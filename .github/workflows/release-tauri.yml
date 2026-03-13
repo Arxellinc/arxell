@@ -14,7 +14,7 @@ jobs:
           - platform: "ubuntu-22.04"
             args: ""
           - platform: "macos-latest"
-            args: ""
+            args: "-- --no-default-features --features custom-protocol"
           - platform: "windows-latest"
             args: "-- --no-default-features --features custom-protocol"
 
