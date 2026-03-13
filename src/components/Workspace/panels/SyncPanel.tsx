@@ -1,11 +1,11 @@
 import { RefreshCcw, Unplug, Wifi } from "lucide-react";
-import { useAuth } from "@clerk/react-router";
 import { PanelWrapper } from "./shared";
 import { useSyncStore } from "../../../store/syncStore";
 import { connectSyncSignal, disconnectSyncSignal } from "../../../core/sync/signalClient";
+import { useOptionalAuth } from "../../../lib/auth";
 
 export function SyncPanel() {
-  const { isSignedIn, getToken } = useAuth();
+  const { isSignedIn, getToken } = useOptionalAuth();
   const {
     deviceId,
     mode,

@@ -1,6 +1,5 @@
 import { BarChart3, Copy, FileJson2, FileSearch, FileText, Pause, Play, SkipForward, Square } from "lucide-react";
 import { useMemo, useState } from "react";
-import { useAuth } from "@clerk/react-router";
 import { cn } from "../../../lib/utils";
 import { buildCitationIndex, useBusinessAnalystStore, type BusinessIntake } from "../../../store/businessAnalystStore";
 import { useChatStore } from "../../../store/chatStore";
@@ -8,6 +7,7 @@ import { usePremiumStore } from "../../../store/premiumStore";
 import { projectCreate, projectList, projectUpdate } from "../../../lib/tauri";
 import { codeWriteFile } from "../../../core/tooling/client";
 import { PanelWrapper } from "./shared";
+import { useOptionalAuth } from "../../../lib/auth";
 
 const EMPTY_INTAKE: BusinessIntake = {
   business_idea: "",
@@ -44,7 +44,7 @@ function parentDir(path: string): string {
 }
 
 export function BusinessAnalystPanel() {
-  const { isSignedIn, getToken } = useAuth();
+  const { isSignedIn, getToken } = useOptionalAuth();
   const { runs, createRun, setRunStatus, advanceRun, cancelRun, enrichRunWithExternalData, exportRunBundle } = useBusinessAnalystStore();
   const { projects, addProject, setProjects, setActiveProject } = useChatStore();
   const { entitlements, preflightBusinessReport } = usePremiumStore();

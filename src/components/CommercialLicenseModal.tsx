@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
-import { useAuth } from "@clerk/react-router";
 import { ExternalLink, RefreshCw, X } from "lucide-react";
 import { usePremiumStore } from "../store/premiumStore";
+import { useOptionalAuth } from "../lib/auth";
 
 interface CommercialLicenseModalProps {
   open: boolean;
@@ -9,7 +9,7 @@ interface CommercialLicenseModalProps {
 }
 
 export function CommercialLicenseModal({ open, onClose }: CommercialLicenseModalProps) {
-  const { isSignedIn, getToken } = useAuth();
+  const { isSignedIn, getToken } = useOptionalAuth();
   const {
     apiBaseUrl,
     entitlements,

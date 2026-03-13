@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { ExternalLink, RefreshCw, X } from "lucide-react";
-import { useAuth } from "@clerk/react-router";
 import { usePremiumStore, type PremiumToolKey } from "../../../store/premiumStore";
 import { useToolCatalogStore } from "../../../store/toolCatalogStore";
+import { useOptionalAuth } from "../../../lib/auth";
 
 interface PremiumToolMeta {
   key: PremiumToolKey | null;
@@ -20,7 +20,7 @@ interface PremiumToolModalProps {
 }
 
 export function PremiumToolModal({ open, tool, onClose }: PremiumToolModalProps) {
-  const { isSignedIn, getToken } = useAuth();
+  const { isSignedIn, getToken } = useOptionalAuth();
   const {
     apiBaseUrl,
     entitlements,
@@ -144,7 +144,7 @@ export function PremiumToolModal({ open, tool, onClose }: PremiumToolModalProps)
               Save Config
             </button>
             <div className="text-[11px] text-text-dark">
-              Auth token is provided automatically from Clerk session.
+              Auth token is provided automatically when cloud auth is configured.
             </div>
           </div>
 
