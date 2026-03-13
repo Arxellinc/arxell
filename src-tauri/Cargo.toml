@@ -48,8 +48,9 @@ llama-cpp-2 = { version = "0.1.136", default-features = false, optional = true }
 # Uses the gguf crate for lightweight header-only reading
 gguf = "0.1.2"
 
-# System information for device enumeration and memory queries
-sysinfo = "0.33"
+# System information for device enumeration and memory queries.
+# Pin to avoid API drift across patch/minor updates in CI/release runners.
+sysinfo = "=0.33.1"
 
 # ZIP archive extraction for downloaded engine binaries
 zip = "2"
@@ -60,13 +61,17 @@ libc = "0.2"
 
 # Memory-mapped file I/O for reading GGUF headers without loading full model into RAM
 memmap2 = "0.9"
-whisper-rs = { path = "../vendor/whisper-rs", optional = true }
 redis = { version = "0.27", features = ["tokio-comp"] }
 tokio-postgres = "0.7"
 lettre = { version = "0.11", default-features = false, features = ["builder", "smtp-transport", "tokio1", "tokio1-native-tls"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 webkit2gtk = "2.0"
+
+[target.'cfg(not(target_os = "windows"))'.dependencies]
+# whisper-rs pulls in whisper.cpp bindgen; keep it off Windows by default to
+# avoid toolchain-specific bindgen breakage during public release builds.
+whisper-rs = { path = "../vendor/whisper-rs", optional = true }
 
 
 
