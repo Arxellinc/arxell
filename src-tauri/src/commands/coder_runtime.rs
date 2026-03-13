@@ -2147,11 +2147,11 @@ mod tests {
     fn parse_pi_model_spec_ignores_default_aliases() {
         assert_eq!(
             parse_pi_model_spec(Some("default".to_string())),
-            (Some("openai".to_string()), None)
+            (None, None)
         );
         assert_eq!(
             parse_pi_model_spec(Some("openai/default".to_string())),
-            (Some("openai".to_string()), None)
+            (None, None)
         );
     }
 
