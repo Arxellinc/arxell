@@ -26,6 +26,9 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Sync app version from tag
+        run: bash ./scripts/sync_version_from_tag.sh "${{ github.ref_name }}"
+
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
