@@ -84,10 +84,22 @@ jobs:
         with:
           workspaces: src-tauri
 
+      - name: Cloud auth mode
+        shell: bash
+        run: |
+          if [ -n "${VITE_CLERK_PUBLISHABLE_KEY:-}" ]; then
+            echo "Clerk key detected: building cloud-enabled release."
+          else
+            echo "Clerk key missing: building local-mode release (cloud auth disabled)."
+          fi
+        env:
+          VITE_CLERK_PUBLISHABLE_KEY: ${{ secrets.VITE_CLERK_PUBLISHABLE_KEY || secrets.CLERK_PUBLISHABLE_KEY }}
+
       - name: Build and bundle with Tauri
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VITE_CLERK_PUBLISHABLE_KEY: ${{ secrets.VITE_CLERK_PUBLISHABLE_KEY || secrets.CLERK_PUBLISHABLE_KEY }}
         with:
           tagName: ${{ github.ref_name }}
           releaseName: "Arxell ${{ github.ref_name }}"
