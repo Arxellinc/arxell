@@ -37,6 +37,8 @@ jobs:
 
       - name: Vendor Pi binaries
         run: bash ./scripts/vendor_pi_binaries.sh
+        env:
+          PI_VENDOR_TARGET: auto
 
       - name: Verify bundled pi binary is present
         run: ARX_PI_REQUIRE_BUNDLE=1 bash ./scripts/coder_pi_preflight.sh
