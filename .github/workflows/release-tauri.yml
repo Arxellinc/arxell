@@ -16,7 +16,7 @@ jobs:
           - platform: "macos-latest"
             args: ""
           - platform: "windows-latest"
-            args: ""
+            args: "--no-default-features --features custom-protocol"
 
     runs-on: ${{ matrix.platform }}
     steps:
@@ -33,7 +33,7 @@ jobs:
         run: npm ci
 
       - name: Vendor Pi binaries
-        run: bash ./scripts/vendor_pi_binaries.sh
+        run: bash ./scripts/vendor_pi_binaries.sh v0.57.1
         shell: bash
         env:
           PI_VENDOR_TARGET: auto
@@ -51,6 +51,7 @@ jobs:
             libsoup-3.0-dev \
             libwebkit2gtk-4.1-dev \
             libjavascriptcoregtk-4.1-dev \
+            libasound2-dev \
             libayatana-appindicator3-dev \
             librsvg2-dev \
             pkg-config \

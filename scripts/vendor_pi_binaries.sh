@@ -29,14 +29,26 @@ fi
 
 RELEASE_TAG="${1:-}"
 if [[ -z "$RELEASE_TAG" ]]; then
+  RELEASE_TAG="${PI_VENDOR_RELEASE_TAG:-}"
+fi
+
+if [[ -z "$RELEASE_TAG" ]]; then
+  LATEST_JSON="$(
+    curl -fsSL \
+      -H "Accept: application/vnd.github+json" \
+      -H "User-Agent: arxell-vendor-script" \
+      https://api.github.com/repos/badlogic/pi-mono/releases/latest || true
+  )"
   RELEASE_TAG="$(
-    curl -fsSL https://api.github.com/repos/badlogic/pi-mono/releases/latest \
-      | node -e 'const fs=require("fs");const d=JSON.parse(fs.readFileSync(0,"utf8"));process.stdout.write((d.tag_name||"").trim());'
+    printf '%s' "$LATEST_JSON" \
+      | node -e 'const fs=require("fs");const s=fs.readFileSync(0,"utf8").trim();if(!s){process.exit(0);}try{const d=JSON.parse(s);process.stdout.write((d.tag_name||"").trim());}catch{process.exit(0);}'
   )"
 fi
 
 if [[ -z "$RELEASE_TAG" || "$RELEASE_TAG" == "null" ]]; then
-  echo "Failed to determine pi-mono release tag"
+  echo "Failed to determine pi-mono release tag (GitHub API may be rate-limited/forbidden)."
+  echo "Pass an explicit tag: bash ./scripts/vendor_pi_binaries.sh v0.57.1"
+  echo "Or set PI_VENDOR_RELEASE_TAG in the environment."
   exit 1
 fi
 
