@@ -9,6 +9,7 @@
     "build": "tsc && vite build",
     "preview": "vite preview",
     "tauri": "tauri",
+    "security:preflight": "bash ./scripts/security_preflight.sh",
     "diagnose:pi": "bash ./scripts/coder_pi_preflight.sh",
     "verify:pi:bundle": "ARX_PI_REQUIRE_BUNDLE=1 bash ./scripts/coder_pi_preflight.sh",
     "tauri:build:safe": "npm run verify:pi:bundle && npm run tauri build",

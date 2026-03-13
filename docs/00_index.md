@@ -21,6 +21,8 @@ arx is a local-first Rust + Tauri desktop application for AI chat, local model s
 - [14_troubleshooting.md](./14_troubleshooting.md): Common failures, diagnostics, and recovery steps.
 - [15_release_notes.md](./15_release_notes.md): Current release notes and changelog template.
 - [16_appendices.md](./16_appendices.md): Glossary, license/dependency attribution, and external references.
+- [22_public_launch_checklist.md](./22_public_launch_checklist.md): Pre-announcement release and security checklist for open-source launch.
+- [23_github_security_verification.md](./23_github_security_verification.md): Manual GitHub settings audit for branch protection, required checks, and access controls.
 - [guardrails.md](./guardrails.md): Modular tool guardrails, capability modes, gateway policy, and console boundaries.
 
 ## Which Doc Do I Need?

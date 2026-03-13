@@ -105,6 +105,12 @@ Frontend:
 npm run build
 ```
 
+Security preflight:
+
+```bash
+npm run security:preflight
+```
+
 Rust backend:
 
 ```bash

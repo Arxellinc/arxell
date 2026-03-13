@@ -44,9 +44,8 @@
       "resources/scripts/voice/stt_whisper.py": "resources/scripts/voice/stt_whisper.py",
       "resources/scripts/voice/stt_whisper_persistent.py": "resources/scripts/voice/stt_whisper_persistent.py",
       "resources/coder": "coder",
-      "../public/models/ggml-base-q8_0.bin": "resources/whisper/ggml-base-q8_0.bin",
-      "../public/models/ggml-tiny.en-q8_0.bin": "resources/whisper/ggml-tiny.en-q8_0.bin",
-      "../public/models/Qwen3.5-2B-Q8_0.gguf": "resources/models/Qwen3.5-2B-Q8_0.gguf"
+      "../public/whisper/ggml-base-q8_0.bin": "resources/whisper/ggml-base-q8_0.bin",
+      "../public/whisper/ggml-tiny.en-q8_0.bin": "resources/whisper/ggml-tiny.en-q8_0.bin"
     }
   }
 }

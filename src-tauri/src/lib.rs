@@ -322,12 +322,10 @@ pub fn run() {
                 }
             }
 
-            // ── Bundled LLM: deploy to {app_data_dir}/models/ on first launch ──
-            // The default Qwen model ships inside the app bundle under
-            // resources/models/. It is copied once to the models directory so
-            // cmd_list_available_models picks it up and the startup autoload can
-            // use it. Skip if the file is already there (user may have deleted it
-            // intentionally, or a newer copy is already in place).
+            // ── Optional bundled LLM: deploy to {app_data_dir}/models/ on first launch ──
+            // If a model is present in resources/models/, copy it once so
+            // cmd_list_available_models can pick it up. Public builds may omit
+            // this asset and rely on first-run model installation flow.
             {
                 let llm_dest = app_dir.join("models");
                 std::fs::create_dir_all(&llm_dest).ok();
