@@ -104,8 +104,9 @@ fn get_cpu_name() -> String {
     #[cfg(not(target_os = "linux"))]
     {
         use sysinfo::{CpuRefreshKind, RefreshKind, System};
-        let mut sys =
-            System::new_with_specifics(RefreshKind::new().with_cpu(CpuRefreshKind::new()));
+        let mut sys = System::new_with_specifics(
+            RefreshKind::nothing().with_cpu(CpuRefreshKind::everything()),
+        );
         sys.refresh_cpu_all();
         if let Some(cpu) = sys.cpus().first() {
             let brand = cpu.brand();
