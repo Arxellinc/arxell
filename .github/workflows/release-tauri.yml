@@ -32,6 +32,10 @@ jobs:
       - name: Install frontend deps
         run: npm ci
 
+      - name: Vendor Pi binaries
+        run: bash ./scripts/vendor_pi_binaries.sh
+        shell: bash
+
       - name: Verify bundled Pi binary is present
         run: ARX_PI_REQUIRE_BUNDLE=1 bash ./scripts/coder_pi_preflight.sh
         shell: bash
