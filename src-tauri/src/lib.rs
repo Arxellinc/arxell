@@ -291,14 +291,10 @@ pub fn run() {
             {
                 let whisper_dest = {
                     let home = std::env::var("HOME").unwrap_or_default();
-                    std::path::PathBuf::from(home)
-                        .join(".local/share/arx/whisper")
+                    std::path::PathBuf::from(home).join(".local/share/arx/whisper")
                 };
                 std::fs::create_dir_all(&whisper_dest).ok();
-                let bundled = [
-                    "ggml-base-q8_0.bin",
-                    "ggml-tiny.en-q8_0.bin",
-                ];
+                let bundled = ["ggml-base-q8_0.bin", "ggml-tiny.en-q8_0.bin"];
                 for name in &bundled {
                     let dest = whisper_dest.join(name);
                     if !dest.exists() {
@@ -306,17 +302,15 @@ pub fn run() {
                             format!("resources/whisper/{name}"),
                             tauri::path::BaseDirectory::Resource,
                         ) {
-                            Ok(src) if src.exists() => {
-                                match std::fs::copy(&src, &dest) {
-                                    Ok(_) => commands::logs::info(&format!(
-                                        "Deployed bundled Whisper model: {name}"
-                                    )),
-                                    Err(e) => log::warn!(
-                                        "Failed to deploy Whisper model {name}: {e}"
-                                    ),
-                                }
+                            Ok(src) if src.exists() => match std::fs::copy(&src, &dest) {
+                                Ok(_) => commands::logs::info(&format!(
+                                    "Deployed bundled Whisper model: {name}"
+                                )),
+                                Err(e) => log::warn!("Failed to deploy Whisper model {name}: {e}"),
+                            },
+                            _ => {
+                                log::debug!("Bundled Whisper model not found in resources: {name}")
                             }
-                            _ => log::debug!("Bundled Whisper model not found in resources: {name}"),
                         }
                     }
                 }
@@ -336,16 +330,12 @@ pub fn run() {
                         format!("resources/models/{bundled_llm}"),
                         tauri::path::BaseDirectory::Resource,
                     ) {
-                        Ok(src) if src.exists() => {
-                            match std::fs::copy(&src, &dest) {
-                                Ok(_) => commands::logs::info(&format!(
-                                    "Deployed bundled LLM: {bundled_llm}"
-                                )),
-                                Err(e) => log::warn!(
-                                    "Failed to deploy bundled LLM {bundled_llm}: {e}"
-                                ),
-                            }
-                        }
+                        Ok(src) if src.exists() => match std::fs::copy(&src, &dest) {
+                            Ok(_) => commands::logs::info(&format!(
+                                "Deployed bundled LLM: {bundled_llm}"
+                            )),
+                            Err(e) => log::warn!("Failed to deploy bundled LLM {bundled_llm}: {e}"),
+                        },
                         _ => log::debug!("Bundled LLM not found in resources: {bundled_llm}"),
                     }
                 }
@@ -422,7 +412,8 @@ pub fn run() {
                             "INSERT OR REPLACE INTO settings (key, value) VALUES (?1, ?2)",
                             rusqlite::params!["primary_llm_source", "local"],
                         );
-                        let msg = "[startup] Updated settings to route chat to adopted local server";
+                        let msg =
+                            "[startup] Updated settings to route chat to adopted local server";
                         commands::logs::info(msg);
                         log::info!("{}", msg);
                     } else {
@@ -458,7 +449,10 @@ pub fn run() {
                 if let Some(main) = app.get_webview_window("main") {
                     let _ = main.with_webview(|webview| {
                         use webkit2gtk::glib::prelude::ObjectExt;
-                        use webkit2gtk::{PermissionRequestExt, SettingsExt, UserMediaPermissionRequest, WebViewExt};
+                        use webkit2gtk::{
+                            PermissionRequestExt, SettingsExt, UserMediaPermissionRequest,
+                            WebViewExt,
+                        };
                         if let Some(settings) = webview.inner().settings() {
                             settings.set_enable_media_stream(true);
                             log::info!("[webkit] enabled media stream");

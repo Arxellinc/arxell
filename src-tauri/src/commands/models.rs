@@ -539,7 +539,12 @@ pub fn cmd_model_update(
                 |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
             )
             .map_err(|e| e.to_string())?;
-        sync_primary_model_settings(&db, &resolved_model_id, &resolved_base_url, &resolved_api_key)?;
+        sync_primary_model_settings(
+            &db,
+            &resolved_model_id,
+            &resolved_base_url,
+            &resolved_api_key,
+        )?;
     }
 
     Ok(())

@@ -127,7 +127,9 @@ fn resolve_input_device(host: &cpal::Host, preferred_name: Option<&str>) -> Resu
             .input_devices()
             .map_err(|e| anyhow::anyhow!("Failed to list input devices: {e}"))?
             .collect();
-        if let Some(device) = candidates.iter().find(|d| d.name().ok().as_deref() == Some(name))
+        if let Some(device) = candidates
+            .iter()
+            .find(|d| d.name().ok().as_deref() == Some(name))
         {
             return Ok(device.clone());
         }
@@ -339,11 +341,12 @@ fn capture_loop(
             // is_speech is derived from the same value so we only run the ONNX
             // model once per chunk.
             let speech_prob = if let Some(ref mut v) = vad {
-                v.predict(chunk).unwrap_or(if rms > config.amplitude_threshold {
-                    1.0
-                } else {
-                    0.0
-                })
+                v.predict(chunk)
+                    .unwrap_or(if rms > config.amplitude_threshold {
+                        1.0
+                    } else {
+                        0.0
+                    })
             } else if rms > config.amplitude_threshold {
                 1.0
             } else {

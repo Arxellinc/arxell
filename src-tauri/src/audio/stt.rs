@@ -446,7 +446,9 @@ fn wav_to_pcm(wav_bytes: &[u8]) -> Result<Vec<f32>, String> {
             let mut idx = 0usize;
             for sample in reader.samples::<f32>() {
                 let s = sample.map_err(|e| format!("WAV decode error: {e}"))?;
-                if idx % channels == 0 { pcm.push(s); }
+                if idx % channels == 0 {
+                    pcm.push(s);
+                }
                 idx += 1;
             }
         }
@@ -455,14 +457,18 @@ fn wav_to_pcm(wav_bytes: &[u8]) -> Result<Vec<f32>, String> {
                 let mut idx = 0usize;
                 for sample in reader.samples::<i16>() {
                     let s = sample.map_err(|e| format!("WAV decode error: {e}"))?;
-                    if idx % channels == 0 { pcm.push(s as f32 / i16::MAX as f32); }
+                    if idx % channels == 0 {
+                        pcm.push(s as f32 / i16::MAX as f32);
+                    }
                     idx += 1;
                 }
             } else {
                 let mut idx = 0usize;
                 for sample in reader.samples::<i32>() {
                     let s = sample.map_err(|e| format!("WAV decode error: {e}"))?;
-                    if idx % channels == 0 { pcm.push(s as f32 / i32::MAX as f32); }
+                    if idx % channels == 0 {
+                        pcm.push(s as f32 / i32::MAX as f32);
+                    }
                     idx += 1;
                 }
             }

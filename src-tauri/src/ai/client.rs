@@ -2,11 +2,11 @@ use anyhow::{anyhow, Result};
 use futures_util::StreamExt;
 use reqwest::Client;
 use serde_json::Value;
-use std::time::{Duration, Instant};
 use std::sync::{
     atomic::{AtomicBool, Ordering},
     Arc,
 };
+use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter};
 
 use super::types::{ChatMessage, ChatRequest, ChunkEvent, StreamChunk};

@@ -324,7 +324,10 @@ pub fn update_workflow(
 }
 
 pub fn delete_workflow(conn: &Connection, workflow_id: &str) -> Result<bool> {
-    Ok(conn.execute("DELETE FROM a2a_workflows WHERE workflow_id = ?1", [workflow_id])? > 0)
+    Ok(conn.execute(
+        "DELETE FROM a2a_workflows WHERE workflow_id = ?1",
+        [workflow_id],
+    )? > 0)
 }
 
 pub fn create_run(
@@ -426,10 +429,7 @@ pub fn list_runs(
     };
     let mut stmt = conn.prepare(sql)?;
     let rows = if bind_workflow {
-        stmt.query_map(
-            params![workflow_id.unwrap_or_default(), limit],
-            map_run_row,
-        )?
+        stmt.query_map(params![workflow_id.unwrap_or_default(), limit], map_run_row)?
     } else {
         stmt.query_map(params![limit], map_run_row)?
     };
@@ -535,10 +535,16 @@ pub fn create_credential(
 }
 
 pub fn delete_credential(conn: &Connection, credential_id: &str) -> Result<bool> {
-    Ok(conn.execute("DELETE FROM a2a_credentials WHERE credential_id = ?1", [credential_id])? > 0)
+    Ok(conn.execute(
+        "DELETE FROM a2a_credentials WHERE credential_id = ?1",
+        [credential_id],
+    )? > 0)
 }
 
-pub fn get_credential(conn: &Connection, credential_id: &str) -> Result<Option<A2ACredentialRecord>> {
+pub fn get_credential(
+    conn: &Connection,
+    credential_id: &str,
+) -> Result<Option<A2ACredentialRecord>> {
     let mut stmt = conn.prepare(
         "SELECT credential_id, name, kind, data_json, created_at_ms, updated_at_ms
          FROM a2a_credentials WHERE credential_id = ?1 LIMIT 1",
@@ -574,7 +580,11 @@ pub fn list_templates(conn: &Connection) -> Result<Vec<A2ATemplateRecord>> {
     Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
 }
 
-pub fn create_template(conn: &Connection, name: String, definition: Value) -> Result<A2ATemplateRecord> {
+pub fn create_template(
+    conn: &Connection,
+    name: String,
+    definition: Value,
+) -> Result<A2ATemplateRecord> {
     let template_id = next_id("tpl");
     let now = now_ms();
     let definition_json = serde_json::to_string(&definition)?;
@@ -600,5 +610,8 @@ pub fn create_template(conn: &Connection, name: String, definition: Value) -> Re
 }
 
 pub fn delete_template(conn: &Connection, template_id: &str) -> Result<bool> {
-    Ok(conn.execute("DELETE FROM a2a_templates WHERE template_id = ?1", [template_id])? > 0)
+    Ok(conn.execute(
+        "DELETE FROM a2a_templates WHERE template_id = ?1",
+        [template_id],
+    )? > 0)
 }

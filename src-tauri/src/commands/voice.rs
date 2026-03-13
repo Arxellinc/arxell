@@ -1,4 +1,6 @@
-use crate::audio::capture::{pcm_to_wav, start_capture, VadConfig, VadMode, VoicePipeline, VoiceUtterance};
+use crate::audio::capture::{
+    pcm_to_wav, start_capture, VadConfig, VadMode, VoicePipeline, VoiceUtterance,
+};
 use crate::audio::state::SharedAudioState;
 use crate::audio::stt as local_stt;
 use crate::audio::tts as local_tts;
@@ -516,11 +518,10 @@ pub async fn cmd_stt_check_engines(app: AppHandle) -> SttEngineStatus {
         "~/.local/share/arx/whisper/ggml-base-q8_0.bin",
     ));
 
-    let whisper_rs = tokio::task::spawn_blocking(move || {
-        local_stt::check_whisper_rs(&whisper_rs_model_path)
-    })
-    .await
-    .unwrap_or(false);
+    let whisper_rs =
+        tokio::task::spawn_blocking(move || local_stt::check_whisper_rs(&whisper_rs_model_path))
+            .await
+            .unwrap_or(false);
 
     let external = !stt_url.is_empty() && {
         reqwest::Client::builder()
@@ -576,10 +577,17 @@ pub async fn cmd_tts_list_voices(app: AppHandle) -> Vec<String> {
                 .unwrap_or_default()
         }
         "external" => vec![
-            "alloy".to_string(), "ash".to_string(), "ballad".to_string(),
-            "coral".to_string(), "echo".to_string(), "fable".to_string(),
-            "nova".to_string(), "onyx".to_string(), "sage".to_string(),
-            "shimmer".to_string(), "verse".to_string(),
+            "alloy".to_string(),
+            "ash".to_string(),
+            "ballad".to_string(),
+            "coral".to_string(),
+            "echo".to_string(),
+            "fable".to_string(),
+            "nova".to_string(),
+            "onyx".to_string(),
+            "sage".to_string(),
+            "shimmer".to_string(),
+            "verse".to_string(),
         ],
         _ => Vec::new(),
     };

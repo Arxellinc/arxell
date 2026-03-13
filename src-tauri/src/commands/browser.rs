@@ -107,14 +107,21 @@ fn parse_usize_query(uri: &str, key: &str, default_value: usize, min: usize, max
 
 fn parse_safety(uri: &str) -> ProxySafety {
     let mut cfg = ProxySafety::default();
-    cfg.allow_only_http_https = parse_bool_query(uri, "allowHttpHttpsOnly", cfg.allow_only_http_https);
+    cfg.allow_only_http_https =
+        parse_bool_query(uri, "allowHttpHttpsOnly", cfg.allow_only_http_https);
     cfg.disable_javascript = parse_bool_query(uri, "disableJavascript", cfg.disable_javascript);
     cfg.redirect_recheck = parse_bool_query(uri, "redirectRecheck", cfg.redirect_recheck);
-    cfg.block_private_targets = parse_bool_query(uri, "blockPrivateTargets", cfg.block_private_targets);
+    cfg.block_private_targets =
+        parse_bool_query(uri, "blockPrivateTargets", cfg.block_private_targets);
     cfg.timeout_ms = parse_u64_query(uri, "timeoutMs", cfg.timeout_ms, 3_000, 120_000);
     cfg.max_redirects = parse_usize_query(uri, "maxRedirects", cfg.max_redirects, 0, 20);
-    cfg.max_response_bytes =
-        parse_usize_query(uri, "maxResponseBytes", cfg.max_response_bytes, 100_000, 25_000_000);
+    cfg.max_response_bytes = parse_usize_query(
+        uri,
+        "maxResponseBytes",
+        cfg.max_response_bytes,
+        100_000,
+        25_000_000,
+    );
     cfg.max_concurrency = parse_usize_query(uri, "maxConcurrency", cfg.max_concurrency, 1, 64);
     cfg
 }
@@ -137,7 +144,9 @@ fn is_blocked_private_host(host: &str) -> bool {
                     || (o[0] == 172 && (16..=31).contains(&o[1]))
                     || (o[0] == 192 && o[1] == 168)
             }
-            IpAddr::V6(v6) => v6.is_loopback() || v6.is_unique_local() || v6.is_unicast_link_local(),
+            IpAddr::V6(v6) => {
+                v6.is_loopback() || v6.is_unique_local() || v6.is_unicast_link_local()
+            }
         };
     }
     false
@@ -725,7 +734,11 @@ pub fn serper_key_status(state: &AppState) -> Result<serde_json::Value, String> 
         if trimmed.len() <= 8 {
             "****".to_string()
         } else {
-            format!("{}****{}", &trimmed[..4], &trimmed[trimmed.len().saturating_sub(4)..])
+            format!(
+                "{}****{}",
+                &trimmed[..4],
+                &trimmed[trimmed.len().saturating_sub(4)..]
+            )
         }
     } else {
         "".to_string()
@@ -822,7 +835,10 @@ pub async fn serper_search(
         .build()
         .map_err(|e| e.to_string())?;
 
-    let requested_mode = mode.unwrap_or_else(|| "search".to_string()).trim().to_lowercase();
+    let requested_mode = mode
+        .unwrap_or_else(|| "search".to_string())
+        .trim()
+        .to_lowercase();
     let normalized_mode = match requested_mode.as_str() {
         "search" => "search",
         "images" => "images",
@@ -858,7 +874,11 @@ pub async fn serper_search(
     let status = resp.status();
     let body = resp.text().await.map_err(|e| e.to_string())?;
     if !status.is_success() {
-        return Err(format!("Serper search failed (HTTP {}): {}", status.as_u16(), body));
+        return Err(format!(
+            "Serper search failed (HTTP {}): {}",
+            status.as_u16(),
+            body
+        ));
     }
 
     let parsed: serde_json::Value = serde_json::from_str(&body).map_err(|e| e.to_string())?;
@@ -892,7 +912,11 @@ pub async fn serper_search(
         .map(|items| {
             items
                 .iter()
-                .filter_map(|item| item.get("query").and_then(|q| q.as_str()).map(|q| q.to_string()))
+                .filter_map(|item| {
+                    item.get("query")
+                        .and_then(|q| q.as_str())
+                        .map(|q| q.to_string())
+                })
                 .collect::<Vec<_>>()
         })
         .unwrap_or_default();

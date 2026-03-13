@@ -103,7 +103,13 @@ fn namespace_title(namespace: &str) -> String {
 fn namespace_to_filename(namespace: &str) -> String {
     let safe: String = namespace
         .chars()
-        .map(|c| if c.is_ascii_alphanumeric() || c == '-' { c } else { '_' })
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' {
+                c
+            } else {
+                '_'
+            }
+        })
         .collect();
     format!("{safe}.md")
 }

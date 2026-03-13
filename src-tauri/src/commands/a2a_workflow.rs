@@ -264,7 +264,9 @@ fn topological_sort(
                 e.source, e.target
             ));
         }
-        *indegree.get_mut(e.target.as_str()).expect("target in indegree") += 1;
+        *indegree
+            .get_mut(e.target.as_str())
+            .expect("target in indegree") += 1;
         out.get_mut(e.source.as_str())
             .expect("source in out")
             .push(e.target.as_str());
@@ -301,10 +303,7 @@ fn evaluate_template(template: &str, item: &A2AExecutionItem, ctx: &NodeContext)
     if !(trimmed.starts_with("{{") && trimmed.ends_with("}}")) {
         return Value::String(template.to_string());
     }
-    let expr = trimmed
-        .trim_start_matches('{')
-        .trim_end_matches('}')
-        .trim();
+    let expr = trimmed.trim_start_matches('{').trim_end_matches('}').trim();
 
     if expr == "$now" {
         return Value::String(chrono::Utc::now().to_rfc3339());
@@ -427,7 +426,10 @@ fn evaluate_condition(item: &A2AExecutionItem, ctx: &NodeContext, cond: &Value) 
     }
 }
 
-fn pass_through(outputs: &mut HashMap<String, Vec<A2AExecutionItem>>, input_items: &[A2AExecutionItem]) {
+fn pass_through(
+    outputs: &mut HashMap<String, Vec<A2AExecutionItem>>,
+    input_items: &[A2AExecutionItem],
+) {
     outputs.insert("main".to_string(), input_items.to_vec());
 }
 
@@ -557,10 +559,7 @@ async fn execute_node(
                 .and_then(|v| v.as_array())
                 .cloned()
                 .unwrap_or_default();
-            let expr = node
-                .params
-                .get("expression")
-                .and_then(|v| v.as_str());
+            let expr = node.params.get("expression").and_then(|v| v.as_str());
 
             let mut yes = Vec::new();
             let mut no = Vec::new();
@@ -627,7 +626,9 @@ async fn execute_node(
             for it in input_items {
                 let mut out_idx = fallback;
                 if mode == "expression" {
-                    out_idx = evaluate_template(value_expr, it, ctx).as_i64().unwrap_or(fallback);
+                    out_idx = evaluate_template(value_expr, it, ctx)
+                        .as_i64()
+                        .unwrap_or(fallback);
                 } else {
                     let needle = evaluate_template(value_expr, it, ctx);
                     for rule in &rules {
@@ -720,7 +721,11 @@ async fn execute_node(
                 let av = read_json_path(&a.json, field);
                 let bv = read_json_path(&b.json, field);
                 let cmp = av.to_string().cmp(&bv.to_string());
-                if order == "descending" { cmp.reverse() } else { cmp }
+                if order == "descending" {
+                    cmp.reverse()
+                } else {
+                    cmp
+                }
             });
             outputs.insert("main".to_string(), out);
         }
@@ -790,7 +795,10 @@ async fn execute_node(
                 .map(|it| {
                     let mut obj = it.json.as_object().cloned().unwrap_or_default();
                     for pair in &keys {
-                        let from = pair.get("currentKey").and_then(|v| v.as_str()).unwrap_or("");
+                        let from = pair
+                            .get("currentKey")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("");
                         let to = pair.get("newKey").and_then(|v| v.as_str()).unwrap_or("");
                         if from.is_empty() || to.is_empty() {
                             continue;
@@ -878,7 +886,10 @@ async fn execute_node(
                         .collect::<Vec<_>>();
                     let aggregate_val = match aggregation.as_str() {
                         "count" => json!(values.len() as i64),
-                        "sum" => json!(values.iter().map(|v| v.as_f64().unwrap_or(0.0)).sum::<f64>()),
+                        "sum" => json!(values
+                            .iter()
+                            .map(|v| v.as_f64().unwrap_or(0.0))
+                            .sum::<f64>()),
                         "min" => {
                             let nums = values.iter().filter_map(|v| v.as_f64()).collect::<Vec<_>>();
                             nums.into_iter()
@@ -893,7 +904,10 @@ async fn execute_node(
                         }
                         "append" => json!(values),
                         "countunique" => {
-                            let set = values.iter().map(|v| v.to_string()).collect::<std::collections::HashSet<_>>();
+                            let set = values
+                                .iter()
+                                .map(|v| v.to_string())
+                                .collect::<std::collections::HashSet<_>>();
                             json!(set.len() as i64)
                         }
                         _ => json!(values.len() as i64),
@@ -1011,10 +1025,7 @@ async fn execute_node(
                 .and_then(|v| v.as_str())
                 .map(|s| s.to_string())
                 .filter(|s| !s.trim().is_empty());
-            let temperature = node
-                .params
-                .get("temperature")
-                .and_then(|v| v.as_f64());
+            let temperature = node.params.get("temperature").and_then(|v| v.as_f64());
 
             let base_url = get_setting(state, "base_url", "http://localhost:11434/v1");
             let api_key = get_setting(state, "api_key", "ollama");
@@ -1189,13 +1200,17 @@ async fn execute_node(
                         })
                         .unwrap_or_else(|| "{}".to_string());
                     memory::upsert(&db, &namespace, &key, &value).map_err(|e| e.to_string())?;
-                    memory::write_file(&db, &namespace, &state.memory_dir).map_err(|e| e.to_string())?;
+                    memory::write_file(&db, &namespace, &state.memory_dir)
+                        .map_err(|e| e.to_string())?;
                     written += 1;
                 }
             }
             outputs.insert(
                 "main".to_string(),
-                vec![A2AExecutionItem::from_json(json!({ "written": written, "namespace": namespace }), 0)],
+                vec![A2AExecutionItem::from_json(
+                    json!({ "written": written, "namespace": namespace }),
+                    0,
+                )],
             );
         }
         "skill.run" => {
@@ -1264,10 +1279,24 @@ async fn execute_node(
                         .get("mode")
                         .and_then(|v| v.as_str())
                         .map(|v| v.to_string());
-                    let num = node.params.get("num").and_then(|v| v.as_u64()).map(|v| v as u32);
-                    let page = node.params.get("page").and_then(|v| v.as_u64()).map(|v| v as u32);
-                    let result =
-                        crate::commands::browser::serper_search(state, query.to_string(), mode, num, page).await?;
+                    let num = node
+                        .params
+                        .get("num")
+                        .and_then(|v| v.as_u64())
+                        .map(|v| v as u32);
+                    let page = node
+                        .params
+                        .get("page")
+                        .and_then(|v| v.as_u64())
+                        .map(|v| v as u32);
+                    let result = crate::commands::browser::serper_search(
+                        state,
+                        query.to_string(),
+                        mode,
+                        num,
+                        page,
+                    )
+                    .await?;
                     json!(result)
                 }
                 "memory.list" => {
@@ -1370,13 +1399,19 @@ async fn execute_node(
                 std::fs::write(file_path, payload).map_err(|e| e.to_string())?;
                 outputs.insert(
                     "main".to_string(),
-                    vec![A2AExecutionItem::from_json(json!({ "written": true, "path": file_path }), 0)],
+                    vec![A2AExecutionItem::from_json(
+                        json!({ "written": true, "path": file_path }),
+                        0,
+                    )],
                 );
             } else {
                 let content = std::fs::read_to_string(file_path).map_err(|e| e.to_string())?;
                 outputs.insert(
                     "main".to_string(),
-                    vec![A2AExecutionItem::from_json(json!({ "path": file_path, "content": content }), 0)],
+                    vec![A2AExecutionItem::from_json(
+                        json!({ "path": file_path, "content": content }),
+                        0,
+                    )],
                 );
             }
         }
@@ -1437,8 +1472,9 @@ async fn execute_node(
                 .get("query")
                 .and_then(|v| v.as_str())
                 .ok_or_else(|| "db.postgres requires params.query".to_string())?;
-            let (client, connection) =
-                tokio_postgres::connect(conn_str.as_str(), NoTls).await.map_err(|e| e.to_string())?;
+            let (client, connection) = tokio_postgres::connect(conn_str.as_str(), NoTls)
+                .await
+                .map_err(|e| e.to_string())?;
             tauri::async_runtime::spawn(async move {
                 let _ = connection.await;
             });
@@ -1462,7 +1498,11 @@ async fn execute_node(
             outputs.insert("main".to_string(), out);
         }
         "db.mysql" | "db.mariadb" => {
-            let _ = credential_data_for_node(state, node, &["mysql", "mariadb", "db.mysql", "db.mariadb"])?;
+            let _ = credential_data_for_node(
+                state,
+                node,
+                &["mysql", "mariadb", "db.mysql", "db.mariadb"],
+            )?;
             return Err("db.mysql/db.mariadb runtime is disabled in this build".to_string());
         }
         "db.mongodb" => {
@@ -1549,8 +1589,10 @@ async fn execute_node(
         "util.send_email" => {
             use lettre::transport::smtp::authentication::Credentials;
             use lettre::{AsyncSmtpTransport, AsyncTransport, Message, Tokio1Executor};
-            let cred = credential_data_for_node(state, node, &["smtp", "email.smtp", "util.send_email"])?;
-            let host = as_string(&cred, "host").ok_or_else(|| "smtp credential requires host".to_string())?;
+            let cred =
+                credential_data_for_node(state, node, &["smtp", "email.smtp", "util.send_email"])?;
+            let host = as_string(&cred, "host")
+                .ok_or_else(|| "smtp credential requires host".to_string())?;
             let port = cred.get("port").and_then(|v| v.as_u64()).unwrap_or(587) as u16;
             let username = as_string(&cred, "username");
             let password = as_string(&cred, "password");
@@ -1560,7 +1602,9 @@ async fn execute_node(
                 .and_then(|v| v.as_str())
                 .map(|s| s.to_string())
                 .or_else(|| as_string(&cred, "from"))
-                .ok_or_else(|| "util.send_email requires params.from or credential.from".to_string())?;
+                .ok_or_else(|| {
+                    "util.send_email requires params.from or credential.from".to_string()
+                })?;
             let to = node
                 .params
                 .get("to")
@@ -1577,7 +1621,8 @@ async fn execute_node(
                 .and_then(|v| v.as_str())
                 .unwrap_or("");
 
-            let mut builder = Message::builder().from(from.parse().map_err(|e| format!("invalid from: {e}"))?);
+            let mut builder =
+                Message::builder().from(from.parse().map_err(|e| format!("invalid from: {e}"))?);
             for recipient in to.split(',').map(|s| s.trim()).filter(|s| !s.is_empty()) {
                 builder = builder.to(recipient.parse().map_err(|e| format!("invalid to: {e}"))?);
             }
@@ -1596,7 +1641,10 @@ async fn execute_node(
             transport.send(email).await.map_err(|e| e.to_string())?;
             outputs.insert(
                 "main".to_string(),
-                vec![A2AExecutionItem::from_json(json!({ "sent": true, "to": to, "subject": subject }), 0)],
+                vec![A2AExecutionItem::from_json(
+                    json!({ "sent": true, "to": to, "subject": subject }),
+                    0,
+                )],
             );
         }
         other => return Err(format!("Unsupported node type: {other}")),
@@ -1621,7 +1669,8 @@ async fn execute_workflow_run(
         .map(|n| (n.id.as_str(), n))
         .collect();
 
-    let mut outputs_by_node: HashMap<String, HashMap<String, Vec<A2AExecutionItem>>> = HashMap::new();
+    let mut outputs_by_node: HashMap<String, HashMap<String, Vec<A2AExecutionItem>>> =
+        HashMap::new();
     let mut outputs_by_name: HashMap<String, Vec<A2AExecutionItem>> = HashMap::new();
     let mut final_items = Vec::new();
 
@@ -1667,10 +1716,7 @@ async fn execute_workflow_run(
         match result {
             Ok(node_outputs) => {
                 if node.node_type == "output.respond" {
-                    final_items = node_outputs
-                        .get("main")
-                        .cloned()
-                        .unwrap_or_default();
+                    final_items = node_outputs.get("main").cloned().unwrap_or_default();
                 }
                 outputs_by_name.insert(
                     node.name.clone(),
@@ -1748,13 +1794,7 @@ async fn execute_workflow_run(
                     )
                     .map_err(|e| e.to_string())?;
                 }
-                emit_trace(
-                    app,
-                    run_id,
-                    &node.id,
-                    "failed",
-                    json!({ "error": err }),
-                );
+                emit_trace(app, run_id, &node.id, "failed", json!({ "error": err }));
                 return Err(err);
             }
         }
@@ -1798,9 +1838,15 @@ pub fn cmd_a2a_workflow_create(
     payload: A2AWorkflowCreatePayload,
 ) -> Result<workflow_store::A2AWorkflowRecord, String> {
     let db = state.a2a_db.lock().map_err(|e| e.to_string())?;
-    let row = workflow_store::create_workflow(&db, payload.name, payload.definition, payload.active)
-        .map_err(|e| e.to_string())?;
-    emit_changed(&app, "workflow_created", Some(row.workflow_id.as_str()), None);
+    let row =
+        workflow_store::create_workflow(&db, payload.name, payload.definition, payload.active)
+            .map_err(|e| e.to_string())?;
+    emit_changed(
+        &app,
+        "workflow_created",
+        Some(row.workflow_id.as_str()),
+        None,
+    );
     Ok(row)
 }
 
@@ -1820,7 +1866,12 @@ pub fn cmd_a2a_workflow_update(
     )
     .map_err(|e| e.to_string())?;
     if let Some(ref row) = updated {
-        emit_changed(&app, "workflow_updated", Some(row.workflow_id.as_str()), None);
+        emit_changed(
+            &app,
+            "workflow_updated",
+            Some(row.workflow_id.as_str()),
+            None,
+        );
     }
     Ok(updated)
 }
@@ -1832,7 +1883,8 @@ pub fn cmd_a2a_workflow_delete(
     workflow_id: String,
 ) -> Result<bool, String> {
     let db = state.a2a_db.lock().map_err(|e| e.to_string())?;
-    let deleted = workflow_store::delete_workflow(&db, workflow_id.trim()).map_err(|e| e.to_string())?;
+    let deleted =
+        workflow_store::delete_workflow(&db, workflow_id.trim()).map_err(|e| e.to_string())?;
     if deleted {
         emit_changed(&app, "workflow_deleted", Some(workflow_id.trim()), None);
     }
@@ -1846,7 +1898,8 @@ pub fn cmd_a2a_workflow_run_list(
     limit: Option<i64>,
 ) -> Result<Vec<workflow_store::A2AWorkflowRunRecord>, String> {
     let db = state.a2a_db.lock().map_err(|e| e.to_string())?;
-    workflow_store::list_runs(&db, workflow_id.as_deref(), limit.unwrap_or(50)).map_err(|e| e.to_string())
+    workflow_store::list_runs(&db, workflow_id.as_deref(), limit.unwrap_or(50))
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -1858,7 +1911,8 @@ pub fn cmd_a2a_workflow_run_get(
     let Some(run) = workflow_store::get_run(&db, run_id.trim()).map_err(|e| e.to_string())? else {
         return Ok(None);
     };
-    let node_runs = workflow_store::list_node_runs(&db, run_id.trim()).map_err(|e| e.to_string())?;
+    let node_runs =
+        workflow_store::list_node_runs(&db, run_id.trim()).map_err(|e| e.to_string())?;
     Ok(Some(A2AWorkflowRunDetail { run, node_runs }))
 }
 
@@ -1892,7 +1946,12 @@ pub async fn cmd_a2a_workflow_run_start(
         (workflow, run)
     };
     let _permit = acquire_run_permit(workflow.workflow_id.as_str())?;
-    emit_changed(&app, "run_started", Some(workflow.workflow_id.as_str()), Some(run.run_id.as_str()));
+    emit_changed(
+        &app,
+        "run_started",
+        Some(workflow.workflow_id.as_str()),
+        Some(run.run_id.as_str()),
+    );
 
     let definition: A2AWorkflowDefinition =
         serde_json::from_str(&workflow.definition_json).map_err(|e| e.to_string())?;
@@ -1962,7 +2021,12 @@ pub async fn cmd_a2a_workflow_run_start(
             .map_err(|e| e.to_string())?
             .ok_or_else(|| "Run was not found after execution".to_string())?
     };
-    emit_changed(&app, "run_finished", Some(workflow.workflow_id.as_str()), Some(final_run.run_id.as_str()));
+    emit_changed(
+        &app,
+        "run_finished",
+        Some(workflow.workflow_id.as_str()),
+        Some(final_run.run_id.as_str()),
+    );
     Ok(final_run)
 }
 
@@ -2011,7 +2075,8 @@ pub fn cmd_a2a_credential_delete(
     credential_id: String,
 ) -> Result<bool, String> {
     let db = state.a2a_db.lock().map_err(|e| e.to_string())?;
-    let deleted = workflow_store::delete_credential(&db, credential_id.trim()).map_err(|e| e.to_string())?;
+    let deleted =
+        workflow_store::delete_credential(&db, credential_id.trim()).map_err(|e| e.to_string())?;
     if deleted {
         emit_changed(&app, "credential_deleted", None, None);
     }
@@ -2046,7 +2111,8 @@ pub fn cmd_a2a_template_delete(
     template_id: String,
 ) -> Result<bool, String> {
     let db = state.a2a_db.lock().map_err(|e| e.to_string())?;
-    let deleted = workflow_store::delete_template(&db, template_id.trim()).map_err(|e| e.to_string())?;
+    let deleted =
+        workflow_store::delete_template(&db, template_id.trim()).map_err(|e| e.to_string())?;
     if deleted {
         emit_changed(&app, "template_deleted", None, None);
     }

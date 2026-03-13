@@ -2,7 +2,9 @@ use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use tauri::{AppHandle, State};
 
-use super::{a2a, a2a_workflow, browser, coder_runtime, logs, model, models, terminal, voice, workspace};
+use super::{
+    a2a, a2a_workflow, browser, coder_runtime, logs, model, models, terminal, voice, workspace,
+};
 use crate::{a2a::workflow_store, AppState};
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -839,14 +841,20 @@ pub async fn cmd_tool_invoke(
                 return deny(&request, "browser.search requires non-empty query");
             }
 
-            let result =
-                browser::serper_search(state.inner(), payload.query, payload.mode, payload.num, payload.page).await?;
+            let result = browser::serper_search(
+                state.inner(),
+                payload.query,
+                payload.mode,
+                payload.num,
+                payload.page,
+            )
+            .await?;
             audit_allow(&request);
             Ok(serde_json::json!({ "result": result }))
         }
         ("web", "browser.search.key_set") => {
-            let payload: BrowserSearchKeySetPayload = serde_json::from_value(request.payload.clone())
-                .map_err(|e| {
+            let payload: BrowserSearchKeySetPayload =
+                serde_json::from_value(request.payload.clone()).map_err(|e| {
                     let msg = format!("Invalid payload for browser.search.key_set: {}", e);
                     audit_deny(&request, &msg);
                     msg
@@ -866,8 +874,8 @@ pub async fn cmd_tool_invoke(
             Ok(serde_json::json!({ "result": status }))
         }
         ("web", "browser.search.key_validate") => {
-            let payload: BrowserSearchKeySetPayload = serde_json::from_value(request.payload.clone())
-                .map_err(|e| {
+            let payload: BrowserSearchKeySetPayload =
+                serde_json::from_value(request.payload.clone()).map_err(|e| {
                     let msg = format!("Invalid payload for browser.search.key_validate: {}", e);
                     audit_deny(&request, &msg);
                     msg
@@ -1568,14 +1576,27 @@ pub async fn cmd_tool_invoke(
                     msg
                 })?;
 
-            let workflow_id = if let Some(id) = payload.workflow_id.as_ref().map(|v| v.trim()).filter(|v| !v.is_empty()) {
+            let workflow_id = if let Some(id) = payload
+                .workflow_id
+                .as_ref()
+                .map(|v| v.trim())
+                .filter(|v| !v.is_empty())
+            {
                 id.to_string()
-            } else if let Some(name) = payload.workflow_name.as_ref().map(|v| v.trim()).filter(|v| !v.is_empty()) {
+            } else if let Some(name) = payload
+                .workflow_name
+                .as_ref()
+                .map(|v| v.trim())
+                .filter(|v| !v.is_empty())
+            {
                 let db = state.a2a_db.lock().map_err(|e| e.to_string())?;
                 let rows = workflow_store::list_workflows(&db).map_err(|e| e.to_string())?;
                 let lower = name.to_ascii_lowercase();
                 rows.into_iter()
-                    .find(|wf| wf.name.trim().eq_ignore_ascii_case(name) || wf.name.to_ascii_lowercase().contains(lower.as_str()))
+                    .find(|wf| {
+                        wf.name.trim().eq_ignore_ascii_case(name)
+                            || wf.name.to_ascii_lowercase().contains(lower.as_str())
+                    })
                     .map(|wf| wf.workflow_id)
                     .ok_or_else(|| format!("Workflow not found for name: {name}"))?
             } else {

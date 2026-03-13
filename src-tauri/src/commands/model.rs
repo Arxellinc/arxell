@@ -281,7 +281,9 @@ pub async fn cmd_load_model(
         let best_external = runtime
             .engines
             .iter()
-            .filter(|e| e.is_available && e.is_applicable && e.backend != "cpu" && e.binary_path.is_some())
+            .filter(|e| {
+                e.is_available && e.is_applicable && e.backend != "cpu" && e.binary_path.is_some()
+            })
             .max_by_key(|e| e.is_recommended as i32)
             .cloned();
 
@@ -630,7 +632,11 @@ pub async fn cmd_get_serve_state(
     let (inference_endpoint, local_server_port, local_ctx_size) = {
         let local = app_state.local_server.lock().unwrap();
         if let Some(handle) = local.as_ref() {
-            (Some(handle.url.clone()), Some(handle.port), Some(handle.ctx_size))
+            (
+                Some(handle.url.clone()),
+                Some(handle.port),
+                Some(handle.ctx_size),
+            )
         } else {
             drop(local);
             let db = app_state.db.lock().unwrap();
@@ -989,8 +995,9 @@ pub async fn cmd_delete_available_model(
     let base = models_dir
         .canonicalize()
         .map_err(|e| format!("Failed to resolve models directory: {}", e))?;
-    let candidate =
-        std::path::PathBuf::from(&path).canonicalize().map_err(|e| format!("Invalid path: {}", e))?;
+    let candidate = std::path::PathBuf::from(&path)
+        .canonicalize()
+        .map_err(|e| format!("Invalid path: {}", e))?;
 
     if !candidate.starts_with(&base) {
         return Err("Refusing to delete file outside models directory".to_string());
@@ -1127,8 +1134,8 @@ pub async fn cmd_import_model_from_path(
             .map_err(|e| format!("Failed to import model file: {}", e))?;
     }
 
-    let metadata = std::fs::metadata(&dest)
-        .map_err(|e| format!("Failed to stat imported model: {}", e))?;
+    let metadata =
+        std::fs::metadata(&dest).map_err(|e| format!("Failed to stat imported model: {}", e))?;
     let modified_ms = metadata
         .modified()
         .ok()

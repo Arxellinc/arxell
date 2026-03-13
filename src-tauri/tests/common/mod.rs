@@ -55,7 +55,8 @@ Fetch and read any web page:
 // mode.  Keeping them here lets us measure — in actual model tokens — how much
 // of the context window each mode consumes before any user message is added.
 
-pub const CHAT_SYSTEM_PROMPT: &str = "You are Arxell, a helpful AI assistant. Be concise and clear.";
+pub const CHAT_SYSTEM_PROMPT: &str =
+    "You are Arxell, a helpful AI assistant. Be concise and clear.";
 
 pub const CODE_SYSTEM_PROMPT: &str = "\
 You are Arxell in Code mode — an expert software engineer.

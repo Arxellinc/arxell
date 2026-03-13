@@ -209,8 +209,7 @@ fn find_substring(devices: &[Device], normalized: &str) -> Option<(Device, Strin
     devices.iter().find_map(|d| {
         let name = d.name().ok()?;
         let norm = normalize_label(&name);
-        (norm.contains(normalized) || normalized.contains(&norm))
-            .then(|| (d.clone(), name))
+        (norm.contains(normalized) || normalized.contains(&norm)).then(|| (d.clone(), name))
     })
 }
 

@@ -7,8 +7,8 @@ pub mod stt;
 pub mod tts;
 pub mod vad;
 
-use tauri::{AppHandle, Emitter, State};
 use cpal::traits::DeviceTrait;
+use tauri::{AppHandle, Emitter, State};
 
 use device::{reconcile_device, DeviceSelection, ReconciliationResult};
 use observe::AudioLog;
