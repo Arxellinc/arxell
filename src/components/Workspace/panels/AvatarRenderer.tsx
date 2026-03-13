@@ -1539,7 +1539,7 @@ export function AvatarRenderer({
         roughness: 0.7,
         metalness: 0.0,
       });
-      // Normal mode should use textures/materials bundled inside normal.glb.
+      // Normal mode should use textures/materials from the uploaded rigged model.
       // External /avatar/skins/* overrides are disabled.
       const shouldLoadSkinAssets = false;
       const meshProbeMat = new THREE.MeshBasicMaterial({
@@ -1950,7 +1950,7 @@ export function AvatarRenderer({
             : normalMat.clone();
           const materialName = (material.name || "").toLowerCase().replace(/[^a-z0-9]/g, "");
           if (!skinTextures) {
-            // Targeted overrides retained for normal.glb: dress and ScalpCap.
+            // Targeted overrides retained for common mesh names: dress and ScalpCap.
             if (overrideTextures) {
               if (category === "dress") {
                 setMaterialRole(cloned, "skin");

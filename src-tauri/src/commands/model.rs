@@ -1043,6 +1043,110 @@ pub fn cmd_get_models_dir(app: AppHandle) -> Result<String, String> {
     Ok(models_dir.to_string_lossy().to_string())
 }
 
+/// Import a local GGUF file into the app's models directory.
+///
+/// The source file can be anywhere on disk. The file is copied into
+/// app_data/models and returned as an AvailableModel entry.
+#[tauri::command]
+pub async fn cmd_import_model_from_path(
+    app: AppHandle,
+    source_path: String,
+) -> Result<AvailableModel, String> {
+    let source_raw = source_path.trim();
+    if source_raw.is_empty() {
+        return Err("source_path is empty".to_string());
+    }
+
+    let source = std::path::PathBuf::from(source_raw)
+        .canonicalize()
+        .map_err(|e| format!("Invalid source file: {}", e))?;
+    if !source.is_file() {
+        return Err("Selected path is not a file".to_string());
+    }
+    if source
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e.eq_ignore_ascii_case("gguf"))
+        != Some(true)
+    {
+        return Err("Only .gguf files can be imported".to_string());
+    }
+
+    let models_dir: std::path::PathBuf = app
+        .path()
+        .app_data_dir()
+        .map(|p| p.join("models"))
+        .map_err(|e| format!("Failed to get app data dir: {}", e))?;
+    if !models_dir.exists() {
+        std::fs::create_dir_all(&models_dir)
+            .map_err(|e| format!("Failed to create models directory: {}", e))?;
+    }
+
+    let source_name = sanitize_filename(
+        source
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or("model.gguf"),
+    );
+    let base_stem = std::path::Path::new(&source_name)
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("model")
+        .to_string();
+    let mut dest_name = if source_name.to_ascii_lowercase().ends_with(".gguf") {
+        source_name
+    } else {
+        format!("{}.gguf", source_name)
+    };
+    let mut dest = models_dir.join(&dest_name);
+    let mut suffix = 1u32;
+
+    while dest.exists() {
+        let same_file = dest
+            .canonicalize()
+            .ok()
+            .map(|p| p == source)
+            .unwrap_or(false);
+        if same_file {
+            break;
+        }
+        dest_name = format!("{}_{}.gguf", base_stem, suffix);
+        dest = models_dir.join(&dest_name);
+        suffix += 1;
+    }
+
+    let need_copy = !dest.exists()
+        || dest
+            .canonicalize()
+            .ok()
+            .map(|p| p != source)
+            .unwrap_or(true);
+    if need_copy {
+        tokio::fs::copy(&source, &dest)
+            .await
+            .map_err(|e| format!("Failed to import model file: {}", e))?;
+    }
+
+    let metadata = std::fs::metadata(&dest)
+        .map_err(|e| format!("Failed to stat imported model: {}", e))?;
+    let modified_ms = metadata
+        .modified()
+        .ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0);
+
+    Ok(AvailableModel {
+        name: dest
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_else(|| "Unknown.gguf".to_string()),
+        path: dest.to_string_lossy().to_string(),
+        size_mb: metadata.len() / (1024 * 1024),
+        modified_ms,
+    })
+}
+
 /// Open the models directory in the system file manager.
 #[tauri::command]
 pub async fn cmd_open_models_folder(app: AppHandle) -> Result<(), String> {

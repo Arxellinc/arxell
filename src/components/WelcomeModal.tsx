@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { AlertTriangle, Cable, Download, Loader2, Rocket, Sparkles } from "lucide-react";
 import { llmModelAdd } from "../core/tooling/client";
 
@@ -17,6 +18,8 @@ interface WelcomeModelOption {
   name: string;
   size: string;
   description: string;
+  externalUrl?: string;
+  externalLabel?: string;
   download:
     | {
         type: "asset";
@@ -29,6 +32,9 @@ interface WelcomeModelOption {
       }
     | {
         type: "custom";
+      }
+    | {
+        type: "local";
       };
 }
 
@@ -38,9 +44,12 @@ const WELCOME_MODEL_OPTIONS: WelcomeModelOption[] = [
     name: "Qwen3.5 2B",
     size: "~2 GB",
     description: "Fastest startup option for lower-end hardware and responsive voice mode.",
+    externalUrl: "https://huggingface.co/unsloth/Qwen3.5-2B-GGUF/blob/main/Qwen3.5-2B-UD-Q4_K_XL.gguf",
+    externalLabel: "Link",
     download: {
-      type: "query",
-      query: "Qwen3.5 2B Instruct GGUF Q4",
+      type: "asset",
+      repoId: "unsloth/Qwen3.5-2B-GGUF",
+      fileName: "Qwen3.5-2B-UD-Q4_K_XL.gguf",
     },
   },
   {
@@ -48,10 +57,12 @@ const WELCOME_MODEL_OPTIONS: WelcomeModelOption[] = [
     name: "Qwen3.5 4B",
     size: "~4 GB",
     description: "Balanced baseline model for everyday chat and tool-assisted tasks.",
+    externalUrl: "https://huggingface.co/unsloth/Qwen3.5-4B-GGUF/blob/main/Qwen3.5-4B-UD-Q4_K_XL.gguf",
+    externalLabel: "Link",
     download: {
       type: "asset",
       repoId: "unsloth/Qwen3.5-4B-GGUF",
-      fileName: "Q4_K_M",
+      fileName: "Qwen3.5-4B-UD-Q4_K_XL.gguf",
     },
   },
   {
@@ -59,6 +70,8 @@ const WELCOME_MODEL_OPTIONS: WelcomeModelOption[] = [
     name: "GPT-OSS 20B",
     size: "~13 GB",
     description: "Higher quality output with slower voice-turn responsiveness on most systems.",
+    externalUrl: "https://huggingface.co/Arxell/gpt-oss-20b-MXFP4",
+    externalLabel: "Link",
     download: {
       type: "asset",
       repoId: "Arxell/gpt-oss-20b-MXFP4",
@@ -66,10 +79,21 @@ const WELCOME_MODEL_OPTIONS: WelcomeModelOption[] = [
     },
   },
   {
+    id: "local-model",
+    name: "Use your own model",
+    size: "Local file",
+    description: "Browse for a .gguf file on this machine and copy it into Arxell's models folder.",
+    download: {
+      type: "local",
+    },
+  },
+  {
     id: "custom-endpoint",
     name: "Use Custom Endpoint",
     size: "External",
     description: "Use your own API endpoint by providing URL, model name, and API key.",
+    externalUrl: "https://openrouter.ai/docs/quickstart",
+    externalLabel: "Docs",
     download: {
       type: "custom",
     },
@@ -167,13 +191,61 @@ export function WelcomeModal({
           repoId: selectedModel.download.repoId,
           fileName: selectedModel.download.fileName,
         });
+      } else if (selectedModel.download.type === "local") {
+        const picked = await openDialog({
+          multiple: false,
+          directory: false,
+          filters: [{ name: "GGUF Models", extensions: ["gguf"] }],
+        });
+        if (!picked || typeof picked !== "string") {
+          throw new Error("Model file selection was canceled.");
+        }
+        await invoke("cmd_import_model_from_path", {
+          sourcePath: picked,
+        });
       } else {
         await invoke("cmd_download_model_from_hf_query", {
           query: selectedModel.download.query,
         });
       }
       onOpenModelSetup();
-      onDismiss(doNotShowAgain);
+      // Completing setup should always suppress this modal on future starts.
+      onDismiss(true);
+    } catch (error) {
+      setDownloadError(String(error));
+    } finally {
+      setDownloadInProgress(false);
+    }
+  };
+
+  const handleDownloadModelOption = async (model: WelcomeModelOption) => {
+    if (downloadInProgress || model.download.type === "custom") return;
+    setSelectedModelId(model.id);
+    setDownloadError(null);
+    setDownloadInProgress(true);
+    try {
+      if (model.download.type === "local") {
+        const picked = await openDialog({
+          multiple: false,
+          directory: false,
+          filters: [{ name: "GGUF Models", extensions: ["gguf"] }],
+        });
+        if (!picked || typeof picked !== "string") {
+          throw new Error("Model file selection was canceled.");
+        }
+        await invoke("cmd_import_model_from_path", {
+          sourcePath: picked,
+        });
+      } else if (model.download.type === "asset") {
+        await invoke("cmd_download_model_from_hf_asset", {
+          repoId: model.download.repoId,
+          fileName: model.download.fileName,
+        });
+      } else {
+        await invoke("cmd_download_model_from_hf_query", {
+          query: model.download.query,
+        });
+      }
     } catch (error) {
       setDownloadError(String(error));
     } finally {
@@ -323,12 +395,56 @@ export function WelcomeModal({
                       checked={selectedModelId === model.id}
                       onChange={() => setSelectedModelId(model.id)}
                     />
-                    <div className="min-w-0">
-                      <div className="flex items-center gap-2">
-                        <p className="text-[12px] font-medium text-text-norm">{model.name}</p>
-                        <span className="rounded border border-line-dark px-1.5 py-0.5 text-[10px] text-text-med">{model.size}</span>
+                    <div className="flex min-w-0 flex-1 items-start justify-between gap-2">
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2">
+                          <p className="text-[12px] font-medium text-text-norm">{model.name}</p>
+                          <span className="rounded border border-line-dark px-1.5 py-0.5 text-[10px] text-text-med">{model.size}</span>
+                        </div>
+                        <p className="mt-1 text-[11px] text-text-med">{model.description}</p>
                       </div>
-                      <p className="mt-1 text-[11px] text-text-med">{model.description}</p>
+                      <div className="flex shrink-0 items-center gap-1">
+                        {model.download.type !== "custom" && (
+                          <button
+                            type="button"
+                            onClick={(event) => {
+                              event.preventDefault();
+                              event.stopPropagation();
+                              void handleDownloadModelOption(model);
+                            }}
+                            disabled={downloadInProgress}
+                            className="inline-flex items-center gap-1 rounded border border-accent-green/40 bg-accent-green/15 px-2 py-1 text-[10px] font-medium text-accent-green hover:bg-accent-green/25 disabled:cursor-not-allowed disabled:opacity-60"
+                            title={
+                              model.download.type === "local"
+                                ? "Load a local .gguf into the app models folder"
+                                : `Download ${model.name} to local app models folder`
+                            }
+                          >
+                            {downloadInProgress && selectedModelId === model.id ? (
+                              <Loader2 size={11} className="animate-spin" />
+                            ) : (
+                              <Download size={11} />
+                            )}
+                            {model.download.type === "local" ? "Load" : "Download"}
+                          </button>
+                        )}
+                        {model.externalUrl && (
+                          <button
+                            type="button"
+                            onClick={(event) => {
+                              event.preventDefault();
+                              event.stopPropagation();
+                              const url = model.externalUrl;
+                              if (!url) return;
+                              void openExternalUrl(url);
+                            }}
+                            className="rounded border border-line-dark px-2 py-1 text-[10px] font-medium text-text-med hover:bg-line-med"
+                            title={model.externalUrl}
+                          >
+                            {model.externalLabel ?? "Link"}
+                          </button>
+                        )}
+                      </div>
                     </div>
                   </label>
                 ))}
@@ -405,6 +521,8 @@ export function WelcomeModal({
                         : "Downloading..."
                       : customOptionSelected
                       ? "Save + Continue"
+                      : selectedModel.download.type === "local"
+                      ? "Load + Continue"
                       : "Download + Continue"}
                   </button>
                 </div>

@@ -141,7 +141,11 @@ export default function App() {
 
   // Initialize serve store and load persisted theme once on mount
   useEffect(() => {
-    initialize();
+    void (async () => {
+      await initialize();
+      const hasAvailableModel = useServeStore.getState().availableModels.length > 0;
+      setPanel(hasAvailableModel ? "avatar" : "serve");
+    })();
     void loadTheme();
     void prewarmPiBootstrap(".");
   }, []);

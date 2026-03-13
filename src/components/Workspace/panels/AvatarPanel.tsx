@@ -1,5 +1,5 @@
 import { Settings, SquareUser, X, ZoomIn, ZoomOut, Save, Trash2, Edit3, Plus, ChevronUp, ChevronDown, RefreshCw, Play, Square, Maximize2, Minimize2 } from "lucide-react";
-import { Suspense, lazy, useEffect, useState, useCallback, useMemo } from "react";
+import { Suspense, lazy, useEffect, useState, useCallback, useMemo, useRef } from "react";
 import {
   AnimationParams,
   AnimationPreset,
@@ -37,11 +37,11 @@ function glbLabel(path: string): string {
 const _glbCacheBust = Date.now();
 const MODE_MODEL_FILENAME: Record<RenderMode, string> = {
   wireframe: "wireframe.glb",
-  normal: "normal.glb",
+  normal: "uploaded model (.glb)",
 };
 const MODE_MODEL_SRC: Record<RenderMode, string> = {
   wireframe: `/avatar/wireframe.glb?v=${_glbCacheBust}`,
-  normal: `/avatar/normal.glb?v=${_glbCacheBust}`,
+  normal: "",
 };
 
 const ZOOM_ORBITS = [
@@ -231,6 +231,10 @@ function AvatarSettingsOverlay({
   onHierarchyConfigChange,
   normalRenderOptions,
   onNormalRenderOptionsChange,
+  normalModelName,
+  hasNormalModel,
+  onUploadNormalModel,
+  onClearNormalModel,
   onRunMeshProbe,
   onClose,
 }: {
@@ -268,6 +272,10 @@ function AvatarSettingsOverlay({
   onHierarchyConfigChange: (config: BoneHierarchyConfig) => void;
   normalRenderOptions: NormalRenderOptions;
   onNormalRenderOptionsChange: (options: NormalRenderOptions) => void;
+  normalModelName: string | null;
+  hasNormalModel: boolean;
+  onUploadNormalModel: () => void;
+  onClearNormalModel: () => void;
   onRunMeshProbe: () => void;
   onClose: () => void;
 }) {
@@ -392,6 +400,30 @@ function AvatarSettingsOverlay({
           </button>
         </div>
         <p className="mt-1 text-[8px] text-text-dark leading-tight">*Rendering may be slow on some systems.</p>
+        {renderMode === "normal" && (
+          <div className="mt-1.5 flex gap-1">
+            <button
+              onClick={onUploadNormalModel}
+              className="flex-1 rounded border border-line-med py-1 text-[9px] text-text-med transition-colors hover:border-line-light hover:text-text-norm"
+              title="Upload a rigged .glb model for normal mode"
+            >
+              Upload GLB
+            </button>
+            <button
+              onClick={onClearNormalModel}
+              disabled={!hasNormalModel}
+              className="rounded border border-line-med px-2 py-1 text-[9px] text-text-med transition-colors hover:border-line-light hover:text-text-norm disabled:cursor-not-allowed disabled:opacity-40"
+              title="Clear uploaded normal-mode model"
+            >
+              Clear
+            </button>
+          </div>
+        )}
+        {renderMode === "normal" && (
+          <p className="mt-1 text-[8px] text-text-dark truncate" title={normalModelName ?? "No model selected"}>
+            {normalModelName ?? "No model uploaded yet"}
+          </p>
+        )}
       </div>
 
       {/* Tabs */}
@@ -1133,8 +1165,17 @@ export function AvatarPanel({ presentationMode = false }: AvatarPanelProps) {
   const [isAnimationPlaying, setIsAnimationPlaying] = useState(false);
   const [animationTime, setAnimationTime] = useState(0);
   const [animationDuration, setAnimationDuration] = useState(0);
-  const activeModelSrc = MODE_MODEL_SRC[renderMode];
-  const activeModelFilename = MODE_MODEL_FILENAME[renderMode];
+  const [uploadedNormalModelSrc, setUploadedNormalModelSrc] = useState<string | null>(null);
+  const [uploadedNormalModelName, setUploadedNormalModelName] = useState<string | null>(null);
+  const uploadInputRef = useRef<HTMLInputElement | null>(null);
+
+  const activeModelSrc =
+    renderMode === "normal" ? (uploadedNormalModelSrc ?? "") : MODE_MODEL_SRC.wireframe;
+  const activeModelFilename =
+    renderMode === "normal"
+      ? (uploadedNormalModelName ?? MODE_MODEL_FILENAME.normal)
+      : MODE_MODEL_FILENAME.wireframe;
+  const needsNormalModelUpload = renderMode === "normal" && !uploadedNormalModelSrc;
 
   // Hierarchy config state - persisted per-model in localStorage
   const [hierarchyConfig, setHierarchyConfig] = useState<BoneHierarchyConfig>(() => {
@@ -1253,10 +1294,49 @@ export function AvatarPanel({ presentationMode = false }: AvatarPanelProps) {
     setAnimationDuration(duration);
   };
 
+  const handleUploadNormalModel = useCallback(() => {
+    uploadInputRef.current?.click();
+  }, []);
+
+  const handleNormalModelSelected = useCallback((event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    const isGlb = /\.glb$/i.test(file.name) || file.type === "model/gltf-binary";
+    if (!isGlb) {
+      setModelError(true);
+      event.target.value = "";
+      return;
+    }
+    setUploadedNormalModelSrc((prev) => {
+      if (prev) URL.revokeObjectURL(prev);
+      return URL.createObjectURL(file);
+    });
+    setUploadedNormalModelName(file.name);
+    setModelError(false);
+    event.target.value = "";
+  }, []);
+
+  const handleClearNormalModel = useCallback(() => {
+    setUploadedNormalModelSrc((prev) => {
+      if (prev) URL.revokeObjectURL(prev);
+      return null;
+    });
+    setUploadedNormalModelName(null);
+    setModelError(false);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (uploadedNormalModelSrc) {
+        URL.revokeObjectURL(uploadedNormalModelSrc);
+      }
+    };
+  }, [uploadedNormalModelSrc]);
+
   const viewport = (
     <div className={presentationMode ? "h-full w-full relative min-h-0 overflow-hidden bg-black" : "flex-1 relative min-h-0 overflow-hidden"}>
         {/* ── 3D viewer (unified for all modes) ───────────────────────────────── */}
-        {!isLoading && !modelError ? (
+        {!isLoading && !modelError && !needsNormalModelUpload ? (
           <Suspense
             fallback={
               <div className="h-full flex flex-col items-center justify-center text-center px-4">
@@ -1293,6 +1373,18 @@ export function AvatarPanel({ presentationMode = false }: AvatarPanelProps) {
               onAnimationTimeChange={handleAnimationTimeChange}
             />
           </Suspense>
+        ) : needsNormalModelUpload ? (
+          <div className="h-full flex flex-col items-center justify-center gap-2 text-center px-4">
+            <SquareUser size={42} className="text-accent-primary/60 mb-1" />
+            <div className="text-sm text-text-med">Upload a rigged `.glb` to use Normal mode</div>
+            <button
+              onClick={handleUploadNormalModel}
+              className="rounded border border-line-med px-3 py-1.5 text-[11px] text-text-med transition-colors hover:border-line-light hover:text-text-norm"
+            >
+              Upload GLB Model
+            </button>
+            <p className="text-[10px] text-text-dark">Wireframe mode works out of the box with bundled assets.</p>
+          </div>
         ) : (
           <div className="h-full flex flex-col items-center justify-center text-center px-4">
             <SquareUser size={42} className="text-accent-primary/60 mb-2" />
@@ -1301,6 +1393,14 @@ export function AvatarPanel({ presentationMode = false }: AvatarPanelProps) {
             </div>
           </div>
         )}
+
+        <input
+          ref={uploadInputRef}
+          type="file"
+          accept=".glb,model/gltf-binary"
+          className="hidden"
+          onChange={handleNormalModelSelected}
+        />
 
         {/* ── Zoom and camera controls ──────────────────────────────────────────────── */}
         <div className="absolute top-2 right-2 flex flex-col gap-1 z-10">
@@ -1384,6 +1484,10 @@ export function AvatarPanel({ presentationMode = false }: AvatarPanelProps) {
             onHierarchyConfigChange={handleHierarchyConfigChange}
             normalRenderOptions={normalRenderOptions}
             onNormalRenderOptionsChange={setNormalRenderOptions}
+            normalModelName={uploadedNormalModelName}
+            hasNormalModel={Boolean(uploadedNormalModelSrc)}
+            onUploadNormalModel={handleUploadNormalModel}
+            onClearNormalModel={handleClearNormalModel}
             onRunMeshProbe={() => setMeshProbeNonce((n) => n + 1)}
             onClose={() => setShowSettings(false)}
           />
@@ -1405,6 +1509,15 @@ export function AvatarPanel({ presentationMode = false }: AvatarPanelProps) {
           <span className="text-[10px] text-text-dark font-mono">
             {activeModelFilename}
           </span>
+          {renderMode === "normal" && (
+            <button
+              onClick={handleUploadNormalModel}
+              title="Upload normal-mode GLB model"
+              className="rounded px-1 py-0.5 text-[9px] text-text-dark transition-colors hover:text-text-med"
+            >
+              Upload
+            </button>
+          )}
           <button
             onClick={() => setShowSettings((v) => !v)}
             title="Avatar settings"

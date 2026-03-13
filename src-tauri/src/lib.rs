@@ -572,6 +572,7 @@ pub fn run() {
             commands::model::cmd_list_available_models,
             commands::model::cmd_delete_available_model,
             commands::model::cmd_get_models_dir,
+            commands::model::cmd_import_model_from_path,
             commands::model::cmd_download_model_from_hf_query,
             commands::model::cmd_download_model_from_hf_asset,
             commands::model::cmd_get_runtime_status,
