@@ -1,0 +1,138 @@
+# Agents Functionality Review
+
+## Scope Reviewed
+- `src/components/Workspace/panels/AgentsPanel.tsx`
+- `src/tools/agents/manifest.ts`
+- `src/lib/tauri.ts`
+- `src/core/tooling/client.ts`
+- `src/hooks/useChat.ts`
+- `src-tauri/src/a2a/{types.rs,store.rs,runtime.rs,mod.rs}`
+- `src-tauri/src/commands/{a2a.rs,tool_gateway.rs}`
+- `src-tauri/src/db/mod.rs`
+- `src-tauri/src/lib.rs`
+
+## Findings (Ordered By Severity)
+
+### 1) Critical: Primary chat agent cannot actually invoke Agents tooling
+- Evidence:
+  - Tool prompt only documents file/task/note/browser/coder tools, no agents tool tags: `src/hooks/useChat.ts:67-186`
+  - Tool parser supports no agents tags: `src/hooks/useChat.ts:554-657`
+  - Known tag allowlist excludes agents tags: `src/hooks/useChat.ts:661-667`
+  - Unknown-tag error text lists no agents tools: `src/hooks/useChat.ts:1120`
+- Impact:
+  - Even though Agents APIs exist, the main agent loop cannot delegate via the same tool-call pathway currently used by chat.
+  - This is the biggest functional gap relative to your stated objective (primary agent orchestrating other agents).
+
+### 2) Critical: Agent card `logic` and model preferences are persisted but not executed/routed
+- Evidence:
+  - `preferred_model_id`, `fallback_model_ids_json`, `logic_language`, `logic_source` are present in UI/API/store (`src/components/Workspace/panels/AgentsPanel.tsx:399-459`, `src/lib/tauri.ts:422-533`, `src-tauri/src/a2a/store.rs:114-136,726-987`).
+  - No runtime usage of these fields in A2A execution path (`src-tauri/src/a2a/runtime.rs:13-319` contains no model routing/logic execution references).
+- Impact:
+  - Current behavior is configuration-only metadata.
+  - Cards can be edited, but those settings do not change run-time orchestration behavior yet.
+
+### 3) High: A2A protocol interfaces are metadata only (no active transport/server implementation)
+- Evidence:
+  - Card fields support `url`, `additional_interfaces_json` and protocol metadata in storage/UI.
+  - No JSON-RPC/REST/gRPC A2A server/client handling in reviewed runtime/command execution paths (`src-tauri/src/a2a/runtime.rs`, `src-tauri/src/commands/a2a.rs`).
+- Impact:
+  - System is not yet interoperating via standard A2A protocol; it is currently an internal process/event model.
+
+### 4) High: Core runtime capabilities exist but are not exposed for general orchestration
+- Evidence:
+  - Runtime has APIs for `create_agent_run`, `create_task`, `declare_edge`, `register_artifact`, `write_memory_ref`: `src-tauri/src/a2a/runtime.rs:68-234`.
+  - Exposed commands are only process list/get/events, seed demo, process create/status/retry, and card CRUD: `src-tauri/src/commands/a2a.rs:38-274`.
+- Impact:
+  - Outside seeded demo flow, you cannot drive full run/task/edge/artifact/memory operations through Tauri command surface.
+
+### 5) High: Tool gateway `agents.*` surface is incomplete for state retrieval
+- Evidence:
+  - Policies and handlers include only: card CRUD + process create/set_status/retry (`src-tauri/src/commands/tool_gateway.rs:209-240,1231-1359`).
+  - No `agents.process_list`, `agents.process_get`, `agents.process_events` tool actions.
+- Impact:
+  - Agent-side tool orchestration cannot inspect process state through the tool gateway, limiting autonomous control loops.
+
+### 6) Medium: Card JSON validation silently rewrites invalid input to defaults
+- Evidence:
+  - `ensureJson` returns fallback on parse error with no user-facing validation error: `src/components/Workspace/panels/AgentsPanel.tsx:139-148`.
+  - Used during save for multiple fields: `src/components/Workspace/panels/AgentsPanel.tsx:433-437,453-457`.
+- Impact:
+  - Users may think they saved specific JSON, but invalid input is silently replaced.
+  - This can hide configuration mistakes.
+
+### 7) Medium: No referential validation of model IDs in agent cards
+- Evidence:
+  - Store accepts arbitrary `preferred_model_id` and fallback JSON strings as plain text (`src-tauri/src/a2a/store.rs:768-987`).
+- Impact:
+  - Cards can reference deleted/nonexistent models.
+  - Runtime routing implementation later will need defensive checks to avoid hard failures.
+
+### 8) Medium: UI refresh is partially event-driven but still poll-heavy
+- Evidence:
+  - Process list polling every 5s: `src/components/Workspace/panels/AgentsPanel.tsx:244-246`
+  - Selected detail polling every 2.5s: `src/components/Workspace/panels/AgentsPanel.tsx:287-293`
+  - Also listens to `a2a:changed`: `src/components/Workspace/panels/AgentsPanel.tsx:270-285`
+- Impact:
+  - Redundant refreshes and avoidable load/churn.
+  - Can cause UI jitter and unnecessary DB/IPC traffic.
+
+### 9) Medium: Event feed visibility is limited (payload not shown)
+- Evidence:
+  - Recent events display `type`, `sequence`, `actor`, timestamp only: `src/components/Workspace/panels/AgentsPanel.tsx:777-786`.
+- Impact:
+  - Harder to audit what actually happened per event without inspecting raw DB or adding dev tooling.
+  - Reduces the “high visibility” objective.
+
+### 10) Low: Automated test coverage for A2A is minimal
+- Evidence:
+  - Only one store test validating basic process/event projection: `src-tauri/src/a2a/store.rs:1014-1046`.
+  - No runtime command tests for cards, process controls, or gateway mappings in reviewed files.
+- Impact:
+  - Regression risk is high as features evolve.
+
+### 11) Low: Agents tool manifest omits capabilities metadata
+- Evidence:
+  - `capabilities: {}` in tool manifest: `src/tools/agents/manifest.ts:18`.
+- Impact:
+  - Weak discoverability/contract description compared to richer manifests.
+
+## What Is Fully Functional Today
+- A2A schema initialization and persistence bootstrapped in main DB init (`src-tauri/src/db/mod.rs:297`).
+- Event-sourced process projection pipeline:
+  - append event + projection updates process/run/task/edge/artifact/memory tables (`src-tauri/src/a2a/store.rs:362-528`).
+- Process operations exposed and working via Tauri commands:
+  - list/get/events/create/status/retry/seed (`src-tauri/src/commands/a2a.rs:38-147`).
+- Agent card CRUD via Tauri and tool-gateway:
+  - includes identity, interfaces, skills/capabilities JSON, logic metadata, model preference metadata (`src-tauri/src/commands/a2a.rs:149-274`, `src-tauri/src/commands/tool_gateway.rs:1231-1311`).
+- Agents panel UI:
+  - process list/search, graph + inspector, event list, card strip, card modal CRUD (`src/components/Workspace/panels/AgentsPanel.tsx`).
+- Live update signal:
+  - backend emits `a2a:changed` and panel listens (`src-tauri/src/commands/a2a.rs:29-36`, `src/components/Workspace/panels/AgentsPanel.tsx:270-285`).
+
+## What Is Partially Functional
+- Preferred/fallback model selection in modal:
+  - end-to-end storage works, routing does not execute yet.
+- Logic editor in card modal:
+  - end-to-end storage works, execution runtime missing.
+- Directed graph:
+  - visualizes existing edges, but no generalized runtime orchestration path currently generating rich real-world edge patterns.
+
+## What Is Not Yet Implemented (Relative To Target Architecture)
+- Primary agent -> agents tool orchestration inside chat loop.
+- Runtime enforcement of agent-specific model routing with fallback.
+- Runtime execution model for per-agent logic payloads (or equivalent reference-based executor model).
+- External A2A protocol transport interoperability (JSON-RPC/HTTP+JSON/gRPC).
+- Full tool-gateway read APIs for process state introspection (`list/get/events`) usable by autonomous control logic.
+
+## Open Questions / Assumptions
+- Assumed target behavior includes primary chat agent direct orchestration over `agents.*` via tool tags.
+- Assumed A2A protocol goal implies active transport interoperability, not metadata-only card fields.
+- Assumed agent logic execution should be runtime-controlled (likely by trusted executor types), not arbitrary direct source execution for security reasons.
+
+## Recommended Next Milestones (Non-Code Plan)
+1. Add explicit `agents.*` tool contract to chat tool prompt + parser/executor path.
+2. Expose runtime operations for run/task/edge/artifact/memory through commands + tool gateway.
+3. Implement model routing resolver (`preferred -> fallback`) with validation/telemetry.
+4. Define safe logic execution architecture (executor registry or sandboxed runtime), then bind card logic to it.
+5. Expand observability in panel: event payload view, per-run model used, and routing decisions.
+6. Add integration tests covering command + gateway + store projections + panel data flow.

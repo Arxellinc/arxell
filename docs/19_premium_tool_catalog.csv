@@ -1,0 +1,20 @@
+tool_name,product_name,product_id,price_id,monthly_usd,active
+Backup/Restore + Versioned State,Arxell Premium Tool - Backup/Restore + Versioned State,prod_U3G7ZPPqAzqMvK,price_1T59bDJUmU0LO8AUCFtHT9Hb,12.00,true
+Browser Automation Cloud,Arxell Premium Tool - Browser Automation Cloud,prod_U3G7y83ZZQa3Ig,price_1T59b4JUmU0LO8AUZ2VIOrUN,25.00,true
+Business Analyst,Arxell Premium Tool - Business Analyst,prod_U3FYDn6dWhfMpM,price_1T593IJUmU0LO8AUXpWSOaDs,29.00,true
+Cloud Account Sync,Arxell Premium Tool - Cloud Account Sync,prod_U3G7WpxqPw9gMO,price_1T59b1JUmU0LO8AUxnfubKO0,12.00,true
+Code Execution Sandbox Cloud,Arxell Premium Tool - Code Execution Sandbox Cloud,prod_U3G7fudgNOqGxj,price_1T59b6JUmU0LO8AUuxF8yLlU,22.00,true
+Enterprise Connectors Pack,Arxell Premium Tool - Enterprise Connectors Pack,prod_U3G7ZUvdnxqrMw,price_1T59b6JUmU0LO8AUud9lID7e,30.00,true
+FinOps/Cost Optimizer,Arxell Premium Tool - FinOps/Cost Optimizer,prod_U3G7GhLoJxyvvv,price_1T59bAJUmU0LO8AUPMVTqtr1,21.00,true
+Google Drive Integration,Arxell Premium Tool - Google Drive Integration,prod_U3G7gfnvEcctIZ,price_1T59b1JUmU0LO8AUYyXDcUFd,9.00,true
+Human-in-the-loop Workflow,Arxell Premium Tool - Human-in-the-loop Workflow,prod_U3G7iIg2pOAeYr,price_1T59bBJUmU0LO8AUPYqp8Npm,20.00,true
+Managed Vector DB + RAG Indexing,Arxell Premium Tool - Managed Vector DB + RAG Indexing,prod_U3G7oaefMTqUdU,price_1T59b3JUmU0LO8AUQLufHpfv,19.00,true
+Meeting Intelligence,Arxell Premium Tool - Meeting Intelligence,prod_U3G7bQzgp7t1Oc,price_1T59b7JUmU0LO8AUF2yJbbNp,16.00,true
+Model Routing Premium,Arxell Premium Tool - Model Routing Premium,prod_U3G7XvbF3C7f80,price_1T59bBJUmU0LO8AUvEUusiVt,17.00,true
+Monitoring + Alert Ops,Arxell Premium Tool - Monitoring + Alert Ops,prod_U3G7A1KXGoakIt,price_1T59b9JUmU0LO8AU6Zm5LLhr,24.00,true
+Org Analytics,Arxell Premium Tool - Org Analytics,prod_U3G7xVVeNEHrX6,price_1T59bCJUmU0LO8AUYqAyGgyq,14.00,true
+Secure Vault + Secrets Manager,Arxell Premium Tool - Secure Vault + Secrets Manager,prod_U3G7mAzGFWa5K8,price_1T59b5JUmU0LO8AUPMax82hg,18.00,true
+Specialist Agents,Arxell Premium Tool - Specialist Agents,prod_U3G7OwvMUtCY35,price_1T59b2JUmU0LO8AUiSFvcFYi,29.00,true
+Specialist Compliance Agents,Arxell Premium Tool - Specialist Compliance Agents,prod_U3G7fJ4oNy2KnQ,price_1T59b9JUmU0LO8AU8LpbWmE6,39.00,true
+Team Memory Cloud,Arxell Premium Tool - Team Memory Cloud,prod_U3G7Wpk9fn0oJV,price_1T59b4JUmU0LO8AUCH8iaRtd,15.00,true
+Voice/Phone Agent,Arxell Premium Tool - Voice/Phone Agent,prod_U3G7tufDDbCyW8,price_1T59b8JUmU0LO8AUWzpOaAv0,35.00,true

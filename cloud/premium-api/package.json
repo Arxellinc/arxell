@@ -1,0 +1,21 @@
+{
+  "name": "arx-premium-api",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node src/index.js",
+    "create-test-promo": "node src/create-test-promo.js",
+    "seed-premium-products": "node src/seed-premium-products.js",
+    "export-premium-catalog-csv": "node src/export-premium-catalog-csv.js"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "helmet": "^8.0.0",
+    "jose": "^6.1.3",
+    "pg": "^8.13.1",
+    "stripe": "^17.5.0"
+  }
+}

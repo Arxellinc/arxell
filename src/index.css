@@ -1,0 +1,458 @@
+@import "tailwindcss";
+@import "highlight.js/styles/github-dark.css";
+
+/* ── Design tokens ────────────────────────────────────────────────────────────
+   13 semantic color tokens, three themes.
+   Tailwind v4 reads @theme and generates utility classes:
+     text-text-norm, bg-bg-dark, border-line-med, text-accent-primary …
+   [data-theme] blocks override the same CSS variables at runtime.
+   ─────────────────────────────────────────────────────────────────────────── */
+@theme {
+  /* Text */
+  --color-text-norm:       rgba(255, 255, 255, 0.90);
+  --color-text-med:        rgba(255, 255, 255, 0.55);
+  --color-text-dark:       rgba(255, 255, 255, 0.28);
+
+  /* Accents */
+  --color-accent-red:      #f87171;
+  --color-accent-green:    #4ade80;
+  --color-accent-gold:     #fbbf24;
+  --color-accent-primary:  #6366f1;
+
+  /* Backgrounds */
+  --color-bg-dark:         #0a0a0a;
+  --color-bg-norm:         #111111;
+  --color-bg-light:        #1c1c1c;
+  --color-bg-button:       #1c1c1c;
+
+  /* Lines / borders / subtle surfaces */
+  --color-line-light:      rgba(255, 255, 255, 0.04);
+  --color-line-med:        rgba(255, 255, 255, 0.08);
+  --color-line-dark:       rgba(255, 255, 255, 0.15);
+}
+
+/* ── Light theme ────────────────────────────────────────────────────────────── */
+[data-theme="light"] {
+  --color-text-norm:       rgba(0, 0, 0, 0.88);
+  --color-text-med:        rgba(0, 0, 0, 0.52);
+  --color-text-dark:       rgba(0, 0, 0, 0.28);
+
+  --color-accent-red:      #dc2626;
+  --color-accent-green:    #16a34a;
+  --color-accent-gold:     #d97706;
+  --color-accent-primary:  #4f46e5;
+
+  --color-bg-dark:         #e8e8e8;
+  --color-bg-norm:         #f5f5f5;
+  --color-bg-light:        #ffffff;
+  --color-bg-button:       #e8e8e8;
+
+  --color-line-light:      rgba(0, 0, 0, 0.05);
+  --color-line-med:        rgba(0, 0, 0, 0.10);
+  --color-line-dark:       rgba(0, 0, 0, 0.18);
+}
+
+/* ── Tron theme ─────────────────────────────────────────────────────────────── */
+[data-theme="tron"] {
+  --color-text-norm:       #c7d2d3;
+  --color-text-med:        #a7cdcf;
+  --color-text-dark:       #5e696a;
+
+  --color-accent-red:      #ff3a3a;
+  --color-accent-green:    #00ff9d;
+  --color-accent-gold:     #8e7a3d;
+  --color-accent-primary:  #00f0ff;
+
+  --color-bg-dark:         #0d1015;
+  --color-bg-norm:         #0d1115;
+  --color-bg-light:        #0d1115;
+  --color-bg-button:       #1c2427;
+
+  --color-line-light:      rgba(0, 240, 255, 0.06);
+  --color-line-med:        #61787a;
+  --color-line-dark:       rgba(0, 240, 255, 0.26);
+}
+
+/* Tron theme overrides for chat input panel and skills bar */
+[data-theme="tron"] .chat-input-panel,
+[data-theme="tron"] .skills-bar {
+  background-color: var(--color-bg-norm);
+}
+
+/* Tron theme - remove vertical borders for cleaner look */
+[data-theme="tron"] .sidebar-container {
+  border-right: none;
+}
+
+[data-theme="tron"] .skills-bar {
+  border-bottom: none;
+}
+
+[data-theme="tron"] .chat-input-panel {
+  border-top: none;
+}
+
+/* Tron theme - resize divider hidden by default, visible on hover */
+[data-theme="tron"] .resize-divider-line {
+  opacity: 0;
+  transition: opacity 0.2s ease;
+}
+
+[data-theme="tron"] .resize-divider:hover .resize-divider-line {
+  opacity: 1;
+}
+
+/* Tron theme icon colors */
+[data-theme="tron"] svg,
+[data-theme="tron"] .lucide {
+  color: var(--color-text-med);
+}
+
+/* Tron theme button backgrounds - transparent by default, show on hover */
+[data-theme="tron"] button {
+  background-color: transparent;
+}
+
+[data-theme="tron"] button:hover {
+  background-color: var(--color-bg-button);
+}
+
+/* Tron theme toolbar button overrides */
+[data-theme="tron"] .toolbar-button,
+[data-theme="tron"] [class*="ToolBar"] button {
+  background-color: transparent !important;
+}
+
+[data-theme="tron"] .toolbar-button:hover,
+[data-theme="tron"] [class*="ToolBar"] button:hover {
+  background-color: var(--color-bg-button) !important;
+}
+
+/* Tron theme secondary menu items (New, Open, Save, etc.) */
+[data-theme="tron"] .tool-panel button,
+[data-theme="tron"] .panel-toolbar button,
+[data-theme="tron"] [class*="Panel"] button:not(.chat-input-container button),
+[data-theme="tron"] .flex.items-center.gap-1\.5.px-3 button,
+[data-theme="tron"] .h-12.flex.items-center button {
+  background-color: transparent !important;
+}
+
+[data-theme="tron"] .tool-panel button:hover,
+[data-theme="tron"] .panel-toolbar button:hover,
+[data-theme="tron"] [class*="Panel"] button:not(.chat-input-container button):hover,
+[data-theme="tron"] .flex.items-center.gap-1\.5.px-3 button:hover,
+[data-theme="tron"] .h-12.flex.items-center button:hover {
+  background-color: var(--color-bg-button) !important;
+}
+
+/* Tron theme text colors - ensure input and time use text-norm */
+[data-theme="tron"] .chat-input-container textarea,
+[data-theme="tron"] .chat-input-container textarea::placeholder {
+  color: var(--color-text-norm);
+}
+
+[data-theme="tron"] .text-text-norm {
+  color: var(--color-text-norm);
+}
+
+/* Shared sidebar header title color */
+.sidebar-container .sidebar-header-title {
+  color: var(--color-text-med);
+}
+
+/* Chat input container with folded corner */
+.chat-input-container {
+  position: relative;
+  background-color: var(--color-bg-norm);
+  /* Cut off the top-right corner */
+  clip-path: polygon(0 0, calc(100% - 20px) 0, 100% 20px, 100% 100%, 0 100%);
+}
+
+/* Wrapper sits outside the clipped container so ::after can fill the void corner */
+.chat-input-wrap {
+  position: relative;
+}
+
+/* Single gradient fills the dark fold triangle AND draws the crease line.
+   The ::after is not subject to the container's clip-path so it covers
+   exactly the 20×20 corner that was cut away.
+   225° gradient: top-right → bottom-left
+     0%–49.5%  : bg-dark   (the fold shadow triangle)
+     49.5–50.5%: line-med  (the 1 px fold crease)
+     50.5%–100%: transparent (shows the container behind) */
+.chat-input-wrap::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 20px;
+  height: 20px;
+  background: linear-gradient(
+    225deg,
+    var(--color-bg-norm)  calc(50% - 1px),
+    var(--color-line-med) calc(50% - 1px),
+    var(--color-line-med) calc(50% + 0px),
+    transparent           calc(50% + 0px)
+  );
+  pointer-events: none;
+  z-index: 2;
+}
+
+/* Blinking cursor animation */
+@keyframes blink {
+  0%, 50% { opacity: 1; }
+  51%, 100% { opacity: 0; }
+}
+
+.animate-blink {
+  animation: blink 1s step-end infinite;
+}
+
+/* ── Base reset ─────────────────────────────────────────────────────────────── */
+* {
+  box-sizing: border-box;
+}
+
+html, body, #root {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  font-family: -apple-system, BlinkMacSystemFont, 'Inter', 'Segoe UI', sans-serif;
+  -webkit-font-smoothing: antialiased;
+  background: var(--color-bg-norm);
+  color: var(--color-text-norm);
+}
+
+/* Thin scrollbar */
+::-webkit-scrollbar {
+  width: 4px;
+  height: 4px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--color-line-med);
+  border-radius: 2px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-line-dark);
+}
+
+/* Hide scrollbar for tab bar */
+.scrollbar-none::-webkit-scrollbar {
+  display: none;
+}
+.scrollbar-none {
+  scrollbar-width: none;
+}
+
+/* ── VAD parameter sliders ───────────────────────────────────────────────── */
+/* Uses CSS custom properties set inline: --pct (0–1), --rec-lo (0–1), --rec-hi (0–1) */
+.vad-slider {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 3px;
+  border-radius: 2px;
+  outline: none;
+  cursor: pointer;
+  background: linear-gradient(
+    to right,
+    /* filled portion */
+    var(--color-accent-primary) 0%,
+    var(--color-accent-primary) calc(var(--pct, 0.5) * 100%),
+    /* unfilled before recommended zone */
+    var(--color-line-med) calc(var(--pct, 0.5) * 100%),
+    var(--color-line-med) calc(var(--rec-lo, 0.4) * 100%),
+    /* recommended zone — subtle brighter band */
+    var(--color-line-dark) calc(var(--rec-lo, 0.4) * 100%),
+    var(--color-line-dark) calc(var(--rec-hi, 0.7) * 100%),
+    /* remainder */
+    var(--color-line-med) calc(var(--rec-hi, 0.7) * 100%),
+    var(--color-line-med) 100%
+  );
+}
+.vad-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  background: var(--color-accent-primary);
+  border: 1.5px solid var(--color-line-dark);
+  cursor: pointer;
+  transition: background 0.15s, transform 0.1s;
+}
+.vad-slider::-webkit-slider-thumb:hover {
+  filter: brightness(1.2);
+  transform: scale(1.15);
+}
+.vad-slider:focus {
+  outline: none;
+}
+
+/* Generation settings slider thumb style */
+.slider-thumb::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--color-accent-primary);
+  cursor: pointer;
+  transition: background 0.15s, transform 0.1s;
+}
+.slider-thumb::-webkit-slider-thumb:hover {
+  filter: brightness(1.2);
+  transform: scale(1.1);
+}
+.slider-thumb::-moz-range-thumb {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--color-accent-primary);
+  border: none;
+  cursor: pointer;
+}
+.slider-thumb::-moz-range-thumb:hover {
+  filter: brightness(1.2);
+}
+
+/* Prose tweaks for dark theme */
+.prose-invert code::before,
+.prose-invert code::after {
+  content: none;
+}
+
+/* Minimal markdown styling for Help/Notes panels */
+.minimal-md {
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--color-text-med);
+}
+.minimal-md h1 {
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--color-text-norm);
+  margin: 0 0 12px 0;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--color-line-med);
+}
+.minimal-md h2 {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--color-text-norm);
+  margin: 16px 0 8px 0;
+}
+.minimal-md h3 {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--color-text-norm);
+  margin: 12px 0 6px 0;
+}
+.minimal-md h4, .minimal-md h5, .minimal-md h6 {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--color-text-med);
+  margin: 10px 0 4px 0;
+}
+.minimal-md p {
+  margin: 0 0 10px 0;
+}
+.minimal-md ul, .minimal-md ol {
+  margin: 0 0 10px 0;
+  padding-left: 20px;
+}
+.minimal-md li {
+  margin: 2px 0;
+}
+.minimal-md code {
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 12px;
+  background: var(--color-line-med);
+  padding: 1px 4px;
+  border-radius: 3px;
+  color: var(--color-text-norm);
+}
+.minimal-md pre {
+  background: var(--color-bg-dark);
+  border: 1px solid var(--color-line-med);
+  border-radius: 4px;
+  padding: 10px 12px;
+  margin: 0 0 12px 0;
+  overflow-x: auto;
+}
+.minimal-md pre code {
+  background: transparent;
+  padding: 0;
+  font-size: 12px;
+  line-height: 1.5;
+}
+.minimal-md blockquote {
+  border-left: 2px solid var(--color-line-dark);
+  margin: 0 0 10px 0;
+  padding-left: 12px;
+  color: var(--color-text-dark);
+}
+.minimal-md a {
+  color: var(--color-accent-primary);
+  text-decoration: none;
+}
+.minimal-md a:hover {
+  text-decoration: underline;
+}
+.minimal-md table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 0 0 12px 0;
+  font-size: 12px;
+}
+.minimal-md th, .minimal-md td {
+  border: 1px solid var(--color-line-med);
+  padding: 6px 10px;
+  text-align: left;
+}
+.minimal-md th {
+  background: var(--color-line-light);
+  font-weight: 500;
+  color: var(--color-text-norm);
+}
+.minimal-md hr {
+  border: none;
+  border-top: 1px solid var(--color-line-med);
+  margin: 16px 0;
+}
+.minimal-md img {
+  max-width: 100%;
+  border-radius: 4px;
+}
+
+/* Chat code blocks must wrap long lines inside message bubbles. */
+.chat-md pre,
+.chat-md pre code,
+.chat-md pre code.hljs {
+  white-space: pre-wrap !important;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+}
+
+/* Keep native dropdown popups readable across platforms */
+select {
+  color-scheme: dark;
+}
+
+select,
+select option,
+select optgroup {
+  background-color: var(--color-bg-light);
+  color: var(--color-text-norm);
+}
+
+/* Workspace file editor should match toolbar/base panel tone */
+.workspace-code-editor .monaco-editor,
+.workspace-code-editor .monaco-editor-background,
+.workspace-code-editor .margin,
+.workspace-code-editor .monaco-editor .inputarea.ime-input {
+  background-color: var(--color-bg-norm) !important;
+}

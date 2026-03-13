@@ -1,0 +1,28 @@
+# Cargo build configuration for arx
+
+# Enable incremental compilation for faster builds
+[build]
+incremental = true
+
+[env]
+LIBCLANG_PATH = "/usr/lib/llvm-20/lib"
+WHISPER_DONT_GENERATE_BINDINGS = "1"
+
+# Linux x86_64 configuration
+[target.x86_64-unknown-linux-gnu]
+rustflags = []
+
+# Linux aarch64 configuration
+[target.aarch64-unknown-linux-gnu]
+rustflags = []
+
+# Windows MSVC configuration
+[target.x86_64-pc-windows-msvc]
+linker = "rust-lld.exe"
+
+# Windows GNU configuration
+[target.x86_64-pc-windows-gnu]
+linker = "rust-lld.exe"
+
+# macOS uses default Apple linker (ld64)
+# No configuration needed - Apple Clang handles this

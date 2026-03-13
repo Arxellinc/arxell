@@ -1,0 +1,93 @@
+[package]
+name = "arx"
+version = "0.8.0"
+description = "arx — local-first AI chat with voice"
+authors = ["arx"]
+edition = "2021"
+
+[lib]
+name = "arx_lib"
+crate-type = ["cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["tray-icon", "unstable"] }
+tauri-plugin-dialog = "2"
+tauri-plugin-fs = "2"
+tauri-plugin-shell = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+tokio = { version = "1", features = ["full"] }
+rusqlite = { version = "0.31", features = ["bundled"] }
+reqwest = { version = "0.12", features = ["json", "stream", "multipart"] }
+uuid = { version = "1", features = ["v4"] }
+chrono = { version = "0.4", features = ["serde"] }
+anyhow = "1"
+thiserror = "1"
+futures-util = "0.3"
+bytes = "1"
+cpal = "0.15"
+tract-onnx = "0.21"
+hound = "3.5"
+log = "0.4"
+env_logger = "0.11"
+open = "5"
+portable-pty = "0.8"
+
+# llama.cpp bindings for Rust - local LLM inference
+# Supports: CUDA, Metal, Vulkan, ROCm/HIP, CPU
+# Note: Only enable one backend feature at a time
+# The crate is called `llama-cpp-2` in crates.io
+# See: https://docs.rs/llama-cpp-2
+llama-cpp-2 = { version = "0.1.136", default-features = false, optional = true }
+
+# GGUF file format parser - for reading model metadata without loading weights
+# Uses the gguf crate for lightweight header-only reading
+gguf = "0.1.2"
+
+# System information for device enumeration and memory queries
+sysinfo = "0.33"
+
+# ZIP archive extraction for downloaded engine binaries
+zip = "2"
+
+# C standard library bindings — used for prctl(PR_SET_PDEATHSIG) on Linux
+# to ensure subprocesses are killed when the parent dies (any signal, incl. SIGKILL)
+libc = "0.2"
+
+# Memory-mapped file I/O for reading GGUF headers without loading full model into RAM
+memmap2 = "0.9"
+whisper-rs = { path = "../vendor/whisper-rs", optional = true }
+redis = { version = "0.27", features = ["tokio-comp"] }
+tokio-postgres = "0.7"
+lettre = { version = "0.11", default-features = false, features = ["builder", "smtp-transport", "tokio1", "tokio1-native-tls"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+webkit2gtk = "2.0"
+
+
+
+[dev-dependencies]
+hound = "3.5"
+
+[features]
+default = ["whisper-rs-stt"]
+
+# Backend features - mutually exclusive in practice
+# Enable GPU backends with: cargo build --features vulkan (or cuda, rocm, metal)
+# CPU is the default when no GPU features are enabled
+cuda         = ["llama-cpp-2/cuda"]
+cuda-no-vmm = ["cuda", "llama-cpp-2/cuda-no-vmm"]  # CUDA without memory mapping
+metal        = ["llama-cpp-2/metal"]  # Apple Metal (macOS/iOS)
+dynamic-link = ["llama-cpp-2/dynamic-link"]  # Dynamic linking
+vulkan       = ["llama-cpp-2/vulkan"]  # Vulkan support
+openmp       = ["llama-cpp-2/openmp"]  # OpenMP support
+rocm         = ["llama-cpp-2/rocm"]  # ROCm/HIP (AMD GPU)
+sampler      = ["llama-cpp-2/sampler"]  # Sampling (only has effect on Android)
+mtmd         = ["llama-cpp-2/mtmd"]  # Memory-mapped disk I/O (only has effect on Android)
+whisper-rs-stt = ["dep:whisper-rs"]
+# Tauri custom protocol feature
+custom-protocol = ["tauri/custom-protocol"]
