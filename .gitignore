@@ -65,6 +65,7 @@ review/
 # Bundled local model assets (too large for git; generated/downloaded locally)
 *.gguf
 *.onnx
+!src-tauri/resources/silero_vad.onnx
 ggml-*.bin
 voices-*.bin
 !public/whisper/ggml-tiny.en-q8_0.bin
