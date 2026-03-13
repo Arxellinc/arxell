@@ -73,70 +73,31 @@ const RootWrapper: React.ComponentType<React.PropsWithChildren> =
   import.meta.env.DEV ? React.Fragment : React.StrictMode;
 
 const clerkPublishableKey = (import.meta.env.VITE_CLERK_PUBLISHABLE_KEY ?? "").trim();
-
-function MissingClerkKeyScreen() {
-  return (
-    <div
-      style={{
-        height: "100vh",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        background: "#111111",
-        color: "rgba(255,255,255,0.85)",
-        fontFamily: "Inter, system-ui, -apple-system, Segoe UI, sans-serif",
-        padding: 24,
-      }}
-    >
-      <div style={{ maxWidth: 680, width: "100%" }}>
-        <h1 style={{ fontSize: 18, margin: "0 0 12px 0" }}>Missing Clerk Configuration</h1>
-        <p style={{ margin: "0 0 10px 0", opacity: 0.9 }}>
-          Set <code>VITE_CLERK_PUBLISHABLE_KEY</code> in <code>.env.local</code> and restart dev mode.
-        </p>
-        <pre
-          style={{
-            margin: 0,
-            padding: 12,
-            borderRadius: 8,
-            background: "#0b0b0b",
-            border: "1px solid rgba(255,255,255,0.12)",
-            whiteSpace: "pre-wrap",
-            fontSize: 12,
-          }}
-        >
-{`cp .env.local.example .env.local
-# then edit .env.local:
-VITE_CLERK_PUBLISHABLE_KEY=pk_...
-
-npm run start-dev`}
-        </pre>
-      </div>
-    </div>
-  );
-}
+const appRoutes = (
+  <RootErrorBoundary>
+    <Routes>
+      <Route path="/" element={<App />} />
+    </Routes>
+  </RootErrorBoundary>
+);
 
 if (!clerkPublishableKey) {
-  console.error("Missing Clerk Publishable Key: VITE_CLERK_PUBLISHABLE_KEY");
-  ReactDOM.createRoot(document.getElementById("root")!).render(
-    <RootWrapper>
-      <MissingClerkKeyScreen />
-    </RootWrapper>
-  );
-} else {
-  ReactDOM.createRoot(document.getElementById("root")!).render(
-    <RootWrapper>
-      <BrowserRouter>
-        <ClerkProvider publishableKey={clerkPublishableKey}>
-          <RootErrorBoundary>
-            <Routes>
-              <Route path="/" element={<App />} />
-            </Routes>
-          </RootErrorBoundary>
-        </ClerkProvider>
-      </BrowserRouter>
-    </RootWrapper>
+  console.warn(
+    "Clerk publishable key not configured; running in local mode without cloud auth."
   );
 }
+
+ReactDOM.createRoot(document.getElementById("root")!).render(
+  <RootWrapper>
+    <BrowserRouter>
+      {clerkPublishableKey ? (
+        <ClerkProvider publishableKey={clerkPublishableKey}>{appRoutes}</ClerkProvider>
+      ) : (
+        appRoutes
+      )}
+    </BrowserRouter>
+  </RootWrapper>
+);
 
 // Fade out the inline loading screen once React has painted
 requestAnimationFrame(() => {

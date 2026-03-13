@@ -30,6 +30,9 @@ const WORKSPACE_MAX = 1600;
 const DIVIDER_WIDTH = 3;
 const DIVIDER_COUNT = 2;
 const WELCOME_DISMISS_KEY = "ui_welcome_modal_dismissed";
+const CLERK_ENABLED = Boolean(
+  (import.meta.env.VITE_CLERK_PUBLISHABLE_KEY ?? "").trim()
+);
 
 function ResizeDivider({
   onDelta,
@@ -340,21 +343,27 @@ export default function App() {
               <Cloud size={13} />
               Cloud Sync
             </button>
-            <SignedOut>
-              <SignInButton mode="modal">
-                <button className="rounded bg-line-med px-2 py-1 text-[11px] text-text-med hover:bg-line-dark">
-                  Sign in
-                </button>
-              </SignInButton>
-              <SignUpButton mode="modal">
-                <button className="rounded bg-accent-primary/25 px-2 py-1 text-[11px] text-accent-primary hover:bg-accent-primary/35">
-                  Sign up
-                </button>
-              </SignUpButton>
-            </SignedOut>
-            <SignedIn>
-              <UserButton />
-            </SignedIn>
+            {CLERK_ENABLED ? (
+              <>
+                <SignedOut>
+                  <SignInButton mode="modal">
+                    <button className="rounded bg-line-med px-2 py-1 text-[11px] text-text-med hover:bg-line-dark">
+                      Sign in
+                    </button>
+                  </SignInButton>
+                  <SignUpButton mode="modal">
+                    <button className="rounded bg-accent-primary/25 px-2 py-1 text-[11px] text-accent-primary hover:bg-accent-primary/35">
+                      Sign up
+                    </button>
+                  </SignUpButton>
+                </SignedOut>
+                <SignedIn>
+                  <UserButton />
+                </SignedIn>
+              </>
+            ) : (
+              <span className="text-[11px] text-text-dark">Cloud auth disabled</span>
+            )}
           </div>
         </div>
       </div>
