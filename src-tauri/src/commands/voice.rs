@@ -7,6 +7,7 @@ use crate::audio::tts as local_tts;
 use crate::AppState;
 use cpal::traits::{DeviceTrait, HostTrait};
 use serde::Serialize;
+use std::path::Path;
 use std::sync::{atomic::Ordering, Arc, Mutex};
 use tauri::{AppHandle, Emitter, Manager, State};
 
@@ -49,6 +50,44 @@ fn default_whisper_model_path(app: &AppHandle) -> String {
         .ok()
         .and_then(|p| p.to_str().map(|s| s.to_string()))
         .unwrap_or_else(|| "ggml-base-q8_0.bin".to_string())
+}
+
+fn default_python_bin() -> String {
+    #[cfg(target_os = "windows")]
+    {
+        "python".to_string()
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        "python3".to_string()
+    }
+}
+
+fn resolved_kokoro_python_path(app: &AppHandle) -> String {
+    let configured = expand_home(&get_db_setting(app, "kokoro_python_path", ""));
+    if !configured.trim().is_empty() && Path::new(&configured).exists() {
+        return configured;
+    }
+    if let Ok(app_dir) = app.path().app_data_dir() {
+        #[cfg(target_os = "windows")]
+        let candidate = app_dir
+            .join("kokoro")
+            .join("runtime")
+            .join("venv")
+            .join("Scripts")
+            .join("python.exe");
+        #[cfg(not(target_os = "windows"))]
+        let candidate = app_dir
+            .join("kokoro")
+            .join("runtime")
+            .join("venv")
+            .join("bin")
+            .join("python3");
+        if candidate.exists() {
+            return candidate.to_string_lossy().to_string();
+        }
+    }
+    default_python_bin()
 }
 
 // ── Voice capture ─────────────────────────────────────────────────────────────
@@ -389,6 +428,7 @@ pub async fn cmd_tts_speak(
             let model   = expand_home(&get_db_setting(&app, "kokoro_model_path", ""));
             let voices  = expand_home(&get_db_setting(&app, "kokoro_voices_path", ""));
             let voice   = get_db_setting(&app, "kokoro_voice", "af_heart");
+            let python_bin = resolved_kokoro_python_path(&app);
             log::info!("[TTS] kokoro: voice={} model={} (persistent daemon)", voice, model);
 
             // Clone config for the blocking task
@@ -397,6 +437,7 @@ pub async fn cmd_tts_speak(
             let model_clone = model.clone();
             let voices_clone = voices.clone();
             let voice_clone = voice.clone();
+            let python_clone = python_bin.clone();
 
             // Get daemon handle from state
             let daemon_handle = state.kokoro_daemon.clone();
@@ -419,6 +460,7 @@ pub async fn cmd_tts_speak(
                     log::info!("[TTS] Initializing Kokoro daemon: {} --model {} --voices {}",
                         script_clone, model_clone, voices_clone);
                     *daemon_guard = Some(local_tts::KokoroDaemon::new(
+                        &python_clone,
                         &script_clone,
                         &model_clone,
                         &voices_clone,
@@ -510,18 +552,25 @@ pub struct TtsEngineStatus {
 }
 
 #[tauri::command]
+pub fn cmd_get_kokoro_bootstrap_status() -> crate::KokoroBootstrapStatus {
+    crate::get_kokoro_bootstrap_status()
+}
+
+#[tauri::command]
 pub async fn cmd_tts_check_engines(app: AppHandle) -> TtsEngineStatus {
     let current_engine = get_db_setting(&app, "tts_engine", "kokoro");
     let script = script_path(&app, "tts_kokoro.py").unwrap_or_default();
     let model = expand_home(&get_db_setting(&app, "kokoro_model_path", ""));
     let voices = expand_home(&get_db_setting(&app, "kokoro_voices_path", ""));
+    let python_bin = resolved_kokoro_python_path(&app);
     let tts_url = get_db_setting(&app, "tts_url", "");
 
     let script_clone = script.clone();
     let model_clone = model.clone();
     let voices_clone = voices.clone();
+    let python_clone = python_bin.clone();
     let kokoro = tokio::task::spawn_blocking(move || {
-        local_tts::check_kokoro(&script_clone)
+        local_tts::check_kokoro(&script_clone, &python_clone)
             && std::path::Path::new(&model_clone).exists()
             && std::path::Path::new(&voices_clone).exists()
     })
@@ -623,13 +672,16 @@ pub fn cmd_stt_list_whisper_models(dir: String) -> Vec<String> {
 #[tauri::command]
 pub async fn cmd_tts_list_voices(app: AppHandle) -> Vec<String> {
     let engine = get_db_setting(&app, "tts_engine", "kokoro");
+    let python_bin = resolved_kokoro_python_path(&app);
     let mut voices = match engine.as_str() {
         "kokoro" => {
             let model = expand_home(&get_db_setting(&app, "kokoro_model_path", ""));
             let voices_path = expand_home(&get_db_setting(&app, "kokoro_voices_path", ""));
-            tokio::task::spawn_blocking(move || local_tts::list_kokoro_voices(&model, &voices_path))
-                .await
-                .unwrap_or_default()
+            tokio::task::spawn_blocking(move || {
+                local_tts::list_kokoro_voices(&model, &voices_path, &python_bin)
+            })
+            .await
+            .unwrap_or_default()
         }
         "external" => vec![
             "alloy".to_string(),

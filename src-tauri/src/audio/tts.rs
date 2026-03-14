@@ -31,6 +31,7 @@ pub struct SpeakResult {
 /// If the daemon crashes, it will be restarted on the next call.
 pub struct KokoroDaemon {
     child: Option<Child>,
+    python_bin: String,
     script_path: String,
     model_path: String,
     voices_path: String,
@@ -51,6 +52,7 @@ impl KokoroDaemon {
 
     /// Create a new daemon handle (does not spawn the process yet).
     pub fn new(
+        python_bin: &str,
         script_path: &str,
         model_path: &str,
         voices_path: &str,
@@ -58,6 +60,12 @@ impl KokoroDaemon {
     ) -> Self {
         Self {
             child: None,
+            python_bin: if python_bin.is_empty() {
+                "python3"
+            } else {
+                python_bin
+            }
+            .to_string(),
             script_path: script_path.to_string(),
             model_path: model_path.to_string(),
             voices_path: voices_path.to_string(),
@@ -102,7 +110,7 @@ impl KokoroDaemon {
             self.voices_path
         );
 
-        let mut cmd = Command::new("python3");
+        let mut cmd = Command::new(&self.python_bin);
         cmd.args([
             &self.script_path,
             "--model",
@@ -408,6 +416,7 @@ pub fn check_espeak() -> bool {
 /// Synthesise `text` with Kokoro ONNX TTS via Python subprocess.
 /// Returns WAV bytes.
 pub fn speak_kokoro(
+    python_bin: &str,
     text: &str,
     script_path: &str,
     model_path: &str,
@@ -422,7 +431,12 @@ pub fn speak_kokoro(
     }
     let voice = if voice.is_empty() { "af_heart" } else { voice };
 
-    let mut child = Command::new("python3")
+    let python_bin = if python_bin.is_empty() {
+        "python3"
+    } else {
+        python_bin
+    };
+    let mut child = Command::new(python_bin)
         .args([
             script_path,
             "--model",
@@ -466,8 +480,13 @@ pub fn speak_kokoro(
 }
 
 /// Check whether Python3 + kokoro-onnx + soundfile are installed.
-pub fn check_kokoro(script_path: &str) -> bool {
-    Command::new("python3")
+pub fn check_kokoro(script_path: &str, python_bin: &str) -> bool {
+    let python_bin = if python_bin.is_empty() {
+        "python3"
+    } else {
+        python_bin
+    };
+    Command::new(python_bin)
         .args(["-c", "import kokoro_onnx, soundfile"])
         .stdout(Stdio::null())
         .stderr(Stdio::null())
@@ -480,10 +499,15 @@ pub fn check_kokoro(script_path: &str) -> bool {
 /// Attempt to list available Kokoro voices by inspecting the loaded model object.
 ///
 /// Returns an empty list when Kokoro isn't available or introspection fails.
-pub fn list_kokoro_voices(model_path: &str, voices_path: &str) -> Vec<String> {
+pub fn list_kokoro_voices(model_path: &str, voices_path: &str, python_bin: &str) -> Vec<String> {
     if model_path.is_empty() || voices_path.is_empty() {
         return vec![];
     }
+    let python_bin = if python_bin.is_empty() {
+        "python3"
+    } else {
+        python_bin
+    };
 
     // Keep this self-contained to avoid shipping another script file.
     let script = r#"
@@ -533,7 +557,7 @@ for n in sorted(clean):
     print(n)
 "#;
 
-    let output = Command::new("python3")
+    let output = Command::new(python_bin)
         .args(["-c", script, model_path, voices_path])
         .stdout(Stdio::piped())
         .stderr(Stdio::null())

@@ -1,8 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { AlertTriangle, Cable, Download, Loader2, Rocket, Sparkles } from "lucide-react";
 import { llmModelAdd } from "../core/tooling/client";
+import { getKokoroBootstrapStatus, type KokoroBootstrapStatus } from "../lib/tauri";
 
 interface WelcomeModalProps {
   open: boolean;
@@ -143,6 +145,7 @@ export function WelcomeModal({
   const [customApiKey, setCustomApiKey] = useState("");
   const [downloadInProgress, setDownloadInProgress] = useState(false);
   const [downloadError, setDownloadError] = useState<string | null>(null);
+  const [kokoroStatus, setKokoroStatus] = useState<KokoroBootstrapStatus | null>(null);
 
   const termsUrl = useMemo(() => "https://arxell.com/terms.html", []);
 
@@ -160,12 +163,37 @@ export function WelcomeModal({
     }
   }, [initialDoNotShow, open]);
 
+  useEffect(() => {
+    if (!open) return;
+    let unlisten: (() => void) | undefined;
+    let mounted = true;
+
+    void getKokoroBootstrapStatus()
+      .then((status) => {
+        if (mounted) setKokoroStatus(status);
+      })
+      .catch(() => {});
+
+    void listen<KokoroBootstrapStatus>("kokoro:bootstrap", (event) => {
+      if (mounted) setKokoroStatus(event.payload);
+    }).then((off) => {
+      unlisten = off;
+    });
+
+    return () => {
+      mounted = false;
+      unlisten?.();
+    };
+  }, [open]);
+
   if (!open) return null;
 
   const selectedModel = WELCOME_MODEL_OPTIONS.find((model) => model.id === selectedModelId) ?? WELCOME_MODEL_OPTIONS[0];
   const customOptionSelected = selectedModel.download.type === "custom";
   const customReady =
     normalizeApiBaseUrl(customEndpointUrl).length > 0 && customModelName.trim().length > 0;
+  const showKokoroToast = !!kokoroStatus && (!kokoroStatus.done || !kokoroStatus.ok);
+  const kokoroProgress = Math.max(0, Math.min(100, kokoroStatus?.progressPercent ?? 0));
 
   const handleDownloadAndContinue = async () => {
     if (downloadInProgress) return;
@@ -531,6 +559,28 @@ export function WelcomeModal({
           </>
         )}
       </div>
+      {showKokoroToast && (
+        <div className="pointer-events-none fixed bottom-4 left-4 z-[96] w-[300px] rounded-lg border border-line-dark bg-bg-light/95 px-3 py-2 shadow-xl">
+          <div className="flex items-center justify-between gap-2">
+            <p className="text-[11px] font-medium text-text-norm">
+              Voice runtime setup
+            </p>
+            <span className="text-[10px] text-text-med">{kokoroProgress}%</span>
+          </div>
+          <p className="mt-1 text-[10px] text-text-med">
+            {kokoroStatus?.message ?? "Preparing Kokoro runtime"}
+          </p>
+          {kokoroStatus?.error && (
+            <p className="mt-1 text-[10px] text-red-300">{kokoroStatus.error}</p>
+          )}
+          <div className="mt-2 h-1.5 overflow-hidden rounded bg-line-med">
+            <div
+              className="h-full bg-accent-primary transition-all duration-300"
+              style={{ width: `${kokoroProgress}%` }}
+            />
+          </div>
+        </div>
+      )}
     </div>
   );
 }

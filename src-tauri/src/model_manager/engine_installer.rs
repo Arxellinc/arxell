@@ -172,8 +172,12 @@ pub(crate) fn terminate_pid(pid: u32, grace: std::time::Duration) -> bool {
     }
     #[cfg(windows)]
     {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
         let _ = std::process::Command::new("taskkill")
             .args(["/F", "/T", "/PID", &pid.to_string()])
+            .creation_flags(CREATE_NO_WINDOW)
             .output();
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
         while std::time::Instant::now() < deadline {
@@ -284,6 +288,14 @@ pub fn start_llama_server(
     state_file: Option<&Path>,
 ) -> Result<crate::LocalServerHandle, String> {
     let mut cmd = std::process::Command::new(binary_path);
+
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+
     cmd.arg("--model")
         .arg(model_path)
         .arg("--port")

@@ -6,8 +6,9 @@ mod db;
 pub mod memory;
 pub mod model_manager;
 
+use serde::Serialize;
 use std::sync::atomic::{AtomicBool, AtomicU64};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, LazyLock, Mutex};
 use tauri::{Emitter, Manager};
 use tokio::io::AsyncWriteExt;
 
@@ -133,6 +134,56 @@ pub struct AppState {
     pub memory_dir: std::path::PathBuf,
 }
 
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct KokoroBootstrapStatus {
+    pub phase: String,
+    pub message: String,
+    pub progress_percent: u8,
+    pub model_ready: bool,
+    pub runtime_ready: bool,
+    pub done: bool,
+    pub ok: bool,
+    pub error: Option<String>,
+}
+
+static KOKORO_BOOTSTRAP_STATUS: LazyLock<Mutex<KokoroBootstrapStatus>> = LazyLock::new(|| {
+    Mutex::new(KokoroBootstrapStatus {
+        phase: "idle".to_string(),
+        message: "Waiting".to_string(),
+        progress_percent: 0,
+        model_ready: false,
+        runtime_ready: false,
+        done: false,
+        ok: false,
+        error: None,
+    })
+});
+static KOKORO_BOOTSTRAP_RUNNING: AtomicBool = AtomicBool::new(false);
+
+fn emit_kokoro_bootstrap_status(app: &tauri::AppHandle, status: KokoroBootstrapStatus) {
+    if let Ok(mut guard) = KOKORO_BOOTSTRAP_STATUS.lock() {
+        *guard = status.clone();
+    }
+    let _ = app.emit("kokoro:bootstrap", &status);
+}
+
+pub fn get_kokoro_bootstrap_status() -> KokoroBootstrapStatus {
+    KOKORO_BOOTSTRAP_STATUS
+        .lock()
+        .map(|s| s.clone())
+        .unwrap_or(KokoroBootstrapStatus {
+            phase: "unknown".to_string(),
+            message: "Status unavailable".to_string(),
+            progress_percent: 0,
+            model_ready: false,
+            runtime_ready: false,
+            done: false,
+            ok: false,
+            error: Some("status lock unavailable".to_string()),
+        })
+}
+
 /// Log system state at startup so any subsequent failure has context.
 ///
 /// Emitted to the frontend via `log:info` / `log:warn` events before any
@@ -227,6 +278,27 @@ fn model_id_from_path(path: &str) -> Option<String> {
     }
 }
 
+fn default_kokoro_python_path(app_dir: &std::path::Path) -> std::path::PathBuf {
+    #[cfg(target_os = "windows")]
+    {
+        app_dir
+            .join("kokoro")
+            .join("runtime")
+            .join("venv")
+            .join("Scripts")
+            .join("python.exe")
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        app_dir
+            .join("kokoro")
+            .join("runtime")
+            .join("venv")
+            .join("bin")
+            .join("python3")
+    }
+}
+
 fn normalize_voice_paths(conn: &rusqlite::Connection, app_dir: &std::path::Path) {
     let whisper_dir = app_dir.join("whisper");
     let kokoro_dir = app_dir.join("kokoro");
@@ -245,6 +317,9 @@ fn normalize_voice_paths(conn: &rusqlite::Connection, app_dir: &std::path::Path)
         .join("voices-v1.0.bin")
         .to_string_lossy()
         .to_string();
+    let kokoro_python = default_kokoro_python_path(app_dir)
+        .to_string_lossy()
+        .to_string();
 
     let upsert_sql = "INSERT INTO settings (key, value) VALUES (?1, ?2)
                       ON CONFLICT(key) DO UPDATE SET value = excluded.value";
@@ -260,84 +335,348 @@ fn normalize_voice_paths(conn: &rusqlite::Connection, app_dir: &std::path::Path)
         upsert_sql,
         rusqlite::params!["kokoro_voices_path", kokoro_voices],
     );
+    let _ = conn.execute(
+        upsert_sql,
+        rusqlite::params!["kokoro_python_path", kokoro_python],
+    );
 }
 
-fn start_kokoro_download_if_missing(model_path: std::path::PathBuf) {
-    if model_path.exists() {
-        return;
+fn run_command_capture(program: &str, args: &[String]) -> Result<(), String> {
+    let output = std::process::Command::new(program)
+        .args(args)
+        .output()
+        .map_err(|e| format!("failed to run {program}: {e}"))?;
+    if output.status.success() {
+        return Ok(());
+    }
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let details = if !stderr.is_empty() { stderr } else { stdout };
+    Err(format!(
+        "{} exited with {}{}",
+        program,
+        output.status,
+        if details.is_empty() {
+            "".to_string()
+        } else {
+            format!(": {}", details)
+        }
+    ))
+}
+
+fn check_kokoro_runtime_with_python(python_bin: &std::path::Path) -> bool {
+    std::process::Command::new(python_bin)
+        .args(["-c", "import kokoro_onnx, soundfile"])
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+}
+
+fn detect_system_python_launcher() -> Option<(String, Vec<String>)> {
+    let mut candidates: Vec<(String, Vec<String>)> = Vec::new();
+    #[cfg(target_os = "windows")]
+    {
+        candidates.push(("py".to_string(), vec!["-3".to_string()]));
+        candidates.push(("python".to_string(), Vec::new()));
+        candidates.push(("python3".to_string(), Vec::new()));
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        candidates.push(("python3".to_string(), Vec::new()));
+        candidates.push(("python".to_string(), Vec::new()));
     }
 
-    let parent = match model_path.parent() {
-        Some(p) => p.to_path_buf(),
-        None => return,
-    };
-    let _ = std::fs::create_dir_all(&parent);
+    for (program, prefix) in candidates {
+        let mut args = prefix.clone();
+        args.push("--version".to_string());
+        if run_command_capture(&program, &args).is_ok() {
+            return Some((program, prefix));
+        }
+    }
+    None
+}
 
-    let lock_path = parent.join(".kokoro_download.lock");
-    let lock = std::fs::OpenOptions::new()
-        .create_new(true)
-        .write(true)
-        .open(&lock_path);
-    if lock.is_err() {
+fn ensure_kokoro_runtime(app_dir: &std::path::Path) -> Result<std::path::PathBuf, String> {
+    let python_path = default_kokoro_python_path(app_dir);
+    if python_path.exists() && check_kokoro_runtime_with_python(&python_path) {
+        return Ok(python_path);
+    }
+
+    let Some((program, prefix)) = detect_system_python_launcher() else {
+        return Err(
+            "Python 3 was not found on PATH. Install Python 3 and relaunch Arxell.".to_string(),
+        );
+    };
+
+    let venv_dir = python_path
+        .parent()
+        .and_then(|p| p.parent())
+        .map(|p| p.to_path_buf())
+        .ok_or_else(|| "failed to resolve Kokoro venv path".to_string())?;
+    std::fs::create_dir_all(&venv_dir).map_err(|e| format!("failed to create venv dir: {e}"))?;
+
+    let mut create_venv_args = prefix.clone();
+    create_venv_args.extend([
+        "-m".to_string(),
+        "venv".to_string(),
+        venv_dir.to_string_lossy().to_string(),
+    ]);
+    run_command_capture(&program, &create_venv_args)?;
+
+    if !python_path.exists() {
+        return Err(format!(
+            "Python venv created but interpreter is missing at {}",
+            python_path.to_string_lossy()
+        ));
+    }
+
+    run_command_capture(
+        &python_path.to_string_lossy(),
+        &[
+            "-m".to_string(),
+            "pip".to_string(),
+            "install".to_string(),
+            "--upgrade".to_string(),
+            "pip".to_string(),
+        ],
+    )?;
+    run_command_capture(
+        &python_path.to_string_lossy(),
+        &[
+            "-m".to_string(),
+            "pip".to_string(),
+            "install".to_string(),
+            "--no-cache-dir".to_string(),
+            "kokoro-onnx".to_string(),
+            "soundfile".to_string(),
+            "numpy".to_string(),
+        ],
+    )?;
+
+    if !check_kokoro_runtime_with_python(&python_path) {
+        return Err("Kokoro runtime installation completed but import check failed".to_string());
+    }
+    Ok(python_path)
+}
+
+fn start_kokoro_bootstrap(
+    app: tauri::AppHandle,
+    app_dir: std::path::PathBuf,
+    model_path: std::path::PathBuf,
+    voices_path: std::path::PathBuf,
+) {
+    if KOKORO_BOOTSTRAP_RUNNING.swap(true, std::sync::atomic::Ordering::SeqCst) {
         return;
     }
 
     let url = std::env::var("ARXELL_KOKORO_MODEL_URL").unwrap_or_else(|_| {
         "https://huggingface.co/Arxell/kokoro-v1.0.onnx/resolve/main/kokoro-v1.0.onnx?download=true".to_string()
     });
-    let temp_path = model_path.with_extension("onnx.part");
-    commands::logs::info(&format!(
-        "[startup] Kokoro model missing; starting background download from {}",
-        url
-    ));
+
+    emit_kokoro_bootstrap_status(
+        &app,
+        KokoroBootstrapStatus {
+            phase: "starting".to_string(),
+            message: "Preparing voice runtime".to_string(),
+            progress_percent: 2,
+            model_ready: model_path.exists(),
+            runtime_ready: false,
+            done: false,
+            ok: false,
+            error: None,
+        },
+    );
 
     tauri::async_runtime::spawn(async move {
-        let result: Result<(), String> = async {
-            let client = reqwest::Client::builder()
-                .timeout(std::time::Duration::from_secs(1200))
-                .build()
-                .map_err(|e| format!("failed to build HTTP client: {e}"))?;
+        let mut model_ready = model_path.exists();
+        let mut runtime_ready = false;
 
-            let mut resp = client
-                .get(&url)
-                .send()
-                .await
-                .map_err(|e| format!("request failed: {e}"))?;
-            if !resp.status().is_success() {
-                return Err(format!("HTTP {}", resp.status()));
-            }
+        if !voices_path.exists() {
+            let msg = format!("voices file missing at {}", voices_path.to_string_lossy());
+            emit_kokoro_bootstrap_status(
+                &app,
+                KokoroBootstrapStatus {
+                    phase: "error".to_string(),
+                    message: "Kokoro voices file is missing".to_string(),
+                    progress_percent: 100,
+                    model_ready,
+                    runtime_ready,
+                    done: true,
+                    ok: false,
+                    error: Some(msg.clone()),
+                },
+            );
+            commands::logs::warn(&format!("[startup] Kokoro bootstrap failed: {msg}"));
+            KOKORO_BOOTSTRAP_RUNNING.store(false, std::sync::atomic::Ordering::SeqCst);
+            return;
+        }
 
-            let mut file = tokio::fs::File::create(&temp_path)
-                .await
-                .map_err(|e| format!("failed to create temp file: {e}"))?;
-            while let Some(chunk) = resp.chunk().await.map_err(|e| e.to_string())? {
-                file.write_all(&chunk)
+        if !model_ready {
+            let temp_path = model_path.with_extension("onnx.part");
+            emit_kokoro_bootstrap_status(
+                &app,
+                KokoroBootstrapStatus {
+                    phase: "downloading-model".to_string(),
+                    message: "Downloading Kokoro model".to_string(),
+                    progress_percent: 5,
+                    model_ready,
+                    runtime_ready,
+                    done: false,
+                    ok: false,
+                    error: None,
+                },
+            );
+            let result: Result<(), String> = async {
+                let client = reqwest::Client::builder()
+                    .timeout(std::time::Duration::from_secs(1800))
+                    .build()
+                    .map_err(|e| format!("failed to build HTTP client: {e}"))?;
+
+                let mut resp = client
+                    .get(&url)
+                    .send()
                     .await
-                    .map_err(|e| format!("failed to write chunk: {e}"))?;
+                    .map_err(|e| format!("request failed: {e}"))?;
+                if !resp.status().is_success() {
+                    return Err(format!("HTTP {}", resp.status()));
+                }
+                let total = resp.content_length();
+                let mut downloaded: u64 = 0;
+                let mut last_emit = std::time::Instant::now();
+                let mut file = tokio::fs::File::create(&temp_path)
+                    .await
+                    .map_err(|e| format!("failed to create temp file: {e}"))?;
+
+                while let Some(chunk) = resp.chunk().await.map_err(|e| e.to_string())? {
+                    downloaded = downloaded.saturating_add(chunk.len() as u64);
+                    file.write_all(&chunk)
+                        .await
+                        .map_err(|e| format!("failed to write chunk: {e}"))?;
+
+                    if last_emit.elapsed() >= std::time::Duration::from_millis(250) {
+                        let pct = total
+                            .map(|t| ((downloaded as f64 / t.max(1) as f64) * 100.0) as u8)
+                            .unwrap_or(0)
+                            .min(100);
+                        let progress = 5u8.saturating_add(((pct as f32) * 0.55f32) as u8).min(60);
+                        emit_kokoro_bootstrap_status(
+                            &app,
+                            KokoroBootstrapStatus {
+                                phase: "downloading-model".to_string(),
+                                message: format!("Downloading Kokoro model ({}%)", pct),
+                                progress_percent: progress,
+                                model_ready: false,
+                                runtime_ready,
+                                done: false,
+                                ok: false,
+                                error: None,
+                            },
+                        );
+                        last_emit = std::time::Instant::now();
+                    }
+                }
+
+                file.flush()
+                    .await
+                    .map_err(|e| format!("failed to flush file: {e}"))?;
+                tokio::fs::rename(&temp_path, &model_path)
+                    .await
+                    .map_err(|e| format!("failed to finalize model file: {e}"))?;
+                Ok(())
             }
-            file.flush()
-                .await
-                .map_err(|e| format!("failed to flush file: {e}"))?;
+            .await;
 
-            tokio::fs::rename(&temp_path, &model_path)
-                .await
-                .map_err(|e| format!("failed to finalize model file: {e}"))?;
-            Ok(())
-        }
-        .await;
-
-        match result {
-            Ok(()) => commands::logs::info("[startup] Kokoro model download complete"),
-            Err(e) => {
+            if let Err(e) = result {
                 let _ = std::fs::remove_file(&temp_path);
-                commands::logs::warn(&format!(
-                    "[startup] Kokoro model download failed: {}. Local TTS may fall back until this succeeds.",
-                    e
-                ));
+                emit_kokoro_bootstrap_status(
+                    &app,
+                    KokoroBootstrapStatus {
+                        phase: "error".to_string(),
+                        message: "Kokoro model download failed".to_string(),
+                        progress_percent: 100,
+                        model_ready: false,
+                        runtime_ready,
+                        done: true,
+                        ok: false,
+                        error: Some(e.clone()),
+                    },
+                );
+                commands::logs::warn(&format!("[startup] Kokoro model download failed: {e}"));
+                KOKORO_BOOTSTRAP_RUNNING.store(false, std::sync::atomic::Ordering::SeqCst);
+                return;
+            }
+            model_ready = true;
+            commands::logs::info("[startup] Kokoro model download complete");
+        }
+
+        emit_kokoro_bootstrap_status(
+            &app,
+            KokoroBootstrapStatus {
+                phase: "installing-runtime".to_string(),
+                message: "Installing voice runtime".to_string(),
+                progress_percent: 70,
+                model_ready,
+                runtime_ready,
+                done: false,
+                ok: false,
+                error: None,
+            },
+        );
+
+        let app_dir_clone = app_dir.clone();
+        let runtime_result =
+            tokio::task::spawn_blocking(move || ensure_kokoro_runtime(&app_dir_clone))
+                .await
+                .map_err(|e| e.to_string())
+                .and_then(|r| r);
+
+        match runtime_result {
+            Ok(python_path) => {
+                runtime_ready = true;
+                if let Some(state) = app.try_state::<AppState>() {
+                    let db = state.db.lock().unwrap();
+                    let _ = db.execute(
+                        "INSERT OR REPLACE INTO settings (key, value) VALUES (?1, ?2)",
+                        rusqlite::params![
+                            "kokoro_python_path",
+                            python_path.to_string_lossy().to_string()
+                        ],
+                    );
+                }
+                emit_kokoro_bootstrap_status(
+                    &app,
+                    KokoroBootstrapStatus {
+                        phase: "ready".to_string(),
+                        message: "Voice runtime ready".to_string(),
+                        progress_percent: 100,
+                        model_ready,
+                        runtime_ready,
+                        done: true,
+                        ok: true,
+                        error: None,
+                    },
+                );
+                commands::logs::info("[startup] Kokoro runtime is ready");
+            }
+            Err(e) => {
+                emit_kokoro_bootstrap_status(
+                    &app,
+                    KokoroBootstrapStatus {
+                        phase: "error".to_string(),
+                        message: "Voice runtime setup failed".to_string(),
+                        progress_percent: 100,
+                        model_ready,
+                        runtime_ready: false,
+                        done: true,
+                        ok: false,
+                        error: Some(e.clone()),
+                    },
+                );
+                commands::logs::warn(&format!("[startup] Kokoro runtime setup failed: {e}"));
             }
         }
 
-        let _ = std::fs::remove_file(&lock_path);
+        KOKORO_BOOTSTRAP_RUNNING.store(false, std::sync::atomic::Ordering::SeqCst);
     });
 }
 
@@ -448,7 +787,12 @@ pub fn run() {
                         _ => log::debug!("Bundled Kokoro voices file not found in resources"),
                     }
                 }
-                start_kokoro_download_if_missing(kokoro_dest.join("kokoro-v1.0.onnx"));
+                start_kokoro_bootstrap(
+                    app.handle().clone(),
+                    app_dir.clone(),
+                    kokoro_dest.join("kokoro-v1.0.onnx"),
+                    voices_dest,
+                );
             }
 
             // ── Optional bundled LLM: deploy to {app_data_dir}/models/ on first launch ──
@@ -634,6 +978,7 @@ pub fn run() {
             commands::voice::cmd_tts_speak,
             commands::voice::cmd_check_voice_endpoints,
             commands::voice::cmd_list_audio_devices,
+            commands::voice::cmd_get_kokoro_bootstrap_status,
             commands::voice::cmd_tts_check_engines,
             commands::voice::cmd_stt_check_engines,
             commands::voice::cmd_stt_list_whisper_models,

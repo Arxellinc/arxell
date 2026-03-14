@@ -271,6 +271,20 @@ export interface TtsEngineStatus {
   current_engine: string;
 }
 
+export interface KokoroBootstrapStatus {
+  phase: string;
+  message: string;
+  progressPercent: number;
+  modelReady: boolean;
+  runtimeReady: boolean;
+  done: boolean;
+  ok: boolean;
+  error: string | null;
+}
+
+export const getKokoroBootstrapStatus = () =>
+  invoke<KokoroBootstrapStatus>("cmd_get_kokoro_bootstrap_status");
+
 export const checkTtsEngines = () =>
   invoke<TtsEngineStatus>("cmd_tts_check_engines");
 

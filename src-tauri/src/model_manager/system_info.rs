@@ -177,8 +177,18 @@ const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 #[cfg(target_os = "windows")]
 const WINDOWS_GPU_USAGE_TTL: Duration = Duration::from_secs(10);
 #[cfg(target_os = "windows")]
+const WINDOWS_GPU_INFO_TTL: Duration = Duration::from_secs(30);
+#[cfg(target_os = "windows")]
+const WINDOWS_SYSTEM_RESOURCES_TTL: Duration = Duration::from_secs(30);
+#[cfg(target_os = "windows")]
 static WINDOWS_GPU_USAGE_CACHE: LazyLock<Mutex<(Option<Instant>, Vec<GpuUsage>)>> =
     LazyLock::new(|| Mutex::new((None, Vec::new())));
+#[cfg(target_os = "windows")]
+static WINDOWS_GPU_INFO_CACHE: LazyLock<Mutex<(Option<Instant>, Vec<GpuInfo>)>> =
+    LazyLock::new(|| Mutex::new((None, Vec::new())));
+#[cfg(target_os = "windows")]
+static WINDOWS_SYSTEM_RESOURCES_CACHE: LazyLock<Mutex<(Option<Instant>, Option<SystemResources>)>> =
+    LazyLock::new(|| Mutex::new((None, None)));
 
 #[cfg(target_os = "windows")]
 fn run_windows_command_hidden(program: &str, args: &[&str]) -> Option<std::process::Output> {
@@ -189,6 +199,15 @@ fn run_windows_command_hidden(program: &str, args: &[&str]) -> Option<std::proce
         .creation_flags(CREATE_NO_WINDOW)
         .output()
         .ok()
+}
+
+#[cfg(not(target_os = "windows"))]
+fn run_windows_command_hidden(program: &str, args: &[&str]) -> Option<std::process::Output> {
+    std::process::Command::new(program).args(args).output().ok()
+}
+
+fn run_command_quiet(program: &str, args: &[&str]) -> Option<std::process::Output> {
+    run_windows_command_hidden(program, args)
 }
 
 /// Storage device and mounted volume information
@@ -310,15 +329,13 @@ pub fn check_cuda_driver() -> DriverStatus {
 
     #[cfg(not(feature = "cuda"))]
     {
-        let nvidia_smi_ok = std::process::Command::new("nvidia-smi")
-            .arg("--query-gpu=driver_version")
-            .arg("--format=csv,noheader")
-            .output()
-            .map(|o| o.status.success())
-            .unwrap_or(false);
-        let nvcc_ok = std::process::Command::new("nvcc")
-            .arg("--version")
-            .output()
+        let nvidia_smi_ok = run_command_quiet(
+            "nvidia-smi",
+            &["--query-gpu=driver_version", "--format=csv,noheader"],
+        )
+        .map(|o| o.status.success())
+        .unwrap_or(false);
+        let nvcc_ok = run_command_quiet("nvcc", &["--version"])
             .map(|o| o.status.success())
             .unwrap_or(false);
         if nvidia_smi_ok || nvcc_ok {
@@ -355,10 +372,7 @@ pub fn check_vulkan_driver() -> DriverStatus {
         // Try multiple methods to detect Vulkan
 
         // Method 1: Try vulkaninfo command
-        if let Ok(output) = std::process::Command::new("vulkaninfo")
-            .arg("--summary")
-            .output()
-        {
+        if let Some(output) = run_command_quiet("vulkaninfo", &["--summary"]) {
             if output.status.success() {
                 // Try to extract version from output
                 let info = String::from_utf8_lossy(&output.stdout);
@@ -468,6 +482,10 @@ pub fn check_rocm_driver() -> DriverStatus {
 
     #[cfg(not(feature = "rocm"))]
     {
+        #[cfg(target_os = "windows")]
+        let is_available = false;
+
+        #[cfg(not(target_os = "windows"))]
         // Check for ROCm installation
         let is_available = std::path::Path::new("/opt/rocm").exists()
             || std::process::Command::new("rocminfo")
@@ -552,24 +570,21 @@ pub fn get_gpus() -> Vec<GpuInfo> {
         // Fallback CUDA detection via nvidia-smi when feature not compiled in
         #[cfg(not(feature = "cuda"))]
         {
-            if let Ok(output) = std::process::Command::new("nvidia-smi")
-                .arg("--query-gpu=name")
-                .arg("--format=csv,noheader")
-                .output()
+            if let Some(output) =
+                run_command_quiet("nvidia-smi", &["--query-gpu=name", "--format=csv,noheader"])
             {
                 if output.status.success() {
                     let names = String::from_utf8_lossy(&output.stdout);
                     for (idx, name) in names.lines().filter(|l| !l.trim().is_empty()).enumerate() {
                         // Try to get VRAM from nvidia-smi
-                        let vram = std::process::Command::new("nvidia-smi")
-                            .arg("--query-gpu=memory.total")
-                            .arg("--format=csv,noheader,nounits")
-                            .output()
-                            .ok()
-                            .and_then(|vram_output| {
-                                let vram_str = String::from_utf8_lossy(&vram_output.stdout);
-                                vram_str.lines().nth(idx)?.trim().parse::<u64>().ok()
-                            });
+                        let vram = run_command_quiet(
+                            "nvidia-smi",
+                            &["--query-gpu=memory.total", "--format=csv,noheader,nounits"],
+                        )
+                        .and_then(|vram_output| {
+                            let vram_str = String::from_utf8_lossy(&vram_output.stdout);
+                            vram_str.lines().nth(idx)?.trim().parse::<u64>().ok()
+                        });
 
                         gpus.push(GpuInfo {
                             id: format!("cuda:{}", idx),
@@ -607,10 +622,7 @@ pub fn get_gpus() -> Vec<GpuInfo> {
         // Fallback Vulkan detection via vulkaninfo when feature not compiled in
         #[cfg(not(feature = "vulkan"))]
         {
-            if let Ok(output) = std::process::Command::new("vulkaninfo")
-                .arg("--summary")
-                .output()
-            {
+            if let Some(output) = run_command_quiet("vulkaninfo", &["--summary"]) {
                 if output.status.success() {
                     let info = String::from_utf8_lossy(&output.stdout);
                     // Parse device names from vulkaninfo output
@@ -743,6 +755,7 @@ pub fn get_gpus() -> Vec<GpuInfo> {
         // Fallback ROCm detection via rocminfo when feature not compiled in
         #[cfg(not(feature = "rocm"))]
         {
+            #[cfg(not(target_os = "windows"))]
             if let Ok(output) = std::process::Command::new("rocminfo").output() {
                 if output.status.success() {
                     let info = String::from_utf8_lossy(&output.stdout);
@@ -1286,6 +1299,15 @@ pub fn get_npus() -> Vec<NpuInfo> {
 
 /// Get complete system resources information
 pub fn get_system_resources() -> SystemResources {
+    #[cfg(target_os = "windows")]
+    if let Ok(cache) = WINDOWS_SYSTEM_RESOURCES_CACHE.lock() {
+        if let (Some(last), Some(cached)) = (cache.0, cache.1.as_ref()) {
+            if last.elapsed() < WINDOWS_SYSTEM_RESOURCES_TTL {
+                return cached.clone();
+            }
+        }
+    }
+
     let cpu = get_cpu_info();
     let memory = get_memory_info();
     let gpus = get_gpus();
@@ -1304,13 +1326,21 @@ pub fn get_system_resources() -> SystemResources {
         drivers.push(npu.driver.clone());
     }
 
-    SystemResources {
+    let resources = SystemResources {
         cpu,
         memory,
         gpus,
         npus,
         drivers,
+    };
+
+    #[cfg(target_os = "windows")]
+    if let Ok(mut cache) = WINDOWS_SYSTEM_RESOURCES_CACHE.lock() {
+        cache.0 = Some(Instant::now());
+        cache.1 = Some(resources.clone());
     }
+
+    resources
 }
 
 /// Get real-time utilization metrics for CPU/GPU and memory.
@@ -1329,7 +1359,38 @@ pub fn get_system_usage() -> SystemUsage {
 
     let memory_usage_percent = get_memory_info().usage_percent;
 
-    let mut gpus: Vec<GpuUsage> = get_gpus()
+    #[cfg(target_os = "windows")]
+    let gpus_info = {
+        if let Ok(cache) = WINDOWS_GPU_INFO_CACHE.lock() {
+            if let Some(last) = cache.0 {
+                if last.elapsed() < WINDOWS_GPU_INFO_TTL {
+                    cache.1.clone()
+                } else {
+                    drop(cache);
+                    let fresh = get_gpus();
+                    if let Ok(mut c) = WINDOWS_GPU_INFO_CACHE.lock() {
+                        c.0 = Some(Instant::now());
+                        c.1 = fresh.clone();
+                    }
+                    fresh
+                }
+            } else {
+                drop(cache);
+                let fresh = get_gpus();
+                if let Ok(mut c) = WINDOWS_GPU_INFO_CACHE.lock() {
+                    c.0 = Some(Instant::now());
+                    c.1 = fresh.clone();
+                }
+                fresh
+            }
+        } else {
+            get_gpus()
+        }
+    };
+    #[cfg(not(target_os = "windows"))]
+    let gpus_info = get_gpus();
+
+    let mut gpus: Vec<GpuUsage> = gpus_info
         .into_iter()
         .map(|gpu| {
             let memory_used_mb = match (gpu.vram_mb, gpu.available_vram_mb) {
@@ -1734,6 +1795,12 @@ fn check_llama_cpp_binary() -> Option<(String, Option<String>)> {
                     .unwrap_or_default();
                 if !path.is_empty() {
                     // Try to get version
+                    #[cfg(target_os = "windows")]
+                    let version = run_windows_command_hidden(&path, &["--version"]).and_then(|v| {
+                        let v_str = String::from_utf8_lossy(&v.stdout);
+                        v_str.lines().next().map(|s| s.to_string())
+                    });
+                    #[cfg(not(target_os = "windows"))]
                     let version = std::process::Command::new(&path)
                         .arg("--version")
                         .output()
@@ -1978,10 +2045,7 @@ pub fn get_compatible_engines(engines_dir: Option<&std::path::Path>) -> Vec<Infe
 /// Check if system has an AMD GPU
 fn check_for_amd_gpu() -> bool {
     // Check via vulkaninfo for AMD
-    if let Ok(output) = std::process::Command::new("vulkaninfo")
-        .arg("--summary")
-        .output()
-    {
+    if let Some(output) = run_command_quiet("vulkaninfo", &["--summary"]) {
         let info = String::from_utf8_lossy(&output.stdout);
         if info.to_lowercase().contains("amd") || info.to_lowercase().contains("radeon") {
             return true;
@@ -2008,10 +2072,7 @@ fn check_for_amd_gpu() -> bool {
 /// Check if system has an NVIDIA GPU
 fn check_for_nvidia_gpu() -> bool {
     // Check via nvidia-smi
-    if std::process::Command::new("nvidia-smi")
-        .arg("--query-gpu=name")
-        .arg("--format=csv,noheader")
-        .output()
+    if run_command_quiet("nvidia-smi", &["--query-gpu=name", "--format=csv,noheader"])
         .map(|o| o.status.success())
         .unwrap_or(false)
     {
