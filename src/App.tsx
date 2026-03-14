@@ -18,6 +18,7 @@ import { chatGetMessages, memoryList, memoryUpsert, settingsGet, settingsSet } f
 import { useThemeStore } from "./store/themeStore";
 import { useSystemAlertStore } from "./store/systemAlertStore";
 import { listen } from "@tauri-apps/api/event";
+import { getVersion } from "@tauri-apps/api/app";
 import { prewarmPiBootstrap } from "./lib/piBootstrap";
 import { initHotPlugListeners } from "./audio/reconcile";
 
@@ -130,6 +131,7 @@ export default function App() {
   const [welcomeModalResolved, setWelcomeModalResolved] = useState(false);
   const [welcomeDoNotShow, setWelcomeDoNotShow] = useState(false);
   const [welcomeFlowCompleted, setWelcomeFlowCompleted] = useState(false);
+  const [appVersion, setAppVersion] = useState(__APP_VERSION__);
   const { setPanel, toolbarPosition } = useToolPanelStore();
   const addAlert = useSystemAlertStore((s) => s.addAlert);
 
@@ -285,6 +287,23 @@ export default function App() {
     };
   }, []);
 
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const version = await getVersion();
+        if (!cancelled && version.trim()) {
+          setAppVersion(version.trim());
+        }
+      } catch {
+        // Non-Tauri contexts use the build-time fallback.
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   const dismissWelcomeModal = (doNotShowAgain: boolean) => {
     setWelcomeDoNotShow(doNotShowAgain);
     setShowWelcomeModal(false);
@@ -314,7 +333,7 @@ export default function App() {
           <div className="flex items-center gap-2">
             <div className="inline-flex items-center gap-1.5">
               <span className="text-[12px] font-semibold tracking-wide text-text-norm">Arxell</span>
-              <span className="text-[10px] text-text-med">v0.1.8</span>
+              <span className="text-[10px] text-text-med">v{appVersion}</span>
             </div>
           </div>
 

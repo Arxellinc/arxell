@@ -3,12 +3,12 @@
 //! Provides detailed information about CPU, RAM, GPUs, NPUs, and driver availability.
 
 use serde::{Deserialize, Serialize};
-use std::time::{SystemTime, UNIX_EPOCH};
-use sysinfo::{CpuRefreshKind, Disks, RefreshKind, System};
 #[cfg(target_os = "windows")]
 use std::sync::{LazyLock, Mutex};
 #[cfg(target_os = "windows")]
 use std::time::{Duration, Instant};
+use std::time::{SystemTime, UNIX_EPOCH};
+use sysinfo::{CpuRefreshKind, Disks, RefreshKind, System};
 
 /// Inference engine types supported by the application
 #[derive(Debug, Clone, Serialize, Deserialize)]

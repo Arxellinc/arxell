@@ -266,6 +266,7 @@ export const listAudioDevices = () =>
 
 export interface TtsEngineStatus {
   kokoro: boolean;
+  espeak: boolean;
   external: boolean;
   current_engine: string;
 }

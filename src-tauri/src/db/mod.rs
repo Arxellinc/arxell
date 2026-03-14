@@ -179,13 +179,13 @@ pub fn init_db(path: &Path) -> Result<Connection> {
             ('stt_engine', 'whisper_rs'),
             ('whisper_model_size', 'tiny'),
             ('whisper_model_dir', ''),
-            ('whisper_rs_model_path', '~/.local/share/arx/whisper/ggml-base-q8_0.bin'),
+            ('whisper_rs_model_path', ''),
             ('whisper_rs_language', 'en'),
             ('tts_url', 'http://127.0.0.1:1234/v1/audio/speech'),
             ('tts_voice', 'alloy'),
             ('tts_engine', 'kokoro'),
-            ('kokoro_model_path', '~/.local/share/arx/kokoro/kokoro-v1.0.onnx'),
-            ('kokoro_voices_path', '~/.local/share/arx/kokoro/voices-v1.0.bin'),
+            ('kokoro_model_path', ''),
+            ('kokoro_voices_path', ''),
             ('kokoro_voice', 'af_heart'),
             ('vad_threshold', '0.35'),
             ('vad_min_silence_ms', '1100'),
@@ -211,8 +211,16 @@ pub fn init_db(path: &Path) -> Result<Connection> {
         UPDATE settings SET value = '1100'  WHERE key = 'vad_min_silence_ms'     AND value = '1200';
         UPDATE settings SET value = 'whisper_rs'
             WHERE key = 'stt_engine' AND value = 'whisper';
-        UPDATE settings SET value = '~/.local/share/arx/whisper/ggml-base-q8_0.bin'
-            WHERE key = 'whisper_rs_model_path' AND value = '~/.local/share/arx/whisper/ggml-base.en.bin';
+        UPDATE settings SET value = ''
+            WHERE key = 'whisper_rs_model_path' AND value IN (
+                '~/.local/share/arx/whisper/ggml-base.en.bin',
+                '~/.local/share/arx/whisper/ggml-base-q8_0.bin',
+                '~/.local/share/arxell/whisper/ggml-base.en.bin'
+            );
+        UPDATE settings SET value = ''
+            WHERE key = 'kokoro_model_path' AND value = '~/.local/share/arx/kokoro/kokoro-v1.0.onnx';
+        UPDATE settings SET value = ''
+            WHERE key = 'kokoro_voices_path' AND value = '~/.local/share/arx/kokoro/voices-v1.0.bin';
         UPDATE settings SET value = '320'   WHERE key = 'vad_speech_pad_pre_ms'  AND value = '100';
         UPDATE settings SET value = '320'   WHERE key = 'vad_speech_pad_pre_ms'  AND value = '150';
         UPDATE settings SET value = '50'    WHERE key = 'vad_min_speech_ms'      AND value = '100';
@@ -260,10 +268,10 @@ pub fn init_db(path: &Path) -> Result<Connection> {
 
         -- Ensure kokoro paths exist
         INSERT OR IGNORE INTO settings (key, value) VALUES
-            ('kokoro_model_path',      '~/.local/share/arx/kokoro/kokoro-v1.0.onnx'),
-            ('kokoro_voices_path',     '~/.local/share/arx/kokoro/voices-v1.0.bin'),
+            ('kokoro_model_path',      ''),
+            ('kokoro_voices_path',     ''),
             ('kokoro_voice',           'af_heart'),
-            ('whisper_rs_model_path',  '~/.local/share/arx/whisper/ggml-base.en.bin'),
+            ('whisper_rs_model_path',  ''),
             ('whisper_rs_language',    'en');
 
         -- Remove obsolete piper / kitten / index_tts keys

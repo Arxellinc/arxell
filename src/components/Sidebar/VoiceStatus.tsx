@@ -231,10 +231,14 @@ export function VoiceStatus() {
       // Scan the directory containing the configured model for all .bin files
       const rsDir = rsModelPath.includes("/")
         ? rsModelPath.substring(0, rsModelPath.lastIndexOf("/"))
-        : "~/.local/share/arx/whisper";
-      listWhisperModels(rsDir || "~/.local/share/arx/whisper")
-        .then(setWhisperRsModels)
-        .catch(() => {});
+        : "";
+      if (rsDir) {
+        listWhisperModels(rsDir)
+          .then(setWhisperRsModels)
+          .catch(() => {});
+      } else {
+        setWhisperRsModels([]);
+      }
       setTtsEngine(ttsEng);
       setTtsUrl(all["tts_url"] ?? "");
       setTtsVoice(all["tts_voice"] ?? "alloy");
@@ -698,7 +702,7 @@ export function VoiceStatus() {
                               type="text"
                               value={whisperRsModelPath}
                               onChange={(e) => setWhisperRsModelPath(e.target.value)}
-                              placeholder="~/.local/share/arx/whisper/ggml-base-q8_0.bin"
+                              placeholder="<app-data>/whisper/ggml-base-q8_0.bin"
                               className="w-full bg-line-light border border-line-med rounded px-2 py-1 text-[10px] text-text-norm placeholder-text-dark outline-none focus:border-accent-primary/50 font-mono"
                             />
                           )}
@@ -764,7 +768,7 @@ export function VoiceStatus() {
                             type="text"
                             value={kokoroModelPath}
                             onChange={(e) => setKokoroModelPath(e.target.value)}
-                            placeholder="~/.local/share/arx/kokoro/kokoro-v1.0.onnx"
+                            placeholder="<app-data>/kokoro/kokoro-v1.0.onnx"
                             className="w-full bg-line-light border border-line-med rounded px-2 py-1 text-[10px] text-text-norm placeholder-text-dark outline-none focus:border-accent-primary/50 font-mono"
                           />
                         </div>
@@ -774,7 +778,7 @@ export function VoiceStatus() {
                             type="text"
                             value={kokoroVoicesPath}
                             onChange={(e) => setKokoroVoicesPath(e.target.value)}
-                            placeholder="~/.local/share/arx/kokoro/voices-v1.0.bin"
+                            placeholder="<app-data>/kokoro/voices-v1.0.bin"
                             className="w-full bg-line-light border border-line-med rounded px-2 py-1 text-[10px] text-text-norm placeholder-text-dark outline-none focus:border-accent-primary/50 font-mono"
                           />
                         </div>

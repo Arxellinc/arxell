@@ -19,13 +19,13 @@ const DEFAULTS: Record<string, string> = {
   stt_url: "http://127.0.0.1:1234/v1/audio/transcriptions",
   whisper_model_size: "tiny",
   whisper_model_dir: "",
-  whisper_rs_model_path: "~/.local/share/arx/whisper/ggml-base.en.bin",
+  whisper_rs_model_path: "",
   whisper_rs_language: "en",
   tts_engine: "kokoro",
   tts_url: "http://127.0.0.1:1234/v1/audio/speech",
   tts_voice: "alloy",
-  kokoro_model_path: "~/.local/share/arx/kokoro/kokoro-v1.0.onnx",
-  kokoro_voices_path: "~/.local/share/arx/kokoro/voices-v1.0.bin",
+  kokoro_model_path: "",
+  kokoro_voices_path: "",
   kokoro_voice: "af_heart",
   vad_threshold: "0.35",
   vad_min_silence_ms: "1200",
@@ -509,7 +509,7 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                 onChange={(v) =>
                   setValues((prev) => ({ ...prev, whisper_rs_model_path: v }))
                 }
-                placeholder="~/.local/share/arx/whisper/ggml-base.en.bin"
+                placeholder="<app-data>/whisper/ggml-base-q8_0.bin"
               />
               <TextField
                 label="Whisper-rs Language"

@@ -42,6 +42,15 @@ fn script_path(app: &AppHandle, name: &str) -> Option<String> {
         .and_then(|p| p.to_str().map(|s| s.to_string()))
 }
 
+fn default_whisper_model_path(app: &AppHandle) -> String {
+    app.path()
+        .app_data_dir()
+        .map(|d| d.join("whisper").join("ggml-base-q8_0.bin"))
+        .ok()
+        .and_then(|p| p.to_str().map(|s| s.to_string()))
+        .unwrap_or_else(|| "ggml-base-q8_0.bin".to_string())
+}
+
 // ── Voice capture ─────────────────────────────────────────────────────────────
 
 #[tauri::command]
@@ -231,7 +240,7 @@ async fn transcribe_and_emit(app: AppHandle, samples: Vec<f32>, is_partial: bool
             let model_path = expand_home(&get_db_setting(
                 &app,
                 "whisper_rs_model_path",
-                "~/.local/share/arx/whisper/ggml-base-q8_0.bin",
+                &default_whisper_model_path(&app),
             ));
             let language = get_db_setting(&app, "whisper_rs_language", "en");
             log::info!(
@@ -392,7 +401,7 @@ pub async fn cmd_tts_speak(
             // Get daemon handle from state
             let daemon_handle = state.kokoro_daemon.clone();
 
-            tokio::task::spawn_blocking(move || {
+            let kokoro_result = tokio::task::spawn_blocking(move || {
                 let mut daemon_guard = daemon_handle.lock().unwrap();
 
                 // Reset daemon if model path changed (e.g. switched from int8)
@@ -422,8 +431,41 @@ pub async fn cmd_tts_speak(
                 daemon.speak(&text_clone, Some(&voice_clone))
             })
             .await
-            .map_err(|e| e.to_string())?
-            .map(|r| TtsSpeakResult { audio_bytes: r.audio, phonemes: r.phonemes })
+            .map_err(|e| e.to_string())?;
+
+            match kokoro_result {
+                Ok(r) => Ok(TtsSpeakResult {
+                    audio_bytes: r.audio,
+                    phonemes: r.phonemes,
+                }),
+                Err(kokoro_err) => {
+                    log::warn!(
+                        "[TTS] Kokoro failed ({}); attempting espeak-ng fallback",
+                        kokoro_err
+                    );
+                    let fallback_voice = get_db_setting(&app, "tts_voice", "en-us");
+                    let text_fallback = text.clone();
+                    let fallback_result = tokio::task::spawn_blocking(move || {
+                        if !local_tts::check_espeak() {
+                            return Err("espeak-ng is not available".to_string());
+                        }
+                        local_tts::speak_espeak(&text_fallback, &fallback_voice)
+                    })
+                    .await
+                    .map_err(|e| e.to_string())?;
+
+                    match fallback_result {
+                        Ok(audio) => Ok(TtsSpeakResult {
+                            audio_bytes: audio,
+                            phonemes: None,
+                        }),
+                        Err(fallback_err) => Err(format!(
+                            "Kokoro failed: {}. espeak-ng fallback failed: {}",
+                            kokoro_err, fallback_err
+                        )),
+                    }
+                }
+            }
         }
 
         _ /* "external" */ => {
@@ -462,6 +504,7 @@ pub async fn cmd_tts_speak(
 #[derive(Serialize)]
 pub struct TtsEngineStatus {
     pub kokoro: bool,
+    pub espeak: bool,
     pub external: bool,
     pub current_engine: String,
 }
@@ -470,10 +513,21 @@ pub struct TtsEngineStatus {
 pub async fn cmd_tts_check_engines(app: AppHandle) -> TtsEngineStatus {
     let current_engine = get_db_setting(&app, "tts_engine", "kokoro");
     let script = script_path(&app, "tts_kokoro.py").unwrap_or_default();
+    let model = expand_home(&get_db_setting(&app, "kokoro_model_path", ""));
+    let voices = expand_home(&get_db_setting(&app, "kokoro_voices_path", ""));
     let tts_url = get_db_setting(&app, "tts_url", "");
 
     let script_clone = script.clone();
-    let kokoro = tokio::task::spawn_blocking(move || local_tts::check_kokoro(&script_clone))
+    let model_clone = model.clone();
+    let voices_clone = voices.clone();
+    let kokoro = tokio::task::spawn_blocking(move || {
+        local_tts::check_kokoro(&script_clone)
+            && std::path::Path::new(&model_clone).exists()
+            && std::path::Path::new(&voices_clone).exists()
+    })
+    .await
+    .unwrap_or(false);
+    let espeak = tokio::task::spawn_blocking(local_tts::check_espeak)
         .await
         .unwrap_or(false);
 
@@ -495,6 +549,7 @@ pub async fn cmd_tts_check_engines(app: AppHandle) -> TtsEngineStatus {
 
     TtsEngineStatus {
         kokoro,
+        espeak,
         external,
         current_engine,
     }
@@ -515,7 +570,7 @@ pub async fn cmd_stt_check_engines(app: AppHandle) -> SttEngineStatus {
     let whisper_rs_model_path = expand_home(&get_db_setting(
         &app,
         "whisper_rs_model_path",
-        "~/.local/share/arx/whisper/ggml-base-q8_0.bin",
+        &default_whisper_model_path(&app),
     ));
 
     let whisper_rs =

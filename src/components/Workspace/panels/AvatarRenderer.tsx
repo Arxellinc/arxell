@@ -2424,103 +2424,28 @@ export function AvatarRenderer({
             onMorphNames?.(allMorphNames);
           }
           
-          // ── Comprehensive Model Inspection ───────────────────────────────────
-          console.groupCollapsed(`[AvatarRenderer] Model Inspection: ${src}`);
-          
-          // Bones with hierarchy
+          // Gather bones for mapping/debug panel data.
           const bones: string[] = [];
-          const boneHierarchy: string[] = [];
           gltf.scene.traverse((node) => {
             if (node instanceof THREE.Bone) {
               bones.push(node.name);
-              // Show hierarchy with indentation based on depth
-              let depth = 0;
-              let parent = node.parent;
-              while (parent) { depth++; parent = parent.parent; }
-              const indent = "  ".repeat(depth);
-              const rot = node.rotation;
-              boneHierarchy.push(`${indent}${node.name} [rot: ${rot.x.toFixed(2)}, ${rot.y.toFixed(2)}, ${rot.z.toFixed(2)}]`);
             }
           });
-          console.log(`🦴 Bones (${bones.length}):`, bones);
-          console.groupCollapsed("🦴 Bone Hierarchy (with initial rotations):");
-          boneHierarchy.forEach(line => console.log(line));
-          console.groupEnd();
-          
-          // Meshes with details
-          console.groupCollapsed(`📦 Meshes (${allMeshes.length})`);
-          for (const { mesh, isFace, isEye, isLip } of allMeshes) {
-            const morphCount = mesh.morphTargetDictionary ? Object.keys(mesh.morphTargetDictionary).length : 0;
-            console.log(`  "${mesh.name}": face=${isFace}, eye=${isEye}, lip=${isLip}, morphs=${morphCount}`);
-          }
-          console.groupEnd();
-          
-          // Morph targets grouped by mesh
-          if (morphMeshes.length > 0) {
-            console.groupCollapsed(`🎭 Morph Targets (${allMorphNames.length} unique)`);
-            for (const { mesh, dict } of morphMeshes) {
-              const names = Object.keys(dict);
-              if (names.length > 0) {
-                console.log(`  "${mesh.name}":`, names);
-              }
-            }
-            console.groupEnd();
-          } else {
-            console.log("🎭 Morph Targets: None");
-          }
-          
-          // Animations
-          console.log(`🎬 Animation Clips (${gltf.animations.length}):`, gltf.animations.map(a => a.name || "unnamed"));
-          
-          // Check for common lip sync morphs
-          const lipSyncMorphs = ["jawOpen", "jaw_open", "Jaw_Open", "mouthOpen", "viseme_aa", "A", "mouthFunnel", "mouthPucker"];
-          const foundLipSync = lipSyncMorphs.filter(name => allMorphNames.some(n => n.toLowerCase() === name.toLowerCase()));
-          const missingLipSync = lipSyncMorphs.filter(name => !allMorphNames.some(n => n.toLowerCase() === name.toLowerCase()));
-          console.log("👄 Lip Sync Morphs - Found:", foundLipSync.length > 0 ? foundLipSync : "NONE ⚠️");
-          console.log("👄 Lip Sync Morphs - Missing:", missingLipSync);
-          
-          // Check for blink morphs
-          const blinkMorphs = ["eyeBlink_L", "eyeBlink_R", "blink_L", "blink_R", "eyeblinkleft", "eyeblinkright"];
-          const foundBlink = blinkMorphs.filter(name => allMorphNames.some(n => n.toLowerCase() === name.toLowerCase()));
-          console.log("👁️ Blink Morphs - Found:", foundBlink.length > 0 ? foundBlink : "NONE ⚠️");
-          
-          console.groupEnd();
 
           // Find key bones (fuzzy, rig-agnostic).
-          // Helper to log which bone was matched
-          const logBoneMatch = (name: string, bone: THREE.Bone | undefined, keywords: string[]) => {
-            if (bone) {
-              console.log(`🦴 ${name}: "${bone.name}" (matched: [${keywords.join(", ")}])`);
-            } else {
-              console.warn(`🦴 ${name}: NOT FOUND (tried: [${keywords.join(", ")}])`);
-            }
-          };
-          
           bHips      = findBone(gltf.scene, "hips", "pelvis", "root");
-          logBoneMatch("Hips", bHips, ["hips", "pelvis", "root"]);
           bSpine     = findBone(gltf.scene, "spine", "spine1", "spine01");
-          logBoneMatch("Spine", bSpine, ["spine", "spine1", "spine01"]);
           bChest     = findBone(gltf.scene, "chest", "spine2", "spine02", "upperchest");
-          logBoneMatch("Chest", bChest, ["chest", "spine2", "spine02", "upperchest"]);
           bNeck      = findBone(gltf.scene, "neck");
-          logBoneMatch("Neck", bNeck, ["neck"]);
           bHead      = findBone(gltf.scene, "head");
-          logBoneMatch("Head", bHead, ["head"]);
           bJaw       = findJawBone(gltf.scene);
-          logBoneMatch("Jaw", bJaw, ["jaw", "chin", "mandible"]);
           
           bLUpperArm = findBone(gltf.scene, "leftupperarm", "leftarm", "lupperarm", "upperarml", "arml", "shoulderl");
-          logBoneMatch("LUpperArm", bLUpperArm, ["leftupperarm", "leftarm", "lupperarm", "upperarml", "arml", "shoulderl"]);
           bRUpperArm = findBone(gltf.scene, "rightupperarm", "rightarm", "rupperarm", "upperarmr", "armr", "shoulderr");
-          logBoneMatch("RUpperArm", bRUpperArm, ["rightupperarm", "rightarm", "rupperarm", "upperarmr", "armr", "shoulderr"]);
           bLForearm  = findBone(gltf.scene, "leftforearm", "leftlowerarm", "lforearm", "forearm_l");
-          logBoneMatch("LForearm", bLForearm, ["leftforearm", "leftlowerarm", "lforearm", "forearm_l"]);
           bRForearm  = findBone(gltf.scene, "rightforearm", "rightlowerarm", "rforearm", "forearm_r");
-          logBoneMatch("RForearm", bRForearm, ["rightforearm", "rightlowerarm", "rforearm", "forearm_r"]);
           bLHand     = findBone(gltf.scene, "lefthand", "lhand", "hand_l");
-          logBoneMatch("LHand", bLHand, ["lefthand", "lhand", "hand_l"]);
           bRHand     = findBone(gltf.scene, "righthand", "rhand", "hand_r");
-          logBoneMatch("RHand", bRHand, ["righthand", "rhand", "hand_r"]);
 
           // Prefer exact jaw object nodes when present.
           const findObjectByNames = (names: string[]): THREE.Object3D | null => {
@@ -2538,7 +2463,6 @@ export function AvatarRenderer({
             jawBottomMesh.matrixAutoUpdate = true;
             initJawMeshQuats.set(jawBottomMesh, jawBottomMesh.quaternion.clone());
             initJawMeshPositions.set(jawBottomMesh, jawBottomMesh.position.clone());
-            console.log("[AvatarRenderer] Using jaw object by name:", jawBottomByName.name);
           }
           const jawTopByName = findObjectByNames(["Jaw_top", "Upper_Jaw", "upper_jaw", "jaw_top"]);
           if (jawTopByName) {
@@ -2546,7 +2470,6 @@ export function AvatarRenderer({
             jawTopMesh.matrixAutoUpdate = true;
             initJawMeshQuats.set(jawTopMesh, jawTopMesh.quaternion.clone());
             initJawMeshPositions.set(jawTopMesh, jawTopMesh.position.clone());
-            console.log("[AvatarRenderer] Using jaw object by name:", jawTopByName.name);
           }
 
           // Report bone mapping to debug UI
@@ -2571,18 +2494,6 @@ export function AvatarRenderer({
           // Build and report comprehensive skeleton mapping for rig debug UI
           const skeletonMapping = buildSkeletonMapping(gltf.scene, gltf.animations, hierarchyConfigRef.current);
           twistChains = skeletonMapping.twistChains;
-          console.log("[AvatarRenderer] Skeleton mapping built:", {
-            totalBones: skeletonMapping.totalBones,
-            twistBones: skeletonMapping.twistBoneCount,
-            twistChains: twistChains.length,
-            morphTargets: skeletonMapping.morphTargets.length,
-          });
-          console.log(`[AvatarRenderer] boneCache: ${boneCache.size} bones`, [...boneCache.keys()]);
-          if (twistChains.length > 0) {
-            console.log("[AvatarRenderer] Twist chains detected:", twistChains.map(c => `${c.mainBone} → [${c.twistBones.join(", ")}] (axis=${c.axis})`));
-          } else {
-            console.warn("[AvatarRenderer] No twist chains detected — twist bone distribution disabled. Check bone names contain 'twist'.");
-          }
           onSkeletonMapping?.(skeletonMapping);
 
           scene.add(gltf.scene);
@@ -2603,10 +2514,6 @@ export function AvatarRenderer({
             excludeTwist: false,  // Show twist bones as they're part of the armature
             excludeCorrective: true,
           }, filteredBones);
-          console.log(`[AvatarRenderer] FilteredSkeletonHelper: ${filteredBones.included.length} bones included, ${filteredBones.excluded.length} excluded`);
-          if (filteredBones.excluded.length > 0) {
-            console.log("[AvatarRenderer] Excluded bones:", filteredBones.excluded);
-          }
           skeletonHelper.visible = showSkeletonHelperRef.current;
           scene.add(skeletonHelper);
 

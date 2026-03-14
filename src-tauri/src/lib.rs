@@ -9,6 +9,7 @@ pub mod model_manager;
 use std::sync::atomic::{AtomicBool, AtomicU64};
 use std::sync::{Arc, Mutex};
 use tauri::{Emitter, Manager};
+use tokio::io::AsyncWriteExt;
 
 use model_manager::ModelManagerState;
 use rusqlite::OptionalExtension;
@@ -226,6 +227,120 @@ fn model_id_from_path(path: &str) -> Option<String> {
     }
 }
 
+fn normalize_voice_paths(conn: &rusqlite::Connection, app_dir: &std::path::Path) {
+    let whisper_dir = app_dir.join("whisper");
+    let kokoro_dir = app_dir.join("kokoro");
+    let _ = std::fs::create_dir_all(&whisper_dir);
+    let _ = std::fs::create_dir_all(&kokoro_dir);
+
+    let whisper_model = whisper_dir
+        .join("ggml-base-q8_0.bin")
+        .to_string_lossy()
+        .to_string();
+    let kokoro_model = kokoro_dir
+        .join("kokoro-v1.0.onnx")
+        .to_string_lossy()
+        .to_string();
+    let kokoro_voices = kokoro_dir
+        .join("voices-v1.0.bin")
+        .to_string_lossy()
+        .to_string();
+
+    let upsert_sql = "INSERT INTO settings (key, value) VALUES (?1, ?2)
+                      ON CONFLICT(key) DO UPDATE SET value = excluded.value";
+    let _ = conn.execute(
+        upsert_sql,
+        rusqlite::params!["whisper_rs_model_path", whisper_model],
+    );
+    let _ = conn.execute(
+        upsert_sql,
+        rusqlite::params!["kokoro_model_path", kokoro_model],
+    );
+    let _ = conn.execute(
+        upsert_sql,
+        rusqlite::params!["kokoro_voices_path", kokoro_voices],
+    );
+}
+
+fn start_kokoro_download_if_missing(model_path: std::path::PathBuf) {
+    if model_path.exists() {
+        return;
+    }
+
+    let parent = match model_path.parent() {
+        Some(p) => p.to_path_buf(),
+        None => return,
+    };
+    let _ = std::fs::create_dir_all(&parent);
+
+    let lock_path = parent.join(".kokoro_download.lock");
+    let lock = std::fs::OpenOptions::new()
+        .create_new(true)
+        .write(true)
+        .open(&lock_path);
+    if lock.is_err() {
+        return;
+    }
+
+    let url = std::env::var("ARXELL_KOKORO_MODEL_URL").unwrap_or_else(|_| {
+        "https://huggingface.co/Arxell/kokoro-v1.0.onnx/resolve/main/kokoro-v1.0.onnx?download=true".to_string()
+    });
+    let temp_path = model_path.with_extension("onnx.part");
+    commands::logs::info(&format!(
+        "[startup] Kokoro model missing; starting background download from {}",
+        url
+    ));
+
+    tauri::async_runtime::spawn(async move {
+        let result: Result<(), String> = async {
+            let client = reqwest::Client::builder()
+                .timeout(std::time::Duration::from_secs(1200))
+                .build()
+                .map_err(|e| format!("failed to build HTTP client: {e}"))?;
+
+            let mut resp = client
+                .get(&url)
+                .send()
+                .await
+                .map_err(|e| format!("request failed: {e}"))?;
+            if !resp.status().is_success() {
+                return Err(format!("HTTP {}", resp.status()));
+            }
+
+            let mut file = tokio::fs::File::create(&temp_path)
+                .await
+                .map_err(|e| format!("failed to create temp file: {e}"))?;
+            while let Some(chunk) = resp.chunk().await.map_err(|e| e.to_string())? {
+                file.write_all(&chunk)
+                    .await
+                    .map_err(|e| format!("failed to write chunk: {e}"))?;
+            }
+            file.flush()
+                .await
+                .map_err(|e| format!("failed to flush file: {e}"))?;
+
+            tokio::fs::rename(&temp_path, &model_path)
+                .await
+                .map_err(|e| format!("failed to finalize model file: {e}"))?;
+            Ok(())
+        }
+        .await;
+
+        match result {
+            Ok(()) => commands::logs::info("[startup] Kokoro model download complete"),
+            Err(e) => {
+                let _ = std::fs::remove_file(&temp_path);
+                commands::logs::warn(&format!(
+                    "[startup] Kokoro model download failed: {}. Local TTS may fall back until this succeeds.",
+                    e
+                ));
+            }
+        }
+
+        let _ = std::fs::remove_file(&lock_path);
+    });
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     env_logger::init();
@@ -265,6 +380,7 @@ pub fn run() {
 
             let db_path = app_dir.join("arx.db");
             let conn = db::init_db(&db_path).expect("failed to init database");
+            normalize_voice_paths(&conn, &app_dir);
             commands::logs::info("Database initialized");
 
             let a2a_db_path = app_dir.join("a2a.db");
@@ -286,13 +402,10 @@ pub fn run() {
             // ── Bundled Whisper models: deploy to user data dir on first launch ─
             // Models are shipped inside the app bundle under resources/whisper/.
             // On first run (or if deleted) they are copied to
-            // ~/.local/share/arx/whisper/ so the default DB path resolves and
+            // app_data_dir/whisper/ so the default DB path resolves and
             // users can manage/replace models in a stable, well-known location.
             {
-                let whisper_dest = {
-                    let home = std::env::var("HOME").unwrap_or_default();
-                    std::path::PathBuf::from(home).join(".local/share/arx/whisper")
-                };
+                let whisper_dest = app_dir.join("whisper");
                 std::fs::create_dir_all(&whisper_dest).ok();
                 let bundled = ["ggml-base-q8_0.bin", "ggml-tiny.en-q8_0.bin"];
                 for name in &bundled {
@@ -314,6 +427,28 @@ pub fn run() {
                         }
                     }
                 }
+            }
+
+            // ── Kokoro assets bootstrap ────────────────────────────────────────
+            // voices-v1.0.bin is bundled with the app. The large ONNX model is
+            // downloaded on-demand on first launch when missing.
+            {
+                let kokoro_dest = app_dir.join("kokoro");
+                std::fs::create_dir_all(&kokoro_dest).ok();
+                let voices_dest = kokoro_dest.join("voices-v1.0.bin");
+                if !voices_dest.exists() {
+                    match app.path().resolve(
+                        "resources/voice/voices-v1.0.bin",
+                        tauri::path::BaseDirectory::Resource,
+                    ) {
+                        Ok(src) if src.exists() => match std::fs::copy(&src, &voices_dest) {
+                            Ok(_) => commands::logs::info("Deployed bundled Kokoro voices file"),
+                            Err(e) => log::warn!("Failed to deploy Kokoro voices file: {e}"),
+                        },
+                        _ => log::debug!("Bundled Kokoro voices file not found in resources"),
+                    }
+                }
+                start_kokoro_download_if_missing(kokoro_dest.join("kokoro-v1.0.onnx"));
             }
 
             // ── Optional bundled LLM: deploy to {app_data_dir}/models/ on first launch ──

@@ -181,7 +181,7 @@ export function StatusBar() {
   const ttsOk: boolean | undefined = ttsLoading
     ? undefined
     : activeTtsEngine === "kokoro"
-    ? ttsEngines?.kokoro
+    ? (ttsEngines?.kokoro || ttsEngines?.espeak)
     : activeTtsEngine === "external"
     ? ttsEngines?.external
     : false;
@@ -193,6 +193,8 @@ export function StatusBar() {
     : activeTtsEngine === "kokoro"
     ? ttsEngines.kokoro
       ? "kokoro ✓"
+      : ttsEngines.espeak
+      ? "fallback: espeak"
       : "not found"
     : ttsEngines.external
     ? "online"
