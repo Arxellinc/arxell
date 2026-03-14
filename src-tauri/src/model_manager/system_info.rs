@@ -5,6 +5,10 @@
 use serde::{Deserialize, Serialize};
 use std::time::{SystemTime, UNIX_EPOCH};
 use sysinfo::{CpuRefreshKind, Disks, RefreshKind, System};
+#[cfg(target_os = "windows")]
+use std::sync::{LazyLock, Mutex};
+#[cfg(target_os = "windows")]
+use std::time::{Duration, Instant};
 
 /// Inference engine types supported by the application
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -166,6 +170,25 @@ pub struct SystemUsage {
     pub npu_utilization_percent: Option<f32>,
     /// Snapshot time in unix milliseconds
     pub timestamp_ms: u64,
+}
+
+#[cfg(target_os = "windows")]
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+#[cfg(target_os = "windows")]
+const WINDOWS_GPU_USAGE_TTL: Duration = Duration::from_secs(10);
+#[cfg(target_os = "windows")]
+static WINDOWS_GPU_USAGE_CACHE: LazyLock<Mutex<(Option<Instant>, Vec<GpuUsage>)>> =
+    LazyLock::new(|| Mutex::new((None, Vec::new())));
+
+#[cfg(target_os = "windows")]
+fn run_windows_command_hidden(program: &str, args: &[&str]) -> Option<std::process::Output> {
+    use std::os::windows::process::CommandExt;
+
+    std::process::Command::new(program)
+        .args(args)
+        .creation_flags(CREATE_NO_WINDOW)
+        .output()
+        .ok()
 }
 
 /// Storage device and mounted volume information
@@ -1555,16 +1578,24 @@ fn query_nvidia_smi_usage() -> Vec<GpuUsage> {
 
 #[cfg(target_os = "windows")]
 fn query_windows_gpu_usage() -> Vec<GpuUsage> {
+    // This path runs from the global 1s telemetry loop. On Windows, avoid
+    // spawning visible PowerShell windows continuously and throttle expensive
+    // external probes to a coarser interval.
+    if let Ok(cache) = WINDOWS_GPU_USAGE_CACHE.lock() {
+        if let Some(last) = cache.0 {
+            if last.elapsed() < WINDOWS_GPU_USAGE_TTL {
+                return cache.1.clone();
+            }
+        }
+    }
+
     let mut out = Vec::new();
     let controller_script = r#"
       $list = Get-CimInstance Win32_VideoController | Select-Object Name,AdapterRAM
       $list | ConvertTo-Json -Compress
     "#;
-    if let Ok(output) = std::process::Command::new("powershell")
-        .arg("-NoProfile")
-        .arg("-Command")
-        .arg(controller_script)
-        .output()
+    if let Some(output) =
+        run_windows_command_hidden("powershell", &["-NoProfile", "-Command", controller_script])
     {
         if output.status.success() {
             let txt = String::from_utf8_lossy(&output.stdout);
@@ -1590,11 +1621,8 @@ fn query_windows_gpu_usage() -> Vec<GpuUsage> {
       if ($null -eq $sum) { $sum = 0 }
       [PSCustomObject]@{util=$sum} | ConvertTo-Json -Compress
     "#;
-    if let Ok(output) = std::process::Command::new("powershell")
-        .arg("-NoProfile")
-        .arg("-Command")
-        .arg(util_script)
-        .output()
+    if let Some(output) =
+        run_windows_command_hidden("powershell", &["-NoProfile", "-Command", util_script])
     {
         if output.status.success() {
             let txt = String::from_utf8_lossy(&output.stdout);
@@ -1613,6 +1641,12 @@ fn query_windows_gpu_usage() -> Vec<GpuUsage> {
             }
         }
     }
+
+    if let Ok(mut cache) = WINDOWS_GPU_USAGE_CACHE.lock() {
+        cache.0 = Some(Instant::now());
+        cache.1 = out.clone();
+    }
+
     out
 }
 
@@ -1684,11 +1718,13 @@ fn check_llama_cpp_binary() -> Option<(String, Option<String>)> {
 
     // Check if binary is in PATH
     for binary in &binary_names {
-        let lookup = if cfg!(target_os = "windows") {
-            std::process::Command::new("where").arg(binary).output()
-        } else {
-            std::process::Command::new("which").arg(binary).output()
-        };
+        #[cfg(target_os = "windows")]
+        let lookup = run_windows_command_hidden("where", &[*binary]).ok_or(());
+        #[cfg(not(target_os = "windows"))]
+        let lookup = std::process::Command::new("which")
+            .arg(binary)
+            .output()
+            .map_err(|_| ());
         if let Ok(output) = lookup {
             if output.status.success() {
                 let path = String::from_utf8_lossy(&output.stdout)
