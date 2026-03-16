@@ -14,6 +14,7 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import urllib.parse
 import urllib.request
 import zipfile
 from pathlib import Path
@@ -49,7 +50,7 @@ def _detect_target() -> tuple[str, str, str]:
 
 
 def _download(url: str, dest: Path) -> None:
-    req = urllib.request.Request(url, headers={"User-Agent": "arx-kokoro-runtime-prep"})
+    req = urllib.request.Request(url, headers=_request_headers(api=False))
     with urllib.request.urlopen(req) as resp, dest.open("wb") as out:
         shutil.copyfileobj(resp, out)
 
@@ -62,10 +63,19 @@ def _sha256(path: Path) -> str:
     return h.hexdigest()
 
 
+def _request_headers(*, api: bool) -> dict[str, str]:
+    headers = {"User-Agent": "arx-kokoro-runtime-prep"}
+    token = (os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN") or "").strip()
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    if api:
+        headers["Accept"] = "application/vnd.github+json"
+        headers["X-GitHub-Api-Version"] = "2022-11-28"
+    return headers
+
+
 def _fetch_latest_pbs_asset(target: str, python_series: str) -> tuple[str, str]:
-    req = urllib.request.Request(
-        GITHUB_API_LATEST, headers={"User-Agent": "arx-kokoro-runtime-prep"}
-    )
+    req = urllib.request.Request(GITHUB_API_LATEST, headers=_request_headers(api=True))
     with urllib.request.urlopen(req) as resp:
         payload = json.load(resp)
 
@@ -188,6 +198,11 @@ def main() -> int:
         "--requirements",
         default=str(Path("scripts") / "kokoro-runtime-requirements.txt"),
     )
+    parser.add_argument(
+        "--pbs-asset-url",
+        default=os.environ.get("KOKORO_PBS_ASSET_URL", "").strip(),
+        help="Optional direct URL for python-build-standalone install_only archive.",
+    )
     args = parser.parse_args()
 
     repo_root = Path(__file__).resolve().parent.parent
@@ -221,7 +236,12 @@ def main() -> int:
     if not req_path.exists():
         raise RuntimeError(f"Requirements file missing: {req_path}")
 
-    url, asset_name = _fetch_latest_pbs_asset(target, args.python_series)
+    if args.pbs_asset_url:
+        url = args.pbs_asset_url
+        parsed = urllib.parse.urlparse(url)
+        asset_name = Path(parsed.path).name
+    else:
+        url, asset_name = _fetch_latest_pbs_asset(target, args.python_series)
     print(f"Using python-build-standalone asset: {asset_name}")
 
     with tempfile.TemporaryDirectory(prefix="kokoro-runtime-") as td:

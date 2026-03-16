@@ -50,6 +50,7 @@ jobs:
             --model-out public/voice/model_quantized.onnx \
             --python-series 3.11
         env:
+          GITHUB_TOKEN: ${{ github.token }}
           KOKORO_QUANT_MODEL_URL: https://huggingface.co/onnx-community/Kokoro-82M-v1.0-ONNX/resolve/main/onnx/model_quantized.onnx?download=true
 
       - name: Install Linux deps for Tauri
