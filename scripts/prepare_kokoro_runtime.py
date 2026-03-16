@@ -127,6 +127,14 @@ def _venv_python(venv_dir: Path) -> Path:
     return venv_dir / "bin" / "python3"
 
 
+def _standalone_root(standalone_python: Path) -> Path:
+    # .../python/bin/python3 -> .../python
+    root = standalone_python.parent.parent
+    if not root.exists():
+        raise RuntimeError(f"Standalone python root not found for {standalone_python}")
+    return root
+
+
 def _run(cmd: list[str], *, cwd: Path | None = None, input_text: str | None = None) -> None:
     subprocess.run(
         cmd,
@@ -257,8 +265,23 @@ def main() -> int:
         standalone_python = _find_python_binary(extract_dir)
         print(f"Standalone Python: {standalone_python}")
 
-        _run([str(standalone_python), "-m", "venv", str(venv_dir), "--copies"])
-        vpy = _venv_python(venv_dir)
+        vpy: Path
+        try:
+            _run([str(standalone_python), "-m", "venv", str(venv_dir), "--copies"])
+            vpy = _venv_python(venv_dir)
+        except subprocess.CalledProcessError as exc:
+            # Some macOS CI images have intermittent ensurepip/venv failures with
+            # standalone Python. Fall back to using the standalone runtime directly.
+            print(
+                "WARNING: venv creation failed; falling back to standalone runtime "
+                f"layout ({exc})."
+            )
+            runtime_root = _standalone_root(standalone_python)
+            if venv_dir.exists():
+                shutil.rmtree(venv_dir)
+            shutil.copytree(runtime_root, venv_dir)
+            vpy = _venv_python(venv_dir)
+
         _run([str(vpy), "-m", "pip", "install", "--upgrade", "pip"])
         _run([str(vpy), "-m", "pip", "install", "-r", str(req_path)])
         _smoke_test(vpy, repo_root, model_out, voices_path)
