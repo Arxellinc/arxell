@@ -13,6 +13,7 @@ pub mod settings;
 pub mod skills;
 pub mod terminal;
 pub mod tool_gateway;
+pub mod tool_packs;
 pub mod voice;
 pub mod webview;
 pub mod workspace;

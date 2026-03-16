@@ -1,7 +1,17 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Check, RefreshCw, Save, X } from "lucide-react";
-import { modelsList, settingsGetAll, settingsSet } from "../lib/tauri";
+import {
+  modelsList,
+  settingsGetAll,
+  settingsSet,
+  toolPackInstall,
+  toolPackRemove,
+  toolPacksList,
+  toolPackSetEnabled,
+  type ToolPackRecord,
+} from "../lib/tauri";
 import { useThemeStore, type Theme } from "../store/themeStore";
+import { useToolCatalogStore } from "../store/toolCatalogStore";
 import { cn } from "../lib/utils";
 
 interface SettingsDialogProps {
@@ -245,6 +255,10 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
+  const [toolPacks, setToolPacks] = useState<ToolPackRecord[]>([]);
+  const [packsLoading, setPacksLoading] = useState(false);
+  const [packsBusyId, setPacksBusyId] = useState<string | null>(null);
+  const [packsMessage, setPacksMessage] = useState<string | null>(null);
   const fetchedForUrl = useRef<string | null>(null);
 
   const handleThemeChange = (nextTheme: Theme) => {
@@ -258,8 +272,111 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
       settingsGetAll()
         .then((all) => setValues({ ...DEFAULTS, ...all }))
         .catch(console.error);
+      void refreshToolPacks();
     }
   }, [open]);
+
+  const refreshToolPacks = async () => {
+    setPacksLoading(true);
+    try {
+      const packs = await toolPacksList();
+      setToolPacks(packs);
+    } catch (e) {
+      setPacksMessage(`Failed to load tool packs: ${String(e)}`);
+    } finally {
+      setPacksLoading(false);
+    }
+  };
+
+  const installCodexPack = async () => {
+    setPacksBusyId("codex");
+    setPacksMessage(null);
+    try {
+      await toolPackInstall({
+        id: "codex",
+        repo: "Arxellinc/tools",
+        ref: "main",
+        manifest_path: "codex/manifest.json",
+        enable: true,
+      });
+      const catalog = useToolCatalogStore.getState();
+      catalog.installOptionalTool("github-codex-pack");
+      catalog.setToolEnabled("codex", true);
+      await refreshToolPacks();
+      setPacksMessage("Codex tool pack installed.");
+    } catch (e) {
+      setPacksMessage(`Codex install failed: ${String(e)}`);
+    } finally {
+      setPacksBusyId(null);
+    }
+  };
+
+  const installPiPack = async () => {
+    setPacksBusyId("pi");
+    setPacksMessage(null);
+    try {
+      await toolPackInstall({
+        id: "pi",
+        repo: "Arxellinc/tools",
+        ref: "main",
+        manifest_path: "pi/manifest.json",
+        enable: true,
+      });
+      const catalog = useToolCatalogStore.getState();
+      catalog.installOptionalTool("github-pi-pack");
+      catalog.setToolEnabled("pi", true);
+      await refreshToolPacks();
+      setPacksMessage("Pi tool pack installed.");
+    } catch (e) {
+      setPacksMessage(`Pi install failed: ${String(e)}`);
+    } finally {
+      setPacksBusyId(null);
+    }
+  };
+
+  const togglePack = async (pack: ToolPackRecord, enabled: boolean) => {
+    setPacksBusyId(pack.id);
+    setPacksMessage(null);
+    try {
+      await toolPackSetEnabled(pack.id, enabled);
+      if (pack.id === "codex") {
+        const catalog = useToolCatalogStore.getState();
+        catalog.setOptionalToolEnabled("github-codex-pack", enabled);
+        catalog.setToolEnabled("codex", enabled);
+      } else if (pack.id === "pi") {
+        const catalog = useToolCatalogStore.getState();
+        catalog.setOptionalToolEnabled("github-pi-pack", enabled);
+        catalog.setToolEnabled("pi", enabled);
+      }
+      await refreshToolPacks();
+    } catch (e) {
+      setPacksMessage(`Failed to update '${pack.id}': ${String(e)}`);
+    } finally {
+      setPacksBusyId(null);
+    }
+  };
+
+  const removePack = async (pack: ToolPackRecord) => {
+    setPacksBusyId(pack.id);
+    setPacksMessage(null);
+    try {
+      await toolPackRemove(pack.id, true);
+      if (pack.id === "codex") {
+        const catalog = useToolCatalogStore.getState();
+        catalog.uninstallOptionalTool("github-codex-pack");
+        catalog.setToolEnabled("codex", false);
+      } else if (pack.id === "pi") {
+        const catalog = useToolCatalogStore.getState();
+        catalog.uninstallOptionalTool("github-pi-pack");
+        catalog.setToolEnabled("pi", false);
+      }
+      await refreshToolPacks();
+    } catch (e) {
+      setPacksMessage(`Failed to remove '${pack.id}': ${String(e)}`);
+    } finally {
+      setPacksBusyId(null);
+    }
+  };
 
   // Auto-fetch models when base_url becomes available
   useEffect(() => {
@@ -456,6 +573,79 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                 placeholder="Optional model id for codex exec --model"
                 hint="Leave blank to auto-pick a coding model from your configured list."
               />
+            </div>
+          </Section>
+
+          <Section title="Tool Packs">
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={() => void installCodexPack()}
+                disabled={packsBusyId === "codex"}
+                className="rounded border border-line-dark px-3 py-1.5 text-xs text-text-med hover:bg-line-med disabled:opacity-50"
+              >
+                {packsBusyId === "codex" ? "Installing Codex..." : "Install Codex Pack"}
+              </button>
+              <button
+                type="button"
+                onClick={() => void installPiPack()}
+                disabled={packsBusyId === "pi"}
+                className="rounded border border-line-dark px-3 py-1.5 text-xs text-text-med hover:bg-line-med disabled:opacity-50"
+              >
+                {packsBusyId === "pi" ? "Installing Pi..." : "Install Pi Pack"}
+              </button>
+              <button
+                type="button"
+                onClick={() => void refreshToolPacks()}
+                disabled={packsLoading}
+                className="inline-flex items-center gap-1 rounded border border-line-dark px-3 py-1.5 text-xs text-text-med hover:bg-line-med disabled:opacity-50"
+              >
+                <RefreshCw size={12} className={packsLoading ? "animate-spin" : ""} />
+                Refresh
+              </button>
+              <p className="text-[10px] text-text-dark">
+                Optional heavy integrations can be installed on demand from GitHub.
+              </p>
+            </div>
+            {packsMessage ? <p className="text-[10px] text-text-med">{packsMessage}</p> : null}
+            <div className="space-y-2">
+              {toolPacks.length === 0 ? (
+                <p className="text-[10px] text-text-dark">No tool packs installed.</p>
+              ) : (
+                toolPacks.map((pack) => (
+                  <div
+                    key={pack.id}
+                    className="flex items-center justify-between gap-3 rounded border border-line-med px-2.5 py-2"
+                  >
+                    <div className="min-w-0">
+                      <p className="text-[11px] text-text-norm">
+                        {pack.name} <span className="text-text-dark">({pack.id})</span>
+                      </p>
+                      <p className="truncate text-[10px] text-text-dark">
+                        v{pack.version} • {pack.source_repo}@{pack.source_ref}
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => void togglePack(pack, !pack.enabled)}
+                        disabled={packsBusyId === pack.id}
+                        className="rounded border border-line-dark px-2 py-1 text-[10px] text-text-med hover:bg-line-med disabled:opacity-50"
+                      >
+                        {pack.enabled ? "Disable" : "Enable"}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => void removePack(pack)}
+                        disabled={packsBusyId === pack.id}
+                        className="rounded border border-line-dark px-2 py-1 text-[10px] text-accent-red/90 hover:bg-line-med disabled:opacity-50"
+                      >
+                        Remove
+                      </button>
+                    </div>
+                  </div>
+                ))
+              )}
             </div>
           </Section>
 

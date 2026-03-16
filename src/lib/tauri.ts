@@ -16,6 +16,50 @@ export const settingsSet = (key: string, value: string) =>
 export const settingsGetAll = () =>
   invoke<Record<string, string>>("cmd_settings_get_all");
 
+export interface ToolPackRecord {
+  id: string;
+  name: string;
+  version: string;
+  description: string;
+  enabled: boolean;
+  install_path: string;
+  executable_path: string | null;
+  source_repo: string;
+  source_ref: string;
+  installed_at: number;
+}
+
+export interface ToolPackIndexEntry {
+  id: string;
+  name: string;
+  description: string;
+  latest: string;
+  manifest_path?: string | null;
+}
+
+export interface ToolPackInstallRequest {
+  id: string;
+  repo?: string;
+  ref?: string;
+  manifest_path?: string;
+  enable?: boolean;
+}
+
+export const toolPacksList = () =>
+  invoke<ToolPackRecord[]>("cmd_tool_packs_list");
+
+export const toolPacksIndex = (repo?: string, ref?: string) =>
+  invoke<ToolPackIndexEntry[]>("cmd_tool_packs_index", { repo, gitRef: ref });
+
+export const toolPackInstall = (request: ToolPackInstallRequest) =>
+  invoke<ToolPackRecord>("cmd_tool_pack_install", { request });
+
+export const toolPackSetEnabled = (id: string, enabled: boolean) =>
+  invoke<void>("cmd_tool_pack_set_enabled", { request: { id, enabled } });
+
+export const toolPackRemove = (id: string, remove_files = true) =>
+  invoke<void>("cmd_tool_pack_remove", { request: { id, removeFiles: remove_files } });
+
 export const modelsList = () => invoke<string[]>("cmd_models_list");
 
 // Model Configs

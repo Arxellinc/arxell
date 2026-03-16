@@ -49,6 +49,7 @@ import { useTaskStore } from "../store/taskStore";
 import { useNotesStore } from "../store/notesStore";
 import { useMcpStore } from "../store/mcpStore";
 import { useToolPanelStore } from "../store/toolPanelStore";
+import { useToolCatalogStore } from "../store/toolCatalogStore";
 import type { ChunkEvent } from "../types";
 import type { Project, Conversation } from "../types";
 import type { ToolMode } from "../core/tooling/types";
@@ -516,6 +517,46 @@ For all other tools, your current autonomy mode determines what executes. If a t
 - In **Full-Auto** mode: all tools execute automatically.
 Never silently pretend to perform an action — if a tool is blocked, always say so and direct the user to enable the appropriate mode.`;
 
+const BASE_AVAILABLE_TOOL_TAGS: string[] = [
+  "write_to_file",
+  "read_file",
+  "browser_search",
+  "browser_fetch",
+  "browser_navigate",
+  "browser_screenshot",
+  "settings_get",
+  "settings_set",
+  "set_mode",
+  "create_task",
+  "update_task",
+  "create_note",
+  "update_note",
+  "project_second_opinion",
+  "project_process_create",
+  "project_process_set_status",
+  "project_process_retry",
+];
+
+function isCoderRunEnabledByCatalog(): boolean {
+  const enabled = useToolCatalogStore.getState().enabledToolIds;
+  return enabled.includes("codex") || enabled.includes("pi");
+}
+
+function getAdvertisedToolTags(): string[] {
+  const tags = [...BASE_AVAILABLE_TOOL_TAGS];
+  if (isCoderRunEnabledByCatalog()) {
+    tags.push("coder_run");
+  }
+  return tags;
+}
+
+function toolAvailabilitySuffix(): string {
+  if (isCoderRunEnabledByCatalog()) return "";
+  return `\n\n### Tool Availability Override
+- coder_run is currently unavailable because no coding-agent runtime is enabled.
+- Install/enable a coding pack in Settings > Tool Packs, then enable the Codex or Pi panel in Tools.`;
+}
+
 function mergeToolRules(raw: unknown): Record<ModeId, ToolRules> {
   const fallback: Record<ModeId, ToolRules> = {
     chat: { ...DEFAULT_TOOL_RULES.chat },
@@ -843,7 +884,8 @@ async function buildExtraContext(
     ? `Workspace directory: ${workspacePath}\nAll paths are relative to this directory.`
     : `Note: No project workspace configured. Use absolute paths or assign this conversation to a project.`;
 
-  const toolPrompt = TOOL_PROMPT_TEMPLATE.replace("{WORKSPACE_LINE}", workspaceLine);
+  const toolPrompt =
+    TOOL_PROMPT_TEMPLATE.replace("{WORKSPACE_LINE}", workspaceLine) + toolAvailabilitySuffix();
 
   const mode = getModeById(modeId);
   const [modePolicy, toolRules, constraints] = await Promise.all([
@@ -1655,12 +1697,51 @@ async function executeToolCalls(
   const taskStore = useTaskStore.getState();
   const readResults: ReadResult[] = [];
   const safeSettingKeys = SAFE_SETTINGS.map((item) => item.key).join(", ");
+  const enabledToolIds = useToolCatalogStore.getState().enabledToolIds;
+  const enabledToolSet = new Set(enabledToolIds);
+  const isCatalogEnabledForCall = (call: ToolCall): boolean => {
+    switch (call.type) {
+      case "write_to_file":
+      case "read_file":
+        return enabledToolSet.has("files");
+      case "browser_fetch":
+      case "browser_search":
+      case "browser_navigate":
+      case "browser_screenshot":
+        return enabledToolSet.has("web");
+      case "create_task":
+      case "update_task":
+        return enabledToolSet.has("tasks");
+      case "create_note":
+      case "update_note":
+        return enabledToolSet.has("notes");
+      case "coder_run":
+        return enabledToolSet.has("codex") || enabledToolSet.has("pi");
+      case "project_second_opinion":
+      case "project_process_create":
+      case "project_process_set_status":
+      case "project_process_retry":
+        return enabledToolSet.has("project");
+      default:
+        return true;
+    }
+  };
 
   const gatewayMode = "sandbox";
   const rootGuard = workspacePath || null;
 
   let executedCount = 0;
   for (const call of calls) {
+    if (!isCatalogEnabledForCall(call)) {
+      const toolName = call.type === "coder_run" ? "Codex/Pi" : call.type;
+      readResults.push({
+        path: `disabled://${call.type}`,
+        content: "",
+        error: `Tool '${toolName}' is disabled in the current tool catalog. Enable it from the Tools panel before retrying.`,
+      });
+      continue;
+    }
+
     // Task and notes operations bypass mode policy — they are always allowed
     // regardless of autonomy level so the agent can track work and save notes in any mode.
     const isTaskOp = call.type === "create_task" || call.type === "update_task"
@@ -2283,12 +2364,13 @@ async function executeToolCalls(
   }
 
   // Report any unrecognized tool tags so the AI can inform the user
+  const advertisedTools = getAdvertisedToolTags().join(", ");
   for (const tag of unknownTags) {
     console.warn(`[tool] Unrecognized tool tag: <${tag}>`);
     readResults.push({
       path: `tool://${tag}`,
       content: "",
-      error: `Unrecognized tool "<${tag}>": this is not a supported tool. Available tools: write_to_file, read_file, browser_search, browser_fetch, browser_navigate, browser_screenshot, settings_get, settings_set, set_mode, create_task, update_task, coder_run, create_note, update_note, project_second_opinion, project_process_create, project_process_set_status, project_process_retry. Check the tool documentation above and use a supported tag.`,
+      error: `Unrecognized tool "<${tag}>": this is not a supported tool. Available tools: ${advertisedTools}. Check the tool documentation above and use a supported tag.`,
     });
   }
 

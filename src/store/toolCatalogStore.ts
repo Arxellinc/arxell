@@ -60,13 +60,32 @@ const DEFAULT_ENABLED_TOOL_IDS: ToolId[] = [
   "flow",
   "code",
   "web",
-  "pi",
   "terminal",
   "serve",
   "help",
 ];
 
 const DEFAULT_OPTIONAL_TOOLS: OptionalToolDefinition[] = [
+  {
+    id: "github-codex-pack",
+    title: "Codex Agent Pack",
+    description: "Install Codex agent runtime from GitHub tool packs.",
+    source: "github",
+    repo: "github.com/Arxellinc/tools",
+    installed: false,
+    enabled: false,
+    linkedToolId: "codex",
+  },
+  {
+    id: "github-pi-pack",
+    title: "Pi Agent Pack",
+    description: "Install Pi-compatible coding runtime from GitHub tool packs.",
+    source: "github",
+    repo: "github.com/Arxellinc/tools",
+    installed: false,
+    enabled: false,
+    linkedToolId: "pi",
+  },
   {
     id: "optional-email",
     title: "Email Client",

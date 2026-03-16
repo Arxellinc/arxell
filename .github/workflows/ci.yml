@@ -40,14 +40,6 @@ jobs:
         with:
           node-version: '20'
 
-      - name: Vendor Pi binaries
-        run: bash ./scripts/vendor_pi_binaries.sh v0.57.1
-        env:
-          PI_VENDOR_TARGET: auto
-
-      - name: Verify bundled pi binary is present
-        run: ARX_PI_REQUIRE_BUNDLE=1 bash ./scripts/coder_pi_preflight.sh
-
       - name: Install Linux deps for Tauri
         run: |
           sudo apt-get update

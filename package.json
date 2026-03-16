@@ -11,11 +11,9 @@
     "tauri": "tauri",
     "security:preflight": "bash ./scripts/security_preflight.sh",
     "diagnose:pi": "bash ./scripts/coder_pi_preflight.sh",
-    "verify:pi:bundle": "ARX_PI_REQUIRE_BUNDLE=1 bash ./scripts/coder_pi_preflight.sh",
-    "tauri:build:safe": "npm run verify:pi:bundle && npm run tauri build",
+    "tauri:build:safe": "npm run tauri build",
     "tauri:build:lowmem": "bash ./scripts/tauri_build_lowmem.sh",
     "tauri:build:capped": "bash ./scripts/tauri_build_capped.sh",
-    "vendor:pi": "bash ./scripts/vendor_pi_binaries.sh",
     "tauri:dev:safe": "bash ./scripts/tauri_dev_safe.sh"
   },
   "dependencies": {

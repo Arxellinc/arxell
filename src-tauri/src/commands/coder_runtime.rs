@@ -10,30 +10,11 @@ use toml::map::Map as TomlMap;
 use toml::Value as TomlValue;
 
 use super::terminal::TerminalExecResult;
+use super::tool_packs;
 use crate::AppState;
 
-/// Bundled models.json from the codex-rs source tree, embedded at compile time.
-const BUNDLED_CODEX_MODELS_JSON: &str =
-    include_str!("../../resources/coder/codex-main/codex-rs/core/models.json");
-
-/// Extract `base_instructions` from the first entry of the bundled models.json.
-/// This gives local model entries the same high-quality coding agent system prompt
-/// that the built-in codex models use.
 fn bundled_base_instructions() -> &'static str {
-    static INSTRUCTIONS: OnceLock<String> = OnceLock::new();
-    INSTRUCTIONS.get_or_init(|| {
-        serde_json::from_str::<serde_json::Value>(BUNDLED_CODEX_MODELS_JSON)
-            .ok()
-            .and_then(|v| {
-                v["models"][0]["base_instructions"]
-                    .as_str()
-                    .map(String::from)
-            })
-            .unwrap_or_else(|| {
-                "You are a coding agent. Help the user with their coding tasks using shell commands."
-                    .to_string()
-            })
-    })
+    "You are a coding agent. Help the user with their coding tasks using shell commands."
 }
 
 /// Generate a local model catalog JSON for common open-source / local model families.
@@ -177,68 +158,6 @@ fn resolve_workdir(cwd: Option<String>, root_guard: Option<String>) -> Result<Pa
     Ok(workdir)
 }
 
-fn bundled_candidates(app: &AppHandle) -> Result<Vec<PathBuf>, String> {
-    let resource_dir = app
-        .path()
-        .resource_dir()
-        .map_err(|e| format!("Failed to resolve app resource dir: {}", e))?;
-
-    let mut candidates = if cfg!(target_os = "windows") {
-        vec![
-            resource_dir.join("coder/codex-main/bin/codex.cmd"),
-            resource_dir.join("coder/codex-main/bin/codex.exe"),
-            resource_dir.join("coder/windows-x86_64/pi.exe"),
-        ]
-    } else if cfg!(target_os = "macos") {
-        if cfg!(target_arch = "aarch64") {
-            vec![
-                resource_dir.join("coder/codex-main/bin/codex"),
-                resource_dir.join("coder/macos-aarch64/pi"),
-            ]
-        } else {
-            vec![
-                resource_dir.join("coder/codex-main/bin/codex"),
-                resource_dir.join("coder/macos-x86_64/pi"),
-            ]
-        }
-    } else {
-        if cfg!(target_arch = "aarch64") {
-            vec![
-                resource_dir.join("coder/codex-main/bin/codex"),
-                resource_dir.join("coder/linux-aarch64/pi"),
-            ]
-        } else {
-            vec![
-                resource_dir.join("coder/codex-main/bin/codex"),
-                resource_dir.join("coder/linux-x86_64/pi"),
-            ]
-        }
-    };
-
-    // Dev-mode fallback: resolve directly from source tree resources.
-    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    if cfg!(target_os = "windows") {
-        candidates.push(manifest_dir.join("resources/coder/codex-main/bin/codex.cmd"));
-        candidates.push(manifest_dir.join("resources/coder/codex-main/bin/codex.exe"));
-        candidates.push(manifest_dir.join("resources/coder/windows-x86_64/pi.exe"));
-    } else if cfg!(target_os = "macos") {
-        candidates.push(manifest_dir.join("resources/coder/codex-main/bin/codex"));
-        if cfg!(target_arch = "aarch64") {
-            candidates.push(manifest_dir.join("resources/coder/macos-aarch64/pi"));
-        } else {
-            candidates.push(manifest_dir.join("resources/coder/macos-x86_64/pi"));
-        }
-    } else if cfg!(target_arch = "aarch64") {
-        candidates.push(manifest_dir.join("resources/coder/codex-main/bin/codex"));
-        candidates.push(manifest_dir.join("resources/coder/linux-aarch64/pi"));
-    } else {
-        candidates.push(manifest_dir.join("resources/coder/codex-main/bin/codex"));
-        candidates.push(manifest_dir.join("resources/coder/linux-x86_64/pi"));
-    }
-
-    Ok(candidates)
-}
-
 fn fallback_binary_name() -> &'static str {
     if cfg!(target_os = "windows") {
         "codex.exe"
@@ -264,15 +183,6 @@ fn is_executable_path(path: &Path) -> bool {
             .map(|m| m.permissions().mode() & 0o111 != 0)
             .unwrap_or(false)
     }
-}
-
-fn first_bundled_hit(app: &AppHandle) -> Result<Option<String>, String> {
-    for candidate in bundled_candidates(app)? {
-        if is_executable_path(&candidate) {
-            return Ok(Some(candidate.to_string_lossy().to_string()));
-        }
-    }
-    Ok(None)
 }
 
 fn find_on_path_in_env(command: &str, path_env: &str) -> Option<String> {
@@ -338,7 +248,7 @@ fn resolve_executable_candidates(
     override_path: Option<String>,
 ) -> Result<Vec<String>, String> {
     let override_trimmed = override_path.unwrap_or_default().trim().to_string();
-    let bundled_hit = first_bundled_hit(app)?;
+    let installed_hit = tool_packs::resolve_enabled_pack_executable(app, "codex");
     let explicit_override =
         !override_trimmed.is_empty() && !is_default_coder_token(&override_trimmed);
 
@@ -346,9 +256,9 @@ fn resolve_executable_candidates(
     if explicit_override {
         candidates.push(override_trimmed.clone());
     }
-    if let Some(bundled) = bundled_hit {
-        if !candidates.iter().any(|c| c == &bundled) {
-            candidates.push(bundled);
+    if let Some(installed) = installed_hit {
+        if !candidates.iter().any(|c| c == &installed) {
+            candidates.push(installed);
         }
     }
 
@@ -1474,7 +1384,7 @@ pub fn pi_diagnostics(
         .as_ref()
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty());
-    let bundled_hit = first_bundled_hit(app)?;
+    let installed_hit = tool_packs::resolve_enabled_pack_executable(app, "codex");
     let candidates = resolve_executable_candidates(app, executable_override)?;
 
     let diagnostics = candidates
@@ -1482,8 +1392,8 @@ pub fn pi_diagnostics(
         .map(|candidate| {
             let source = if requested_executable.as_deref() == Some(candidate.as_str()) {
                 "override"
-            } else if bundled_hit.as_deref() == Some(candidate.as_str()) {
-                "bundled"
+            } else if installed_hit.as_deref() == Some(candidate.as_str()) {
+                "installed_pack"
             } else if candidate == fallback {
                 "path_fallback"
             } else {
@@ -1524,7 +1434,6 @@ async fn exec_pi(
 ) -> Result<TerminalExecResult, String> {
     let workdir = resolve_workdir(cwd, root_guard)?;
     let executables = resolve_executable_candidates(app, executable_override)?;
-    let bundled = bundled_candidates(app)?;
     let codex_runtime = pre_runtime
         .map(Some)
         .unwrap_or_else(|| ensure_codex_runtime_config(app, &HashMap::new(), None));
@@ -1748,29 +1657,9 @@ async fn exec_pi(
     }
 
     if !not_found_candidates.is_empty() {
-        let bundled_notes = if bundled.is_empty() {
-            "Bundled candidates: (none)".to_string()
-        } else {
-            let notes = bundled
-                .iter()
-                .map(|p| {
-                    let exists = p.exists();
-                    let executable = is_executable_path(p);
-                    format!(
-                        "{} [exists={}, executable={}]",
-                        p.to_string_lossy(),
-                        exists,
-                        executable
-                    )
-                })
-                .collect::<Vec<_>>()
-                .join("; ");
-            format!("Bundled candidates: {}", notes)
-        };
         return Err(format!(
-            "coder executable not found. Tried: {}. {}. Configure Settings > Coder > Executable or bundle platform binary resources.",
-            not_found_candidates.join(", "),
-            bundled_notes
+            "coder executable not found. Tried: {}. Install/enable the 'codex' tool pack in Settings > Tool Packs, or configure Settings > Coder > Executable.",
+            not_found_candidates.join(", ")
         ));
     }
 

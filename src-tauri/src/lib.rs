@@ -855,43 +855,21 @@ pub fn run() {
                     log::warn!("Bundled Kokoro voices file not found in resources");
                 }
                 if !model_dest.exists() {
-                    let preferred_variant = std::env::var("ARXELL_KOKORO_MODEL_VARIANT")
-                        .unwrap_or_else(|_| "int8".to_string());
-                    let resource_candidates = if preferred_variant.eq_ignore_ascii_case("fp32") {
-                        vec![
-                            "resources/voice/model_quantized.onnx",
-                            "resources/voice/model.onnx",
-                        ]
-                    } else {
-                        vec![
-                            "resources/voice/model_quantized.onnx",
-                            "resources/voice/model.onnx",
-                        ]
-                    };
-                    let mut copied = false;
-                    for rel in resource_candidates {
-                        if let Ok(src) = app
-                            .path()
-                            .resolve(rel, tauri::path::BaseDirectory::Resource)
-                        {
-                            if src.exists() {
-                                match std::fs::copy(&src, &model_dest) {
-                                    Ok(_) => {
-                                        copied = true;
-                                        commands::logs::info(&format!(
-                                            "Deployed bundled Kokoro model from {rel}"
-                                        ));
-                                        break;
-                                    }
-                                    Err(e) => {
-                                        log::warn!("Failed to deploy Kokoro model from {rel}: {e}")
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    if !copied {
-                        log::warn!("Bundled Kokoro model not found in resources");
+                    match app.path().resolve(
+                        "resources/voice/model_quantized.onnx",
+                        tauri::path::BaseDirectory::Resource,
+                    ) {
+                        Ok(src) if src.exists() => match std::fs::copy(&src, &model_dest) {
+                            Ok(_) => commands::logs::info(
+                                "Deployed bundled Kokoro model: model_quantized.onnx",
+                            ),
+                            Err(e) => log::warn!(
+                                "Failed to deploy bundled Kokoro model model_quantized.onnx: {e}"
+                            ),
+                        },
+                        _ => log::warn!(
+                            "Bundled Kokoro model model_quantized.onnx not found in resources"
+                        ),
                     }
                 }
                 start_kokoro_bootstrap(
@@ -1127,6 +1105,11 @@ pub fn run() {
             commands::a2a_workflow::cmd_a2a_template_create,
             commands::a2a_workflow::cmd_a2a_template_delete,
             commands::tool_gateway::cmd_tool_invoke,
+            commands::tool_packs::cmd_tool_packs_list,
+            commands::tool_packs::cmd_tool_packs_index,
+            commands::tool_packs::cmd_tool_pack_install,
+            commands::tool_packs::cmd_tool_pack_set_enabled,
+            commands::tool_packs::cmd_tool_pack_remove,
             commands::settings::cmd_settings_get,
             commands::settings::cmd_settings_set,
             commands::settings::cmd_settings_get_all,

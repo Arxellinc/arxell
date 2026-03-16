@@ -174,18 +174,16 @@ pub struct SystemUsage {
 
 #[cfg(target_os = "windows")]
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+/// How often the dedicated Windows GPU probe thread refreshes the cache.
 #[cfg(target_os = "windows")]
-const WINDOWS_GPU_USAGE_TTL: Duration = Duration::from_secs(10);
-#[cfg(target_os = "windows")]
-const WINDOWS_GPU_INFO_TTL: Duration = Duration::from_secs(30);
+const WINDOWS_GPU_PROBE_INTERVAL: Duration = Duration::from_secs(15);
 #[cfg(target_os = "windows")]
 const WINDOWS_SYSTEM_RESOURCES_TTL: Duration = Duration::from_secs(30);
+/// Shared cache written by the GPU probe thread, read by the 1 s usage loop.
+/// The 1 s loop never blocks waiting for PowerShell — it only reads this cache.
 #[cfg(target_os = "windows")]
-static WINDOWS_GPU_USAGE_CACHE: LazyLock<Mutex<(Option<Instant>, Vec<GpuUsage>)>> =
-    LazyLock::new(|| Mutex::new((None, Vec::new())));
-#[cfg(target_os = "windows")]
-static WINDOWS_GPU_INFO_CACHE: LazyLock<Mutex<(Option<Instant>, Vec<GpuInfo>)>> =
-    LazyLock::new(|| Mutex::new((None, Vec::new())));
+static WINDOWS_GPU_USAGE_CACHE: LazyLock<Mutex<Vec<GpuUsage>>> =
+    LazyLock::new(|| Mutex::new(Vec::new()));
 #[cfg(target_os = "windows")]
 static WINDOWS_SYSTEM_RESOURCES_CACHE: LazyLock<Mutex<(Option<Instant>, Option<SystemResources>)>> =
     LazyLock::new(|| Mutex::new((None, None)));
@@ -1359,34 +1357,11 @@ pub fn get_system_usage() -> SystemUsage {
 
     let memory_usage_percent = get_memory_info().usage_percent;
 
+    // Windows: GPU info (name, VRAM) is delivered by the dedicated probe thread
+    // via WINDOWS_GPU_USAGE_CACHE.  We never call get_gpus() here so that this
+    // 1 s loop never spawns external processes or blocks.
     #[cfg(target_os = "windows")]
-    let gpus_info = {
-        if let Ok(cache) = WINDOWS_GPU_INFO_CACHE.lock() {
-            if let Some(last) = cache.0 {
-                if last.elapsed() < WINDOWS_GPU_INFO_TTL {
-                    cache.1.clone()
-                } else {
-                    drop(cache);
-                    let fresh = get_gpus();
-                    if let Ok(mut c) = WINDOWS_GPU_INFO_CACHE.lock() {
-                        c.0 = Some(Instant::now());
-                        c.1 = fresh.clone();
-                    }
-                    fresh
-                }
-            } else {
-                drop(cache);
-                let fresh = get_gpus();
-                if let Ok(mut c) = WINDOWS_GPU_INFO_CACHE.lock() {
-                    c.0 = Some(Instant::now());
-                    c.1 = fresh.clone();
-                }
-                fresh
-            }
-        } else {
-            get_gpus()
-        }
-    };
+    let gpus_info: Vec<GpuInfo> = Vec::new();
     #[cfg(not(target_os = "windows"))]
     let gpus_info = get_gpus();
 
@@ -1637,78 +1612,96 @@ fn query_nvidia_smi_usage() -> Vec<GpuUsage> {
     out
 }
 
+/// Non-blocking cache read called from the 1 s system-usage loop.
+/// All actual probing happens in the dedicated thread started at app launch.
 #[cfg(target_os = "windows")]
 fn query_windows_gpu_usage() -> Vec<GpuUsage> {
-    // This path runs from the global 1s telemetry loop. On Windows, avoid
-    // spawning visible PowerShell windows continuously and throttle expensive
-    // external probes to a coarser interval.
     if let Ok(cache) = WINDOWS_GPU_USAGE_CACHE.lock() {
-        if let Some(last) = cache.0 {
-            if last.elapsed() < WINDOWS_GPU_USAGE_TTL {
-                return cache.1.clone();
-            }
+        return cache.clone();
+    }
+    Vec::new()
+}
+
+/// Run one Windows GPU probe and write the result into the shared cache.
+/// Executes a single PowerShell process that gathers both controller info and
+/// GPU-engine utilization in one shot, avoiding double process-spawn overhead.
+/// The `Get-Counter` call samples for ~1 s, which is acceptable here because
+/// this function only runs on the dedicated probe thread, never on the 1 s loop.
+#[cfg(target_os = "windows")]
+fn windows_gpu_probe_once() {
+    // One PowerShell invocation fetches controller names/VRAM and utilization.
+    // @() forces an array even when there is only one adapter, keeping the JSON
+    // shape consistent for the parser below.
+    let combined_script = r#"
+      $controllers = @(Get-CimInstance Win32_VideoController | Select-Object Name,AdapterRAM)
+      $samples = (Get-Counter '\GPU Engine(*)\Utilization Percentage' -ErrorAction SilentlyContinue).CounterSamples
+      $util = if ($samples) { ($samples | Measure-Object -Property CookedValue -Sum).Sum } else { 0 }
+      if ($null -eq $util) { $util = 0 }
+      [PSCustomObject]@{ controllers = $controllers; util = [double]$util } | ConvertTo-Json -Compress -Depth 3
+    "#;
+
+    let output = match run_windows_command_hidden(
+        "powershell",
+        &["-NoProfile", "-NonInteractive", "-Command", combined_script],
+    ) {
+        Some(o) if o.status.success() => o,
+        _ => return,
+    };
+
+    let txt = String::from_utf8_lossy(&output.stdout);
+    let value = match serde_json::from_str::<serde_json::Value>(&txt) {
+        Ok(v) => v,
+        Err(_) => return,
+    };
+
+    let util = value.get("util").and_then(|v| v.as_f64()).map(|v| v as f32);
+
+    let mut out: Vec<GpuUsage> = Vec::new();
+    if let Some(controllers) = value.get("controllers").and_then(|v| v.as_array()) {
+        for (idx, item) in controllers.iter().enumerate() {
+            let adapter_ram = item.get("AdapterRAM").and_then(|v| v.as_u64());
+            out.push(GpuUsage {
+                id: format!("windows:gpu{}", idx),
+                // Assign the total utilization to the first adapter; multi-GPU
+                // splits are not available from the aggregate counter path.
+                utilization_percent: if idx == 0 { util } else { None },
+                memory_total_mb: adapter_ram.map(|b| b / (1024 * 1024)),
+                memory_used_mb: None,
+            });
         }
     }
 
-    let mut out = Vec::new();
-    let controller_script = r#"
-      $list = Get-CimInstance Win32_VideoController | Select-Object Name,AdapterRAM
-      $list | ConvertTo-Json -Compress
-    "#;
-    if let Some(output) =
-        run_windows_command_hidden("powershell", &["-NoProfile", "-Command", controller_script])
-    {
-        if output.status.success() {
-            let txt = String::from_utf8_lossy(&output.stdout);
-            if let Ok(value) = serde_json::from_str::<serde_json::Value>(&txt) {
-                if let Some(items) = value.as_array() {
-                    for (idx, item) in items.iter().enumerate() {
-                        let adapter_ram = item.get("AdapterRAM").and_then(|v| v.as_u64());
-                        out.push(GpuUsage {
-                            id: format!("windows:gpu{}", idx),
-                            utilization_percent: None,
-                            memory_total_mb: adapter_ram.map(|b| b / (1024 * 1024)),
-                            memory_used_mb: None,
-                        });
-                    }
-                }
-            }
-        }
-    }
-
-    let util_script = r#"
-      $samples = (Get-Counter '\GPU Engine(*)\Utilization Percentage').CounterSamples
-      $sum = ($samples | Measure-Object -Property CookedValue -Sum).Sum
-      if ($null -eq $sum) { $sum = 0 }
-      [PSCustomObject]@{util=$sum} | ConvertTo-Json -Compress
-    "#;
-    if let Some(output) =
-        run_windows_command_hidden("powershell", &["-NoProfile", "-Command", util_script])
-    {
-        if output.status.success() {
-            let txt = String::from_utf8_lossy(&output.stdout);
-            if let Ok(value) = serde_json::from_str::<serde_json::Value>(&txt) {
-                let util = value.get("util").and_then(|v| v.as_f64()).map(|v| v as f32);
-                if let Some(first) = out.get_mut(0) {
-                    first.utilization_percent = util;
-                } else if util.is_some() {
-                    out.push(GpuUsage {
-                        id: "windows:gpu0".to_string(),
-                        utilization_percent: util,
-                        memory_total_mb: None,
-                        memory_used_mb: None,
-                    });
-                }
-            }
+    // Ensure at least one entry when no controller info was returned.
+    if out.is_empty() {
+        if let Some(u) = util {
+            out.push(GpuUsage {
+                id: "windows:gpu0".to_string(),
+                utilization_percent: Some(u),
+                memory_total_mb: None,
+                memory_used_mb: None,
+            });
         }
     }
 
     if let Ok(mut cache) = WINDOWS_GPU_USAGE_CACHE.lock() {
-        cache.0 = Some(Instant::now());
-        cache.1 = out.clone();
+        *cache = out;
     }
+}
 
-    out
+/// Spawn the dedicated Windows GPU probe thread.
+/// Call this once during app startup. The thread runs `windows_gpu_probe_once()`
+/// immediately (so the cache is warm before the first system-usage event) and
+/// then repeats every `WINDOWS_GPU_PROBE_INTERVAL` seconds in the background.
+/// The 1 s system-usage loop reads only from the cache and never blocks.
+#[cfg(target_os = "windows")]
+pub fn start_windows_gpu_probe_thread() {
+    std::thread::Builder::new()
+        .name("windows-gpu-probe".to_string())
+        .spawn(|| loop {
+            windows_gpu_probe_once();
+            std::thread::sleep(WINDOWS_GPU_PROBE_INTERVAL);
+        })
+        .ok();
 }
 
 #[cfg(target_os = "macos")]

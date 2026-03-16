@@ -3,7 +3,6 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CODER_RES_DIR="$ROOT_DIR/src-tauri/resources/coder"
-REQUIRE_BUNDLE="${ARX_PI_REQUIRE_BUNDLE:-0}"
 
 os="$(uname -s | tr '[:upper:]' '[:lower:]')"
 arch="$(uname -m)"
@@ -41,7 +40,6 @@ echo "== arx coder pi preflight =="
 echo "workspace: $ROOT_DIR"
 echo "os/arch: $os / $arch"
 echo "expected bundled binary: $expected_bundled"
-echo "require bundled binary: $REQUIRE_BUNDLE"
 echo
 
 bundled_ok=0
@@ -58,7 +56,7 @@ if [[ -f "$expected_bundled" ]]; then
     bundled_ok=1
   fi
 else
-  echo "[fail] bundled file missing"
+  echo "[warn] bundled file missing (expected with tool-pack installs)"
 fi
 
 echo
@@ -103,18 +101,6 @@ else
 fi
 
 echo
-if [[ "$REQUIRE_BUNDLE" == "1" ]]; then
-  if [[ $bundled_ok -eq 1 ]]; then
-    echo "RESULT: PASS (bundled pi detected)"
-    exit 0
-  fi
-  echo "RESULT: FAIL (bundled pi required but missing/non-executable)"
-  echo "next actions:"
-  echo "  1) place bundled binary at: $expected_bundled"
-  echo "  2) ensure executable bit on unix: chmod +x \"$expected_bundled\""
-  exit 1
-fi
-
 if [[ $bundled_ok -eq 1 || $path_ok -eq 1 ]]; then
   echo "RESULT: PASS (at least one runnable pi source detected)"
   exit 0
@@ -122,6 +108,6 @@ fi
 
 echo "RESULT: FAIL (no runnable pi source found)"
 echo "next actions:"
-echo "  1) install global CLI: npm install -g @mariozechner/pi-coding-agent"
-echo "  2) OR place bundled binary at: $expected_bundled"
+echo "  1) Install/enable tool pack from Settings > Tool Packs (recommended)"
+echo "  2) OR install global CLI: npm install -g @mariozechner/pi-coding-agent"
 exit 1

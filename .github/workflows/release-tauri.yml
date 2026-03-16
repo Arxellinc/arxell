@@ -52,16 +52,6 @@ jobs:
         env:
           KOKORO_QUANT_MODEL_URL: https://huggingface.co/onnx-community/Kokoro-82M-v1.0-ONNX/resolve/main/onnx/model_quantized.onnx?download=true
 
-      - name: Vendor Pi binaries
-        run: bash ./scripts/vendor_pi_binaries.sh v0.57.1
-        shell: bash
-        env:
-          PI_VENDOR_TARGET: auto
-
-      - name: Verify bundled Pi binary is present
-        run: ARX_PI_REQUIRE_BUNDLE=1 bash ./scripts/coder_pi_preflight.sh
-        shell: bash
-
       - name: Install Linux deps for Tauri
         if: matrix.platform == 'ubuntu-22.04'
         run: |

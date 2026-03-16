@@ -24,13 +24,10 @@ echo "CARGO_INCREMENTAL=$CARGO_INCREMENTAL"
 echo "CARGO_PROFILE_RELEASE_CODEGEN_UNITS=$CARGO_PROFILE_RELEASE_CODEGEN_UNITS"
 echo "NODE_OPTIONS=$NODE_OPTIONS"
 
-echo "[1/3] verifying bundled Pi binary"
-eval "$NICE_BIN $IONICE_BIN npm run verify:pi:bundle"
-
-echo "[2/3] building frontend"
+echo "[1/2] building frontend"
 eval "$NICE_BIN $IONICE_BIN npm run build"
 
-echo "[3/3] building tauri bundle"
+echo "[2/2] building tauri bundle"
 eval "$NICE_BIN $IONICE_BIN npm run tauri build"
 
 echo "Low-memory build finished."

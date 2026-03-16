@@ -96,7 +96,11 @@ Use the Context refresh button or open this skill to regenerate it.
 }
 
 /// Generate the "Available Skills" content that lists all skills for the agent
-function generateAvailableSkillsContent(skills: SkillMeta[], includeTools: boolean = false): string {
+function generateAvailableSkillsContent(
+  skills: SkillMeta[],
+  includeTools: boolean = false,
+  enabledToolIds: ToolId[] = []
+): string {
   const alwaysActive = skills.filter(s => s.category === "always_active");
   const userSelectable = skills.filter(s => s.category === "user_selectable");
   
@@ -121,7 +125,7 @@ function generateAvailableSkillsContent(skills: SkillMeta[], includeTools: boole
   // Include tool panels when 'tools' skill is active
   if (includeTools) {
     content += `---\n\n`;
-    content += generateAvailableToolsContent();
+    content += generateAvailableToolsContent(enabledToolIds);
   }
   
   return content;
@@ -436,7 +440,11 @@ export function SkillsBar() {
           // For "available-skills", generate content dynamically
           // Include tools information when 'tools' skill is active
           if (skill.id === "available-skills") {
-              const content = generateAvailableSkillsContent(mergedSkills, toolsSkillActive);
+              const content = generateAvailableSkillsContent(
+                mergedSkills,
+                toolsSkillActive,
+                enabledToolIds
+              );
               setSkillContent(skill.id, content);
               try {
                 await codeWriteFile(skill.path, content, dir, "sandbox");

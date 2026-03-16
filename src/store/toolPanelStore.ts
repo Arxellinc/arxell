@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import { getAllToolManifests } from "../core/tooling/registry";
-import type { ToolPanelId } from "../core/tooling/types";
+import type { ToolId, ToolPanelId } from "../core/tooling/types";
 
 export type { ToolPanelId } from "../core/tooling/types";
 
@@ -67,8 +67,11 @@ export function getToolPanelConfig(id: ToolPanelId): ToolPanelConfig | undefined
   return TOOL_PANELS.find((p) => p.id === id);
 }
 
-export function generateAvailableToolsContent(): string {
-  const mainPanels = TOOL_PANELS.filter((p) => p.category === "main");
+export function generateAvailableToolsContent(enabledToolIds?: ToolId[]): string {
+  const enabledSet = enabledToolIds ? new Set(enabledToolIds) : null;
+  const mainPanels = TOOL_PANELS.filter(
+    (p) => p.category === "main" && (!enabledSet || enabledSet.has(p.id as ToolId))
+  );
 
   let content = `# Available Tools and Panels
 

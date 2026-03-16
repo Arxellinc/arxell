@@ -13,7 +13,7 @@ tracked_regex='(^|/)\.env($|\.|/)|\.pem$|\.key$|\.p12$|\.pfx$|\.jks$|\.keystore$
 echo "Checking first-party tracked files for sensitive filename patterns..."
 tracked_hits="$(
   git ls-files \
-    | rg -v '^(vendor/|src-tauri/resources/coder/)' \
+    | rg -v '^(vendor/)' \
     | rg -n "$tracked_regex" \
     | rg -v '\.example$' \
     || true

@@ -171,6 +171,20 @@ pub fn init_db(path: &Path) -> Result<Connection> {
             created_at INTEGER NOT NULL
         );
 
+        CREATE TABLE IF NOT EXISTS tool_packs (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            version TEXT NOT NULL,
+            description TEXT NOT NULL DEFAULT '',
+            enabled INTEGER NOT NULL DEFAULT 1,
+            install_path TEXT NOT NULL,
+            executable_path TEXT,
+            manifest_json TEXT NOT NULL DEFAULT '',
+            source_repo TEXT NOT NULL DEFAULT '',
+            source_ref TEXT NOT NULL DEFAULT '',
+            installed_at INTEGER NOT NULL DEFAULT 0
+        );
+
         INSERT OR IGNORE INTO settings (key, value) VALUES
             ('base_url', 'http://127.0.0.1:1234/v1'),
             ('api_key', 'lm-studio'),
