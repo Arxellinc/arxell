@@ -8,10 +8,19 @@ if [[ -z "$TAG" ]]; then
 fi
 
 VERSION="${TAG#v}"
-if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
+if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$ ]]; then
   echo "Invalid version tag: '$TAG'"
   exit 1
 fi
+
+# Normalize numeric identifiers so tags like v0.9.02 become semver-valid 0.9.2.
+CORE="${VERSION%%[-+]*}"
+SUFFIX="${VERSION#$CORE}"
+IFS='.' read -r MAJOR MINOR PATCH <<<"$CORE"
+MAJOR="$((10#$MAJOR))"
+MINOR="$((10#$MINOR))"
+PATCH="$((10#$PATCH))"
+VERSION="${MAJOR}.${MINOR}.${PATCH}${SUFFIX}"
 
 export ARX_VERSION="$VERSION"
 
