@@ -257,11 +257,11 @@ export const BUILT_IN_PRESETS: AnimationPreset[] = [
 // Default appearance for a single mode
 const DEFAULT_MODE_APPEARANCE: ModeAppearance = {
   wireColor:     "#00ccff",
-  glowIntensity: 0.9,
+  glowIntensity: 0.05,
   glowRadius:    4,
-  fillOpacity:   0.18,
+  fillOpacity:   1.0,
   fillBrightness: 0,
-  fillColorIntensity: 0,
+  fillColorIntensity: 0.06,
   skinColor: "#16E9F5",
   eyeColor: "#1a88aa",
   mouthColor: "#0f4e64",

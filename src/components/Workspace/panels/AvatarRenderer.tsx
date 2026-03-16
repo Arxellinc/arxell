@@ -1387,7 +1387,7 @@ export function AvatarRenderer({
   showSkeletonHelper, activeAnimationClip, isAnimationPlaying, animationTime,
   hierarchyConfig,
   meshProbeNonce = 0,
-  normalRenderOptions = { skin: true, eyes: true, teeth: true, hair: true, hideHair: false },
+  normalRenderOptions = { skin: true, eyes: true, teeth: true, hair: false, hideHair: false },
   onLoad, onError, onMorphNames, onBoneMapping, onSkeletonMapping, onAnimationTimeChange,
   disableProcedural,
   showStats = true,

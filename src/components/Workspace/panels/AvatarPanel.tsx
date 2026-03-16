@@ -1152,7 +1152,7 @@ export function AvatarPanel({ presentationMode = false }: AvatarPanelProps) {
     skin: true,
     eyes: true,
     teeth: true,
-    hair: true,
+    hair: false,
     hideHair: false,
   });
   const [boneMapping, setBoneMapping] = useState<BoneMapping | null>(null);
