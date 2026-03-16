@@ -44,11 +44,7 @@ jobs:
         run: npm ci
 
       - name: Prepare Kokoro runtime and quantized model
-        run: |
-          python scripts/prepare_kokoro_runtime.py \
-            --runtime-out src-tauri/resources/kokoro-runtime \
-            --model-out public/voice/model_quantized.onnx \
-            --python-series 3.11
+        run: python scripts/prepare_kokoro_runtime.py --runtime-out src-tauri/resources/kokoro-runtime --model-out public/voice/model_quantized.onnx --python-series 3.11
         env:
           GITHUB_TOKEN: ${{ github.token }}
           KOKORO_QUANT_MODEL_URL: https://huggingface.co/onnx-community/Kokoro-82M-v1.0-ONNX/resolve/main/onnx/model_quantized.onnx?download=true
