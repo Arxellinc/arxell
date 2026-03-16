@@ -1,14 +1,21 @@
 import { useEffect, useState } from "react";
 import { Mic, Volume2, Bot, Image as ImageIcon, Film, Eye, Cpu, Zap } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import {
   checkSttEngines,
   checkTtsEngines,
   checkVoiceEndpoints,
+  getKokoroBootstrapStatus,
   settingsGetAll,
 } from "../../lib/tauri";
 import type { ServeState } from "../../types/model";
-import type { TtsEngineStatus, SttEngineStatus, VoiceEndpointStatus } from "../../lib/tauri";
+import type {
+  KokoroBootstrapStatus,
+  TtsEngineStatus,
+  SttEngineStatus,
+  VoiceEndpointStatus,
+} from "../../lib/tauri";
 import { useServeStore } from "../../store/serveStore";
 import { useVoiceStore } from "../../store/voiceStore";
 import { cn } from "../../lib/utils";
@@ -98,6 +105,32 @@ export function StatusBar() {
       } catch {}
     };
     init();
+
+    let mounted = true;
+    let unlisten: (() => void) | undefined;
+
+    const refreshTtsFromBootstrap = async (payload: KokoroBootstrapStatus) => {
+      if (!(payload.done && payload.ok) || !mounted) return;
+      try {
+        const status = await checkTtsEngines();
+        if (mounted) setTtsEngines(status);
+      } catch {}
+    };
+
+    void getKokoroBootstrapStatus()
+      .then((status) => refreshTtsFromBootstrap(status))
+      .catch(() => {});
+
+    void listen<KokoroBootstrapStatus>("kokoro:bootstrap", (event) => {
+      void refreshTtsFromBootstrap(event.payload);
+    }).then((off) => {
+      unlisten = off;
+    });
+
+    return () => {
+      mounted = false;
+      unlisten?.();
+    };
   }, []);
 
   // Re-check LLM selection when model loads/unloads

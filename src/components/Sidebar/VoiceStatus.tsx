@@ -768,7 +768,7 @@ export function VoiceStatus() {
                             type="text"
                             value={kokoroModelPath}
                             onChange={(e) => setKokoroModelPath(e.target.value)}
-                            placeholder="<app-data>/kokoro/kokoro-v1.0.onnx"
+                            placeholder="<app-data>/kokoro/model_quantized.onnx"
                             className="w-full bg-line-light border border-line-med rounded px-2 py-1 text-[10px] text-text-norm placeholder-text-dark outline-none focus:border-accent-primary/50 font-mono"
                           />
                         </div>
