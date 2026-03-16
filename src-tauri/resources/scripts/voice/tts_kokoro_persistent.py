@@ -15,7 +15,7 @@ Protocol:
             [M bytes: WAV audio data (0 if error)]
 
 Usage:
-  python3 tts_kokoro_persistent.py --model /path/to/model.onnx --voices /path/to/voices.bin
+  python3 tts_kokoro_persistent.py --model /path/to/model_quantized.onnx --voices /path/to/voices-v1.0.bin
 
 The model is loaded ONCE at startup, then the script enters a request loop.
 """
@@ -25,24 +25,42 @@ import struct
 import json
 import argparse
 import io
+from pathlib import Path
+
+
+def _is_quantized_model(model_path: str) -> bool:
+    return Path(model_path).name.lower() == "model_quantized.onnx"
+
+
+def _resolve_voice_style_path(voices_path: str, voice: str) -> Path:
+    vp = Path(voices_path)
+    base = vp.parent if vp.is_file() else vp
+    candidates = [
+        base / f"{voice}.bin",
+        base / "af_heart.bin",
+        base / "af.bin",
+    ]
+    for c in candidates:
+        if c.exists():
+            return c
+    raise FileNotFoundError(
+        f"No voice style file found near '{voices_path}'. Tried: {', '.join(str(c) for c in candidates)}"
+    )
 
 def main():
     parser = argparse.ArgumentParser(description="Persistent Kokoro TTS daemon")
-    parser.add_argument("--model", required=True, help="Path to kokoro-v1.0.onnx")
+    parser.add_argument("--model", required=True, help="Path to model_quantized.onnx (recommended) or model.onnx")
     parser.add_argument("--voices", required=True, help="Path to voices-v1.0.bin")
     parser.add_argument("--default-voice", default="af_heart", help="Default voice to use")
     args = parser.parse_args()
 
     # Load model ONCE at startup
     try:
+        import numpy as np
         import onnxruntime as ort
-        from kokoro_onnx import Kokoro
+        from kokoro_onnx import Kokoro, Tokenizer
+        quantized_mode = _is_quantized_model(args.model)
         print("[kokoro] Loading model...", file=sys.stderr, flush=True)
-        kokoro = Kokoro(args.model, args.voices)
-
-        # Replace the default ORT session with one that has full graph optimisation
-        # enabled. This is especially important for int8 quantised models where
-        # ORT_ENABLE_ALL activates QLinearMatMul fusion and AVX-512 VNNI kernels.
         import os
         sess_opts = ort.SessionOptions()
         sess_opts.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
@@ -50,14 +68,23 @@ def main():
         sess_opts.intra_op_num_threads = n_threads
         sess_opts.inter_op_num_threads = 1
         sess_opts.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL
-        kokoro.sess = ort.InferenceSession(
-            args.model,
-            sess_options=sess_opts,
-            providers=["CPUExecutionProvider"],
-        )
+        if quantized_mode:
+            tokenizer = Tokenizer()
+            quant_sess = ort.InferenceSession(
+                args.model,
+                sess_options=sess_opts,
+                providers=["CPUExecutionProvider"],
+            )
+        else:
+            kokoro = Kokoro(args.model, args.voices)
+            kokoro.sess = ort.InferenceSession(
+                args.model,
+                sess_options=sess_opts,
+                providers=["CPUExecutionProvider"],
+            )
         print(f"[kokoro] Model loaded successfully (threads={n_threads})", file=sys.stderr, flush=True)
     except ImportError as e:
-        error_msg = f"Import error: {e}. Install with: pip install kokoro-onnx soundfile"
+        error_msg = f"Import error: {e}. Install with: pip install kokoro-onnx onnxruntime soundfile numpy"
         print(f"[kokoro] {error_msg}", file=sys.stderr, flush=True)
         sys.exit(2)
     except Exception as e:
@@ -107,7 +134,28 @@ def main():
                 
                 # Synthesize
                 print(f"[kokoro] Synthesizing chunk {chunk_id}: '{text[:30]}...'", file=sys.stderr, flush=True)
-                samples, sr = kokoro.create(text, voice=voice, speed=speed)
+                if quantized_mode:
+                    phonemes = tokenizer.phonemize(text, lang="en-us")
+                    token_ids = tokenizer.tokenize(phonemes)
+                    if len(token_ids) > 510:
+                        token_ids = token_ids[:510]
+                    ids = np.array([[0, *token_ids, 0]], dtype=np.int64)
+                    style_path = _resolve_voice_style_path(args.voices, voice)
+                    style_bank = np.fromfile(style_path, dtype=np.float32).reshape((-1, 1, 256))
+                    style_idx = min(len(token_ids), style_bank.shape[0] - 1)
+                    style_vec = style_bank[style_idx]
+                    waveform = quant_sess.run(
+                        None,
+                        {
+                            "input_ids": ids,
+                            "style": style_vec.astype(np.float32),
+                            "speed": np.array([float(speed)], dtype=np.float32),
+                        },
+                    )[0]
+                    samples = waveform[0]
+                    sr = 24000
+                else:
+                    samples, sr = kokoro.create(text, voice=voice, speed=speed)
 
                 # Try to extract the phoneme sequence Kokoro used for lipsync.
                 # misaki is kokoro-onnx's own G2P library — zero extra inference cost.

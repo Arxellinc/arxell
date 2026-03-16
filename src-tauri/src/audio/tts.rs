@@ -487,7 +487,7 @@ pub fn check_kokoro(script_path: &str, python_bin: &str) -> bool {
         python_bin
     };
     Command::new(python_bin)
-        .args(["-c", "import kokoro_onnx, soundfile"])
+        .args(["-c", "import kokoro_onnx, soundfile, onnxruntime"])
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .status()

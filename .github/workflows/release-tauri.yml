@@ -35,8 +35,22 @@ jobs:
           node-version: "20"
           cache: "npm"
 
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
       - name: Install frontend deps
         run: npm ci
+
+      - name: Prepare Kokoro runtime and quantized model
+        run: |
+          python scripts/prepare_kokoro_runtime.py \
+            --runtime-out src-tauri/resources/kokoro-runtime \
+            --model-out public/voice/model_quantized.onnx \
+            --python-series 3.11
+        env:
+          KOKORO_QUANT_MODEL_URL: https://huggingface.co/onnx-community/Kokoro-82M-v1.0-ONNX/resolve/main/onnx/model_quantized.onnx?download=true
 
       - name: Vendor Pi binaries
         run: bash ./scripts/vendor_pi_binaries.sh v0.57.1

@@ -220,6 +220,10 @@ pub fn init_db(path: &Path) -> Result<Connection> {
         UPDATE settings SET value = ''
             WHERE key = 'kokoro_model_path' AND value = '~/.local/share/arx/kokoro/kokoro-v1.0.onnx';
         UPDATE settings SET value = ''
+            WHERE key = 'kokoro_model_path' AND value = '~/.local/share/arx/kokoro/model.onnx';
+        UPDATE settings SET value = ''
+            WHERE key = 'kokoro_model_path' AND value = '~/.local/share/arx/kokoro/model_quantized.onnx';
+        UPDATE settings SET value = ''
             WHERE key = 'kokoro_voices_path' AND value = '~/.local/share/arx/kokoro/voices-v1.0.bin';
         UPDATE settings SET value = '320'   WHERE key = 'vad_speech_pad_pre_ms'  AND value = '100';
         UPDATE settings SET value = '320'   WHERE key = 'vad_speech_pad_pre_ms'  AND value = '150';
