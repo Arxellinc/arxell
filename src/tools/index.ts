@@ -9,7 +9,7 @@ export { businessToolManifest } from "./business/manifest";
 export { extensionsToolManifest } from "./extensions/manifest";
 export { devicesToolManifest } from "./devices/manifest";
 export { agentsToolManifest } from "./agents/manifest";
-export { a2aToolManifest } from "./a2a/manifest";
+export { flowToolManifest } from "./flow/manifest";
 export { codexToolManifest } from "./coder/manifest";
 export { codeToolManifest } from "./code/manifest";
 export { webToolManifest } from "./web/manifest";

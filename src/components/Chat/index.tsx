@@ -10,7 +10,6 @@ import { useVoiceMode } from "../../hooks/useVoice";
 import { MessageList } from "./MessageList";
 import { InputBar } from "./InputBar";
 import { VoiceIndicator } from "./VoiceIndicator";
-import { SkillsBar } from "./SkillsBar";
 import { MODE_SELECTION_SETTING_KEY } from "../../lib/modes";
 import {
   CHAT_DISPATCH_EVENT,
@@ -357,8 +356,7 @@ export function ChatPanel() {
         </div>
       </div>
 
-      {/* Skills bar - below header */}
-      <SkillsBar />
+      {/* Skills bar temporarily disabled while isolating startup nested-update crash */}
 
       {/* Messages */}
       <div className="flex flex-1 min-h-0 overflow-hidden">

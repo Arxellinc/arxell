@@ -192,7 +192,9 @@ export function WelcomeModal({
   const customOptionSelected = selectedModel.download.type === "custom";
   const customReady =
     normalizeApiBaseUrl(customEndpointUrl).length > 0 && customModelName.trim().length > 0;
-  const showKokoroToast = !!kokoroStatus && (!kokoroStatus.done || !kokoroStatus.ok);
+  // Keep onboarding focused on model setup; runtime failures are surfaced in
+  // sidebar/status panels instead of blocking first-run flow with error toasts.
+  const showKokoroToast = !!kokoroStatus && !kokoroStatus.done;
   const kokoroProgress = Math.max(0, Math.min(100, kokoroStatus?.progressPercent ?? 0));
 
   const handleDownloadAndContinue = async () => {
@@ -570,9 +572,6 @@ export function WelcomeModal({
           <p className="mt-1 text-[10px] text-text-med">
             {kokoroStatus?.message ?? "Preparing Kokoro runtime"}
           </p>
-          {kokoroStatus?.error && (
-            <p className="mt-1 text-[10px] text-red-300">{kokoroStatus.error}</p>
-          )}
           <div className="mt-2 h-1.5 overflow-hidden rounded bg-line-med">
             <div
               className="h-full bg-accent-primary transition-all duration-300"

@@ -1,6 +1,9 @@
 use serde::{Deserialize, Serialize};
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
-use tauri::{AppHandle, Manager};
+use tauri::{AppHandle, Manager, State};
+
+use crate::AppState;
 
 /// Skill category determines how the skill is activated
 #[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq)]
@@ -28,14 +31,40 @@ pub struct SkillMeta {
     pub category: SkillCategory,
 }
 
-fn skills_dir(app: &AppHandle) -> anyhow::Result<PathBuf> {
-    let dir = app.path().app_data_dir()?.join("skills");
+#[derive(Debug, Serialize, Deserialize)]
+pub struct SkillsResolveResult {
+    pub available: Vec<SkillMeta>,
+    pub enabled_ids: Vec<String>,
+    pub context_markdown: String,
+}
+
+fn legacy_skills_dir(app: &AppHandle) -> anyhow::Result<PathBuf> {
+    Ok(app.path().app_data_dir()?.join("skills"))
+}
+
+fn skills_dir(_app: &AppHandle) -> anyhow::Result<PathBuf> {
+    let dir = arx_rs::Config::config_dir().join("skills");
     std::fs::create_dir_all(&dir)?;
     Ok(dir)
 }
 
 /// Skills that should always be active and injected into context
 const ALWAYS_ACTIVE_SKILLS: &[&str] = &["directives", "available-skills"];
+const LOCAL_SKILLS_DIRS: &[&str] = &[".arx/skills", ".kon/skills"];
+
+fn enabled_key(conversation_id: &str) -> String {
+    format!("chat.skills.enabled.{}", conversation_id)
+}
+
+fn mode_budget(mode_id: Option<&str>) -> usize {
+    match mode_id.unwrap_or("chat").to_ascii_lowercase().as_str() {
+        "voice" => 2_200,
+        "chat" => 4_000,
+        "tools" => 6_000,
+        "full" => 8_000,
+        _ => 4_000,
+    }
+}
 
 fn parse_skill(path: &std::path::Path) -> Option<SkillMeta> {
     let id = path.file_stem()?.to_string_lossy().into_owned();
@@ -84,21 +113,173 @@ fn parse_skill(path: &std::path::Path) -> Option<SkillMeta> {
     })
 }
 
-#[tauri::command]
-pub fn cmd_skills_list(app: AppHandle) -> Result<Vec<SkillMeta>, String> {
-    let dir = skills_dir(&app).map_err(|e| e.to_string())?;
-    let mut skills = Vec::new();
-    let entries = std::fs::read_dir(&dir).map_err(|e| e.to_string())?;
-    for entry in entries.filter_map(|e| e.ok()) {
-        let path = entry.path();
-        if path.extension().map(|e| e == "md").unwrap_or(false) {
+fn collect_skill_dirs(app: &AppHandle, workspace_path: Option<&str>) -> Vec<PathBuf> {
+    let mut dirs = Vec::new();
+
+    if let Some(workspace) = workspace_path {
+        let ws = PathBuf::from(workspace);
+        for rel in LOCAL_SKILLS_DIRS {
+            dirs.push(ws.join(rel));
+        }
+    }
+
+    if let Ok(global) = skills_dir(app) {
+        dirs.push(global);
+    }
+
+    dirs
+}
+
+fn list_skills_internal(
+    app: &AppHandle,
+    workspace_path: Option<&str>,
+) -> Result<Vec<SkillMeta>, String> {
+    let mut by_id: HashMap<String, SkillMeta> = HashMap::new();
+
+    for dir in collect_skill_dirs(app, workspace_path) {
+        if !dir.exists() {
+            continue;
+        }
+        let entries = std::fs::read_dir(&dir).map_err(|e| e.to_string())?;
+        for entry in entries.filter_map(|e| e.ok()) {
+            let path = entry.path();
+            if !path.extension().map(|e| e == "md").unwrap_or(false) {
+                continue;
+            }
             if let Some(meta) = parse_skill(&path) {
-                skills.push(meta);
+                // Local workspace skills override global skills with the same ID.
+                by_id.entry(meta.id.clone()).or_insert(meta);
             }
         }
     }
+
+    let mut skills: Vec<SkillMeta> = by_id.into_values().collect();
     skills.sort_by(|a, b| a.name.cmp(&b.name));
     Ok(skills)
+}
+
+fn read_enabled_ids(state: &State<'_, AppState>, conversation_id: Option<&str>) -> Vec<String> {
+    let Some(conversation_id) = conversation_id else {
+        return Vec::new();
+    };
+    if conversation_id.trim().is_empty() {
+        return Vec::new();
+    }
+    let key = enabled_key(conversation_id);
+    let db = state.db.lock().unwrap();
+    let raw = db.query_row(
+        "SELECT value FROM settings WHERE key = ?1",
+        rusqlite::params![key],
+        |row| row.get::<_, String>(0),
+    );
+    let Ok(raw) = raw else {
+        return Vec::new();
+    };
+    serde_json::from_str::<Vec<String>>(&raw).unwrap_or_default()
+}
+
+fn persist_enabled_ids(
+    state: &State<'_, AppState>,
+    conversation_id: &str,
+    enabled_ids: &[String],
+) -> Result<(), String> {
+    let key = enabled_key(conversation_id);
+    let value = serde_json::to_string(enabled_ids).map_err(|e| e.to_string())?;
+    let db = state.db.lock().unwrap();
+    db.execute(
+        "INSERT INTO settings (key, value) VALUES (?1, ?2)
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+        rusqlite::params![key, value],
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+fn resolve_enabled_ids(available: &[SkillMeta], requested: Vec<String>) -> Vec<String> {
+    let mut known = HashSet::new();
+    let mut always = Vec::new();
+    for skill in available {
+        known.insert(skill.id.clone());
+        if skill.category == SkillCategory::AlwaysActive {
+            always.push(skill.id.clone());
+        }
+    }
+
+    let mut out = Vec::new();
+    let mut seen = HashSet::new();
+    for id in always {
+        if seen.insert(id.clone()) {
+            out.push(id);
+        }
+    }
+    for id in requested {
+        if known.contains(&id) && seen.insert(id.clone()) {
+            out.push(id);
+        }
+    }
+    out
+}
+
+fn build_context_markdown(
+    available: &[SkillMeta],
+    enabled_ids: &[String],
+    mode_id: Option<&str>,
+) -> String {
+    if enabled_ids.is_empty() {
+        return String::new();
+    }
+
+    let mut by_id = HashMap::new();
+    for skill in available {
+        by_id.insert(skill.id.as_str(), skill);
+    }
+
+    let mut pieces = vec!["## Active Skills".to_string(), "".to_string()];
+    let mut deferred = Vec::new();
+    let mut used = 0usize;
+    let budget = mode_budget(mode_id);
+
+    // Keep context lean: include full text while under budget, then fall back to summaries.
+    for id in enabled_ids {
+        let Some(skill) = by_id.get(id.as_str()) else {
+            continue;
+        };
+        let content = std::fs::read_to_string(&skill.path).unwrap_or_default();
+        let trimmed = content.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let block = format!("### {}\n\n{}\n", skill.name, trimmed);
+        let block_len = block.len();
+        if used + block_len <= budget {
+            pieces.push(block);
+            used += block_len;
+        } else {
+            deferred.push(format!(
+                "- {} (`{}`): {}",
+                skill.name, skill.id, skill.description
+            ));
+        }
+    }
+
+    if !deferred.is_empty() {
+        pieces.push("### Deferred Skills".to_string());
+        pieces.push(
+            "These remain enabled but are summarized to stay within context budget:".to_string(),
+        );
+        pieces.push("".to_string());
+        pieces.push(deferred.join("\n"));
+    }
+
+    pieces.join("\n")
+}
+
+#[tauri::command]
+pub fn cmd_skills_list(
+    app: AppHandle,
+    workspace_path: Option<String>,
+) -> Result<Vec<SkillMeta>, String> {
+    list_skills_internal(&app, workspace_path.as_deref())
 }
 
 #[tauri::command]
@@ -107,12 +288,71 @@ pub fn cmd_skills_dir(app: AppHandle) -> Result<String, String> {
     Ok(dir.to_string_lossy().into_owned())
 }
 
+#[tauri::command]
+pub fn cmd_skills_resolve(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    conversation_id: Option<String>,
+    workspace_path: Option<String>,
+    mode_id: Option<String>,
+) -> Result<SkillsResolveResult, String> {
+    let available = list_skills_internal(&app, workspace_path.as_deref())?;
+    let requested = read_enabled_ids(&state, conversation_id.as_deref());
+    let enabled_ids = resolve_enabled_ids(&available, requested);
+    let context_markdown = build_context_markdown(&available, &enabled_ids, mode_id.as_deref());
+    Ok(SkillsResolveResult {
+        available,
+        enabled_ids,
+        context_markdown,
+    })
+}
+
+#[tauri::command]
+pub fn cmd_skills_set_enabled(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    conversation_id: String,
+    workspace_path: Option<String>,
+    mode_id: Option<String>,
+    enabled_ids: Vec<String>,
+) -> Result<SkillsResolveResult, String> {
+    let available = list_skills_internal(&app, workspace_path.as_deref())?;
+    let resolved_enabled = resolve_enabled_ids(&available, enabled_ids);
+    persist_enabled_ids(&state, &conversation_id, &resolved_enabled)?;
+    let context_markdown =
+        build_context_markdown(&available, &resolved_enabled, mode_id.as_deref());
+    Ok(SkillsResolveResult {
+        available,
+        enabled_ids: resolved_enabled,
+        context_markdown,
+    })
+}
+
 /// Called from lib.rs setup to seed default skills when directory is empty.
 pub fn seed_default_skills(app: &AppHandle) {
     let dir = match skills_dir(app) {
         Ok(d) => d,
         Err(_) => return,
     };
+    if let Ok(legacy_dir) = legacy_skills_dir(app) {
+        if legacy_dir.exists() {
+            if let Ok(entries) = std::fs::read_dir(&legacy_dir) {
+                for entry in entries.flatten() {
+                    let path = entry.path();
+                    if !path.extension().map(|e| e == "md").unwrap_or(false) {
+                        continue;
+                    }
+                    let Some(name) = path.file_name() else {
+                        continue;
+                    };
+                    let dest = dir.join(name);
+                    if !dest.exists() {
+                        let _ = std::fs::copy(&path, &dest);
+                    }
+                }
+            }
+        }
+    }
 
     let defaults: &[(&str, &str)] = &[
         // Always-active skills (injected into every context)

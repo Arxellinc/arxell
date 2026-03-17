@@ -49,6 +49,9 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
           KOKORO_QUANT_MODEL_URL: https://huggingface.co/onnx-community/Kokoro-82M-v1.0-ONNX/resolve/main/onnx/model_quantized.onnx?download=true
 
+      - name: Verify Kokoro runtime archive present for target
+        run: python scripts/verify_kokoro_runtime_archive.py
+
       - name: Install Linux deps for Tauri
         if: matrix.platform == 'ubuntu-22.04'
         run: |

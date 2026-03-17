@@ -29,6 +29,14 @@ interface StreamingMessage {
   conversation_id: string;
 }
 
+export interface ToolActivity {
+  id: string;
+  tool: string;
+  summary: string;
+  status: "running" | "done" | "error";
+  details?: string;
+}
+
 export interface MessagePerfStats {
   messageId: string;
   startedAt: number;
@@ -71,12 +79,23 @@ interface ChatStore {
   toggleSkill: (skillId: string) => void;
   /// Set a skill active/inactive explicitly (idempotent)
   setSkillActive: (skillId: string, active: boolean) => void;
+  /// Replace active skills with backend-resolved IDs.
+  setActiveSkillIds: (skillIds: string[]) => void;
   /// Set the content for a skill
   setSkillContent: (skillId: string, content: string) => void;
   /// Clear a skill's content
   clearSkillContent: (skillId: string) => void;
   /// Get combined content of all active skills
   getActiveSkillsContent: () => string;
+  /// Compact tool execution timeline grouped by assistant message id.
+  toolActivitiesByMessageId: Record<string, ToolActivity[]>;
+  addToolActivity: (messageId: string, activity: ToolActivity) => void;
+  updateToolActivity: (
+    messageId: string,
+    activityId: string,
+    patch: Partial<Pick<ToolActivity, "status" | "summary" | "details">>
+  ) => void;
+  clearToolActivities: (messageId: string) => void;
 
   /// Thinking mode toggle - when disabled, models use No_Think mode
   thinkingEnabled: boolean;
@@ -168,6 +187,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
 
   activeSkillIds: [],
   skillContents: {},
+  toolActivitiesByMessageId: {},
   toggleSkill: (skillId) =>
     set((s) => {
       const isActive = s.activeSkillIds.includes(skillId);
@@ -188,12 +208,25 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       }
       return s;
     }),
+  setActiveSkillIds: (skillIds) =>
+    set((s) => {
+      const next = Array.from(new Set(skillIds.filter((id) => id.trim().length > 0)));
+      const prev = s.activeSkillIds;
+      if (prev.length === next.length && prev.every((id, idx) => id === next[idx])) {
+        return s;
+      }
+      return { activeSkillIds: next };
+    }),
   setSkillContent: (skillId, content) =>
-    set((s) => ({
-      skillContents: { ...s.skillContents, [skillId]: content },
-    })),
+    set((s) => {
+      if (s.skillContents[skillId] === content) return s;
+      return {
+        skillContents: { ...s.skillContents, [skillId]: content },
+      };
+    }),
   clearSkillContent: (skillId) =>
     set((s) => {
+      if (!(skillId in s.skillContents)) return s;
       const { [skillId]: _, ...rest } = s.skillContents;
       return { skillContents: rest };
     }),
@@ -204,6 +237,36 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       .filter(Boolean)
       .join("\n\n");
   },
+  addToolActivity: (messageId, activity) =>
+    set((s) => {
+      const current = s.toolActivitiesByMessageId[messageId] ?? [];
+      const next = [...current, activity].slice(-24);
+      return {
+        toolActivitiesByMessageId: {
+          ...s.toolActivitiesByMessageId,
+          [messageId]: next,
+        },
+      };
+    }),
+  updateToolActivity: (messageId, activityId, patch) =>
+    set((s) => {
+      const current = s.toolActivitiesByMessageId[messageId];
+      if (!current || current.length === 0) return s;
+      return {
+        toolActivitiesByMessageId: {
+          ...s.toolActivitiesByMessageId,
+          [messageId]: current.map((entry) =>
+            entry.id === activityId ? { ...entry, ...patch } : entry
+          ),
+        },
+      };
+    }),
+  clearToolActivities: (messageId) =>
+    set((s) => {
+      if (!s.toolActivitiesByMessageId[messageId]) return s;
+      const { [messageId]: _, ...rest } = s.toolActivitiesByMessageId;
+      return { toolActivitiesByMessageId: rest };
+    }),
 
   thinkingEnabled: true,
   toggleThinking: () =>

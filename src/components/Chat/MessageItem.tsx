@@ -22,6 +22,14 @@ interface MessageItemProps {
   variant?: "default" | "minimal";
 }
 
+const EMPTY_TOOL_ACTIVITIES: readonly {
+  id: string;
+  tool: string;
+  summary: string;
+  status: "running" | "done" | "error";
+  details?: string;
+}[] = [];
+
 const TOOL_TAG_NAMES = [
   "write_to_file", "read_file", "browser_fetch", "browser_navigate", "browser_screenshot",
   "create_task", "update_task", "coder_run", "create_note", "update_note",
@@ -36,6 +44,10 @@ const TOOL_XML_RE = new RegExp(
 
 function stripToolXml(content: string): string {
   return content.replace(TOOL_XML_RE, "").replace(/\n{3,}/g, "\n\n").trim();
+}
+
+function stripToolXmlPreview(content: string): string {
+  return stripToolXml(content).replace(/<[^>\n]*$/g, "").trim();
 }
 
 function nodeToPlainText(node: ReactNode): string {
@@ -88,6 +100,8 @@ function MessageItemInner({ message, variant = "default" }: MessageItemProps) {
   const [branched, setBranched] = useState(false);
   const [regenerated, setRegenerated] = useState(false);
   const delegation = useChatStore((s) => s.delegations[message.id]);
+  const toolActivities = useChatStore((s) => s.toolActivitiesByMessageId[message.id]);
+  const visibleToolActivities = toolActivities ?? EMPTY_TOOL_ACTIVITIES;
 
   const copyMessage = async () => {
     try {
@@ -178,7 +192,7 @@ function MessageItemInner({ message, variant = "default" }: MessageItemProps) {
             <p className="text-[13px] leading-relaxed whitespace-pre-wrap select-text">{message.content}</p>
           ) : isStreaming ? (
             <p className="text-[13px] leading-relaxed whitespace-pre-wrap select-text">
-              {message.content}
+              {stripToolXmlPreview(message.content)}
               <span className="inline-block w-1.5 h-4 bg-accent-primary animate-pulse ml-0.5 align-middle rounded-sm" />
             </p>
           ) : (
@@ -261,6 +275,36 @@ function MessageItemInner({ message, variant = "default" }: MessageItemProps) {
         </div>
         {!isUser && !isMinimal && delegation && (
           <DelegationCard delegation={delegation} />
+        )}
+        {!isUser && visibleToolActivities.length > 0 && (
+          <div className="mt-2 w-full flex flex-col gap-1">
+            {visibleToolActivities.map((activity) => (
+              <div
+                key={activity.id}
+                className="rounded-md border border-white/15 bg-white/5 px-2 py-1.5 text-[11px] leading-snug text-white/90"
+              >
+                <div className="flex items-center gap-2">
+                  <span className="font-mono text-white/80">{activity.tool}</span>
+                  <span className="truncate">{activity.summary}</span>
+                  <span
+                    className={cn(
+                      "ml-auto rounded px-1.5 py-0.5 text-[10px] uppercase tracking-wide",
+                      activity.status === "running"
+                        ? "bg-amber-500/20 text-amber-200"
+                        : activity.status === "done"
+                        ? "bg-emerald-500/20 text-emerald-200"
+                        : "bg-rose-500/20 text-rose-200"
+                    )}
+                  >
+                    {activity.status}
+                  </span>
+                </div>
+                {activity.details ? (
+                  <div className="mt-1 text-[10px] text-white/65 line-clamp-2">{activity.details}</div>
+                ) : null}
+              </div>
+            ))}
+          </div>
         )}
         {!isUser && !isMinimal && (
           <div className="mt-2 flex items-center gap-1">

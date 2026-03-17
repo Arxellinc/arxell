@@ -1,10 +1,17 @@
+use arx_rs::events::Event as AgentEvent;
+use arx_rs::provider::openai_compatible::OpenAiCompatibleProvider;
+use arx_rs::provider::ProviderConfig;
+use arx_rs::types::{ContentPart, Message as AgentMessage, UserContent};
 use chrono::Utc;
 use rusqlite::OptionalExtension;
 use std::sync::atomic::Ordering;
 use tauri::{AppHandle, Emitter, Manager, State};
 use uuid::Uuid;
 
-use crate::ai::{client::AiClient, types::ChatMessage};
+use crate::ai::{
+    client::AiClient,
+    types::{ChatMessage, ChunkEvent},
+};
 use crate::db::models::Message;
 use crate::model_manager::ModelManagerState;
 use crate::AppState;
@@ -98,6 +105,163 @@ fn load_history(
     Ok(v)
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum RuntimeMode {
+    Chat,
+    Voice,
+    Tools,
+    Full,
+}
+
+impl RuntimeMode {
+    fn from_str(raw: &str) -> Option<Self> {
+        match raw.trim().to_ascii_lowercase().as_str() {
+            "chat" => Some(Self::Chat),
+            "voice" => Some(Self::Voice),
+            "tools" => Some(Self::Tools),
+            "full" => Some(Self::Full),
+            _ => None,
+        }
+    }
+
+    fn allows_tools(self) -> bool {
+        matches!(self, Self::Tools | Self::Full)
+    }
+}
+
+fn resolve_runtime_mode(mode_id: Option<&str>) -> RuntimeMode {
+    mode_id
+        .and_then(RuntimeMode::from_str)
+        .unwrap_or(RuntimeMode::Chat)
+}
+
+fn as_agent_history(history: &[ChatMessage]) -> Vec<AgentMessage> {
+    history
+        .iter()
+        .map(|m| {
+            if m.role.eq_ignore_ascii_case("assistant") {
+                AgentMessage::Assistant {
+                    content: vec![ContentPart::Text {
+                        text: m.content.clone(),
+                    }],
+                    usage: None,
+                    stop_reason: None,
+                }
+            } else {
+                AgentMessage::User {
+                    content: UserContent::Text(m.content.clone()),
+                }
+            }
+        })
+        .collect()
+}
+
+fn trim_latest_user_message(
+    history: &[ChatMessage],
+    latest_user_content: &str,
+) -> Vec<ChatMessage> {
+    if let Some(last) = history.last() {
+        if last.role.eq_ignore_ascii_case("user") && last.content == latest_user_content {
+            return history[..history.len().saturating_sub(1)].to_vec();
+        }
+    }
+    history.to_vec()
+}
+
+async fn stream_via_standard_agent(
+    app: AppHandle,
+    assistant_id: String,
+    history: Vec<ChatMessage>,
+    user_input: String,
+    mode: RuntimeMode,
+    system_prompt: String,
+    model: String,
+    base_url: String,
+    api_key: String,
+    thinking_enabled: Option<bool>,
+    screenshot_base64: Option<String>,
+) -> Result<String, String> {
+    let provider = OpenAiCompatibleProvider::new(ProviderConfig {
+        api_key: Some(api_key),
+        base_url: Some(base_url),
+        model: model.clone(),
+        max_tokens: 8192,
+        temperature: Some(0.7),
+        thinking_level: if thinking_enabled == Some(false) {
+            "none".to_string()
+        } else {
+            "medium".to_string()
+        },
+        provider: Some("openai-compatible".to_string()),
+    });
+
+    let cwd = std::env::current_dir()
+        .unwrap_or_else(|_| std::path::PathBuf::from("."))
+        .display()
+        .to_string();
+    let mut session = arx_rs::Session::in_memory(
+        cwd.clone(),
+        Some("openai-compatible".to_string()),
+        Some(model),
+        if thinking_enabled == Some(false) {
+            "none".to_string()
+        } else {
+            "medium".to_string()
+        },
+    );
+    for message in as_agent_history(&history) {
+        let _ = session.append_message(message);
+    }
+
+    let tools = if mode.allows_tools() {
+        arx_rs::tools::default_tools()
+    } else {
+        Vec::new()
+    };
+    let mut agent = arx_rs::Agent::new(
+        Box::new(provider),
+        tools,
+        session,
+        arx_rs::AgentConfig::default(),
+        Some(cwd),
+    )
+    .map_err(|e| e.to_string())?;
+    agent.system_prompt = system_prompt;
+
+    let images = screenshot_base64.map(|b64| vec![(b64, "image/png".to_string())]);
+    let events = agent.run_collect(user_input, images, None).await;
+
+    let mut output = String::new();
+    for event in events {
+        match event {
+            AgentEvent::TextDelta { delta } => {
+                output.push_str(&delta);
+                let _ = app.emit(
+                    "chat:chunk",
+                    ChunkEvent {
+                        id: assistant_id.clone(),
+                        delta,
+                        done: false,
+                    },
+                );
+            }
+            AgentEvent::Error { error } => return Err(error),
+            AgentEvent::Interrupted { message } => return Err(message),
+            _ => {}
+        }
+    }
+
+    let _ = app.emit(
+        "chat:chunk",
+        ChunkEvent {
+            id: assistant_id,
+            delta: String::new(),
+            done: true,
+        },
+    );
+    Ok(output)
+}
+
 #[tauri::command]
 pub async fn cmd_chat_stream(
     app: AppHandle,
@@ -109,6 +273,7 @@ pub async fn cmd_chat_stream(
     thinking_enabled: Option<bool>,
     assistant_msg_id: Option<String>,
     screenshot_base64: Option<String>,
+    mode_id: Option<String>,
 ) -> Result<Message, String> {
     let prefer_api_source = primary_llm_source_is_api(&state);
 
@@ -202,6 +367,9 @@ pub async fn cmd_chat_stream(
     let assistant_id = assistant_msg_id
         .filter(|s| !s.is_empty())
         .unwrap_or_else(|| Uuid::new_v4().to_string());
+    let runtime_mode = resolve_runtime_mode(mode_id.as_deref());
+    let standard_agent_enabled =
+        get_setting(&state, "chat_standard_agent_enabled", "true") == "true";
 
     // If an in-process local model is loaded, stream directly from local inference
     // and emit chat:chunk events with the assistant message id.
@@ -247,6 +415,73 @@ pub async fn cmd_chat_stream(
             });
             return Ok(user_msg);
         }
+    }
+
+    if standard_agent_enabled {
+        let app_clone = app.clone();
+        let assistant_id_clone = assistant_id.clone();
+        let conversation_id_clone = conversation_id.clone();
+        let base_url_clone = base_url.clone();
+        let api_key_clone = api_key.clone();
+        let model_clone = model.clone();
+        let system_prompt_clone_agent = system_prompt.clone();
+        let thinking_agent = thinking;
+        let screenshot_agent = screenshot_base64.clone();
+        let agent_history = trim_latest_user_message(&history, &content);
+        tokio::spawn(async move {
+            match stream_via_standard_agent(
+                app_clone.clone(),
+                assistant_id_clone.clone(),
+                agent_history,
+                content,
+                runtime_mode,
+                system_prompt_clone_agent,
+                model_clone,
+                base_url_clone,
+                api_key_clone,
+                thinking_agent,
+                screenshot_agent,
+            )
+            .await
+            {
+                Ok(full_content) => {
+                    let cur_gen = app_clone
+                        .state::<AppState>()
+                        .generation_id
+                        .load(Ordering::SeqCst);
+                    if cur_gen != my_gen {
+                        log::debug!(
+                            "Discarding stale stream (gen {} != current {})",
+                            my_gen,
+                            cur_gen
+                        );
+                        return;
+                    }
+
+                    let msg = Message {
+                        id: assistant_id_clone,
+                        conversation_id: conversation_id_clone.clone(),
+                        role: "assistant".to_string(),
+                        content: full_content,
+                        created_at: Utc::now().timestamp_millis(),
+                    };
+                    let db_state = app_clone.state::<AppState>();
+                    let db = db_state.db.lock().unwrap();
+                    let _ = db.execute(
+                        "INSERT INTO messages (id, conversation_id, role, content, created_at) VALUES (?1,?2,?3,?4,?5)",
+                        rusqlite::params![msg.id, msg.conversation_id, msg.role, msg.content, msg.created_at],
+                    );
+                }
+                Err(e) => {
+                    let _ = app_clone.emit(
+                        "chat:error",
+                        serde_json::json!({ "message": e.to_string() }),
+                    );
+                }
+            }
+        });
+
+        return Ok(user_msg);
     }
 
     let http_client = state.http_client.clone();

@@ -8,7 +8,7 @@ stderr : diagnostic messages
 Usage:
   echo "Hello world" | python3 tts_kokoro.py \
     --model  /path/to/model_quantized.onnx \
-    --voices /path/to/voices-v1.0.bin  \
+    --voices /path/to/af_heart.bin  \
     [--voice af_heart] [--speed 1.0] [--lang en-us]
 """
 
@@ -40,7 +40,7 @@ def _resolve_voice_style_path(voices_path: str, voice: str) -> Path:
 def main():
     p = argparse.ArgumentParser(description="Kokoro TTS subprocess")
     p.add_argument("--model",  required=True, help="Path to model_quantized.onnx (recommended) or model.onnx")
-    p.add_argument("--voices", required=True, help="Path to voices-v1.0.bin")
+    p.add_argument("--voices", required=True, help="Path to af_heart.bin (or another voice style .bin)")
     p.add_argument("--voice",  default="af_heart")
     p.add_argument("--speed",  type=float, default=1.0)
     p.add_argument("--lang",   default="en-us")

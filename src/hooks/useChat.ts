@@ -22,6 +22,7 @@ import {
   settingsGetAll,
   settingsSet,
   skillsDir,
+  skillsResolve,
   voiceStart,
   type MemoryEntry,
   type ModelConfig,
@@ -64,7 +65,7 @@ import {
   coderPiVersion,
   terminalResolvePath,
 } from "../core/tooling/client";
-import { tryDispatchCoderRunViaPi } from "../tools/pi/coderRunAdapter";
+import { tryDispatchCoderRunViaTerminal } from "../tools/coder/coderRunAdapter";
 import { SAFE_SETTINGS, isSafeSettingKey, pickSafeSettings, sanitizeSafeSettingValue, type SafeSettingKey } from "../lib/safeSettings";
 import {
   buildAgentMemoryPayload,
@@ -554,7 +555,7 @@ function toolAvailabilitySuffix(): string {
   if (isCoderRunEnabledByCatalog()) return "";
   return `\n\n### Tool Availability Override
 - coder_run is currently unavailable because no coding-agent runtime is enabled.
-- Install/enable a coding pack in Settings > Tool Packs, then enable the Codex or Pi panel in Tools.`;
+- Install/enable a coding pack in Settings > Tool Packs, then enable the Coder panel in Tools.`;
 }
 
 function mergeToolRules(raw: unknown): Record<ModeId, ToolRules> {
@@ -1176,6 +1177,26 @@ export async function buildContextSnapshotForUi(params: {
   return buildExtraContext(workspacePath, skillContent, modeId, projectId);
 }
 
+async function resolveSkillContext(
+  conversationId: string | null,
+  workspacePath: string,
+  modeId: ModeId
+): Promise<string | null> {
+  if (!conversationId) return null;
+  try {
+    const resolved = await skillsResolve({
+      conversationId,
+      workspacePath,
+      modeId,
+    });
+    useChatStore.getState().setActiveSkillIds(resolved.enabled_ids);
+    return resolved.context_markdown?.trim() ? resolved.context_markdown : null;
+  } catch (error) {
+    console.error("Failed to resolve active skill context:", error);
+    return null;
+  }
+}
+
 // ─── Tool call types ──────────────────────────────────────────────────────────
 
 interface WriteToolCall {
@@ -1339,6 +1360,60 @@ type ToolCall =
   | ProjectProcessSetStatusToolCall
   | ProjectProcessRetryToolCall
   | DelegateToModelToolCall;
+
+function truncateForActivity(value: string, max = 80): string {
+  const compact = value.replace(/\s+/g, " ").trim();
+  if (compact.length <= max) return compact;
+  return `${compact.slice(0, max - 1)}…`;
+}
+
+function summarizeToolCall(call: ToolCall): string {
+  switch (call.type) {
+    case "write_to_file":
+      return call.path || "(path)";
+    case "read_file":
+      return call.path || "(path)";
+    case "browser_search":
+      return truncateForActivity(call.query || "(query)");
+    case "browser_fetch":
+    case "browser_navigate":
+      return truncateForActivity(call.url || "(url)");
+    case "browser_screenshot":
+      return "Capture workspace screenshot";
+    case "create_task":
+      return truncateForActivity(call.title || "Create task");
+    case "update_task":
+      return truncateForActivity(call.id || "Update task");
+    case "coder_run":
+      return truncateForActivity(call.prompt || "Run coder task");
+    case "create_note":
+      return truncateForActivity(call.title || "Create note");
+    case "update_note":
+      return truncateForActivity(call.id || "Update note");
+    case "memory_set":
+      return `${call.namespace}/${call.key}`;
+    case "memory_delete":
+      return `${call.namespace}/${call.key}`;
+    case "settings_get":
+      return call.key ? `get ${call.key}` : "list safe settings";
+    case "settings_set":
+      return call.key ? `set ${call.key}` : "set setting";
+    case "set_mode":
+      return `switch to ${call.mode}`;
+    case "project_second_opinion":
+      return truncateForActivity(call.question || "Second opinion");
+    case "project_process_create":
+      return truncateForActivity(call.title || "Create process");
+    case "project_process_set_status":
+      return `${call.process_id} -> ${call.status}`;
+    case "project_process_retry":
+      return call.process_id || "Retry process";
+    case "delegate_to_model":
+      return `${call.name} (${call.modelId})`;
+    default:
+      return call.type;
+  }
+}
 
 interface ReadResult {
   path: string;
@@ -1729,16 +1804,42 @@ async function executeToolCalls(
 
   const gatewayMode = "sandbox";
   const rootGuard = workspacePath || null;
+  const toolActivityStore = useChatStore.getState();
+  const startToolActivity = (call: ToolCall): string | null => {
+    if (!sourceMessageId) return null;
+    const id = crypto.randomUUID();
+    toolActivityStore.addToolActivity(sourceMessageId, {
+      id,
+      tool: call.type,
+      summary: summarizeToolCall(call),
+      status: "running",
+    });
+    return id;
+  };
+  const finishToolActivity = (
+    activityId: string | null,
+    status: "done" | "error",
+    details?: string
+  ) => {
+    if (!sourceMessageId || !activityId) return;
+    toolActivityStore.updateToolActivity(sourceMessageId, activityId, {
+      status,
+      details: details ? truncateForActivity(details, 180) : undefined,
+    });
+  };
 
   let executedCount = 0;
   for (const call of calls) {
+    const activityId = startToolActivity(call);
     if (!isCatalogEnabledForCall(call)) {
-      const toolName = call.type === "coder_run" ? "Codex/Pi" : call.type;
+      const toolName = call.type === "coder_run" ? "Coder" : call.type;
+      const error = `Tool '${toolName}' is disabled in the current tool catalog. Enable it from the Tools panel before retrying.`;
       readResults.push({
         path: `disabled://${call.type}`,
         content: "",
-        error: `Tool '${toolName}' is disabled in the current tool catalog. Enable it from the Tools panel before retrying.`,
+        error,
       });
+      finishToolActivity(activityId, "error", error);
       continue;
     }
 
@@ -1761,6 +1862,11 @@ async function executeToolCalls(
           content: "",
           error: `Blocked by autonomy policy in '${modeId}' mode: action budget exceeded (${constraints.maxActionsPerTurn} per turn).`,
         });
+        finishToolActivity(
+          activityId,
+          "error",
+          `Blocked: action budget exceeded (${constraints.maxActionsPerTurn} per turn).`
+        );
         continue;
       }
 
@@ -1780,6 +1886,11 @@ async function executeToolCalls(
           content: "",
           error: `Blocked by autonomy policy in '${modeId}' mode: ${call.type} is disabled.${guidance ? ` ${guidance}` : ""}`,
         });
+        finishToolActivity(
+          activityId,
+          "error",
+          `Blocked by autonomy policy in '${modeId}' mode.`
+        );
         continue;
       }
 
@@ -1794,6 +1905,7 @@ async function executeToolCalls(
           content: "",
           error: "write_to_file requires an active project workspace.",
         });
+        finishToolActivity(activityId, "error", "No active project workspace.");
         continue;
       }
       const fullPath =
@@ -1807,7 +1919,10 @@ async function executeToolCalls(
         openTab({ path: fullPath, name, content: call.content, language, modified: false });
       } catch (e) {
         console.error(`Tool write_to_file failed for ${fullPath}:`, e);
+        finishToolActivity(activityId, "error", String(e));
+        continue;
       }
+      finishToolActivity(activityId, "done", `Wrote ${call.path}`);
     } else if (call.type === "read_file") {
       activatePanelFromAgent("files");
       if (!workspacePath) {
@@ -1816,6 +1931,7 @@ async function executeToolCalls(
           content: "",
           error: "read_file requires an active project workspace.",
         });
+        finishToolActivity(activityId, "error", "No active project workspace.");
         continue;
       }
       const fullPath =
@@ -1827,12 +1943,16 @@ async function executeToolCalls(
         readResults.push({ path: call.path, content });
       } catch (e) {
         readResults.push({ path: call.path, content: "", error: String(e) });
+        finishToolActivity(activityId, "error", String(e));
+        continue;
       }
+      finishToolActivity(activityId, "done", `Read ${call.path}`);
     } else if (call.type === "browser_search") {
       activatePanelFromAgent("web");
       const query = call.query.trim();
       if (!query) {
         readResults.push({ path: "browser_search://", content: "", error: "browser_search requires a query." });
+        finishToolActivity(activityId, "error", "Missing search query.");
         continue;
       }
       useWebPanelStore.getState().setNavigateUrl(`arx://search?q=${encodeURIComponent(query)}`);
@@ -1852,7 +1972,10 @@ async function executeToolCalls(
         readResults.push({ path: `browser_search://${query}`, content: lines.join("\n") });
       } catch (e) {
         readResults.push({ path: `browser_search://${query}`, content: "", error: String(e) });
+        finishToolActivity(activityId, "error", String(e));
+        continue;
       }
+      finishToolActivity(activityId, "done", "Search completed");
     } else if (call.type === "browser_fetch") {
       activatePanelFromAgent("web");
       // Also navigate the iframe so the user can see what the agent is fetching
@@ -1865,7 +1988,10 @@ async function executeToolCalls(
         readResults.push({ path: call.url, content });
       } catch (e) {
         readResults.push({ path: call.url, content: "", error: String(e) });
+        finishToolActivity(activityId, "error", String(e));
+        continue;
       }
+      finishToolActivity(activityId, "done", "Fetched page content");
     } else if (call.type === "browser_navigate") {
       activatePanelFromAgent("web");
       const finalUrl = call.url.startsWith("http://") || call.url.startsWith("https://")
@@ -1886,6 +2012,7 @@ async function executeToolCalls(
           content: `Navigated browser to: ${finalUrl}\nUse browser_screenshot to see the current page.`,
         });
       }
+      finishToolActivity(activityId, "done", "Navigation completed");
     } else if (call.type === "browser_screenshot") {
       try {
         const html2canvas = (await import("html2canvas")).default;
@@ -1906,7 +2033,10 @@ async function executeToolCalls(
         });
       } catch (e) {
         readResults.push({ path: "screenshot://workspace", content: "", error: String(e) });
+        finishToolActivity(activityId, "error", String(e));
+        continue;
       }
+      finishToolActivity(activityId, "done", "Screenshot captured");
     } else if (call.type === "create_task") {
       activatePanelFromAgent("tasks");
       if (!call.title.trim()) continue;
@@ -1947,6 +2077,7 @@ async function executeToolCalls(
         last_error: null,
         next_review_at: null,
       });
+      finishToolActivity(activityId, "done", "Task created");
     } else if (call.type === "update_task") {
       activatePanelFromAgent("tasks");
       if (!call.id.trim()) continue;
@@ -1964,6 +2095,7 @@ async function executeToolCalls(
       if (Object.keys(patch).length > 0) {
         taskStore.updateTask(call.id, patch);
       }
+      finishToolActivity(activityId, "done", "Task updated");
     } else if (call.type === "coder_run") {
       const startedAt = Date.now();
       let progressTimer: ReturnType<typeof setInterval> | null = null;
@@ -2020,21 +2152,22 @@ async function executeToolCalls(
         emitProgress(
           `\n[coder] starting${resolvedModel ? ` (model=${resolvedModel})` : ""}${effectiveCwd ? ` cwd=${effectiveCwd}` : ""}...\n`
         );
-        const liveDispatch = await tryDispatchCoderRunViaPi({
+        const liveDispatch = await tryDispatchCoderRunViaTerminal({
           prompt: call.prompt,
           onProgress: emitProgress,
-          ensureVisible: () => activatePanelFromAgent("pi"),
+          ensureVisible: () => activatePanelFromAgent("codex"),
         });
         if (liveDispatch.dispatched) {
           emitProgress(
-            `[coder] prompt dispatched to Pi terminal in ${Math.max(0, Math.floor((Date.now() - startedAt) / 1000))}s\n`
+            `[coder] prompt dispatched to coder terminal in ${Math.max(0, Math.floor((Date.now() - startedAt) / 1000))}s\n`
           );
-          // Live dispatch remains in Pi terminal; do not produce synthetic coder:// output.
+          // Live dispatch remains in coder terminal; do not produce synthetic coder:// output.
+          finishToolActivity(activityId, "done", "Delegated to coder terminal");
           continue;
         }
-        if (liveDispatch.reason !== "pi-disabled") {
+        if (liveDispatch.reason !== "coder-disabled") {
           emitProgress(
-            `[coder] live Pi dispatch unavailable (${liveDispatch.reason}); using background fallback.\n`
+            `[coder] live coder dispatch unavailable (${liveDispatch.reason}); using background fallback.\n`
           );
         }
 
@@ -2142,10 +2275,12 @@ async function executeToolCalls(
           result.stderr || "(empty)",
         ].join("\n");
         readResults.push({ path: "coder://pi", content });
+        finishToolActivity(activityId, "done", `Completed (exit ${result.exitCode})`);
       } catch (e) {
         if (progressTimer) clearInterval(progressTimer);
         onProgress?.(`[coder] failed: ${String(e)}\n`);
         readResults.push({ path: "coder://pi", content: "", error: String(e) });
+        finishToolActivity(activityId, "error", String(e));
       }
     } else if (call.type === "create_note") {
       activatePanelFromAgent("notes");
@@ -2162,6 +2297,7 @@ async function executeToolCalls(
         path: `notes://${note.id}`,
         content: `Note created successfully.\nid: ${note.id}\ntitle: ${note.title}`,
       });
+      finishToolActivity(activityId, "done", "Note created");
     } else if (call.type === "update_note") {
       activatePanelFromAgent("notes");
       const notesStore = useNotesStore.getState();
@@ -2172,6 +2308,7 @@ async function executeToolCalls(
           content: "",
           error: `Note with id "${call.id}" not found. Check Notes Context for valid note IDs.`,
         });
+        finishToolActivity(activityId, "error", `Note ${call.id} not found.`);
       } else {
         const patch: { title?: string; content?: string } = {};
         if (call.title !== undefined) patch.title = call.title;
@@ -2183,6 +2320,7 @@ async function executeToolCalls(
           path: `notes://${call.id}`,
           content: `Note updated successfully.\nid: ${call.id}`,
         });
+        finishToolActivity(activityId, "done", "Note updated");
       }
     } else if (call.type === "set_user_name") {
       // Legacy: redirect to memory system so old model behavior still works
@@ -2194,6 +2332,9 @@ async function executeToolCalls(
           path: "memory://user/name",
           content: `Name remembered: "${trimmedName}".`,
         });
+        finishToolActivity(activityId, "done", "User name stored");
+      } else {
+        finishToolActivity(activityId, "error", "Missing name value.");
       }
     } else if (call.type === "memory_set") {
       const { namespace, key, value } = call;
@@ -2204,6 +2345,9 @@ async function executeToolCalls(
           path: `memory://${namespace}/${key}`,
           content: `Memory stored: ${namespace}/${key}`,
         });
+        finishToolActivity(activityId, "done", `Stored ${namespace}/${key}`);
+      } else {
+        finishToolActivity(activityId, "error", "Missing namespace/key/value.");
       }
     } else if (call.type === "memory_delete") {
       const { namespace, key } = call;
@@ -2214,6 +2358,9 @@ async function executeToolCalls(
           path: `memory://${namespace}/${key}`,
           content: `Memory removed: ${namespace}/${key}`,
         });
+        finishToolActivity(activityId, "done", `Removed ${namespace}/${key}`);
+      } else {
+        finishToolActivity(activityId, "error", "Missing namespace/key.");
       }
     } else if (call.type === "settings_get") {
       activatePanelFromAgent("settings");
@@ -2225,6 +2372,7 @@ async function executeToolCalls(
             content: "",
             error: `Blocked: "${key}" is not in the safe settings allowlist. Allowed keys: ${safeSettingKeys}.`,
           });
+          finishToolActivity(activityId, "error", `Blocked key: ${key}`);
           continue;
         }
         const value = await settingsGet(key);
@@ -2232,6 +2380,7 @@ async function executeToolCalls(
           path: `settings://${key}`,
           content: `${key}=${value ?? "null"}`,
         });
+        finishToolActivity(activityId, "done", `Read ${key}`);
       } else {
         const all = await settingsGetAll();
         const safe = pickSafeSettings(all);
@@ -2239,6 +2388,7 @@ async function executeToolCalls(
           path: "settings://safe",
           content: JSON.stringify(safe, null, 2),
         });
+        finishToolActivity(activityId, "done", "Listed safe settings");
       }
     } else if (call.type === "settings_set") {
       activatePanelFromAgent("settings");
@@ -2249,6 +2399,7 @@ async function executeToolCalls(
           content: "",
           error: `Blocked: "${key || "(missing key)"}" is not in the safe settings allowlist. Allowed keys: ${safeSettingKeys}.`,
         });
+        finishToolActivity(activityId, "error", `Blocked key: ${key || "(missing key)"}`);
         continue;
       }
       const normalized = sanitizeSafeSettingValue(key, call.value ?? "");
@@ -2258,6 +2409,7 @@ async function executeToolCalls(
           content: "",
           error: normalized.error,
         });
+        finishToolActivity(activityId, "error", normalized.error);
         continue;
       }
       await settingsSet(key, normalized.value);
@@ -2266,6 +2418,7 @@ async function executeToolCalls(
         path: `settings://${key}`,
         content: `Updated ${key}=${normalized.value}`,
       });
+      finishToolActivity(activityId, "done", `Updated ${key}`);
     } else if (call.type === "set_mode") {
       const mode = call.mode;
       useChatStore.getState().setActiveMode(mode);
@@ -2274,6 +2427,7 @@ async function executeToolCalls(
         path: "mode://autonomy",
         content: `Autonomy mode switched to: ${mode}`,
       });
+      finishToolActivity(activityId, "done", `Switched to ${mode}`);
     } else if (call.type === "project_second_opinion") {
       activatePanelFromAgent("project");
       const question = call.question.trim();
@@ -2283,6 +2437,7 @@ async function executeToolCalls(
           content: "",
           error: "project_second_opinion requires a non-empty <question>.",
         });
+        finishToolActivity(activityId, "error", "Missing question.");
         continue;
       }
       const cards = await projectCardList(gatewayMode).catch(() => []);
@@ -2300,6 +2455,7 @@ async function executeToolCalls(
           `sample_cards: ${cardPreview}`,
         ].join("\n"),
       });
+      finishToolActivity(activityId, "done", "Second opinion process created");
     } else if (call.type === "project_process_create") {
       activatePanelFromAgent("project");
       const title = call.title.trim();
@@ -2314,6 +2470,7 @@ async function executeToolCalls(
         path: `project://process/${processId}`,
         content: `Process created.\nprocess_id: ${processId}\ntitle: ${title}`,
       });
+      finishToolActivity(activityId, "done", "Project process created");
     } else if (call.type === "project_process_set_status") {
       activatePanelFromAgent("project");
       const processId = call.process_id.trim();
@@ -2329,6 +2486,7 @@ async function executeToolCalls(
         path: `project://process/${processId}`,
         content: `Process status updated.\nprocess_id: ${processId}\nstatus: ${call.status}`,
       });
+      finishToolActivity(activityId, "done", `Set status ${call.status}`);
     } else if (call.type === "project_process_retry") {
       activatePanelFromAgent("project");
       const processId = call.process_id.trim();
@@ -2338,6 +2496,7 @@ async function executeToolCalls(
         path: `project://process/${processId}`,
         content: `Process retried.\nprocess_id: ${processId}`,
       });
+      finishToolActivity(activityId, "done", "Process retry requested");
     } else if (call.type === "delegate_to_model") {
       const { name, modelId, baseUrl, prompt } = call;
       if (!name || !modelId || !baseUrl || !prompt) continue;
@@ -2357,6 +2516,7 @@ async function executeToolCalls(
         status: "pending",
         response: "",
       });
+      finishToolActivity(activityId, "done", `Delegated to ${name}`);
       // Do NOT push to readResults — that would trigger a follow-up stream
       // which causes the agent to ask "Would you like to proceed?" in text,
       // creating a loop. The DelegationCard auto-fires and streams inline.
@@ -2766,24 +2926,14 @@ export function useChatStream() {
             toolResponseContent = `${responseContent}\n\n<coder_run>\n<prompt>${escapeXml(syntheticPrompt)}</prompt>\n</coder_run>`;
           }
         }
-        const hasCoderRun = /<coder_run>/i.test(toolResponseContent);
         const hasCreateTask = /<create_task>/i.test(toolResponseContent);
         const hasUpdateTask = /<update_task>/i.test(toolResponseContent);
-        let toolProgressStreamId: string | null = null;
-        if (hasCoderRun && convIdForTools) {
-          toolProgressStreamId = crypto.randomUUID();
-          useChatStore.getState().startStreaming(toolProgressStreamId, convIdForTools);
-          useChatStore.getState().appendChunk(toolProgressStreamId, "Running coder tool...\n");
-        }
 
         const taskCountBefore = useTaskStore.getState().tasks.length;
         const readResults = await executeToolCalls(
           toolResponseContent,
           workspacePath,
-          (line) => {
-            if (!toolProgressStreamId) return;
-            useChatStore.getState().appendChunk(toolProgressStreamId, line);
-          },
+          undefined,
           streamSnapshot?.id
         );
         const taskCountAfter = useTaskStore.getState().tasks.length;
@@ -2828,21 +2978,19 @@ export function useChatStream() {
           toolFollowUpDepth.current += 1;
           const convId = useChatStore.getState().activeConversationId;
           if (convId) {
-            const skillContent = useChatStore.getState().getActiveSkillsContent();
             const modeId = useChatStore.getState().activeMode;
             const thinkingEnabled =
               modeId === "voice" ? false : useChatStore.getState().thinkingEnabled;
+            const skillContent = await resolveSkillContext(convId, workspacePath, modeId);
             const extraContext = await buildExtraContext(workspacePath, skillContent, modeId, state.activeProjectId);
             const followUpContent = formatReadResults(readResults);
-            const assistantId = toolProgressStreamId ?? crypto.randomUUID();
+            const assistantId = crypto.randomUUID();
             // Consume pending screenshot (if any) for this follow-up
             const screenshotB64 = pendingScreenshotB64 ?? undefined;
             pendingScreenshotB64 = null;
-            if (!toolProgressStreamId) {
-              useChatStore.getState().startStreaming(assistantId, convId);
-            }
+            useChatStore.getState().startStreaming(assistantId, convId);
             try {
-              await chatStream(convId, followUpContent, extraContext, thinkingEnabled, assistantId, screenshotB64);
+              await chatStream(convId, followUpContent, extraContext, thinkingEnabled, assistantId, screenshotB64, modeId);
             } catch (e) {
               console.error("Tool follow-up failed:", e);
               toolFollowUpDepth.current = 0;
@@ -2852,9 +3000,6 @@ export function useChatStream() {
         } else {
           if (readResults.length > 0 && toolFollowUpDepth.current >= MAX_TOOL_FOLLOW_UP_ROUNDS) {
             console.warn(`[tool] Follow-up limit reached (${MAX_TOOL_FOLLOW_UP_ROUNDS}); stopping tool chain.`);
-          }
-          if (toolProgressStreamId) {
-            useChatStore.getState().finishStreaming();
           }
           toolFollowUpDepth.current = 0;
 
@@ -2935,8 +3080,8 @@ export function useChatStream() {
             streamingPanelRef.current = "web";
             useToolPanelStore.getState().activatePanelFromAgent("web");
           } else if (/<coder_run>/i.test(streamAcc)) {
-            streamingPanelRef.current = "pi";
-            useToolPanelStore.getState().activatePanelFromAgent("pi");
+            streamingPanelRef.current = "codex";
+            useToolPanelStore.getState().activatePanelFromAgent("codex");
           } else if (/<settings_get>/i.test(streamAcc) || /<settings_set>/i.test(streamAcc)) {
             streamingPanelRef.current = "settings";
             useToolPanelStore.getState().activatePanelFromAgent("settings");
@@ -2944,6 +3089,14 @@ export function useChatStream() {
             streamingPanelRef.current = "notes";
             useToolPanelStore.getState().activatePanelFromAgent("notes");
           }
+        }
+
+        const openToolTag = /<([a-z][a-z0-9]*_[a-z0-9_]*)/i.exec(streamAcc);
+        if (openToolTag && KNOWN_TOOL_TAGS.has(openToolTag[1])) {
+          suppressVoiceToolPayloadSpeechRef.current = true;
+          streamingSpeech.current?.stop();
+          streamingSpeech.current = null;
+          streamingSpeechStart.current = null;
         }
 
         // Stream create_task content live into the tasks panel preview
@@ -3094,7 +3247,6 @@ export function useChatStream() {
         state.activeConversationId,
         state.activeProjectId
       );
-      const skillContent = state.getActiveSkillsContent();
       const modeId = state.activeMode;
       const thinkingEnabled = modeId === "voice" ? false : state.thinkingEnabled;
       // Run memory capture in the background — it only persists user facts and
@@ -3115,11 +3267,12 @@ export function useChatStream() {
         setConversations(allConvs);
       }
 
+      const skillContent = await resolveSkillContext(convId, workspacePath, modeId);
       const extraContext = await buildExtraContext(workspacePath, skillContent, modeId, state.activeProjectId);
       const assistantId = crypto.randomUUID();
       startMessagePerf(assistantId, Date.now());
       startStreaming(assistantId, convId);
-      const userMsg = await chatStream(convId, content, extraContext, thinkingEnabled, assistantId);
+      const userMsg = await chatStream(convId, content, extraContext, thinkingEnabled, assistantId, undefined, modeId);
       addMessage(userMsg);
     } catch (e) {
       console.error("Failed to send message:", e);

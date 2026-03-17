@@ -8,7 +8,6 @@ import { CommercialLicenseModal } from "./components/CommercialLicenseModal";
 import { WelcomeModal } from "./components/WelcomeModal";
 import { SettingsDialog } from "./components/SettingsDialog";
 import { AvatarPresentationMode } from "./components/AvatarPresentationMode";
-import { useChatInit } from "./hooks/useChat";
 import { useChatStore } from "./store/chatStore";
 import { useServeStore } from "./store/serveStore";
 import { useToolPanelStore } from "./store/toolPanelStore";
@@ -141,7 +140,7 @@ export default function App() {
   const { addMessage, activeConversationId } = useChatStore();
   const hasGreetedRef = useRef(false);
 
-  useChatInit();
+  // Temporarily disabled to isolate startup nested-update crash.
   useChatErrorListener();
 
   // Initialize serve store and load persisted theme once on mount
@@ -266,9 +265,11 @@ export default function App() {
     let cancelled = false;
     void (async () => {
       try {
-        const value = await settingsGet(WELCOME_DISMISS_KEY);
+        // Keep welcome/terms gating machine-local so fresh installs always
+        // show onboarding even if synced DB settings exist.
+        const local = window.localStorage.getItem(WELCOME_DISMISS_KEY);
+        const dismissed = local === "true";
         if (cancelled) return;
-        const dismissed = value === "true";
         setWelcomeDoNotShow(dismissed);
         setShowWelcomeModal(!dismissed);
         setWelcomeFlowCompleted(dismissed);
@@ -308,6 +309,13 @@ export default function App() {
     setWelcomeDoNotShow(doNotShowAgain);
     setShowWelcomeModal(false);
     setWelcomeFlowCompleted(true);
+    try {
+      window.localStorage.setItem(
+        WELCOME_DISMISS_KEY,
+        doNotShowAgain ? "true" : "false"
+      );
+    } catch {}
+    // Keep DB value in sync for backward compatibility with existing tooling.
     void settingsSet(WELCOME_DISMISS_KEY, doNotShowAgain ? "true" : "false").catch((error) => {
       console.error("Failed to save welcome modal setting:", error);
     });

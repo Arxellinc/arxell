@@ -1117,6 +1117,102 @@ async fn execute_node(
                 .get("maxIterations")
                 .and_then(|v| v.as_u64())
                 .unwrap_or(3);
+            let mut skill_bindings = node
+                .params
+                .get("skills")
+                .and_then(|v| v.as_array())
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|v| v.as_str().map(|s| s.trim().to_string()))
+                        .filter(|s| !s.is_empty())
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+            if skill_bindings.is_empty() {
+                if let Some(legacy) = node
+                    .params
+                    .get("skill")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.trim())
+                    .filter(|s| !s.is_empty())
+                {
+                    skill_bindings.push(legacy.to_string());
+                }
+            }
+            let mut tool_bindings = node
+                .params
+                .get("tools")
+                .and_then(|v| v.as_array())
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|v| v.as_str().map(|s| s.trim().to_string()))
+                        .filter(|s| !s.is_empty())
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+            if tool_bindings.is_empty() {
+                if let Some(legacy) = node
+                    .params
+                    .get("tool")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.trim())
+                    .filter(|s| !s.is_empty())
+                {
+                    tool_bindings.push(legacy.to_string());
+                }
+            }
+            let mut memory_bindings = node
+                .params
+                .get("memory_refs")
+                .and_then(|v| v.as_array())
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|v| {
+                            let namespace = v.get("namespace")?.as_str()?.trim();
+                            let key = v.get("key")?.as_str()?.trim();
+                            if namespace.is_empty() || key.is_empty() {
+                                return None;
+                            }
+                            Some((namespace.to_string(), key.to_string()))
+                        })
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+            if memory_bindings.is_empty() {
+                if let Some(legacy) = node
+                    .params
+                    .get("memory")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.trim())
+                    .filter(|s| !s.is_empty())
+                {
+                    if let Some((namespace, key)) = legacy.split_once('/') {
+                        if !namespace.trim().is_empty() && !key.trim().is_empty() {
+                            memory_bindings
+                                .push((namespace.trim().to_string(), key.trim().to_string()));
+                        }
+                    } else {
+                        memory_bindings.push(("user".to_string(), legacy.to_string()));
+                    }
+                }
+            }
+
+            let mut memory_values_by_namespace: HashMap<String, HashMap<String, String>> =
+                HashMap::new();
+            if !memory_bindings.is_empty() {
+                let db = state.db.lock().map_err(|e| e.to_string())?;
+                for (namespace, _key) in &memory_bindings {
+                    if memory_values_by_namespace.contains_key(namespace) {
+                        continue;
+                    }
+                    let rows = memory::list(&db, namespace).map_err(|e| e.to_string())?;
+                    let map = rows
+                        .into_iter()
+                        .map(|row| (row.key, row.value))
+                        .collect::<HashMap<_, _>>();
+                    memory_values_by_namespace.insert(namespace.clone(), map);
+                }
+            }
 
             let mut out = Vec::new();
             for it in input_items {
@@ -1124,7 +1220,64 @@ async fn execute_node(
                     .as_str()
                     .map(|s| s.to_string())
                     .unwrap_or_else(|| evaluate_template(text_template, it, ctx).to_string());
+                let memory_context = memory_bindings
+                    .iter()
+                    .filter_map(|(namespace, key)| {
+                        memory_values_by_namespace
+                            .get(namespace)
+                            .and_then(|rows| rows.get(key))
+                            .map(|value| {
+                                json!({
+                                    "namespace": namespace,
+                                    "key": key,
+                                    "value": value
+                                })
+                            })
+                    })
+                    .collect::<Vec<_>>();
+                let bindings_note = if skill_bindings.is_empty()
+                    && tool_bindings.is_empty()
+                    && memory_context.is_empty()
+                {
+                    String::new()
+                } else {
+                    format!(
+                        "\n\n[Agent bindings]\nskills: {}\ntools: {}\nmemory: {}",
+                        if skill_bindings.is_empty() {
+                            "none".to_string()
+                        } else {
+                            skill_bindings.join(", ")
+                        },
+                        if tool_bindings.is_empty() {
+                            "none".to_string()
+                        } else {
+                            tool_bindings.join(", ")
+                        },
+                        if memory_context.is_empty() {
+                            "none".to_string()
+                        } else {
+                            memory_context
+                                .iter()
+                                .map(|entry| {
+                                    let ns = entry
+                                        .get("namespace")
+                                        .and_then(|v| v.as_str())
+                                        .unwrap_or("");
+                                    let key =
+                                        entry.get("key").and_then(|v| v.as_str()).unwrap_or("");
+                                    format!("{ns}/{key}")
+                                })
+                                .collect::<Vec<_>>()
+                                .join(", ")
+                        }
+                    )
+                };
                 let prompt = if let Some(ref sys) = system {
+                    format!("{sys}\n\nUser: {question}{bindings_note}")
+                } else {
+                    format!("{question}{bindings_note}")
+                };
+                let prompt_without_bindings = if let Some(ref sys) = system {
                     format!("{sys}\n\nUser: {question}")
                 } else {
                     question
@@ -1132,7 +1285,13 @@ async fn execute_node(
                 out.push(A2AExecutionItem {
                     json: json!({
                         "agent_prompt": prompt,
+                        "agent_prompt_user": prompt_without_bindings,
                         "max_iterations": max_iterations,
+                        "agent_context": {
+                            "skills": skill_bindings.clone(),
+                            "tools": tool_bindings.clone(),
+                            "memory": memory_context.clone()
+                        },
                         "note": "Use llm.query downstream for final completion."
                     }),
                     binary: it.binary.clone(),
@@ -1220,7 +1379,7 @@ async fn execute_node(
                 .and_then(|v| v.as_str())
                 .unwrap_or("list");
             if mode == "list" {
-                let skills = crate::commands::skills::cmd_skills_list(app.clone())
+                let skills = crate::commands::skills::cmd_skills_list(app.clone(), None)
                     .map_err(|e| e.to_string())?;
                 let out = skills
                     .into_iter()
@@ -1312,7 +1471,7 @@ async fn execute_node(
                     json!({ "namespace": ns, "items": rows })
                 }
                 "skills.list" => {
-                    let skills = crate::commands::skills::cmd_skills_list(app.clone())
+                    let skills = crate::commands::skills::cmd_skills_list(app.clone(), None)
                         .map_err(|e| e.to_string())?;
                     json!({ "items": skills })
                 }

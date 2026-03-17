@@ -300,6 +300,18 @@ fn default_kokoro_python_path(app_dir: &std::path::Path) -> std::path::PathBuf {
     }
 }
 
+fn resolve_kokoro_voices_path(kokoro_dir: &std::path::Path) -> std::path::PathBuf {
+    let candidates = ["af_heart.bin", "af.bin"];
+    for name in candidates {
+        let path = kokoro_dir.join(name);
+        if path.exists() {
+            return path;
+        }
+    }
+    // Default setting path for first-launch before assets are deployed.
+    kokoro_dir.join("af_heart.bin")
+}
+
 fn normalize_voice_paths(conn: &rusqlite::Connection, app_dir: &std::path::Path) {
     let whisper_dir = app_dir.join("whisper");
     let kokoro_dir = app_dir.join("kokoro");
@@ -314,8 +326,7 @@ fn normalize_voice_paths(conn: &rusqlite::Connection, app_dir: &std::path::Path)
         .join("model_quantized.onnx")
         .to_string_lossy()
         .to_string();
-    let kokoro_voices = kokoro_dir
-        .join("voices-v1.0.bin")
+    let kokoro_voices = resolve_kokoro_voices_path(&kokoro_dir)
         .to_string_lossy()
         .to_string();
     let kokoro_python = default_kokoro_python_path(app_dir)
@@ -442,6 +453,13 @@ fn extract_zip_archive(
         }
     }
 
+    let nested = tmp_dir.join("venv");
+    let extract_root = if nested.exists() && nested.is_dir() {
+        nested
+    } else {
+        tmp_dir.clone()
+    };
+
     if dest_dir.exists() {
         std::fs::remove_dir_all(dest_dir).map_err(|e| {
             format!(
@@ -450,13 +468,16 @@ fn extract_zip_archive(
             )
         })?;
     }
-    std::fs::rename(&tmp_dir, dest_dir).map_err(|e| {
+    std::fs::rename(&extract_root, dest_dir).map_err(|e| {
         format!(
             "failed to finalize runtime extraction {} -> {}: {e}",
-            tmp_dir.display(),
+            extract_root.display(),
             dest_dir.display()
         )
     })?;
+    if tmp_dir.exists() {
+        let _ = std::fs::remove_dir_all(&tmp_dir);
+    }
     Ok(())
 }
 
@@ -580,6 +601,65 @@ fn ensure_kokoro_runtime(
     Ok(python_path)
 }
 
+fn log_kokoro_bootstrap_snapshot(
+    app: &tauri::AppHandle,
+    app_dir: &std::path::Path,
+    model_path: &std::path::Path,
+    voices_path: &std::path::Path,
+) {
+    let python_path = default_kokoro_python_path(app_dir);
+    let archive_name = kokoro_runtime_archive_name();
+    let archive_path = app
+        .path()
+        .resolve(
+            format!("resources/kokoro-runtime/{archive_name}"),
+            tauri::path::BaseDirectory::Resource,
+        )
+        .ok();
+    let archive_exists = archive_path.as_ref().map(|p| p.exists()).unwrap_or(false);
+    let archive_size = archive_path
+        .as_ref()
+        .and_then(|p| std::fs::metadata(p).ok())
+        .map(|m| m.len())
+        .unwrap_or(0);
+    let model_exists = model_path.exists();
+    let model_size = std::fs::metadata(model_path).map(|m| m.len()).unwrap_or(0);
+    let voices_exists = voices_path.exists();
+    let voices_size = std::fs::metadata(voices_path).map(|m| m.len()).unwrap_or(0);
+    let python_exists = python_path.exists();
+    let selected_voice = app
+        .try_state::<AppState>()
+        .and_then(|state| {
+            let db = state.db.lock().ok()?;
+            db.query_row(
+                "SELECT value FROM settings WHERE key = 'kokoro_voice'",
+                [],
+                |row| row.get::<_, String>(0),
+            )
+            .ok()
+        })
+        .unwrap_or_else(|| "af_heart".to_string());
+
+    commands::logs::info(&format!(
+        "[startup] Kokoro snapshot: archive={} exists={} size={} python={} exists={} model={} exists={} size={} voices={} exists={} size={} voice={}",
+        archive_path
+            .as_ref()
+            .map(|p| p.to_string_lossy().to_string())
+            .unwrap_or_else(|| "<unresolved>".to_string()),
+        archive_exists,
+        archive_size,
+        python_path.to_string_lossy(),
+        python_exists,
+        model_path.to_string_lossy(),
+        model_exists,
+        model_size,
+        voices_path.to_string_lossy(),
+        voices_exists,
+        voices_size,
+        selected_voice
+    ));
+}
+
 fn start_kokoro_bootstrap(
     app: tauri::AppHandle,
     app_dir: std::path::PathBuf,
@@ -589,6 +669,7 @@ fn start_kokoro_bootstrap(
     if KOKORO_BOOTSTRAP_RUNNING.swap(true, std::sync::atomic::Ordering::SeqCst) {
         return;
     }
+    log_kokoro_bootstrap_snapshot(&app, &app_dir, &model_path, &voices_path);
 
     emit_kokoro_bootstrap_status(
         &app,
@@ -778,6 +859,9 @@ pub fn run() {
             if let Err(e) = memory::sync_from_files(&conn, &memory_dir) {
                 log::warn!("Memory file sync on startup: {}", e);
             }
+            let agent_home_dir = app_dir.join("agent");
+            std::fs::create_dir_all(&agent_home_dir).ok();
+            std::env::set_var("ARX_AGENT_HOME", &agent_home_dir);
 
             commands::skills::seed_default_skills(app.handle());
 
@@ -819,7 +903,6 @@ pub fn run() {
                 let kokoro_dest = app_dir.join("kokoro");
                 std::fs::create_dir_all(&kokoro_dest).ok();
                 let model_dest = kokoro_dest.join("model_quantized.onnx");
-                let voices_dest = kokoro_dest.join("voices-v1.0.bin");
                 if let Ok(voice_resources_dir) = app
                     .path()
                     .resolve("resources/voice", tauri::path::BaseDirectory::Resource)
@@ -851,8 +934,20 @@ pub fn run() {
                         }
                     }
                 }
+                let voices_dest = resolve_kokoro_voices_path(&kokoro_dest);
                 if !voices_dest.exists() {
-                    log::warn!("Bundled Kokoro voices file not found in resources");
+                    log::warn!(
+                        "Bundled Kokoro voice assets not found in resources (expected af_heart.bin or af.bin)"
+                    );
+                } else {
+                    let _ = conn.execute(
+                        "INSERT INTO settings (key, value) VALUES (?1, ?2)
+                         ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                        rusqlite::params![
+                            "kokoro_voices_path",
+                            voices_dest.to_string_lossy().to_string()
+                        ],
+                    );
                 }
                 if !model_dest.exists() {
                     match app.path().resolve(
@@ -878,31 +973,6 @@ pub fn run() {
                     model_dest,
                     voices_dest,
                 );
-            }
-
-            // ── Optional bundled LLM: deploy to {app_data_dir}/models/ on first launch ──
-            // If a model is present in resources/models/, copy it once so
-            // cmd_list_available_models can pick it up. Public builds may omit
-            // this asset and rely on first-run model installation flow.
-            {
-                let llm_dest = app_dir.join("models");
-                std::fs::create_dir_all(&llm_dest).ok();
-                let bundled_llm = "Qwen3.5-2B-Q8_0.gguf";
-                let dest = llm_dest.join(bundled_llm);
-                if !dest.exists() {
-                    match app.path().resolve(
-                        format!("resources/models/{bundled_llm}"),
-                        tauri::path::BaseDirectory::Resource,
-                    ) {
-                        Ok(src) if src.exists() => match std::fs::copy(&src, &dest) {
-                            Ok(_) => commands::logs::info(&format!(
-                                "Deployed bundled LLM: {bundled_llm}"
-                            )),
-                            Err(e) => log::warn!("Failed to deploy bundled LLM {bundled_llm}: {e}"),
-                        },
-                        _ => log::debug!("Bundled LLM not found in resources: {bundled_llm}"),
-                    }
-                }
             }
 
             app.manage(AppState {
@@ -1072,6 +1142,7 @@ pub fn run() {
             commands::voice::cmd_list_audio_devices,
             commands::voice::cmd_get_kokoro_bootstrap_status,
             commands::voice::cmd_tts_check_engines,
+            commands::voice::cmd_tts_self_test,
             commands::voice::cmd_stt_check_engines,
             commands::voice::cmd_stt_list_whisper_models,
             commands::voice::cmd_tts_list_voices,
@@ -1116,6 +1187,8 @@ pub fn run() {
             commands::settings::cmd_models_list,
             commands::skills::cmd_skills_list,
             commands::skills::cmd_skills_dir,
+            commands::skills::cmd_skills_resolve,
+            commands::skills::cmd_skills_set_enabled,
             commands::models::cmd_model_list_all,
             commands::models::cmd_model_add,
             commands::models::cmd_model_update,

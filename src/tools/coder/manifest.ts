@@ -5,8 +5,8 @@ import { CoderPanel } from "../../components/Workspace/panels/CoderPanel";
 export const codexToolManifest: ToolManifest = {
   id: "codex",
   version: "1.0.0",
-  title: "Codex",
-  description: "Agentic coding with Codex (`codex` CLI)",
+  title: "Coder",
+  description: "CLI coding agent terminal powered by arx-rs",
   iconName: "Bot",
   icon: Bot,
   category: "main",

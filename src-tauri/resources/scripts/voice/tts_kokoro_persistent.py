@@ -15,7 +15,7 @@ Protocol:
             [M bytes: WAV audio data (0 if error)]
 
 Usage:
-  python3 tts_kokoro_persistent.py --model /path/to/model_quantized.onnx --voices /path/to/voices-v1.0.bin
+  python3 tts_kokoro_persistent.py --model /path/to/model_quantized.onnx --voices /path/to/af_heart.bin
 
 The model is loaded ONCE at startup, then the script enters a request loop.
 """
@@ -50,7 +50,7 @@ def _resolve_voice_style_path(voices_path: str, voice: str) -> Path:
 def main():
     parser = argparse.ArgumentParser(description="Persistent Kokoro TTS daemon")
     parser.add_argument("--model", required=True, help="Path to model_quantized.onnx (recommended) or model.onnx")
-    parser.add_argument("--voices", required=True, help="Path to voices-v1.0.bin")
+    parser.add_argument("--voices", required=True, help="Path to af_heart.bin (or another voice style .bin)")
     parser.add_argument("--default-voice", default="af_heart", help="Default voice to use")
     args = parser.parse_args()
 

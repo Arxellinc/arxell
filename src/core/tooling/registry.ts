@@ -1,6 +1,6 @@
 import type { ToolId, ToolManifest, ToolPanelId } from "./types";
 import {
-  a2aToolManifest,
+  flowToolManifest,
   agentsToolManifest,
   avatarToolManifest,
   businessToolManifest,
@@ -35,7 +35,7 @@ export const TOOL_REGISTRY: Record<ToolId, ToolManifest> = {
   extensions: extensionsToolManifest,
   devices: devicesToolManifest,
   project: agentsToolManifest,
-  flow: a2aToolManifest,
+  flow: flowToolManifest,
   codex: codexToolManifest,
   code: codeToolManifest,
   web: webToolManifest,

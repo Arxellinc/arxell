@@ -1,13 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
 import { Plus, RefreshCw, Zap, Brain, BrainCog, Pencil, Check, ChevronDown, ChevronUp } from "lucide-react";
-import { settingsGet, skillsDir, skillsList } from "../../lib/tauri";
+import { settingsGet, skillsDir, skillsList, skillsResolve, skillsSetEnabled } from "../../lib/tauri";
 import type { SkillMeta } from "../../lib/tauri";
 import { useChatStore } from "../../store/chatStore";
 import { useVoiceStore } from "../../store/voiceStore";
 import { generateAvailableToolsContent, useToolPanelStore } from "../../store/toolPanelStore";
 import { cn, getLanguageFromPath } from "../../lib/utils";
-import type { ServeState, SystemResources } from "../../types/model";
 import { useWorkspaceStore } from "../../store/workspaceStore";
 import { codeDeletePath, codeReadFile, codeWriteFile } from "../../core/tooling/client";
 import { buildContextSnapshotForUi } from "../../hooks/useChat";
@@ -131,35 +129,6 @@ function generateAvailableSkillsContent(
   return content;
 }
 
-async function generateRuntimeContextBlock(): Promise<string> {
-  const [serveState, resources] = await Promise.all([
-    invoke<ServeState>("cmd_get_serve_state"),
-    invoke<SystemResources>("cmd_get_system_resources"),
-  ]);
-
-  const now = new Date();
-  const modelName = serveState.modelInfo?.name ?? "No model loaded";
-  const modelCtx = serveState.modelInfo?.contextLength
-    ? serveState.modelInfo.contextLength.toLocaleString()
-    : "Unknown";
-  const cpu = `${resources.cpu.name} (${resources.cpu.physicalCores}C/${resources.cpu.logicalCores}T)`;
-  const mem = `${resources.memory.availableMb.toLocaleString()}MB free / ${resources.memory.totalMb.toLocaleString()}MB total`;
-  const gpu = resources.gpus[0]
-    ? `${resources.gpus[0].name} (${resources.gpus[0].gpuType})`
-    : "None";
-
-  return [
-    "## Runtime Context",
-    `Date: ${now.toLocaleDateString()}`,
-    `Time: ${now.toLocaleTimeString()}`,
-    `Model: ${modelName}`,
-    `Context Length: ${modelCtx}`,
-    `CPU: ${cpu}`,
-    `Memory: ${mem}`,
-    `GPU: ${gpu}`,
-  ].join("\n");
-}
-
 type SkillBarItem =
   | { key: string; kind: "always"; skill: SkillMeta }
   | { key: string; kind: "selectable"; skill: SkillMeta }
@@ -180,8 +149,10 @@ export function SkillsBar() {
   const {
     activeSkillIds,
     activeMode,
-    toggleSkill,
-    setSkillActive,
+    activeConversationId,
+    activeProjectId,
+    projects,
+    setActiveSkillIds,
     setSkillContent,
     clearSkillContent,
     thinkingEnabled,
@@ -189,8 +160,13 @@ export function SkillsBar() {
     complexReasoningEnabled,
     toggleComplexReasoning,
   } = useChatStore();
+  const activeWorkspacePath = useMemo(
+    () => projects.find((p) => p.id === activeProjectId)?.workspace_path ?? "",
+    [projects, activeProjectId]
+  );
   const voiceMode = useVoiceStore((s) => s.voiceMode);
   const loaded = useRef(false);
+  const lastLoadKey = useRef<string>("");
   const [openGroup, setOpenGroup] = useState<"skills" | "tools" | "memory" | "runtime" | null>(null);
   const [modeToolRules, setModeToolRules] = useState<ToolRules>(DEFAULT_TOOL_RULES.chat);
   const rootForPath = useCallback(
@@ -259,6 +235,24 @@ export function SkillsBar() {
     return false;
   }, [modeToolRules]);
 
+  const persistEnabledSkills = useCallback(async (nextIds: string[]) => {
+    if (!activeConversationId) {
+      setActiveSkillIds(nextIds);
+      return;
+    }
+    try {
+      const resolved = await skillsSetEnabled({
+        conversationId: activeConversationId,
+        enabledIds: nextIds,
+        workspacePath: activeWorkspacePath || undefined,
+        modeId: activeMode,
+      });
+      setActiveSkillIds(resolved.enabled_ids);
+    } catch (error) {
+      console.error("Failed to persist enabled skills:", error);
+    }
+  }, [activeConversationId, activeMode, activeWorkspacePath, setActiveSkillIds]);
+
   const refreshContextSkill = useCallback(async (
     allSkills: SkillMeta[],
     rootDir: string,
@@ -267,16 +261,19 @@ export function SkillsBar() {
   ) => {
     const path = contextPath;
     const chatState = useChatStore.getState();
-    const activeIds = chatState.activeSkillIds.filter((id) => id !== contextSkillId);
-    const activeSkillContent = activeIds
-      .map((id) => chatState.skillContents[id])
-      .filter(Boolean)
-      .join("\n\n");
+    const resolved = await skillsResolve({
+      conversationId: chatState.activeConversationId,
+      workspacePath: activeWorkspacePath || undefined,
+      modeId: chatState.activeMode,
+    });
+    setActiveSkillIds(resolved.enabled_ids);
+    const activeIds = resolved.enabled_ids.filter((id) => id !== contextSkillId);
+    const activeSkillContent = resolved.context_markdown || null;
     const activeProject = chatState.projects.find((p) => p.id === chatState.activeProjectId) ?? null;
     const workspacePath = activeProject?.workspace_path ?? "";
     const contextBody = await buildContextSnapshotForUi({
-      workspacePath,
-      skillContent: activeSkillContent || null,
+      workspacePath: workspacePath || activeWorkspacePath,
+      skillContent: activeSkillContent,
       modeId: chatState.activeMode,
       projectId: chatState.activeProjectId,
     });
@@ -310,7 +307,7 @@ export function SkillsBar() {
 
     await codeWriteFile(path, content, rootDir, "sandbox");
     setSkillContent(contextSkillId, content);
-  }, [setSkillContent]);
+  }, [activeWorkspacePath, setActiveSkillIds, setSkillContent]);
 
   const openContextSnapshotFile = useCallback(async () => {
     try {
@@ -387,7 +384,7 @@ export function SkillsBar() {
       } catch {
         // no-op: legacy file may not exist
       }
-      const list = await skillsList();
+      const list = await skillsList(activeWorkspacePath || undefined);
       const preferencesPath = `${dir}/${PREFERENCES_SKILL_ID}.md`;
       const existingContextSkill = list.find((skill) => isContextSkill(skill));
       const contextPath = existingContextSkill?.path ?? `${dir}/${CONTEXT_SKILL_ID}.md`;
@@ -424,62 +421,26 @@ export function SkillsBar() {
         ...(hasPreferences ? [] : [preferencesSkill]),
         ...(hasContext ? [] : [contextSkill]),
       ];
+      const resolved = await skillsResolve({
+        conversationId: activeConversationId,
+        workspacePath: activeWorkspacePath || undefined,
+        modeId: activeMode,
+      });
+      // Keep UI tags aligned with backend-resolved enabled IDs used for context injection.
+      setActiveSkillIds(resolved.enabled_ids);
       setSkills(mergedSkills);
-      
-      // Check if 'tools' skill is active to include tool information
-      const toolsSkillActive = activeSkillIds.includes("tools");
-      
-      // Auto-activate always-active skills and load their content
-      for (const skill of mergedSkills) {
-        if (skill.category === "always_active") {
-          // Add to active skills if not already there
-          if (!activeSkillIds.includes(skill.id)) {
-            setSkillActive(skill.id, true);
-          }
-          
-          // For "available-skills", generate content dynamically
-          // Include tools information when 'tools' skill is active
-          if (skill.id === "available-skills") {
-              const content = generateAvailableSkillsContent(
-                mergedSkills,
-                toolsSkillActive,
-                enabledToolIds
-              );
-              setSkillContent(skill.id, content);
-              try {
-                await codeWriteFile(skill.path, content, dir, "sandbox");
-              } catch (e) {
-                console.error("Failed to persist available-skills content:", e);
-              }
-          } else if (skill.id === DIRECTIVES_SKILL_ID) {
-            try {
-              const base = await codeReadFile(skill.path, rootForPath(skill.path), "sandbox");
-              const runtime = await generateRuntimeContextBlock();
-              setSkillContent(skill.id, `${base.trim()}\n\n---\n${runtime}`);
-            } catch (e) {
-              console.error(`Failed to load directives skill ${skill.id}:`, e);
-            }
-          } else {
-            // Load content from file for other always-active skills
-            try {
-              const content = await codeReadFile(skill.path, rootForPath(skill.path), "sandbox");
-              setSkillContent(skill.id, content);
-            } catch (e) {
-              console.error(`Failed to load always-active skill ${skill.id}:`, e);
-            }
-          }
-        }
-      }
 
-      // Preferences skill should be available and active by default.
-      if (!activeSkillIds.includes(PREFERENCES_SKILL_ID)) {
-        setSkillActive(PREFERENCES_SKILL_ID, true);
-      }
-      try {
-        const preferencesContent = await codeReadFile(preferencesPath, dir, "sandbox");
-        setSkillContent(PREFERENCES_SKILL_ID, preferencesContent);
-      } catch (e) {
-        console.error("Failed to load preferences skill content:", e);
+      // Regenerate dynamic available-skills content after resolution so the file stays truthful.
+      const toolsSkillActive = resolved.enabled_ids.includes("tools");
+      const availableSkill = mergedSkills.find((skill) => skill.id === "available-skills");
+      if (availableSkill) {
+        const content = generateAvailableSkillsContent(mergedSkills, toolsSkillActive, enabledToolIds);
+        setSkillContent(availableSkill.id, content);
+        try {
+          await codeWriteFile(availableSkill.path, content, dir, "sandbox");
+        } catch (e) {
+          console.error("Failed to persist available-skills content:", e);
+        }
       }
       try {
         await refreshContextSkill(
@@ -496,22 +457,28 @@ export function SkillsBar() {
     } finally {
       setLoading(false);
     }
-  }, [activeSkillIds, refreshContextSkill, rootForPath, setSkillActive, setSkillContent]);
+  }, [
+    activeConversationId,
+    activeMode,
+    activeWorkspacePath,
+    enabledToolIds,
+    refreshContextSkill,
+    setActiveSkillIds,
+    setSkillContent,
+  ]);
 
   useEffect(() => {
-    if (!loaded.current) {
-      loaded.current = true;
-      void load();
-    }
-  }, [load]);
-
-  useEffect(() => {
-    if (loading) return;
-    const hasPreferences = skills.some((skill) => skill.id === PREFERENCES_SKILL_ID);
-    const hasContext = skills.some((skill) => isContextSkill(skill));
-    if (hasPreferences && hasContext) return;
+    const loadKey = [
+      activeConversationId ?? "",
+      activeWorkspacePath,
+      activeMode,
+      enabledToolIds.join(","),
+    ].join("|");
+    if (loadKey === lastLoadKey.current) return;
+    lastLoadKey.current = loadKey;
+    loaded.current = true;
     void load();
-  }, [loading, skills, load]);
+  }, [activeConversationId, activeMode, activeWorkspacePath, enabledToolIds, load]);
 
   // Voice mode ↔ voice skill sync
   useEffect(() => {
@@ -520,7 +487,10 @@ export function SkillsBar() {
 
     const activate = async () => {
       if (voiceMode) {
-        setSkillActive("voice", true);
+        if (!activeSkillIds.includes("voice")) {
+          const next = [...activeSkillIds, "voice"];
+          await persistEnabledSkills(next);
+        }
         if (!useChatStore.getState().skillContents["voice"]) {
           try {
             const content = await codeReadFile(voiceSkill.path, rootForPath(voiceSkill.path), "sandbox");
@@ -530,13 +500,24 @@ export function SkillsBar() {
           }
         }
       } else {
-        setSkillActive("voice", false);
+        if (activeSkillIds.includes("voice")) {
+          const next = activeSkillIds.filter((id) => id !== "voice");
+          await persistEnabledSkills(next);
+        }
         clearSkillContent("voice");
       }
     };
 
     void activate();
-  }, [voiceMode, skills, rootForPath, setSkillActive, setSkillContent, clearSkillContent]);
+  }, [
+    activeSkillIds,
+    clearSkillContent,
+    persistEnabledSkills,
+    rootForPath,
+    setSkillContent,
+    skills,
+    voiceMode,
+  ]);
 
   // When a user-selectable skill is toggled, load its content
   const handleSkillClick = async (skill: SkillMeta) => {
@@ -559,14 +540,16 @@ export function SkillsBar() {
     }
 
     const isActive = activeSkillIds.includes(skill.id);
-    
+
     if (isActive) {
-      // Deactivate: remove from active list and clear content
-      toggleSkill(skill.id);
+      // Deactivate and persist to backend source-of-truth.
+      const next = activeSkillIds.filter((id) => id !== skill.id);
+      await persistEnabledSkills(next);
       clearSkillContent(skill.id);
     } else {
-      // Activate: add to active list and load content
-      toggleSkill(skill.id);
+      // Activate and persist to backend source-of-truth.
+      const next = [...activeSkillIds, skill.id];
+      await persistEnabledSkills(next);
       await openSkillFile(skill.path);
       try {
         const content = await codeReadFile(skill.path, rootForPath(skill.path), "sandbox");

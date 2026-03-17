@@ -176,8 +176,37 @@ export interface SkillMeta {
   description: string;
   category: SkillCategory;
 }
-export const skillsList = () => invoke<SkillMeta[]>("cmd_skills_list");
+export interface SkillsResolveResult {
+  available: SkillMeta[];
+  enabled_ids: string[];
+  context_markdown: string;
+}
+export const skillsList = (workspacePath?: string) =>
+  invoke<SkillMeta[]>("cmd_skills_list", { workspacePath });
 export const skillsDir = () => invoke<string>("cmd_skills_dir");
+export const skillsResolve = (params: {
+  conversationId?: string | null;
+  workspacePath?: string;
+  modeId?: "chat" | "voice" | "tools" | "full";
+}) =>
+  invoke<SkillsResolveResult>("cmd_skills_resolve", {
+    conversationId: params.conversationId ?? null,
+    workspacePath: params.workspacePath,
+    modeId: params.modeId,
+  });
+
+export const skillsSetEnabled = (params: {
+  conversationId: string;
+  enabledIds: string[];
+  workspacePath?: string;
+  modeId?: "chat" | "voice" | "tools" | "full";
+}) =>
+  invoke<SkillsResolveResult>("cmd_skills_set_enabled", {
+    conversationId: params.conversationId,
+    enabledIds: params.enabledIds,
+    workspacePath: params.workspacePath,
+    modeId: params.modeId,
+  });
 
 // Projects
 export const projectCreate = (name: string, workspacePath: string) =>
@@ -235,7 +264,8 @@ export const chatStream = (
   extraContext?: string,
   thinkingEnabled?: boolean,
   assistantMsgId?: string,
-  screenshotBase64?: string
+  screenshotBase64?: string,
+  modeId?: "chat" | "voice" | "tools" | "full"
 ) =>
   invoke<Message>("cmd_chat_stream", {
     conversationId,
@@ -244,6 +274,7 @@ export const chatStream = (
     thinkingEnabled,
     assistantMsgId,
     screenshotBase64,
+    modeId,
   });
 
 
@@ -310,9 +341,21 @@ export const listAudioDevices = () =>
 
 export interface TtsEngineStatus {
   kokoro: boolean;
+  kokoro_reason: string | null;
   espeak: boolean;
+  espeak_reason: string | null;
   external: boolean;
+  external_reason: string | null;
   current_engine: string;
+}
+
+export interface TtsSelfTestResult {
+  current_engine: string;
+  ok: boolean;
+  check_reason: string | null;
+  synth_bytes: number;
+  synth_reason: string | null;
+  engines: TtsEngineStatus;
 }
 
 export interface KokoroBootstrapStatus {
@@ -331,6 +374,9 @@ export const getKokoroBootstrapStatus = () =>
 
 export const checkTtsEngines = () =>
   invoke<TtsEngineStatus>("cmd_tts_check_engines");
+
+export const ttsSelfTest = () =>
+  invoke<TtsSelfTestResult>("cmd_tts_self_test");
 
 export interface SttEngineStatus {
   whisper_rs: boolean;

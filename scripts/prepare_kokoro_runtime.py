@@ -152,7 +152,9 @@ def _zip_runtime(venv_dir: Path, archive_path: Path) -> None:
             if not file_path.is_file():
                 continue
             rel = file_path.relative_to(venv_dir)
-            arcname = Path("venv") / rel
+            # Store files at archive root so runtime extraction lands directly at
+            # .../kokoro/runtime/venv/{bin,Scripts,...} (no extra venv/ nesting).
+            arcname = rel
             info = zipfile.ZipInfo.from_file(file_path, arcname=str(arcname))
             if os.name != "nt" and os.access(file_path, os.X_OK):
                 info.external_attr = (0o755 & 0xFFFF) << 16
@@ -160,6 +162,20 @@ def _zip_runtime(venv_dir: Path, archive_path: Path) -> None:
                 info.external_attr = (0o644 & 0xFFFF) << 16
             with file_path.open("rb") as src:
                 zf.writestr(info, src.read(), compress_type=zipfile.ZIP_DEFLATED)
+
+def _validate_runtime_archive_layout(archive_path: Path) -> None:
+    expected = "Scripts/python.exe" if os.name == "nt" else "bin/python3"
+    with zipfile.ZipFile(archive_path, "r") as zf:
+        names = {n for n in zf.namelist() if not n.endswith("/")}
+    if expected not in names:
+        raise RuntimeError(
+            f"Runtime archive missing expected interpreter path '{expected}' at archive root"
+        )
+    nested = f"venv/{expected}"
+    if nested in names:
+        raise RuntimeError(
+            f"Runtime archive has nested '{nested}' path; archive must be rooted at venv contents"
+        )
 
 
 def _smoke_test(
@@ -216,7 +232,12 @@ def main() -> int:
     repo_root = Path(__file__).resolve().parent.parent
     runtime_out = (repo_root / args.runtime_out).resolve()
     model_out = (repo_root / args.model_out).resolve()
-    voices_path = (repo_root / "public" / "voice" / "voices-v1.0.bin").resolve()
+    voice_dir = (repo_root / "public" / "voice").resolve()
+    voices_candidates = [
+        voice_dir / "af_heart.bin",
+        voice_dir / "af.bin",
+    ]
+    voices_path = next((p for p in voices_candidates if p.exists()), voices_candidates[0])
     req_path = (repo_root / args.requirements).resolve()
     quant_url = os.environ.get("KOKORO_QUANT_MODEL_URL", "").strip()
     quant_sha = os.environ.get("KOKORO_QUANT_MODEL_SHA256", "").strip().lower()
@@ -289,6 +310,7 @@ def main() -> int:
         if archive_path.exists():
             archive_path.unlink()
         _zip_runtime(venv_dir, archive_path)
+        _validate_runtime_archive_layout(archive_path)
 
     print(f"Created runtime archive: {archive_path}")
     return 0

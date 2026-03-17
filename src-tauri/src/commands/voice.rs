@@ -8,6 +8,7 @@ use crate::AppState;
 use cpal::traits::{DeviceTrait, HostTrait};
 use serde::Serialize;
 use std::path::Path;
+use std::process::Command;
 use std::sync::{atomic::Ordering, Arc, Mutex};
 use tauri::{AppHandle, Emitter, Manager, State};
 
@@ -88,6 +89,30 @@ fn resolved_kokoro_python_path(app: &AppHandle) -> String {
         }
     }
     default_python_bin()
+}
+
+fn resolved_kokoro_voices_path(app: &AppHandle) -> String {
+    let configured = expand_home(&get_db_setting(app, "kokoro_voices_path", ""));
+    if !configured.trim().is_empty() && Path::new(&configured).exists() {
+        return configured;
+    }
+    if let Ok(app_dir) = app.path().app_data_dir() {
+        let kokoro_dir = app_dir.join("kokoro");
+        for name in ["af_heart.bin", "af.bin"] {
+            let candidate = kokoro_dir.join(name);
+            if candidate.exists() {
+                return candidate.to_string_lossy().to_string();
+            }
+        }
+        if !configured.trim().is_empty() {
+            return configured;
+        }
+        return kokoro_dir
+            .join("af_heart.bin")
+            .to_string_lossy()
+            .to_string();
+    }
+    configured
 }
 
 // ── Voice capture ─────────────────────────────────────────────────────────────
@@ -426,7 +451,7 @@ pub async fn cmd_tts_speak(
         "kokoro" => {
             let script  = script_path(&app, "tts_kokoro_persistent.py").unwrap_or_default();
             let model   = expand_home(&get_db_setting(&app, "kokoro_model_path", ""));
-            let voices  = expand_home(&get_db_setting(&app, "kokoro_voices_path", ""));
+            let voices  = resolved_kokoro_voices_path(&app);
             let voice   = get_db_setting(&app, "kokoro_voice", "af_heart");
             let python_bin = resolved_kokoro_python_path(&app);
             log::info!("[TTS] kokoro: voice={} model={} (persistent daemon)", voice, model);
@@ -543,11 +568,14 @@ pub async fn cmd_tts_speak(
 
 // ── Engine status ─────────────────────────────────────────────────────────────
 
-#[derive(Serialize)]
+#[derive(Serialize, Clone)]
 pub struct TtsEngineStatus {
     pub kokoro: bool,
+    pub kokoro_reason: Option<String>,
     pub espeak: bool,
+    pub espeak_reason: Option<String>,
     pub external: bool,
+    pub external_reason: Option<String>,
     pub current_engine: String,
 }
 
@@ -561,7 +589,7 @@ pub async fn cmd_tts_check_engines(app: AppHandle) -> TtsEngineStatus {
     let current_engine = get_db_setting(&app, "tts_engine", "kokoro");
     let script = script_path(&app, "tts_kokoro.py").unwrap_or_default();
     let model = expand_home(&get_db_setting(&app, "kokoro_model_path", ""));
-    let voices = expand_home(&get_db_setting(&app, "kokoro_voices_path", ""));
+    let voices = resolved_kokoro_voices_path(&app);
     let python_bin = resolved_kokoro_python_path(&app);
     let tts_url = get_db_setting(&app, "tts_url", "");
 
@@ -569,39 +597,237 @@ pub async fn cmd_tts_check_engines(app: AppHandle) -> TtsEngineStatus {
     let model_clone = model.clone();
     let voices_clone = voices.clone();
     let python_clone = python_bin.clone();
-    let kokoro = tokio::task::spawn_blocking(move || {
-        local_tts::check_kokoro(&script_clone, &python_clone)
-            && std::path::Path::new(&model_clone).exists()
-            && std::path::Path::new(&voices_clone).exists()
+    let (kokoro, kokoro_reason) = tokio::task::spawn_blocking(move || {
+        if script_clone.trim().is_empty() {
+            return (
+                false,
+                Some("script_missing: tts_kokoro.py unresolved".to_string()),
+            );
+        }
+        if !Path::new(&script_clone).exists() {
+            return (false, Some(format!("script_missing: {}", script_clone)));
+        }
+        if model_clone.trim().is_empty() || !Path::new(&model_clone).exists() {
+            return (false, Some(format!("model_missing: {}", model_clone)));
+        }
+        if voices_clone.trim().is_empty() || !Path::new(&voices_clone).exists() {
+            return (false, Some(format!("voices_missing: {}", voices_clone)));
+        }
+
+        let out = Command::new(&python_clone)
+            .args(["-c", "import kokoro_onnx, soundfile, onnxruntime"])
+            .output();
+        match out {
+            Ok(o) if o.status.success() => (true, None),
+            Ok(o) => {
+                let stderr = String::from_utf8_lossy(&o.stderr).trim().to_string();
+                let stdout = String::from_utf8_lossy(&o.stdout).trim().to_string();
+                let details = if stderr.is_empty() { stdout } else { stderr };
+                let reason = if details.is_empty() {
+                    format!("runtime_import_failed: {}", o.status)
+                } else {
+                    format!("runtime_import_failed: {} ({details})", o.status)
+                };
+                (false, Some(reason))
+            }
+            Err(e) => (false, Some(format!("python_launch_failed: {e}"))),
+        }
     })
     .await
-    .unwrap_or(false);
-    let espeak = tokio::task::spawn_blocking(local_tts::check_espeak)
-        .await
-        .unwrap_or(false);
+    .unwrap_or((false, Some("check_failed: task_join_error".to_string())));
+    let (espeak, espeak_reason) = tokio::task::spawn_blocking(move || {
+        let ok = local_tts::check_espeak();
+        if ok {
+            (true, None)
+        } else {
+            (false, Some("espeak_not_found_on_path".to_string()))
+        }
+    })
+    .await
+    .unwrap_or((false, Some("check_failed: task_join_error".to_string())));
 
-    let external = if tts_url.is_empty() {
-        false
+    let (external, external_reason) = if tts_url.is_empty() {
+        (false, Some("url_not_configured".to_string()))
     } else {
-        reqwest::Client::builder()
+        let result = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(3))
             .build()
-            .ok()
-            .map(|c| {
+            .map_err(|e| format!("external_client_build_failed: {e}"))
+            .and_then(|c| {
                 futures_util::FutureExt::now_or_never(c.get(&tts_url).send())
-                    .and_then(|r| r.ok())
-                    .map(|r| r.status().is_success() || r.status().as_u16() < 500)
-                    .unwrap_or(false)
-            })
-            .unwrap_or(false)
+                    .ok_or_else(|| "external_check_timeout".to_string())
+                    .and_then(|r| r.map_err(|e| format!("external_request_failed: {e}")))
+                    .map(|r| {
+                        if r.status().is_success() || r.status().as_u16() < 500 {
+                            (true, None)
+                        } else {
+                            (
+                                false,
+                                Some(format!("external_http_status: {}", r.status().as_u16())),
+                            )
+                        }
+                    })
+            });
+        match result {
+            Ok(v) => v,
+            Err(e) => (false, Some(e)),
+        }
     };
 
     TtsEngineStatus {
         kokoro,
+        kokoro_reason,
         espeak,
+        espeak_reason,
         external,
+        external_reason,
         current_engine,
     }
+}
+
+#[derive(Serialize)]
+pub struct TtsSelfTestResult {
+    pub current_engine: String,
+    pub ok: bool,
+    pub check_reason: Option<String>,
+    pub synth_bytes: usize,
+    pub synth_reason: Option<String>,
+    pub engines: TtsEngineStatus,
+}
+
+#[tauri::command]
+pub async fn cmd_tts_self_test(app: AppHandle) -> TtsSelfTestResult {
+    let engines = cmd_tts_check_engines(app.clone()).await;
+    let current_engine = engines.current_engine.clone();
+    let mut result = TtsSelfTestResult {
+        current_engine: current_engine.clone(),
+        ok: false,
+        check_reason: None,
+        synth_bytes: 0,
+        synth_reason: None,
+        engines: engines.clone(),
+    };
+
+    match current_engine.as_str() {
+        "kokoro" => {
+            if !engines.kokoro {
+                result.check_reason = engines.kokoro_reason.clone();
+                return result;
+            }
+            let script = script_path(&app, "tts_kokoro.py").unwrap_or_default();
+            let model = expand_home(&get_db_setting(&app, "kokoro_model_path", ""));
+            let voices = resolved_kokoro_voices_path(&app);
+            let voice = get_db_setting(&app, "kokoro_voice", "af_heart");
+            let python_bin = resolved_kokoro_python_path(&app);
+            let synth = tokio::task::spawn_blocking(move || {
+                local_tts::speak_kokoro(
+                    &python_bin,
+                    "Runtime self-test from Arxell.",
+                    &script,
+                    &model,
+                    &voices,
+                    &voice,
+                )
+            })
+            .await;
+            match synth {
+                Ok(Ok(audio)) => {
+                    result.synth_bytes = audio.len();
+                    result.ok = !audio.is_empty();
+                    if audio.is_empty() {
+                        result.synth_reason = Some("kokoro_synth_returned_empty_audio".to_string());
+                    }
+                }
+                Ok(Err(e)) => {
+                    result.synth_reason = Some(format!("kokoro_synth_failed: {e}"));
+                }
+                Err(e) => {
+                    result.synth_reason = Some(format!("kokoro_synth_task_failed: {e}"));
+                }
+            }
+        }
+        "external" => {
+            if !engines.external {
+                result.check_reason = engines.external_reason.clone();
+                return result;
+            }
+            let tts_url = get_db_setting(&app, "tts_url", "");
+            let api_key = get_db_setting(&app, "api_key", "lm-studio");
+            let voice = get_db_setting(&app, "tts_voice", "alloy");
+            let client = reqwest::Client::builder()
+                .timeout(std::time::Duration::from_secs(10))
+                .build();
+            match client {
+                Ok(c) => {
+                    let resp = c
+                        .post(&tts_url)
+                        .header("Authorization", format!("Bearer {}", api_key))
+                        .json(&serde_json::json!({
+                            "model": "tts-1",
+                            "input": "Runtime self-test from Arxell.",
+                            "voice": voice
+                        }))
+                        .send()
+                        .await;
+                    match resp {
+                        Ok(r) if r.status().is_success() => match r.bytes().await {
+                            Ok(bytes) => {
+                                result.synth_bytes = bytes.len();
+                                result.ok = !bytes.is_empty();
+                                if bytes.is_empty() {
+                                    result.synth_reason =
+                                        Some("external_synth_returned_empty_audio".to_string());
+                                }
+                            }
+                            Err(e) => {
+                                result.synth_reason =
+                                    Some(format!("external_read_audio_failed: {e}"));
+                            }
+                        },
+                        Ok(r) => {
+                            result.synth_reason =
+                                Some(format!("external_synth_http_status: {}", r.status()));
+                        }
+                        Err(e) => {
+                            result.synth_reason =
+                                Some(format!("external_synth_request_failed: {e}"));
+                        }
+                    }
+                }
+                Err(e) => {
+                    result.synth_reason = Some(format!("external_client_build_failed: {e}"));
+                }
+            }
+        }
+        _ => {
+            if !engines.espeak {
+                result.check_reason = engines.espeak_reason.clone();
+                return result;
+            }
+            let voice = get_db_setting(&app, "tts_voice", "en-us");
+            let synth = tokio::task::spawn_blocking(move || {
+                local_tts::speak_espeak("Runtime self-test from Arxell.", &voice)
+            })
+            .await;
+            match synth {
+                Ok(Ok(audio)) => {
+                    result.synth_bytes = audio.len();
+                    result.ok = !audio.is_empty();
+                    if audio.is_empty() {
+                        result.synth_reason = Some("espeak_synth_returned_empty_audio".to_string());
+                    }
+                }
+                Ok(Err(e)) => {
+                    result.synth_reason = Some(format!("espeak_synth_failed: {e}"));
+                }
+                Err(e) => {
+                    result.synth_reason = Some(format!("espeak_synth_task_failed: {e}"));
+                }
+            }
+        }
+    }
+
+    result
 }
 
 #[derive(Serialize)]
@@ -676,7 +902,7 @@ pub async fn cmd_tts_list_voices(app: AppHandle) -> Vec<String> {
     let mut voices = match engine.as_str() {
         "kokoro" => {
             let model = expand_home(&get_db_setting(&app, "kokoro_model_path", ""));
-            let voices_path = expand_home(&get_db_setting(&app, "kokoro_voices_path", ""));
+            let voices_path = resolved_kokoro_voices_path(&app);
             tokio::task::spawn_blocking(move || {
                 local_tts::list_kokoro_voices(&model, &voices_path, &python_bin)
             })
