@@ -27,6 +27,8 @@ import {
   Zap,
   GitBranch,
   Globe,
+  Pause,
+  Square,
   Wrench,
   Database,
   Bot,
@@ -35,6 +37,7 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { cn } from "../../../lib/utils";
 import {
+  a2aNodeTypeList,
   a2aTemplateCreate,
   a2aTemplateDelete,
   a2aTemplateList,
@@ -45,11 +48,16 @@ import {
   a2aWorkflowNodeTest,
   a2aWorkflowRunGet,
   a2aWorkflowRunList,
+  a2aWorkflowRunCancel,
+  a2aWorkflowRunPause,
+  a2aWorkflowRunResume,
+  a2aWorkflowPreflight,
   a2aWorkflowRunStart,
   a2aWorkflowUpdate,
   memoryList,
   skillsList,
   type A2AExecutionItem,
+  type A2ANodeTypeDef,
   type MemoryEntry,
   type SkillMeta,
   type A2AWorkflowDefinition,
@@ -438,6 +446,88 @@ function singleAgentQueryDefinition(name = "Single-Agent Query"): A2AWorkflowDef
   };
 }
 
+function codingRalphLoopDefinition(name = "Coding Ralph Loop"): A2AWorkflowDefinition {
+  const nodes: A2AWorkflowNode[] = [
+    {
+      id: "n_manual",
+      type: "trigger.manual",
+      name: "Manual Trigger",
+      params: {},
+      position: { x: 80, y: 180 },
+    },
+    {
+      id: "n_architect",
+      type: "ai.agent",
+      name: "Architect Manager",
+      params: {
+        text: "{{ $json.task || $json.question || 'Plan implementation' }}",
+        maxIterations: 6,
+      },
+      position: { x: 360, y: 120 },
+    },
+    {
+      id: "n_impl",
+      type: "ai.agent",
+      name: "Implementer",
+      params: {
+        text: "{{ $node[\"Architect Manager\"].json.agent_prompt_user }}",
+        maxIterations: 8,
+      },
+      position: { x: 640, y: 120 },
+    },
+    {
+      id: "n_test",
+      type: "ai.agent",
+      name: "Tester",
+      params: {
+        text: "Validate implementation quality and identify defects.",
+        maxIterations: 6,
+      },
+      position: { x: 920, y: 120 },
+    },
+    {
+      id: "n_review",
+      type: "llm.query",
+      name: "Reviewer",
+      params: {
+        prompt:
+          "Summarize architecture, implementation, tests, and residual risks from prior stages.",
+      },
+      position: { x: 1200, y: 120 },
+    },
+    {
+      id: "n_out",
+      type: "output.respond",
+      name: "Output",
+      params: {},
+      position: { x: 1460, y: 120 },
+    },
+  ];
+
+  return {
+    workflow_id: "",
+    name,
+    active: false,
+    version: 1,
+    nodes,
+    edges: [
+      { id: "e_1", source: "n_manual", source_output: "main", target: "n_architect", target_input: "main" },
+      { id: "e_2", source: "n_architect", source_output: "main", target: "n_impl", target_input: "main" },
+      { id: "e_3", source: "n_impl", source_output: "main", target: "n_test", target_input: "main" },
+      { id: "e_4", source: "n_test", source_output: "main", target: "n_review", target_input: "main" },
+      { id: "e_5", source: "n_review", source_output: "main", target: "n_out", target_input: "main" },
+    ],
+    groups: [
+      {
+        id: "g_ralph",
+        label: "Ralph Loop",
+        color: "rgba(56,189,248,0.12)",
+        node_ids: nodes.map((n) => n.id),
+      },
+    ],
+  };
+}
+
 const WORKFLOW_TEMPLATES: WorkflowTemplate[] = [
   {
     id: "tpl_blank",
@@ -450,6 +540,12 @@ const WORKFLOW_TEMPLATES: WorkflowTemplate[] = [
     name: "Single-Agent Query",
     description: "Manual trigger -> LLM query -> output",
     build: (name) => singleAgentQueryDefinition(name),
+  },
+  {
+    id: "tpl_coding_ralph_loop",
+    name: "Coding Ralph Loop",
+    description: "Architect -> implement -> test -> review",
+    build: (name) => codingRalphLoopDefinition(name),
   },
 ];
 
@@ -472,6 +568,7 @@ function nodeLibraryIcon(nodeType: string) {
 }
 
 function templateIcon(templateId: string) {
+  if (templateId === "tpl_coding_ralph_loop") return <GitBranch size={12} />;
   if (templateId === "tpl_single_query") return <Bot size={12} />;
   return <PlusSquare size={12} />;
 }
@@ -762,9 +859,11 @@ export function FlowPanel() {
   const [openTabs, setOpenTabs] = useState<OpenWorkflowTab[]>([]);
   const [activeTabId, setActiveTabId] = useState<string | null>(null);
   const [workflows, setWorkflows] = useState<A2AWorkflowRecord[]>([]);
+  const [nodeTypeDefs, setNodeTypeDefs] = useState<A2ANodeTypeDef[]>([]);
   const [customTemplates, setCustomTemplates] = useState<A2ATemplateRecord[]>([]);
   const [runs, setRuns] = useState<A2AWorkflowRunRecord[]>([]);
   const [runDetail, setRunDetail] = useState<A2AWorkflowRunDetail | null>(null);
+  const [runTimeoutMs, setRunTimeoutMs] = useState(120000);
   const [error, setError] = useState<string | null>(null);
   const [pendingConnection, setPendingConnection] = useState<PendingConnection | null>(null);
   const [nodeParamsText, setNodeParamsText] = useState("{}");
@@ -812,6 +911,22 @@ export function FlowPanel() {
   const [availableMemoryEntries, setAvailableMemoryEntries] = useState<MemoryEntry[]>([]);
   const [manualMemoryNamespace, setManualMemoryNamespace] = useState("user");
   const [manualMemoryKey, setManualMemoryKey] = useState("");
+
+  const supportedNodeTypeSet = useMemo(() => {
+    const allowed = new Set<string>();
+    for (const def of nodeTypeDefs) {
+      if (def.tier !== "hidden") allowed.add(def.id);
+    }
+    return allowed;
+  }, [nodeTypeDefs]);
+
+  const nodeLibrary = useMemo(
+    () =>
+      supportedNodeTypeSet.size === 0
+        ? NODE_LIBRARY
+        : NODE_LIBRARY.filter((item) => supportedNodeTypeSet.has(item.type)),
+    [supportedNodeTypeSet]
+  );
 
   const canvasRef = useRef<HTMLDivElement | null>(null);
   const openRecentRef = useRef<HTMLDivElement | null>(null);
@@ -870,6 +985,13 @@ export function FlowPanel() {
       return a.namespace.localeCompare(b.namespace);
     });
   }, [availableMemoryEntries, selectedMemoryRefs]);
+  const activeRunRecord = useMemo(() => {
+    if (!activeRunId) return null;
+    if (runDetail?.run.run_id === activeRunId) return runDetail.run;
+    return runs.find((run) => run.run_id === activeRunId) ?? null;
+  }, [activeRunId, runDetail, runs]);
+  const activeRunStatus = activeRunRecord?.status ?? null;
+  const activeRunIsLive = activeRunStatus === "running" || activeRunStatus === "paused";
   const editedNode = inspectorNode ?? selectedNode;
   const selectedNodeFromContext = useMemo(() => {
     if (!definition || !contextMenu || contextMenu.kind !== "node") return null;
@@ -1115,6 +1237,11 @@ export function FlowPanel() {
     setCustomTemplates(rows);
   }, []);
 
+  const reloadNodeTypes = useCallback(async () => {
+    const rows = await a2aNodeTypeList();
+    setNodeTypeDefs(Array.isArray(rows) ? rows : []);
+  }, []);
+
   const reloadRuns = useCallback(async () => {
     const rows = await a2aWorkflowRunList(currentWorkflowId ?? undefined, 80);
     setRuns(rows);
@@ -1138,6 +1265,7 @@ export function FlowPanel() {
     setLoading(true);
     setError(null);
     try {
+      await reloadNodeTypes();
       await reloadWorkflows();
       await reloadTemplates();
       await reloadRuns();
@@ -1146,7 +1274,7 @@ export function FlowPanel() {
     } finally {
       setLoading(false);
     }
-  }, [reloadRuns, reloadTemplates, reloadWorkflows]);
+  }, [reloadNodeTypes, reloadRuns, reloadTemplates, reloadWorkflows]);
 
   useEffect(() => {
     void loadAll();
@@ -1365,16 +1493,30 @@ export function FlowPanel() {
   };
 
   const handleRun = async () => {
-    if (!currentWorkflowId) return;
+    if (!currentWorkflowId || !definition || activeRunIsLive) return;
     setRunning(true);
     setError(null);
     resetSnapshots();
     try {
+      const preflight = await a2aWorkflowPreflight(definition);
+      if (!preflight.ok) {
+        const blocking = preflight.issues.filter((issue) => issue.blocking);
+        const summary = blocking
+          .slice(0, 3)
+          .map((issue) => issue.message)
+          .join(" | ");
+        setError(
+          blocking.length > 0
+            ? `Preflight failed (${blocking.length}): ${summary}`
+            : "Workflow preflight failed"
+        );
+        return;
+      }
       const run = await a2aWorkflowRunStart(
         currentWorkflowId,
         [{ message: "hello from A2A", question: "What is A2A and what can it do?" }],
         "manual",
-        120000
+        runTimeoutMs
       );
       setActiveRun(run.run_id);
       await reloadRuns();
@@ -1387,6 +1529,45 @@ export function FlowPanel() {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
       setRunning(false);
+    }
+  };
+
+  const handlePauseRun = async () => {
+    if (!activeRunId) return;
+    setError(null);
+    try {
+      await a2aWorkflowRunPause(activeRunId);
+      await reloadRuns();
+      const detail = await a2aWorkflowRunGet(activeRunId);
+      setRunDetail(detail);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  };
+
+  const handleResumeRun = async () => {
+    if (!activeRunId) return;
+    setError(null);
+    try {
+      await a2aWorkflowRunResume(activeRunId);
+      await reloadRuns();
+      const detail = await a2aWorkflowRunGet(activeRunId);
+      setRunDetail(detail);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  };
+
+  const handleCancelRun = async () => {
+    if (!activeRunId) return;
+    setError(null);
+    try {
+      await a2aWorkflowRunCancel(activeRunId);
+      await reloadRuns();
+      const detail = await a2aWorkflowRunGet(activeRunId);
+      setRunDetail(detail);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
     }
   };
 
@@ -1510,7 +1691,7 @@ export function FlowPanel() {
     await handleSelectWorkflow(fallback.workflowId);
   };
 
-  const handleAddNode = (template: (typeof NODE_LIBRARY)[number]) => {
+  const handleAddNode = (template: NodeLibraryItem) => {
     handleAddNodeAt(template, null, null);
   };
 
@@ -1518,16 +1699,26 @@ export function FlowPanel() {
     setLibraryExpanded((current) => ({ ...current, [sectionId]: !current[sectionId] }));
   };
 
-  const orderedLibrarySections = [
-    ...NODE_LIBRARY_SECTIONS.filter((section) => section.id === "primary"),
-    { id: "templates", title: "Templates", items: [] as NodeLibraryItem[] },
-    ...NODE_LIBRARY_SECTIONS.filter((section) => section.id === "triggers"),
-    ...NODE_LIBRARY_SECTIONS.filter((section) => section.id === "ai"),
-    ...NODE_LIBRARY_SECTIONS.filter((section) => !["primary", "triggers", "ai"].includes(section.id)),
-  ];
+  const orderedLibrarySections = useMemo(() => {
+    const filtered = NODE_LIBRARY_SECTIONS.map((section) => ({
+      ...section,
+      items:
+        supportedNodeTypeSet.size === 0
+          ? section.items
+          : section.items.filter((item) => supportedNodeTypeSet.has(item.type)),
+    })).filter((section) => section.items.length > 0);
+
+    return [
+      ...filtered.filter((section) => section.id === "primary"),
+      { id: "templates", title: "Templates", items: [] as NodeLibraryItem[] },
+      ...filtered.filter((section) => section.id === "triggers"),
+      ...filtered.filter((section) => section.id === "ai"),
+      ...filtered.filter((section) => !["primary", "triggers", "ai"].includes(section.id)),
+    ];
+  }, [supportedNodeTypeSet]);
 
   const handleAddNodeAt = (
-    template: (typeof NODE_LIBRARY)[number],
+    template: NodeLibraryItem,
     worldX: number | null,
     worldY: number | null
   ) => {
@@ -1849,7 +2040,7 @@ export function FlowPanel() {
       event.dataTransfer.getData(NODE_DRAG_MIME) ||
       event.dataTransfer.getData("text/plain");
     if (!raw) return null;
-    return NODE_LIBRARY.find((item) => item.type === raw) ?? null;
+    return nodeLibrary.find((item) => item.type === raw) ?? null;
   };
 
   const handleCanvasDrop = (event: React.DragEvent<HTMLDivElement>) => {
@@ -2649,8 +2840,11 @@ export function FlowPanel() {
         <div className="relative min-h-0 overflow-hidden bg-bg-dark">
           <div className="absolute left-3 top-3 z-40 rounded border border-line-med bg-bg-norm/95 p-1 backdrop-blur-sm flex items-center gap-1">
             <button
-              onClick={() => handleAddNode(NODE_LIBRARY[0])}
-              disabled={!definition}
+              onClick={() => {
+                const first = nodeLibrary[0];
+                if (first) handleAddNode(first);
+              }}
+              disabled={!definition || nodeLibrary.length === 0}
               className="h-6 w-6 inline-flex items-center justify-center rounded text-text-med hover:text-text-norm hover:bg-line-light disabled:opacity-50"
               title="Add node"
             >
@@ -2675,12 +2869,51 @@ export function FlowPanel() {
             </button>
             <button
               onClick={() => void handleRun()}
-              disabled={!currentWorkflowId || running}
+              disabled={!currentWorkflowId || running || activeRunIsLive}
               className="h-6 w-6 inline-flex items-center justify-center rounded text-text-med hover:text-text-norm hover:bg-line-light disabled:opacity-50"
               title="Execute"
             >
               <Play size={12} />
             </button>
+            <button
+              onClick={() => void handlePauseRun()}
+              disabled={!activeRunId || activeRunStatus !== "running"}
+              className="h-6 w-6 inline-flex items-center justify-center rounded text-text-med hover:text-text-norm hover:bg-line-light disabled:opacity-50"
+              title="Pause run"
+            >
+              <Pause size={12} />
+            </button>
+            <button
+              onClick={() => void handleResumeRun()}
+              disabled={!activeRunId || activeRunStatus !== "paused"}
+              className="h-6 w-6 inline-flex items-center justify-center rounded text-text-med hover:text-text-norm hover:bg-line-light disabled:opacity-50"
+              title="Resume run"
+            >
+              <RotateCcw size={12} />
+            </button>
+            <button
+              onClick={() => void handleCancelRun()}
+              disabled={!activeRunId || (activeRunStatus !== "running" && activeRunStatus !== "paused")}
+              className="h-6 w-6 inline-flex items-center justify-center rounded text-text-med hover:text-accent-red hover:bg-accent-red/10 disabled:opacity-50"
+              title="Cancel run"
+            >
+              <Square size={12} />
+            </button>
+            <div className="ml-1 px-1 py-0.5 rounded border border-line-light bg-bg-dark/50">
+              <label className="text-[10px] text-text-dark mr-1">Max runtime</label>
+              <select
+                value={runTimeoutMs}
+                onChange={(event) => setRunTimeoutMs(Number(event.target.value))}
+                className="text-[10px] bg-transparent text-text-med outline-none"
+                title="Workflow runtime timeout"
+              >
+                <option value={60000}>1m</option>
+                <option value={120000}>2m</option>
+                <option value={300000}>5m</option>
+                <option value={600000}>10m</option>
+                <option value={1800000}>30m</option>
+              </select>
+            </div>
           </div>
           <div
             ref={canvasRef}
@@ -3216,7 +3449,8 @@ export function FlowPanel() {
                       <button
                         className="block w-full text-left px-2 py-1.5 text-xs text-text-med hover:bg-line-light hover:text-text-norm"
                         onClick={() => {
-                          handleAddNode(NODE_LIBRARY[0]);
+                          const first = nodeLibrary[0];
+                          if (first) handleAddNode(first);
                           setContextMenu(null);
                         }}
                       >

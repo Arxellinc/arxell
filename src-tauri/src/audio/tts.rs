@@ -17,6 +17,16 @@ use std::io::{Read, Write};
 use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Mutex};
 
+#[cfg(target_os = "windows")]
+fn apply_no_window(cmd: &mut Command) {
+    use std::os::windows::process::CommandExt;
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    cmd.creation_flags(CREATE_NO_WINDOW);
+}
+
+#[cfg(not(target_os = "windows"))]
+fn apply_no_window(_cmd: &mut Command) {}
+
 /// Result from a Kokoro synthesis call, bundling audio bytes with optional G2P phonemes.
 pub struct SpeakResult {
     pub audio: Vec<u8>,
@@ -123,6 +133,7 @@ impl KokoroDaemon {
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
+        apply_no_window(&mut cmd);
 
         // On Linux: automatically kill this child if the parent exits for any
         // reason (SIGKILL, crash, etc.) so it doesn't outlive the app.
@@ -355,10 +366,12 @@ pub fn known_kokoro_voices() -> Vec<String> {
 pub fn speak_espeak(text: &str, voice: &str) -> Result<Vec<u8>, String> {
     let voice = if voice.is_empty() { "en-us" } else { voice };
 
-    let output = Command::new("espeak-ng")
-        .args(["-v", voice, "--stdout", text])
+    let mut cmd = Command::new("espeak-ng");
+    cmd.args(["-v", voice, "--stdout", text])
         .stdout(Stdio::piped())
-        .stderr(Stdio::null())
+        .stderr(Stdio::null());
+    apply_no_window(&mut cmd);
+    let output = cmd
         .output()
         .map_err(|e| format!("Failed to run espeak-ng: {e}"))?;
 
@@ -375,11 +388,12 @@ pub fn speak_espeak(text: &str, voice: &str) -> Result<Vec<u8>, String> {
 
 /// List voices available in espeak-ng.
 pub fn list_espeak_voices() -> Vec<String> {
-    let output = Command::new("espeak-ng")
-        .args(["--voices=en"])
+    let mut cmd = Command::new("espeak-ng");
+    cmd.args(["--voices=en"])
         .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .output();
+        .stderr(Stdio::null());
+    apply_no_window(&mut cmd);
+    let output = cmd.output();
 
     let Ok(out) = output else { return vec![] };
     let text = String::from_utf8_lossy(&out.stdout);
@@ -402,11 +416,12 @@ pub fn list_espeak_voices() -> Vec<String> {
 
 /// Check whether espeak-ng is on PATH.
 pub fn check_espeak() -> bool {
-    Command::new("espeak-ng")
-        .arg("--version")
+    let mut cmd = Command::new("espeak-ng");
+    cmd.arg("--version")
         .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
+        .stderr(Stdio::null());
+    apply_no_window(&mut cmd);
+    cmd.status()
         .map(|s| s.success())
         .unwrap_or(false)
 }
@@ -436,19 +451,21 @@ pub fn speak_kokoro(
     } else {
         python_bin
     };
-    let mut child = Command::new(python_bin)
-        .args([
-            script_path,
-            "--model",
-            model_path,
-            "--voices",
-            voices_path,
-            "--voice",
-            voice,
-        ])
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
+    let mut cmd = Command::new(python_bin);
+    cmd.args([
+        script_path,
+        "--model",
+        model_path,
+        "--voices",
+        voices_path,
+        "--voice",
+        voice,
+    ])
+    .stdin(Stdio::piped())
+    .stdout(Stdio::piped())
+    .stderr(Stdio::piped());
+    apply_no_window(&mut cmd);
+    let mut child = cmd
         .spawn()
         .map_err(|e| format!("Failed to start tts_kokoro.py: {e}"))?;
 
@@ -486,11 +503,12 @@ pub fn check_kokoro(script_path: &str, python_bin: &str) -> bool {
     } else {
         python_bin
     };
-    Command::new(python_bin)
-        .args(["-c", "import kokoro_onnx, soundfile, onnxruntime"])
+    let mut cmd = Command::new(python_bin);
+    cmd.args(["-c", "import kokoro_onnx, soundfile, onnxruntime"])
         .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
+        .stderr(Stdio::null());
+    apply_no_window(&mut cmd);
+    cmd.status()
         .map(|s| s.success())
         .unwrap_or(false)
         && !script_path.is_empty()
@@ -557,11 +575,12 @@ for n in sorted(clean):
     print(n)
 "#;
 
-    let output = Command::new(python_bin)
-        .args(["-c", script, model_path, voices_path])
+    let mut cmd = Command::new(python_bin);
+    cmd.args(["-c", script, model_path, voices_path])
         .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .output();
+        .stderr(Stdio::null());
+    apply_no_window(&mut cmd);
+    let output = cmd.output();
 
     let Ok(out) = output else { return vec![] };
     if !out.status.success() {

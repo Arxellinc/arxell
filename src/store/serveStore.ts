@@ -201,6 +201,7 @@ export const useServeStore = create<ServeStore>((set, get) => {
   let unlistenProgress: UnlistenFn | null = null;
   let unlistenStateChanged: UnlistenFn | null = null;
   let unlistenInstallProgress: UnlistenFn | null = null;
+  let unlistenServerUnhealthy: UnlistenFn | null = null;
   let startupAutoLoadAttempted = false;
   let initializeInFlight: Promise<void> | null = null;
   let startupAutoLoadTimer: ReturnType<typeof setTimeout> | null = null;
@@ -409,6 +410,26 @@ export const useServeStore = create<ServeStore>((set, get) => {
                     get().fetchRuntimeStatus();
                   }, 2500);
                 }
+              }
+            );
+          }
+
+          if (!unlistenServerUnhealthy) {
+            unlistenServerUnhealthy = await listen<string>(
+              "model:server_unhealthy",
+              (event) => {
+                const message = (event.payload ?? "").trim() || "Local model server stopped unexpectedly.";
+                set({
+                  isLoaded: false,
+                  isLoading: false,
+                  modelInfo: null,
+                  activeDevice: null,
+                  inferenceEndpoint: null,
+                  activeContextLength: null,
+                  tokenCount: null,
+                  loadProgress: null,
+                  error: message,
+                });
               }
             );
           }

@@ -833,6 +833,30 @@ export interface A2AExecutionItem {
   pairedItem?: { item: number } | null;
 }
 
+export type A2ANodeTier = "stable" | "beta" | "hidden";
+
+export interface A2ANodeTypeDef {
+  id: string;
+  label: string;
+  category: string;
+  tier: A2ANodeTier;
+  description: string;
+  side_effecting: boolean;
+}
+
+export interface A2AWorkflowPreflightIssue {
+  kind: string;
+  node_id: string | null;
+  node_type: string | null;
+  message: string;
+  blocking: boolean;
+}
+
+export interface A2AWorkflowPreflightResult {
+  ok: boolean;
+  issues: A2AWorkflowPreflightIssue[];
+}
+
 export const a2aWorkflowList = () =>
   invoke<A2AWorkflowRecord[]>("cmd_a2a_workflow_list");
 
@@ -865,11 +889,26 @@ export const a2aWorkflowRunStart = (
     payload: { workflowId: workflow_id, triggerType: trigger_type, input, timeoutMs: timeout_ms },
   });
 
+export const a2aWorkflowRunCancel = (run_id: string) =>
+  invoke<boolean>("cmd_a2a_workflow_run_cancel", { runId: run_id });
+
+export const a2aWorkflowRunPause = (run_id: string) =>
+  invoke<boolean>("cmd_a2a_workflow_run_pause", { runId: run_id });
+
+export const a2aWorkflowRunResume = (run_id: string) =>
+  invoke<boolean>("cmd_a2a_workflow_run_resume", { runId: run_id });
+
 export const a2aWorkflowRunList = (workflow_id?: string, limit = 50) =>
   invoke<A2AWorkflowRunRecord[]>("cmd_a2a_workflow_run_list", { workflowId: workflow_id, limit });
 
 export const a2aWorkflowRunGet = (run_id: string) =>
   invoke<A2AWorkflowRunDetail | null>("cmd_a2a_workflow_run_get", { runId: run_id });
+
+export const a2aNodeTypeList = () =>
+  invoke<A2ANodeTypeDef[]>("cmd_a2a_node_type_list");
+
+export const a2aWorkflowPreflight = (definition: A2AWorkflowDefinition) =>
+  invoke<A2AWorkflowPreflightResult>("cmd_a2a_workflow_preflight", { definition });
 
 export const a2aWorkflowNodeTest = (node: A2AWorkflowNode, input_items: A2AExecutionItem[]) =>
   invoke<Record<string, A2AExecutionItem[]>>("cmd_a2a_workflow_node_test", {

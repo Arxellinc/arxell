@@ -1,10 +1,10 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::{HashMap, VecDeque};
-use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{LazyLock, Mutex};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::{Arc, LazyLock, Mutex};
 use std::time::{Duration, Instant};
-use tauri::{AppHandle, Emitter, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::a2a::workflow_store;
 use crate::memory;
@@ -16,6 +16,42 @@ const A2A_MAX_PER_WORKFLOW_CONCURRENCY: usize = 2;
 static A2A_ACTIVE_RUNS_GLOBAL: AtomicUsize = AtomicUsize::new(0);
 static A2A_ACTIVE_RUNS_BY_WORKFLOW: LazyLock<Mutex<HashMap<String, usize>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
+static A2A_RUN_CONTROLS: LazyLock<Mutex<HashMap<String, RunControl>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
+#[derive(Clone)]
+struct RunControl {
+    cancelled: Arc<AtomicBool>,
+    paused: Arc<AtomicBool>,
+}
+
+impl RunControl {
+    fn new() -> Self {
+        Self {
+            cancelled: Arc::new(AtomicBool::new(false)),
+            paused: Arc::new(AtomicBool::new(false)),
+        }
+    }
+}
+
+fn set_run_control(run_id: &str, control: RunControl) -> Result<(), String> {
+    let mut map = A2A_RUN_CONTROLS.lock().map_err(|e| e.to_string())?;
+    map.insert(run_id.to_string(), control);
+    Ok(())
+}
+
+fn get_run_control(run_id: &str) -> Option<RunControl> {
+    A2A_RUN_CONTROLS
+        .lock()
+        .ok()
+        .and_then(|map| map.get(run_id).cloned())
+}
+
+fn remove_run_control(run_id: &str) {
+    if let Ok(mut map) = A2A_RUN_CONTROLS.lock() {
+        map.remove(run_id);
+    }
+}
 
 struct RunPermit {
     workflow_id: String,
@@ -228,6 +264,153 @@ pub struct A2ATemplateCreatePayload {
 pub struct A2AWorkflowRunDetail {
     pub run: workflow_store::A2AWorkflowRunRecord,
     pub node_runs: Vec<workflow_store::A2AWorkflowNodeRunRecord>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum A2ANodeTier {
+    Stable,
+    Beta,
+    Hidden,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct A2ANodeTypeDef {
+    pub id: &'static str,
+    pub label: &'static str,
+    pub category: &'static str,
+    pub tier: A2ANodeTier,
+    pub description: &'static str,
+    pub side_effecting: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct A2AWorkflowPreflightIssue {
+    pub kind: String,
+    pub node_id: Option<String>,
+    pub node_type: Option<String>,
+    pub message: String,
+    pub blocking: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct A2AWorkflowPreflightResult {
+    pub ok: bool,
+    pub issues: Vec<A2AWorkflowPreflightIssue>,
+}
+
+fn node_type_defs() -> Vec<A2ANodeTypeDef> {
+    vec![
+        A2ANodeTypeDef { id: "ai.agent", label: "Agent", category: "primary", tier: A2ANodeTier::Stable, description: "Agent-style prompt planning node", side_effecting: false },
+        A2ANodeTypeDef { id: "trigger.manual", label: "Manual Trigger", category: "triggers", tier: A2ANodeTier::Stable, description: "Manually start a workflow", side_effecting: false },
+        A2ANodeTypeDef { id: "trigger.schedule", label: "Schedule Trigger", category: "triggers", tier: A2ANodeTier::Beta, description: "Schedule-based trigger", side_effecting: false },
+        A2ANodeTypeDef { id: "trigger.webhook", label: "Webhook Trigger", category: "triggers", tier: A2ANodeTier::Beta, description: "Webhook-based trigger", side_effecting: false },
+        A2ANodeTypeDef { id: "trigger.error", label: "Error Trigger", category: "triggers", tier: A2ANodeTier::Beta, description: "Error-path trigger", side_effecting: false },
+        A2ANodeTypeDef { id: "logic.if", label: "IF", category: "flow_control", tier: A2ANodeTier::Stable, description: "Conditional branch", side_effecting: false },
+        A2ANodeTypeDef { id: "logic.switch", label: "Switch", category: "flow_control", tier: A2ANodeTier::Stable, description: "Route by rules or expression", side_effecting: false },
+        A2ANodeTypeDef { id: "core.merge", label: "Merge", category: "flow_control", tier: A2ANodeTier::Stable, description: "Merge streams", side_effecting: false },
+        A2ANodeTypeDef { id: "core.split_in_batches", label: "Split In Batches", category: "flow_control", tier: A2ANodeTier::Stable, description: "Split stream into loop+done outputs", side_effecting: false },
+        A2ANodeTypeDef { id: "core.noop", label: "NoOp", category: "flow_control", tier: A2ANodeTier::Stable, description: "Pass-through node", side_effecting: false },
+        A2ANodeTypeDef { id: "core.stop_and_error", label: "Stop And Error", category: "flow_control", tier: A2ANodeTier::Stable, description: "Stop run with explicit error", side_effecting: false },
+        A2ANodeTypeDef { id: "core.wait", label: "Wait", category: "flow_control", tier: A2ANodeTier::Stable, description: "Wait before passing output", side_effecting: false },
+        A2ANodeTypeDef { id: "transform.set", label: "Set", category: "transform", tier: A2ANodeTier::Stable, description: "Set object fields", side_effecting: false },
+        A2ANodeTypeDef { id: "transform.map", label: "Map", category: "transform", tier: A2ANodeTier::Stable, description: "Map fields", side_effecting: false },
+        A2ANodeTypeDef { id: "transform.filter", label: "Filter", category: "transform", tier: A2ANodeTier::Stable, description: "Filter items by conditions", side_effecting: false },
+        A2ANodeTypeDef { id: "transform.sort", label: "Sort", category: "transform", tier: A2ANodeTier::Stable, description: "Sort records by field", side_effecting: false },
+        A2ANodeTypeDef { id: "transform.limit", label: "Limit", category: "transform", tier: A2ANodeTier::Stable, description: "Limit first/last items", side_effecting: false },
+        A2ANodeTypeDef { id: "transform.remove_duplicates", label: "Remove Duplicates", category: "transform", tier: A2ANodeTier::Stable, description: "Drop duplicate records", side_effecting: false },
+        A2ANodeTypeDef { id: "transform.aggregate", label: "Aggregate", category: "transform", tier: A2ANodeTier::Stable, description: "Aggregate records into collection", side_effecting: false },
+        A2ANodeTypeDef { id: "transform.summarize", label: "Summarize", category: "transform", tier: A2ANodeTier::Stable, description: "Summarize grouped records", side_effecting: false },
+        A2ANodeTypeDef { id: "transform.rename_keys", label: "Rename Keys", category: "transform", tier: A2ANodeTier::Stable, description: "Rename object keys", side_effecting: false },
+        A2ANodeTypeDef { id: "transform.compare_datasets", label: "Compare Datasets", category: "transform", tier: A2ANodeTier::Stable, description: "Compare two datasets", side_effecting: false },
+        A2ANodeTypeDef { id: "transform.item_lists", label: "Item Lists", category: "transform", tier: A2ANodeTier::Stable, description: "Split/aggregate list fields", side_effecting: false },
+        A2ANodeTypeDef { id: "http.request", label: "HTTP Request", category: "utility", tier: A2ANodeTier::Stable, description: "HTTP request node", side_effecting: true },
+        A2ANodeTypeDef { id: "util.http_request", label: "HTTP Request", category: "utility", tier: A2ANodeTier::Stable, description: "HTTP request utility node", side_effecting: true },
+        A2ANodeTypeDef { id: "util.respond_to_webhook", label: "Respond To Webhook", category: "utility", tier: A2ANodeTier::Beta, description: "Webhook response node", side_effecting: true },
+        A2ANodeTypeDef { id: "util.read_write_file", label: "Read/Write File", category: "utility", tier: A2ANodeTier::Beta, description: "Filesystem read/write operation", side_effecting: true },
+        A2ANodeTypeDef { id: "util.crypto", label: "Crypto", category: "utility", tier: A2ANodeTier::Stable, description: "Hash/value transformation", side_effecting: false },
+        A2ANodeTypeDef { id: "util.datetime", label: "DateTime", category: "utility", tier: A2ANodeTier::Stable, description: "Date/time helper node", side_effecting: false },
+        A2ANodeTypeDef { id: "util.execute_workflow", label: "Execute Workflow", category: "utility", tier: A2ANodeTier::Hidden, description: "Inline subworkflow execution (not enabled)", side_effecting: true },
+        A2ANodeTypeDef { id: "util.send_email", label: "Send Email", category: "utility", tier: A2ANodeTier::Beta, description: "SMTP email send", side_effecting: true },
+        A2ANodeTypeDef { id: "util.sticky_note", label: "Sticky Note", category: "utility", tier: A2ANodeTier::Stable, description: "Non-executing note node", side_effecting: false },
+        A2ANodeTypeDef { id: "db.sqlite", label: "SQLite", category: "datastore", tier: A2ANodeTier::Beta, description: "SQLite query node", side_effecting: true },
+        A2ANodeTypeDef { id: "db.postgres", label: "Postgres", category: "datastore", tier: A2ANodeTier::Beta, description: "Postgres query node", side_effecting: true },
+        A2ANodeTypeDef { id: "db.redis", label: "Redis", category: "datastore", tier: A2ANodeTier::Beta, description: "Redis operation node", side_effecting: true },
+        A2ANodeTypeDef { id: "db.mysql", label: "MySQL", category: "datastore", tier: A2ANodeTier::Hidden, description: "MySQL runtime disabled", side_effecting: true },
+        A2ANodeTypeDef { id: "db.mariadb", label: "MariaDB", category: "datastore", tier: A2ANodeTier::Hidden, description: "MariaDB runtime disabled", side_effecting: true },
+        A2ANodeTypeDef { id: "db.mssql", label: "Microsoft SQL", category: "datastore", tier: A2ANodeTier::Hidden, description: "MSSQL runtime disabled", side_effecting: true },
+        A2ANodeTypeDef { id: "db.mongodb", label: "MongoDB", category: "datastore", tier: A2ANodeTier::Hidden, description: "MongoDB runtime disabled", side_effecting: true },
+        A2ANodeTypeDef { id: "llm.query", label: "LLM Query", category: "ai", tier: A2ANodeTier::Stable, description: "Prompt a model and return response", side_effecting: true },
+        A2ANodeTypeDef { id: "ai.chat_model", label: "Chat Model", category: "ai", tier: A2ANodeTier::Beta, description: "AI chat model connector", side_effecting: false },
+        A2ANodeTypeDef { id: "ai.memory", label: "Memory Connector", category: "ai", tier: A2ANodeTier::Beta, description: "AI memory connector", side_effecting: false },
+        A2ANodeTypeDef { id: "ai.tool", label: "Tool Connector", category: "ai", tier: A2ANodeTier::Beta, description: "AI tool connector", side_effecting: false },
+        A2ANodeTypeDef { id: "tool.invoke", label: "Tool Invoke", category: "ai", tier: A2ANodeTier::Beta, description: "Invoke tool action bridge", side_effecting: true },
+        A2ANodeTypeDef { id: "memory.read", label: "Memory Read", category: "ai", tier: A2ANodeTier::Stable, description: "Read memory entries", side_effecting: false },
+        A2ANodeTypeDef { id: "memory.write", label: "Memory Write", category: "ai", tier: A2ANodeTier::Stable, description: "Write memory entries", side_effecting: true },
+        A2ANodeTypeDef { id: "skill.run", label: "Skill Run", category: "ai", tier: A2ANodeTier::Beta, description: "Skill execution bridge", side_effecting: false },
+        A2ANodeTypeDef { id: "output.respond", label: "Output", category: "outputs", tier: A2ANodeTier::Stable, description: "Output/response node", side_effecting: false },
+    ]
+}
+
+fn preflight_workflow_definition(definition: &A2AWorkflowDefinition) -> A2AWorkflowPreflightResult {
+    let defs = node_type_defs();
+    let mut supported = std::collections::HashSet::new();
+    for d in &defs {
+        if !matches!(d.tier, A2ANodeTier::Hidden) {
+            supported.insert(d.id);
+        }
+    }
+
+    let mut issues = Vec::new();
+    for node in &definition.nodes {
+        if !supported.contains(node.node_type.as_str()) {
+            issues.push(A2AWorkflowPreflightIssue {
+                kind: "unsupported_node_type".to_string(),
+                node_id: Some(node.id.clone()),
+                node_type: Some(node.node_type.clone()),
+                message: format!("Node type '{}' is not supported in this build", node.node_type),
+                blocking: true,
+            });
+        }
+
+        let needs_credential = matches!(
+            node.node_type.as_str(),
+            "db.postgres" | "db.redis" | "util.send_email"
+        );
+        if needs_credential {
+            let credential_id = node
+                .params
+                .get("credentialId")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .trim();
+            if credential_id.is_empty() {
+                issues.push(A2AWorkflowPreflightIssue {
+                    kind: "missing_credential".to_string(),
+                    node_id: Some(node.id.clone()),
+                    node_type: Some(node.node_type.clone()),
+                    message: format!(
+                        "Node '{}' ({}) requires params.credentialId",
+                        node.name, node.node_type
+                    ),
+                    blocking: true,
+                });
+            }
+        }
+    }
+
+    if let Err(e) = topological_sort(&definition.nodes, &definition.edges) {
+        issues.push(A2AWorkflowPreflightIssue {
+            kind: "graph_invalid".to_string(),
+            node_id: None,
+            node_type: None,
+            message: e,
+            blocking: true,
+        });
+    }
+
+    let ok = !issues.iter().any(|i| i.blocking);
+    A2AWorkflowPreflightResult { ok, issues }
 }
 
 #[derive(Debug, Clone)]
@@ -493,6 +676,7 @@ fn chat_completions_url(base_url: &str) -> String {
 async fn execute_node(
     app: &AppHandle,
     state: &AppState,
+    run_control: Option<&RunControl>,
     node: &A2AWorkflowNode,
     input_items: &[A2AExecutionItem],
     ctx: &NodeContext,
@@ -694,7 +878,23 @@ async fn execute_node(
                 _ => amount * 1_000,
             };
             if ms > 0 {
-                tokio::time::sleep(Duration::from_millis(ms.min(60_000))).await;
+                let mut remaining = ms.min(60_000);
+                while remaining > 0 {
+                    if let Some(ctrl) = run_control {
+                        if ctrl.cancelled.load(Ordering::SeqCst) {
+                            return Err("Workflow canceled".to_string());
+                        }
+                        while ctrl.paused.load(Ordering::SeqCst) {
+                            if ctrl.cancelled.load(Ordering::SeqCst) {
+                                return Err("Workflow canceled".to_string());
+                            }
+                            tokio::time::sleep(Duration::from_millis(200)).await;
+                        }
+                    }
+                    let step = remaining.min(250);
+                    tokio::time::sleep(Duration::from_millis(step)).await;
+                    remaining = remaining.saturating_sub(step);
+                }
             }
             pass_through(&mut outputs, input_items);
         }
@@ -1821,6 +2021,7 @@ async fn execute_workflow_run(
     timeout_ms: u64,
 ) -> Result<Vec<A2AExecutionItem>, String> {
     let started = Instant::now();
+    let run_control = get_run_control(run_id);
     let order = topological_sort(&definition.nodes, &definition.edges)?;
     let node_by_id: HashMap<&str, &A2AWorkflowNode> = definition
         .nodes
@@ -1834,6 +2035,17 @@ async fn execute_workflow_run(
     let mut final_items = Vec::new();
 
     for node_id in order {
+        if let Some(ctrl) = &run_control {
+            if ctrl.cancelled.load(Ordering::SeqCst) {
+                return Err("Workflow canceled".to_string());
+            }
+            while ctrl.paused.load(Ordering::SeqCst) {
+                if ctrl.cancelled.load(Ordering::SeqCst) {
+                    return Err("Workflow canceled".to_string());
+                }
+                tokio::time::sleep(Duration::from_millis(200)).await;
+            }
+        }
         if started.elapsed() > Duration::from_millis(timeout_ms) {
             return Err("Workflow timed out".to_string());
         }
@@ -1868,7 +2080,15 @@ async fn execute_workflow_run(
         let execution_ctx = NodeContext {
             items_by_name: outputs_by_name.clone(),
         };
-        let result = execute_node(app, state, node, &node_input, &execution_ctx).await;
+        let result = execute_node(
+            app,
+            state,
+            run_control.as_ref(),
+            node,
+            &node_input,
+            &execution_ctx,
+        )
+        .await;
         let node_finished_ms = chrono::Utc::now().timestamp_millis();
         let duration_ms = node_started.elapsed().as_millis() as i64;
 
@@ -2076,6 +2296,18 @@ pub fn cmd_a2a_workflow_run_get(
 }
 
 #[tauri::command]
+pub fn cmd_a2a_node_type_list() -> Result<Vec<A2ANodeTypeDef>, String> {
+    Ok(node_type_defs())
+}
+
+#[tauri::command]
+pub fn cmd_a2a_workflow_preflight(
+    definition: A2AWorkflowDefinition,
+) -> Result<A2AWorkflowPreflightResult, String> {
+    Ok(preflight_workflow_definition(&definition))
+}
+
+#[tauri::command]
 pub async fn cmd_a2a_workflow_run_start(
     app: AppHandle,
     state: State<'_, AppState>,
@@ -2088,23 +2320,40 @@ pub async fn cmd_a2a_workflow_run_start(
     };
     let timeout_ms = payload.timeout_ms.unwrap_or(60_000).max(1_000);
 
-    let (workflow, run) = {
+    let workflow = {
         let db = state.a2a_db.lock().map_err(|e| e.to_string())?;
         let Some(workflow) = workflow_store::get_workflow(&db, payload.workflow_id.trim())
             .map_err(|e| e.to_string())?
         else {
             return Err(format!("Workflow not found: {}", payload.workflow_id));
         };
-        let run = workflow_store::create_run(
+        workflow
+    };
+
+    let definition: A2AWorkflowDefinition =
+        serde_json::from_str(&workflow.definition_json).map_err(|e| e.to_string())?;
+    let preflight = preflight_workflow_definition(&definition);
+    if !preflight.ok {
+        let msg = preflight
+            .issues
+            .iter()
+            .filter(|i| i.blocking)
+            .map(|i| i.message.clone())
+            .collect::<Vec<_>>()
+            .join("; ");
+        return Err(format!("Workflow preflight failed: {msg}"));
+    }
+    let _permit = acquire_run_permit(workflow.workflow_id.as_str())?;
+    let run = {
+        let db = state.a2a_db.lock().map_err(|e| e.to_string())?;
+        workflow_store::create_run(
             &db,
             workflow.workflow_id.as_str(),
             trigger.as_str(),
             payload.input.to_string(),
         )
-        .map_err(|e| e.to_string())?;
-        (workflow, run)
+        .map_err(|e| e.to_string())?
     };
-    let _permit = acquire_run_permit(workflow.workflow_id.as_str())?;
     emit_changed(
         &app,
         "run_started",
@@ -2112,81 +2361,115 @@ pub async fn cmd_a2a_workflow_run_start(
         Some(run.run_id.as_str()),
     );
 
-    let definition: A2AWorkflowDefinition =
-        serde_json::from_str(&workflow.definition_json).map_err(|e| e.to_string())?;
     let input_items = as_input_items(&payload.input);
+    let run_id = run.run_id.clone();
+    let workflow_id = workflow.workflow_id.clone();
+    let metrics_json = json!({
+        "node_count": definition.nodes.len(),
+        "edge_count": definition.edges.len(),
+        "timeout_ms": timeout_ms
+    })
+    .to_string();
+    let run_control = RunControl::new();
+    if let Err(e) = set_run_control(run_id.as_str(), run_control) {
+        let db = state.a2a_db.lock().map_err(|lock_err| lock_err.to_string())?;
+        workflow_store::set_run_status(
+            &db,
+            run_id.as_str(),
+            "failed",
+            Some(format!("Failed to initialize run control: {e}")),
+            None,
+            Some(metrics_json.clone()),
+        )
+        .map_err(|status_err| status_err.to_string())?;
+        return Err(e);
+    }
+    let app_clone = app.clone();
+    tauri::async_runtime::spawn(async move {
+        let _permit = _permit;
+        let state_ref = app_clone.state::<AppState>();
+        let execute_result = execute_workflow_run(
+            &app_clone,
+            &state_ref,
+            run_id.as_str(),
+            &definition,
+            input_items,
+            timeout_ms,
+        )
+        .await;
 
-    let execute_result = execute_workflow_run(
-        &app,
-        &state,
-        run.run_id.as_str(),
-        &definition,
-        input_items,
-        timeout_ms,
-    )
-    .await;
+        let db = match state_ref.a2a_db.lock() {
+            Ok(db) => db,
+            Err(e) => {
+                log::error!("Failed to lock a2a_db for run finalization: {}", e);
+                remove_run_control(run_id.as_str());
+                return;
+            }
+        };
 
-    {
-        let db = state.a2a_db.lock().map_err(|e| e.to_string())?;
         match execute_result {
             Ok(out_items) => {
-                let output_json = serde_json::to_string(&out_items).map_err(|e| e.to_string())?;
-                workflow_store::set_run_status(
+                let output_json = match serde_json::to_string(&out_items) {
+                    Ok(v) => v,
+                    Err(e) => {
+                        log::error!("Failed to serialize workflow output: {}", e);
+                        String::new()
+                    }
+                };
+                let _ = workflow_store::set_run_status(
                     &db,
-                    run.run_id.as_str(),
+                    run_id.as_str(),
                     "succeeded",
                     None,
                     Some(output_json),
-                    Some(
-                        json!({
-                            "node_count": definition.nodes.len(),
-                            "edge_count": definition.edges.len(),
-                            "timeout_ms": timeout_ms
-                        })
-                        .to_string(),
-                    ),
-                )
-                .map_err(|e| e.to_string())?;
+                    Some(metrics_json.clone()),
+                );
             }
             Err(err) => {
-                let status = if err.to_ascii_lowercase().contains("timed out") {
-                    "timed_out"
+                let current = workflow_store::get_run(&db, run_id.as_str()).ok().flatten();
+                if current
+                    .as_ref()
+                    .map(|r| r.status.as_str() == "canceled")
+                    .unwrap_or(false)
+                {
+                    let _ = workflow_store::set_run_status(
+                        &db,
+                        run_id.as_str(),
+                        "canceled",
+                        Some(err),
+                        None,
+                        Some(metrics_json.clone()),
+                    );
                 } else {
-                    "failed"
-                };
-                workflow_store::set_run_status(
-                    &db,
-                    run.run_id.as_str(),
-                    status,
-                    Some(err),
-                    None,
-                    Some(
-                        json!({
-                            "node_count": definition.nodes.len(),
-                            "edge_count": definition.edges.len(),
-                            "timeout_ms": timeout_ms
-                        })
-                        .to_string(),
-                    ),
-                )
-                .map_err(|e| e.to_string())?;
+                    let status = if err.to_ascii_lowercase().contains("timed out") {
+                        "timed_out"
+                    } else if err.to_ascii_lowercase().contains("canceled") {
+                        "canceled"
+                    } else {
+                        "failed"
+                    };
+                    let _ = workflow_store::set_run_status(
+                        &db,
+                        run_id.as_str(),
+                        status,
+                        Some(err),
+                        None,
+                        Some(metrics_json.clone()),
+                    );
+                }
             }
         }
-    }
+        drop(db);
+        remove_run_control(run_id.as_str());
+        emit_changed(
+            &app_clone,
+            "run_finished",
+            Some(workflow_id.as_str()),
+            Some(run_id.as_str()),
+        );
+    });
 
-    let final_run = {
-        let db = state.a2a_db.lock().map_err(|e| e.to_string())?;
-        workflow_store::get_run(&db, run.run_id.as_str())
-            .map_err(|e| e.to_string())?
-            .ok_or_else(|| "Run was not found after execution".to_string())?
-    };
-    emit_changed(
-        &app,
-        "run_finished",
-        Some(workflow.workflow_id.as_str()),
-        Some(final_run.run_id.as_str()),
-    );
-    Ok(final_run)
+    Ok(run)
 }
 
 #[tauri::command]
@@ -2198,7 +2481,100 @@ pub async fn cmd_a2a_workflow_node_test(
     let ctx = NodeContext {
         items_by_name: HashMap::new(),
     };
-    execute_node(&app, &state, &payload.node, &payload.input_items, &ctx).await
+    execute_node(&app, &state, None, &payload.node, &payload.input_items, &ctx).await
+}
+
+#[tauri::command]
+pub fn cmd_a2a_workflow_run_cancel(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    run_id: String,
+) -> Result<bool, String> {
+    let run_id = run_id.trim().to_string();
+    if run_id.is_empty() {
+        return Err("run_id is required".to_string());
+    }
+
+    let control = get_run_control(&run_id);
+    if let Some(ctrl) = control {
+        ctrl.cancelled.store(true, Ordering::SeqCst);
+        ctrl.paused.store(false, Ordering::SeqCst);
+    }
+
+    let db = state.a2a_db.lock().map_err(|e| e.to_string())?;
+    let run = workflow_store::get_run(&db, &run_id).map_err(|e| e.to_string())?;
+    let Some(run) = run else {
+        return Ok(false);
+    };
+    if matches!(run.status.as_str(), "succeeded" | "failed" | "canceled" | "timed_out") {
+        return Ok(false);
+    }
+    workflow_store::set_run_status(&db, &run_id, "canceled", Some("Canceled by user".to_string()), None, None)
+        .map_err(|e| e.to_string())?;
+    emit_changed(&app, "run_canceled", Some(run.workflow_id.as_str()), Some(run_id.as_str()));
+    Ok(true)
+}
+
+#[tauri::command]
+pub fn cmd_a2a_workflow_run_pause(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    run_id: String,
+) -> Result<bool, String> {
+    let run_id = run_id.trim().to_string();
+    if run_id.is_empty() {
+        return Err("run_id is required".to_string());
+    }
+
+    let control = get_run_control(&run_id);
+    let Some(ctrl) = control else {
+        return Ok(false);
+    };
+    ctrl.paused.store(true, Ordering::SeqCst);
+
+    let db = state.a2a_db.lock().map_err(|e| e.to_string())?;
+    let run = workflow_store::get_run(&db, &run_id).map_err(|e| e.to_string())?;
+    let Some(run) = run else {
+        return Ok(false);
+    };
+    if run.status != "running" {
+        return Ok(false);
+    }
+    workflow_store::set_run_status(&db, &run_id, "paused", None, None, None)
+        .map_err(|e| e.to_string())?;
+    emit_changed(&app, "run_paused", Some(run.workflow_id.as_str()), Some(run_id.as_str()));
+    Ok(true)
+}
+
+#[tauri::command]
+pub fn cmd_a2a_workflow_run_resume(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    run_id: String,
+) -> Result<bool, String> {
+    let run_id = run_id.trim().to_string();
+    if run_id.is_empty() {
+        return Err("run_id is required".to_string());
+    }
+
+    let control = get_run_control(&run_id);
+    let Some(ctrl) = control else {
+        return Ok(false);
+    };
+    ctrl.paused.store(false, Ordering::SeqCst);
+
+    let db = state.a2a_db.lock().map_err(|e| e.to_string())?;
+    let run = workflow_store::get_run(&db, &run_id).map_err(|e| e.to_string())?;
+    let Some(run) = run else {
+        return Ok(false);
+    };
+    if run.status != "paused" {
+        return Ok(false);
+    }
+    workflow_store::set_run_status(&db, &run_id, "running", None, None, None)
+        .map_err(|e| e.to_string())?;
+    emit_changed(&app, "run_resumed", Some(run.workflow_id.as_str()), Some(run_id.as_str()));
+    Ok(true)
 }
 
 #[tauri::command]

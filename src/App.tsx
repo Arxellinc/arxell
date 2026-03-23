@@ -17,7 +17,6 @@ import { chatGetMessages, memoryList, memoryUpsert, settingsGet, settingsSet } f
 import { useThemeStore } from "./store/themeStore";
 import { useSystemAlertStore } from "./store/systemAlertStore";
 import { listen } from "@tauri-apps/api/event";
-import { getVersion } from "@tauri-apps/api/app";
 import { prewarmPiBootstrap } from "./lib/piBootstrap";
 import { initHotPlugListeners } from "./audio/reconcile";
 
@@ -130,7 +129,7 @@ export default function App() {
   const [welcomeModalResolved, setWelcomeModalResolved] = useState(false);
   const [welcomeDoNotShow, setWelcomeDoNotShow] = useState(false);
   const [welcomeFlowCompleted, setWelcomeFlowCompleted] = useState(false);
-  const [appVersion, setAppVersion] = useState(__APP_VERSION__);
+  const appVersion = __APP_VERSION__;
   const { setPanel, toolbarPosition } = useToolPanelStore();
   const addAlert = useSystemAlertStore((s) => s.addAlert);
 
@@ -281,23 +280,6 @@ export default function App() {
         }
       } finally {
         if (!cancelled) setWelcomeModalResolved(true);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  useEffect(() => {
-    let cancelled = false;
-    void (async () => {
-      try {
-        const version = await getVersion();
-        if (!cancelled && version.trim()) {
-          setAppVersion(version.trim());
-        }
-      } catch {
-        // Non-Tauri contexts use the build-time fallback.
       }
     })();
     return () => {

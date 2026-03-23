@@ -138,6 +138,18 @@ pub(crate) fn is_pid_alive(pid: u32) -> bool {
     }
 }
 
+#[cfg(windows)]
+fn is_llama_server_process(pid: u32) -> bool {
+    use sysinfo::{ProcessesToUpdate, System};
+    let mut sys = System::new();
+    sys.refresh_processes(ProcessesToUpdate::All, false);
+    let Some(proc_info) = sys.process(sysinfo::Pid::from(pid as usize)) else {
+        return false;
+    };
+    let name = proc_info.name().to_string_lossy().to_ascii_lowercase();
+    name == "llama-server.exe" || name == "llama-server"
+}
+
 /// Best-effort forceful termination for adopted server PIDs.
 ///
 /// Returns true when the PID is confirmed gone after signaling.
@@ -203,6 +215,15 @@ pub fn adopt_or_cleanup_server(state_file: &Path) -> Option<crate::LocalServerHa
     let state: ServerStateFile = serde_json::from_str(&content).ok()?;
 
     if !is_pid_alive(state.pid) {
+        let _ = std::fs::remove_file(state_file);
+        return None;
+    }
+    #[cfg(windows)]
+    if !is_llama_server_process(state.pid) {
+        log::warn!(
+            "[server-adopt] State file PID {} is alive but not llama-server; refusing to terminate and clearing stale state",
+            state.pid
+        );
         let _ = std::fs::remove_file(state_file);
         return None;
     }

@@ -16,6 +16,16 @@ use std::sync::{Arc, Mutex};
 #[cfg(feature = "whisper-rs-stt")]
 use whisper_rs::{FullParams, SamplingStrategy, WhisperContext, WhisperContextParameters};
 
+#[cfg(target_os = "windows")]
+fn apply_no_window(cmd: &mut Command) {
+    use std::os::windows::process::CommandExt;
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    cmd.creation_flags(CREATE_NO_WINDOW);
+}
+
+#[cfg(not(target_os = "windows"))]
+fn apply_no_window(_cmd: &mut Command) {}
+
 /// Thread-safe handle for a loaded WhisperContext (whisper-rs / whisper.cpp).
 ///
 /// `WhisperContext` wraps `Arc<WhisperInnerContext>` which implements Send + Sync,
@@ -107,6 +117,7 @@ impl WhisperDaemon {
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
+        apply_no_window(&mut cmd);
 
         // On Linux: automatically kill this child if the parent exits for any
         // reason (SIGKILL, crash, etc.) so it doesn't outlive the app.
@@ -289,11 +300,13 @@ pub fn transcribe_whisper(
         args.push(model_dir.to_string());
     }
 
-    let mut child = Command::new("python3")
-        .args(&args)
+    let mut cmd = Command::new("python3");
+    cmd.args(&args)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
+        .stderr(Stdio::piped());
+    apply_no_window(&mut cmd);
+    let mut child = cmd
         .spawn()
         .map_err(|e| format!("Failed to start stt_whisper.py: {e}"))?;
 
@@ -346,11 +359,12 @@ pub fn transcribe_whisper(
 
 /// Check whether Python3 + faster-whisper are available.
 pub fn check_whisper() -> bool {
-    Command::new("python3")
-        .args(["-c", "import faster_whisper"])
+    let mut cmd = Command::new("python3");
+    cmd.args(["-c", "import faster_whisper"])
         .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
+        .stderr(Stdio::null());
+    apply_no_window(&mut cmd);
+    cmd.status()
         .map(|s| s.success())
         .unwrap_or(false)
 }

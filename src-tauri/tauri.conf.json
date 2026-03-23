@@ -43,10 +43,7 @@
       "resources/scripts/voice/tts_kokoro_persistent.py": "resources/scripts/voice/tts_kokoro_persistent.py",
       "resources/scripts/voice/stt_whisper.py": "resources/scripts/voice/stt_whisper.py",
       "resources/scripts/voice/stt_whisper_persistent.py": "resources/scripts/voice/stt_whisper_persistent.py",
-      "resources/kokoro-runtime": "resources/kokoro-runtime",
-      "../public/whisper/ggml-base-q8_0.bin": "resources/whisper/ggml-base-q8_0.bin",
-      "../public/whisper/ggml-tiny.en-q8_0.bin": "resources/whisper/ggml-tiny.en-q8_0.bin",
-      "../public/voice": "resources/voice"
+      "resources/kokoro-runtime": "resources/kokoro-runtime"
     }
   }
 }

@@ -12,6 +12,16 @@ use std::process::Command;
 use std::sync::{atomic::Ordering, Arc, Mutex};
 use tauri::{AppHandle, Emitter, Manager, State};
 
+#[cfg(target_os = "windows")]
+fn apply_no_window(cmd: &mut Command) {
+    use std::os::windows::process::CommandExt;
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    cmd.creation_flags(CREATE_NO_WINDOW);
+}
+
+#[cfg(not(target_os = "windows"))]
+fn apply_no_window(_cmd: &mut Command) {}
+
 // ── DB helpers ────────────────────────────────────────────────────────────────
 
 fn get_db_setting(app: &AppHandle, key: &str, default: &str) -> String {
@@ -64,9 +74,18 @@ fn default_python_bin() -> String {
     }
 }
 
+fn python_interpreter_usable(python_bin: &str) -> bool {
+    let mut cmd = Command::new(python_bin);
+    cmd.args(["-c", "import encodings"]);
+    apply_no_window(&mut cmd);
+    cmd.output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+}
+
 fn resolved_kokoro_python_path(app: &AppHandle) -> String {
     let configured = expand_home(&get_db_setting(app, "kokoro_python_path", ""));
-    if !configured.trim().is_empty() && Path::new(&configured).exists() {
+    if !configured.trim().is_empty() && python_interpreter_usable(&configured) {
         return configured;
     }
     if let Ok(app_dir) = app.path().app_data_dir() {
@@ -84,9 +103,13 @@ fn resolved_kokoro_python_path(app: &AppHandle) -> String {
             .join("venv")
             .join("bin")
             .join("python3");
-        if candidate.exists() {
+        if candidate.exists() && python_interpreter_usable(candidate.to_string_lossy().as_ref()) {
             return candidate.to_string_lossy().to_string();
         }
+    }
+    let fallback = default_python_bin();
+    if python_interpreter_usable(&fallback) {
+        return fallback;
     }
     default_python_bin()
 }
@@ -614,9 +637,10 @@ pub async fn cmd_tts_check_engines(app: AppHandle) -> TtsEngineStatus {
             return (false, Some(format!("voices_missing: {}", voices_clone)));
         }
 
-        let out = Command::new(&python_clone)
-            .args(["-c", "import kokoro_onnx, soundfile, onnxruntime"])
-            .output();
+        let mut cmd = Command::new(&python_clone);
+        cmd.args(["-c", "import kokoro_onnx, soundfile, onnxruntime"]);
+        apply_no_window(&mut cmd);
+        let out = cmd.output();
         match out {
             Ok(o) if o.status.success() => (true, None),
             Ok(o) => {

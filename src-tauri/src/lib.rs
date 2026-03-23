@@ -279,6 +279,23 @@ fn model_id_from_path(path: &str) -> Option<String> {
     }
 }
 
+fn resolve_existing_resource_path(
+    app: &tauri::AppHandle,
+    candidates: &[&str],
+) -> Option<std::path::PathBuf> {
+    for rel in candidates {
+        if let Ok(path) = app
+            .path()
+            .resolve(rel, tauri::path::BaseDirectory::Resource)
+        {
+            if path.exists() {
+                return Some(path);
+            }
+        }
+    }
+    None
+}
+
 fn default_kokoro_python_path(app_dir: &std::path::Path) -> std::path::PathBuf {
     #[cfg(target_os = "windows")]
     {
@@ -311,6 +328,16 @@ fn resolve_kokoro_voices_path(kokoro_dir: &std::path::Path) -> std::path::PathBu
     // Default setting path for first-launch before assets are deployed.
     kokoro_dir.join("af_heart.bin")
 }
+
+#[cfg(target_os = "windows")]
+fn apply_no_window(cmd: &mut std::process::Command) {
+    use std::os::windows::process::CommandExt;
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    cmd.creation_flags(CREATE_NO_WINDOW);
+}
+
+#[cfg(not(target_os = "windows"))]
+fn apply_no_window(_cmd: &mut std::process::Command) {}
 
 fn normalize_voice_paths(conn: &rusqlite::Connection, app_dir: &std::path::Path) {
     let whisper_dir = app_dir.join("whisper");
@@ -354,8 +381,10 @@ fn normalize_voice_paths(conn: &rusqlite::Connection, app_dir: &std::path::Path)
 }
 
 fn validate_kokoro_runtime_with_python(python_bin: &std::path::Path) -> Result<(), String> {
-    let output = std::process::Command::new(python_bin)
-        .args(["-c", "import kokoro_onnx, soundfile, onnxruntime"])
+    let mut cmd = std::process::Command::new(python_bin);
+    cmd.args(["-c", "import kokoro_onnx, soundfile, onnxruntime"]);
+    apply_no_window(&mut cmd);
+    let output = cmd
         .output()
         .map_err(|e| format!("failed to run python runtime check: {e}"))?;
     if output.status.success() {
@@ -804,6 +833,89 @@ fn start_kokoro_bootstrap(
     });
 }
 
+/// Periodically checks the managed local llama-server health and unloads stale state.
+fn start_local_server_health_probe(app: &tauri::AppHandle) {
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(3))
+            .build()
+            .unwrap_or_else(|_| reqwest::Client::new());
+        let mut consecutive_failures: u8 = 0;
+
+        loop {
+            tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+
+            let app_state = app.state::<AppState>();
+            let snapshot = {
+                let guard = app_state.local_server.lock().unwrap();
+                guard.as_ref().map(|h| (h.pid, h.port))
+            };
+            let Some((pid, port)) = snapshot else {
+                consecutive_failures = 0;
+                continue;
+            };
+
+            let pid_ok = model_manager::engine_installer::is_pid_alive(pid);
+            let health_ok = client
+                .get(format!("http://127.0.0.1:{port}/health"))
+                .send()
+                .await
+                .map(|r| r.status().is_success())
+                .unwrap_or(false);
+
+            if pid_ok && health_ok {
+                consecutive_failures = 0;
+                continue;
+            }
+
+            consecutive_failures = consecutive_failures.saturating_add(1);
+            if consecutive_failures < 2 {
+                log::warn!(
+                    "[health-probe] local server unhealthy (pid_ok={}, health_ok={}) pid={} port={} (retrying)",
+                    pid_ok,
+                    health_ok,
+                    pid,
+                    port
+                );
+                continue;
+            }
+
+            let removed = {
+                let mut guard = app_state.local_server.lock().unwrap();
+                if guard.as_ref().map(|h| h.pid) != Some(pid) {
+                    false
+                } else if let Some(handle) = guard.take() {
+                    drop(handle);
+                    true
+                } else {
+                    false
+                }
+            };
+            if !removed {
+                consecutive_failures = 0;
+                continue;
+            }
+
+            let model_state = app.state::<ModelManagerState>();
+            {
+                let mut manager = model_state.0.write().await;
+                manager.clear();
+            }
+
+            let msg = format!(
+                "Local model server stopped responding on port {}. Model unloaded; reload to continue.",
+                port
+            );
+            log::warn!("[health-probe] {}", msg);
+            let _ = app.emit("model:state_changed", ());
+            let _ = app.emit("model:server_unhealthy", &msg);
+            let _ = app.emit("local:error", &msg);
+            consecutive_failures = 0;
+        }
+    });
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     env_logger::init();
@@ -866,7 +978,8 @@ pub fn run() {
             commands::skills::seed_default_skills(app.handle());
 
             // ── Bundled Whisper models: deploy to user data dir on first launch ─
-            // Models are shipped inside the app bundle under resources/whisper/.
+            // Models may come from explicit bundle resources (resources/whisper/)
+            // or frontend dist assets (whisper/).
             // On first run (or if deleted) they are copied to
             // app_data_dir/whisper/ so the default DB path resolves and
             // users can manage/replace models in a stable, well-known location.
@@ -877,17 +990,21 @@ pub fn run() {
                 for name in &bundled {
                     let dest = whisper_dest.join(name);
                     if !dest.exists() {
-                        match app.path().resolve(
-                            format!("resources/whisper/{name}"),
-                            tauri::path::BaseDirectory::Resource,
-                        ) {
-                            Ok(src) if src.exists() => match std::fs::copy(&src, &dest) {
+                        let src = resolve_existing_resource_path(
+                            app.handle(),
+                            &[
+                                &format!("resources/whisper/{name}"),
+                                &format!("whisper/{name}"),
+                            ],
+                        );
+                        match src {
+                            Some(src) => match std::fs::copy(&src, &dest) {
                                 Ok(_) => commands::logs::info(&format!(
                                     "Deployed bundled Whisper model: {name}"
                                 )),
                                 Err(e) => log::warn!("Failed to deploy Whisper model {name}: {e}"),
                             },
-                            _ => {
+                            None => {
                                 log::debug!("Bundled Whisper model not found in resources: {name}")
                             }
                         }
@@ -896,17 +1013,18 @@ pub fn run() {
             }
 
             // ── Kokoro assets bootstrap ────────────────────────────────────────
-            // Kokoro model and voices are bundled under resources/voice/.
+            // Kokoro model and voices may be bundled under resources/voice/
+            // or in frontend dist assets under voice/.
             // On first run (or if deleted), *.bin voice assets and the selected
             // model are copied to app_data_dir/kokoro/.
             {
                 let kokoro_dest = app_dir.join("kokoro");
                 std::fs::create_dir_all(&kokoro_dest).ok();
                 let model_dest = kokoro_dest.join("model_quantized.onnx");
-                if let Ok(voice_resources_dir) = app
-                    .path()
-                    .resolve("resources/voice", tauri::path::BaseDirectory::Resource)
-                {
+                if let Some(voice_resources_dir) = resolve_existing_resource_path(
+                    app.handle(),
+                    &["resources/voice", "voice"],
+                ) {
                     if let Ok(entries) = std::fs::read_dir(&voice_resources_dir) {
                         for entry in entries.flatten() {
                             let src = entry.path();
@@ -950,11 +1068,12 @@ pub fn run() {
                     );
                 }
                 if !model_dest.exists() {
-                    match app.path().resolve(
-                        "resources/voice/model_quantized.onnx",
-                        tauri::path::BaseDirectory::Resource,
-                    ) {
-                        Ok(src) if src.exists() => match std::fs::copy(&src, &model_dest) {
+                    let src = resolve_existing_resource_path(
+                        app.handle(),
+                        &["resources/voice/model_quantized.onnx", "voice/model_quantized.onnx"],
+                    );
+                    match src {
+                        Some(src) => match std::fs::copy(&src, &model_dest) {
                             Ok(_) => commands::logs::info(
                                 "Deployed bundled Kokoro model: model_quantized.onnx",
                             ),
@@ -962,7 +1081,7 @@ pub fn run() {
                                 "Failed to deploy bundled Kokoro model model_quantized.onnx: {e}"
                             ),
                         },
-                        _ => log::warn!(
+                        None => log::warn!(
                             "Bundled Kokoro model model_quantized.onnx not found in resources"
                         ),
                     }
@@ -1083,6 +1202,9 @@ pub fn run() {
                 });
             }
 
+            // Detect post-start llama-server crashes and notify the frontend.
+            start_local_server_health_probe(app.handle());
+
             commands::logs::info("Application ready");
 
             #[cfg(target_os = "linux")]
@@ -1167,7 +1289,12 @@ pub fn run() {
             commands::a2a_workflow::cmd_a2a_workflow_delete,
             commands::a2a_workflow::cmd_a2a_workflow_run_list,
             commands::a2a_workflow::cmd_a2a_workflow_run_get,
+            commands::a2a_workflow::cmd_a2a_node_type_list,
+            commands::a2a_workflow::cmd_a2a_workflow_preflight,
             commands::a2a_workflow::cmd_a2a_workflow_run_start,
+            commands::a2a_workflow::cmd_a2a_workflow_run_cancel,
+            commands::a2a_workflow::cmd_a2a_workflow_run_pause,
+            commands::a2a_workflow::cmd_a2a_workflow_run_resume,
             commands::a2a_workflow::cmd_a2a_workflow_node_test,
             commands::a2a_workflow::cmd_a2a_credential_list,
             commands::a2a_workflow::cmd_a2a_credential_create,
