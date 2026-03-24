@@ -66,6 +66,8 @@ tokio-postgres = "0.7"
 lettre = { version = "0.11", default-features = false, features = ["builder", "smtp-transport", "tokio1", "tokio1-native-tls"] }
 sha2 = "0.10"
 arx_rs = { path = "../agent" }
+arx-application = { path = "../crates/application" }
+arx-domain = { path = "../crates/domain" }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 webkit2gtk = "2.0"
