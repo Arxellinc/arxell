@@ -25,3 +25,14 @@ pnpm-debug.log*
 # OS/editor artifacts
 .DS_Store
 Thumbs.db
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Tool caches and reports
+.cache/
+.vite/
+coverage/
+.nyc_output/
+*.tsbuildinfo
