@@ -496,7 +496,7 @@ fn run_send_message_use_case(
     run_send_message_use_case_with_provider(app, state, payload, &provider, model, system_prompt)
 }
 
-fn run_send_message_use_case_with_provider(
+pub(crate) fn run_send_message_use_case_with_provider(
     app: Option<&AppHandle>,
     state: &AppState,
     payload: &SendMessageCommand,
@@ -574,7 +574,10 @@ fn run_send_message_use_case_with_provider(
     }
 }
 
-fn run_cancel_use_case(state: &AppState, payload: &CancelRunCommand) -> Result<(), String> {
+pub(crate) fn run_cancel_use_case(
+    state: &AppState,
+    payload: &CancelRunCommand,
+) -> Result<(), String> {
     let run_store = BridgeRunStore { state };
     let use_case = CancelRunUseCase {
         run_store: &run_store,

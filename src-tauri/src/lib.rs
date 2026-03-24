@@ -5,6 +5,8 @@ mod commands;
 mod db;
 pub mod memory;
 pub mod model_manager;
+#[cfg(any(test, debug_assertions))]
+pub mod test_support;
 
 use serde::Serialize;
 use std::io::{Read, Write};
