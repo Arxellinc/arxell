@@ -1,0 +1,348 @@
+import type {
+  AppEvent,
+  ChatGetMessagesRequest,
+  ChatGetMessagesResponse,
+  ChatListConversationsRequest,
+  ChatListConversationsResponse,
+  ChatSendRequest,
+  ChatSendResponse,
+  TerminalCloseSessionRequest,
+  TerminalCloseSessionResponse,
+  TerminalInputRequest,
+  TerminalInputResponse,
+  TerminalOpenSessionRequest,
+  TerminalOpenSessionResponse,
+  TerminalResizeRequest,
+  TerminalResizeResponse,
+  WorkspaceToolRecord,
+  WorkspaceToolsListRequest,
+  WorkspaceToolsListResponse,
+  WorkspaceToolSetEnabledRequest,
+  WorkspaceToolSetEnabledResponse
+} from "./contracts";
+
+export interface ChatIpcClient {
+  sendMessage(request: ChatSendRequest): Promise<ChatSendResponse>;
+  getMessages(request: ChatGetMessagesRequest): Promise<ChatGetMessagesResponse>;
+  listConversations(request: ChatListConversationsRequest): Promise<ChatListConversationsResponse>;
+  openTerminalSession(request: TerminalOpenSessionRequest): Promise<TerminalOpenSessionResponse>;
+  sendTerminalInput(request: TerminalInputRequest): Promise<TerminalInputResponse>;
+  resizeTerminal(request: TerminalResizeRequest): Promise<TerminalResizeResponse>;
+  closeTerminalSession(
+    request: TerminalCloseSessionRequest
+  ): Promise<TerminalCloseSessionResponse>;
+  listWorkspaceTools(request: WorkspaceToolsListRequest): Promise<WorkspaceToolsListResponse>;
+  setWorkspaceToolEnabled(
+    request: WorkspaceToolSetEnabledRequest
+  ): Promise<WorkspaceToolSetEnabledResponse>;
+  onEvent(listener: (event: AppEvent) => void): () => void;
+}
+
+export type IpcRuntimeMode = "tauri" | "mock";
+
+export interface ChatIpcClientFactoryResult {
+  client: ChatIpcClient;
+  runtimeMode: IpcRuntimeMode;
+}
+
+export async function createChatIpcClient(): Promise<ChatIpcClientFactoryResult> {
+  if (isTauriRuntime()) {
+    return { client: await createTauriChatIpcClient(), runtimeMode: "tauri" };
+  }
+  return { client: new MockChatIpcClient(), runtimeMode: "mock" };
+}
+
+class TauriChatIpcClient implements ChatIpcClient {
+  private listeners: Array<(event: AppEvent) => void> = [];
+  private unlisten: null | (() => void) = null;
+
+  constructor(
+    private readonly invokeFn: <T>(command: string, args?: Record<string, unknown>) => Promise<T>,
+    private readonly listenFn: (
+      event: string,
+      handler: (payload: unknown) => void
+    ) => Promise<() => void>
+  ) {}
+
+  async initialize(): Promise<void> {
+    this.unlisten = await this.listenFn("app:event", (payload) => {
+      const event = asAppEvent(payload);
+      if (!event) return;
+      for (const listener of this.listeners) {
+        listener(event);
+      }
+    });
+  }
+
+  onEvent(listener: (event: AppEvent) => void): () => void {
+    this.listeners.push(listener);
+    return () => {
+      this.listeners = this.listeners.filter((l) => l !== listener);
+    };
+  }
+
+  sendMessage(request: ChatSendRequest): Promise<ChatSendResponse> {
+    return this.invokeFn<ChatSendResponse>("cmd_chat_send_message", { request });
+  }
+
+  getMessages(request: ChatGetMessagesRequest): Promise<ChatGetMessagesResponse> {
+    return this.invokeFn<ChatGetMessagesResponse>("cmd_chat_get_messages", { request });
+  }
+
+  listConversations(
+    request: ChatListConversationsRequest
+  ): Promise<ChatListConversationsResponse> {
+    return this.invokeFn<ChatListConversationsResponse>("cmd_chat_list_conversations", {
+      request
+    });
+  }
+
+  openTerminalSession(
+    request: TerminalOpenSessionRequest
+  ): Promise<TerminalOpenSessionResponse> {
+    return this.invokeFn<TerminalOpenSessionResponse>("cmd_terminal_open_session", { request });
+  }
+
+  sendTerminalInput(request: TerminalInputRequest): Promise<TerminalInputResponse> {
+    return this.invokeFn<TerminalInputResponse>("cmd_terminal_send_input", { request });
+  }
+
+  resizeTerminal(request: TerminalResizeRequest): Promise<TerminalResizeResponse> {
+    return this.invokeFn<TerminalResizeResponse>("cmd_terminal_resize", { request });
+  }
+
+  closeTerminalSession(
+    request: TerminalCloseSessionRequest
+  ): Promise<TerminalCloseSessionResponse> {
+    return this.invokeFn<TerminalCloseSessionResponse>("cmd_terminal_close_session", { request });
+  }
+
+  listWorkspaceTools(request: WorkspaceToolsListRequest): Promise<WorkspaceToolsListResponse> {
+    return this.invokeFn<WorkspaceToolsListResponse>("cmd_workspace_tools_list", { request });
+  }
+
+  setWorkspaceToolEnabled(
+    request: WorkspaceToolSetEnabledRequest
+  ): Promise<WorkspaceToolSetEnabledResponse> {
+    return this.invokeFn<WorkspaceToolSetEnabledResponse>("cmd_workspace_tool_set_enabled", {
+      request
+    });
+  }
+}
+
+export class MockChatIpcClient implements ChatIpcClient {
+  private listeners: Array<(event: AppEvent) => void> = [];
+  private readonly tools = new Map<string, WorkspaceToolRecord>([
+    [
+      "terminal",
+      {
+        toolId: "terminal",
+        title: "Terminal",
+        enabled: true,
+        status: "ready"
+      }
+    ]
+  ]);
+
+  onEvent(listener: (event: AppEvent) => void): () => void {
+    this.listeners.push(listener);
+    return () => {
+      this.listeners = this.listeners.filter((l) => l !== listener);
+    };
+  }
+
+  async sendMessage(request: ChatSendRequest): Promise<ChatSendResponse> {
+    this.emit({
+      timestampMs: Date.now(),
+      correlationId: request.correlationId,
+      subsystem: "ipc",
+      action: "cmd.chat.send_message",
+      stage: "start",
+      severity: "info",
+      payload: { conversationId: request.conversationId }
+    });
+
+    const text = `Echoed safely via registry: ${request.userMessage}`;
+    for (const token of text.split(" ")) {
+      this.emit({
+        timestampMs: Date.now(),
+        correlationId: request.correlationId,
+        subsystem: "service",
+        action: "chat.stream.chunk",
+        stage: "progress",
+        severity: "info",
+        payload: {
+          conversationId: request.conversationId,
+          delta: `${token} `,
+          done: false
+        }
+      });
+      await sleep(30);
+    }
+
+    this.emit({
+      timestampMs: Date.now(),
+      correlationId: request.correlationId,
+      subsystem: "service",
+      action: "chat.stream.complete",
+      stage: "complete",
+      severity: "info",
+      payload: { conversationId: request.conversationId, assistantLength: text.length }
+    });
+
+    const response: ChatSendResponse = {
+      conversationId: request.conversationId,
+      assistantMessage: text,
+      correlationId: request.correlationId
+    };
+
+    this.emit({
+      timestampMs: Date.now(),
+      correlationId: request.correlationId,
+      subsystem: "ipc",
+      action: "cmd.chat.send_message",
+      stage: "complete",
+      severity: "info",
+      payload: { ok: true }
+    });
+
+    return response;
+  }
+
+  async getMessages(request: ChatGetMessagesRequest): Promise<ChatGetMessagesResponse> {
+    return {
+      conversationId: request.conversationId,
+      messages: [],
+      correlationId: request.correlationId
+    };
+  }
+
+  async listConversations(
+    request: ChatListConversationsRequest
+  ): Promise<ChatListConversationsResponse> {
+    return {
+      conversations: [
+        {
+          conversationId: "foundation-chat",
+          messageCount: 0,
+          lastMessagePreview: "No messages yet",
+          updatedAtMs: Date.now()
+        }
+      ],
+      correlationId: request.correlationId
+    };
+  }
+
+  async openTerminalSession(
+    request: TerminalOpenSessionRequest
+  ): Promise<TerminalOpenSessionResponse> {
+    return {
+      sessionId: `mock-terminal-${Date.now()}`,
+      correlationId: request.correlationId
+    };
+  }
+
+  async sendTerminalInput(request: TerminalInputRequest): Promise<TerminalInputResponse> {
+    this.emit({
+      timestampMs: Date.now(),
+      correlationId: request.correlationId,
+      subsystem: "service",
+      action: "terminal.output",
+      stage: "progress",
+      severity: "info",
+      payload: {
+        sessionId: request.sessionId,
+        data: `mock> ${request.input}`
+      }
+    });
+    return {
+      sessionId: request.sessionId,
+      accepted: true,
+      correlationId: request.correlationId
+    };
+  }
+
+  async resizeTerminal(request: TerminalResizeRequest): Promise<TerminalResizeResponse> {
+    return { sessionId: request.sessionId, correlationId: request.correlationId };
+  }
+
+  async closeTerminalSession(
+    request: TerminalCloseSessionRequest
+  ): Promise<TerminalCloseSessionResponse> {
+    return { sessionId: request.sessionId, closed: true, correlationId: request.correlationId };
+  }
+
+  async listWorkspaceTools(
+    request: WorkspaceToolsListRequest
+  ): Promise<WorkspaceToolsListResponse> {
+    return {
+      tools: [...this.tools.values()],
+      correlationId: request.correlationId
+    };
+  }
+
+  async setWorkspaceToolEnabled(
+    request: WorkspaceToolSetEnabledRequest
+  ): Promise<WorkspaceToolSetEnabledResponse> {
+    const current = this.tools.get(request.toolId);
+    if (current) {
+      current.enabled = request.enabled;
+      current.status = request.enabled ? "ready" : "disabled";
+    }
+    return {
+      toolId: request.toolId,
+      enabled: request.enabled,
+      correlationId: request.correlationId
+    };
+  }
+
+  private emit(event: AppEvent): void {
+    for (const listener of this.listeners) {
+      listener(event);
+    }
+  }
+}
+
+async function createTauriChatIpcClient(): Promise<ChatIpcClient> {
+  const [{ invoke }, eventApi] = await Promise.all([
+    import("@tauri-apps/api/core"),
+    import("@tauri-apps/api/event")
+  ]);
+
+  const client = new TauriChatIpcClient(
+    (command, args) => invoke(command, args),
+    async (event, handler) => {
+      const unlisten = await eventApi.listen(event, (evt) => handler(evt.payload));
+      return () => {
+        unlisten();
+      };
+    }
+  );
+  await client.initialize();
+  return client;
+}
+
+function isTauriRuntime(): boolean {
+  return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+}
+
+function asAppEvent(payload: unknown): AppEvent | null {
+  if (!payload || typeof payload !== "object") return null;
+  const value = payload as Record<string, unknown>;
+  if (
+    typeof value.timestampMs !== "number" ||
+    typeof value.correlationId !== "string" ||
+    typeof value.subsystem !== "string" ||
+    typeof value.action !== "string" ||
+    typeof value.stage !== "string" ||
+    typeof value.severity !== "string" ||
+    value.payload === undefined
+  ) {
+    return null;
+  }
+  return value as unknown as AppEvent;
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
