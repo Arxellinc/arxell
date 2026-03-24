@@ -266,7 +266,7 @@ impl<'a> RunStore for BridgeRunStore<'a> {
 
 #[derive(Clone)]
 struct BridgeEventPublisher {
-    app: AppHandle,
+    app: Option<AppHandle>,
     run_to_assistant_message: Arc<Mutex<HashMap<String, String>>>,
 }
 
@@ -296,14 +296,16 @@ impl EventPublisher for BridgeEventPublisher {
                     guard.get(run_id.as_str()).cloned()
                 };
                 if let Some(message_id) = id {
-                    let _ = self.app.emit(
-                        "chat:chunk",
-                        serde_json::json!({
-                            "id": message_id,
-                            "delta": delta,
-                            "done": false
-                        }),
-                    );
+                    if let Some(app) = &self.app {
+                        let _ = app.emit(
+                            "chat:chunk",
+                            serde_json::json!({
+                                "id": message_id,
+                                "delta": delta,
+                                "done": false
+                            }),
+                        );
+                    }
                 }
             }
             _ => {}
@@ -400,26 +402,10 @@ impl ChatProvider for OpenAiCompatibleProviderAdapter {
 }
 
 fn run_send_message_use_case(
-    app: &AppHandle,
+    app: Option<&AppHandle>,
     state: &AppState,
     payload: &SendMessageCommand,
 ) -> Result<SendMessageResult, String> {
-    let correlation_id =
-        CorrelationId::new(payload.correlation_id.clone()).map_err(|e| e.to_string())?;
-    let conversation_id =
-        ConversationId::new(payload.conversation_id.clone()).map_err(|e| e.to_string())?;
-
-    let user_message_id = MessageId::new(Uuid::new_v4().to_string()).map_err(|e| e.to_string())?;
-    let assistant_message_id = MessageId::new(
-        payload
-            .assistant_msg_id
-            .clone()
-            .filter(|v| !v.trim().is_empty())
-            .unwrap_or_else(|| Uuid::new_v4().to_string()),
-    )
-    .map_err(|e| e.to_string())?;
-    let run_id = RunId::new(Uuid::new_v4().to_string()).map_err(|e| e.to_string())?;
-
     let base_url = get_setting(state, "base_url", "http://localhost:11434/v1");
     let api_key = get_setting(state, "api_key", "ollama");
     let model = get_setting(state, "model", "llama3.2");
@@ -441,12 +427,6 @@ fn run_send_message_use_case(
         }
     };
 
-    let message_store = SqliteMessageStore { state };
-    let run_store = BridgeRunStore { state };
-    let event_publisher = BridgeEventPublisher {
-        app: app.clone(),
-        run_to_assistant_message: Arc::new(Mutex::new(HashMap::new())),
-    };
     let provider = OpenAiCompatibleProviderAdapter {
         handle: tokio::runtime::Handle::current(),
         client: state.http_client.clone(),
@@ -454,15 +434,48 @@ fn run_send_message_use_case(
         api_key,
     };
 
+    run_send_message_use_case_with_provider(app, state, payload, &provider, model, system_prompt)
+}
+
+fn run_send_message_use_case_with_provider(
+    app: Option<&AppHandle>,
+    state: &AppState,
+    payload: &SendMessageCommand,
+    provider: &dyn ChatProvider,
+    model: String,
+    system_prompt: Option<String>,
+) -> Result<SendMessageResult, String> {
+    let correlation_id =
+        CorrelationId::new(payload.correlation_id.clone()).map_err(|e| e.to_string())?;
+    let conversation_id =
+        ConversationId::new(payload.conversation_id.clone()).map_err(|e| e.to_string())?;
+
+    let user_message_id = MessageId::new(Uuid::new_v4().to_string()).map_err(|e| e.to_string())?;
+    let assistant_message_id = MessageId::new(
+        payload
+            .assistant_msg_id
+            .clone()
+            .filter(|v| !v.trim().is_empty())
+            .unwrap_or_else(|| Uuid::new_v4().to_string()),
+    )
+    .map_err(|e| e.to_string())?;
+    let run_id = RunId::new(Uuid::new_v4().to_string()).map_err(|e| e.to_string())?;
+
     let user_message_id_raw = user_message_id.as_str().to_string();
     let assistant_message_id_raw = assistant_message_id.as_str().to_string();
     let conversation_id_raw = conversation_id.as_str().to_string();
+    let message_store = SqliteMessageStore { state };
+    let run_store = BridgeRunStore { state };
+    let event_publisher = BridgeEventPublisher {
+        app: app.cloned(),
+        run_to_assistant_message: Arc::new(Mutex::new(HashMap::new())),
+    };
 
     let use_case = SendMessageUseCase {
         message_store: &message_store,
         run_store: &run_store,
         event_publisher: &event_publisher,
-        provider: &provider,
+        provider,
     };
 
     let use_case_result = use_case.execute(SendMessageInput {
@@ -478,14 +491,16 @@ fn run_send_message_use_case(
 
     match use_case_result {
         Ok(_) => {
-            let _ = app.emit(
-                "chat:chunk",
-                serde_json::json!({
-                    "id": assistant_message_id_raw,
-                    "delta": "",
-                    "done": true,
-                }),
-            );
+            if let Some(app) = app {
+                let _ = app.emit(
+                    "chat:chunk",
+                    serde_json::json!({
+                        "id": assistant_message_id_raw,
+                        "delta": "",
+                        "done": true,
+                    }),
+                );
+            }
             Ok(SendMessageResult {
                 user_message: Message {
                     id: user_message_id_raw,
@@ -529,7 +544,7 @@ pub async fn cmd_bridge_send_message(
     payload: SendMessageCommand,
 ) -> Result<SendMessageResult, String> {
     let result = if bridge_application_enabled(&state) {
-        run_send_message_use_case(&app, &state, &payload)
+        run_send_message_use_case(Some(&app), &state, &payload)
     } else {
         chat::cmd_chat_stream(
             app.clone(),
@@ -709,6 +724,79 @@ pub fn cmd_bridge_regenerate_last_prompt(
 mod tests {
     use super::*;
     use serde_json::json;
+    use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+
+    use crate::AppState;
+
+    struct FakeProvider;
+
+    impl ChatProvider for FakeProvider {
+        fn stream_chat(
+            &self,
+            _request: ProviderRequest,
+            sink: &mut dyn TokenSink,
+        ) -> Result<ProviderResponse, DomainError> {
+            sink.on_token("bridge hello")?;
+            Ok(ProviderResponse {
+                content: "bridge hello".to_string(),
+            })
+        }
+    }
+
+    fn build_test_state(db: rusqlite::Connection, a2a_db: rusqlite::Connection) -> AppState {
+        AppState {
+            db: Mutex::new(db),
+            a2a_db: Mutex::new(a2a_db),
+            voice_active: Mutex::new(false),
+            audio_buffer: Mutex::new(Vec::new()),
+            chat_cancel: Arc::new(AtomicBool::new(false)),
+            speculative_cancel: Arc::new(AtomicBool::new(false)),
+            generation_id: Arc::new(AtomicU64::new(0)),
+            voice_running: Arc::new(AtomicBool::new(false)),
+            local_server: Mutex::new(None),
+            kokoro_daemon: Arc::new(Mutex::new(None)),
+            whisper_daemon: Arc::new(Mutex::new(None)),
+            whisper_rs_ctx: Arc::new(Mutex::new(None)),
+            http_client: reqwest::Client::new(),
+            memory_dir: std::env::temp_dir(),
+        }
+    }
+
+    fn init_bridge_test_db() -> rusqlite::Connection {
+        let db = rusqlite::Connection::open_in_memory().expect("open in-memory db");
+        db.execute_batch(
+            r#"
+            PRAGMA foreign_keys=ON;
+            CREATE TABLE settings (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            );
+            CREATE TABLE conversations (
+                id TEXT PRIMARY KEY,
+                project_id TEXT,
+                title TEXT NOT NULL DEFAULT 'New Chat',
+                model TEXT NOT NULL DEFAULT '',
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL
+            );
+            CREATE TABLE messages (
+                id TEXT PRIMARY KEY,
+                conversation_id TEXT NOT NULL,
+                role TEXT NOT NULL,
+                content TEXT NOT NULL,
+                created_at INTEGER NOT NULL,
+                FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
+            );
+            INSERT INTO settings (key, value) VALUES
+                ('base_url', 'http://127.0.0.1:11434/v1'),
+                ('api_key', ''),
+                ('model', 'gpt-x'),
+                ('system_prompt', '');
+            "#,
+        )
+        .expect("init bridge test schema");
+        db
+    }
 
     #[test]
     fn bridge_event_command_accepted_serializes_contract_shape() {
@@ -848,5 +936,75 @@ mod tests {
             Some("true")
         ));
         assert!(resolve_bridge_application_enabled(Some("0"), Some("on")));
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn bridge_integration_contract_send_then_cancel_uses_application_slice() {
+        let db_conn = init_bridge_test_db();
+        let a2a_conn = rusqlite::Connection::open_in_memory().expect("init a2a db");
+        let state = build_test_state(db_conn, a2a_conn);
+
+        let conversation_id = "conv-bridge-integration-1".to_string();
+        {
+            let db = state.db.lock().expect("lock db");
+            db.execute(
+                "INSERT INTO conversations (id, project_id, title, model, created_at, updated_at) VALUES (?1, NULL, 'Bridge Contract', 'gpt-x', 0, 0)",
+                rusqlite::params![conversation_id.clone()],
+            )
+            .expect("seed conversation");
+        }
+
+        let send_result = run_send_message_use_case_with_provider(
+            None,
+            &state,
+            &SendMessageCommand {
+                correlation_id: "corr-bridge-integration-1".to_string(),
+                conversation_id: conversation_id.clone(),
+                content: "ping".to_string(),
+                extra_context: None,
+                thinking_enabled: None,
+                assistant_msg_id: Some("assistant-bridge-1".to_string()),
+                screenshot_base64: None,
+                mode_id: None,
+            },
+            &FakeProvider,
+            "gpt-x".to_string(),
+            None,
+        )
+        .expect("run send use case through bridge slice");
+
+        assert_eq!(send_result.user_message.role, "user");
+        assert_eq!(send_result.user_message.content, "ping");
+
+        {
+            let db = state.db.lock().expect("lock db");
+            let message_count: i64 = db
+                .query_row(
+                    "SELECT COUNT(*) FROM messages WHERE conversation_id = ?1",
+                    rusqlite::params![conversation_id],
+                    |row| row.get(0),
+                )
+                .expect("count messages");
+            assert_eq!(message_count, 2);
+
+            let assistant_content: String = db
+                .query_row(
+                    "SELECT content FROM messages WHERE role = 'assistant' ORDER BY created_at DESC LIMIT 1",
+                    [],
+                    |row| row.get(0),
+                )
+                .expect("load assistant message");
+            assert_eq!(assistant_content, "bridge hello");
+        }
+
+        let cancel_result = run_cancel_use_case(
+            &state,
+            &CancelRunCommand {
+                correlation_id: "corr-bridge-integration-1".to_string(),
+                run_id: Some("run-bridge-1".to_string()),
+            },
+        );
+        assert!(cancel_result.is_ok());
+        assert!(state.chat_cancel.load(Ordering::SeqCst));
     }
 }
