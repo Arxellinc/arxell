@@ -15,6 +15,7 @@ Usage:
 import sys
 import argparse
 import io
+import wave
 from pathlib import Path
 
 
@@ -37,6 +38,21 @@ def _resolve_voice_style_path(voices_path: str, voice: str) -> Path:
         f"No voice style file found near '{voices_path}'. Tried: {', '.join(str(c) for c in candidates)}"
     )
 
+
+def _wav_bytes(samples, sample_rate: int) -> bytes:
+    import numpy as np
+
+    arr = np.asarray(samples, dtype=np.float32).reshape(-1)
+    arr = np.clip(arr, -1.0, 1.0)
+    pcm = (arr * 32767.0).astype(np.int16)
+    out = io.BytesIO()
+    with wave.open(out, "wb") as wf:
+        wf.setnchannels(1)
+        wf.setsampwidth(2)
+        wf.setframerate(int(sample_rate))
+        wf.writeframes(pcm.tobytes())
+    return out.getvalue()
+
 def main():
     p = argparse.ArgumentParser(description="Kokoro TTS subprocess")
     p.add_argument("--model",  required=True, help="Path to model_quantized.onnx (recommended) or model.onnx")
@@ -52,13 +68,12 @@ def main():
         sys.exit(1)
 
     try:
-        import soundfile as sf
         import numpy as np
         from kokoro_onnx import Kokoro, Tokenizer
         import onnxruntime as ort
     except ImportError as e:
         print(f"[kokoro] import error: {e}", file=sys.stderr)
-        print("[kokoro] install with: pip install kokoro-onnx onnxruntime soundfile numpy", file=sys.stderr)
+        print("[kokoro] install with: pip install kokoro-onnx onnxruntime numpy", file=sys.stderr)
         sys.exit(2)
 
     try:
@@ -90,9 +105,7 @@ def main():
             samples, sr = k.create(text, voice=args.voice, speed=args.speed, lang=args.lang)
         print(f"[kokoro] synthesised {len(samples)} samples @ {sr}Hz", file=sys.stderr)
 
-        buf = io.BytesIO()
-        sf.write(buf, samples, sr, format="WAV")
-        sys.stdout.buffer.write(buf.getvalue())
+        sys.stdout.buffer.write(_wav_bytes(samples, sr))
         sys.stdout.buffer.flush()
     except Exception as e:
         print(f"[kokoro] synthesis error: {e}", file=sys.stderr)

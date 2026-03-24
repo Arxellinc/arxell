@@ -382,7 +382,7 @@ fn normalize_voice_paths(conn: &rusqlite::Connection, app_dir: &std::path::Path)
 
 fn validate_kokoro_runtime_with_python(python_bin: &std::path::Path) -> Result<(), String> {
     let mut cmd = std::process::Command::new(python_bin);
-    cmd.args(["-c", "import kokoro_onnx, soundfile, onnxruntime"]);
+    cmd.args(["-c", "import kokoro_onnx, onnxruntime, numpy"]);
     apply_no_window(&mut cmd);
     let output = cmd
         .output()
@@ -610,15 +610,61 @@ fn ensure_kokoro_runtime(
             tauri::path::BaseDirectory::Resource,
         )
         .map_err(|e| format!("failed to resolve bundled runtime archive path: {e}"))?;
+    commands::logs::event(
+        "info",
+        "runtime.bootstrap.start",
+        serde_json::json!({
+            "runtime": "kokoro",
+            "platform": std::env::consts::OS,
+            "arch": std::env::consts::ARCH,
+            "archive_path": archive_path.to_string_lossy(),
+            "archive_exists": archive_path.exists(),
+            "python_path": python_path.to_string_lossy(),
+            "python_exists": python_path.exists(),
+        }),
+    );
     if !archive_path.exists() {
+        commands::logs::event(
+            "error",
+            "runtime.bootstrap.verify",
+            serde_json::json!({
+                "runtime": "kokoro",
+                "stage": "archive_present",
+                "result": "error",
+                "error_code": "RUNTIME_ARCHIVE_MISSING",
+                "archive_path": archive_path.to_string_lossy(),
+            }),
+        );
         return Err(format!(
             "Bundled Kokoro runtime archive missing: {}",
             archive_path.to_string_lossy()
         ));
     }
 
+    let extract_start = std::time::Instant::now();
     extract_zip_archive(&archive_path, &runtime_dir)?;
+    commands::logs::event(
+        "info",
+        "runtime.bootstrap.extract",
+        serde_json::json!({
+            "runtime": "kokoro",
+            "target_dir": runtime_dir.to_string_lossy(),
+            "duration_ms": extract_start.elapsed().as_millis(),
+            "result": "ok",
+        }),
+    );
     if !python_path.exists() {
+        commands::logs::event(
+            "error",
+            "runtime.bootstrap.verify",
+            serde_json::json!({
+                "runtime": "kokoro",
+                "stage": "python_present",
+                "result": "error",
+                "error_code": "PYTHON_BIN_MISSING",
+                "python_path": python_path.to_string_lossy(),
+            }),
+        );
         return Err(format!(
             "Runtime extracted but Python interpreter is missing at {}",
             python_path.to_string_lossy()
@@ -627,7 +673,50 @@ fn ensure_kokoro_runtime(
     chmod_runtime_binaries(&python_path)?;
     rewrite_pyvenv_home(&python_path)?;
     validate_kokoro_runtime_with_python(&python_path)?;
+    commands::logs::event(
+        "info",
+        "runtime.bootstrap.verify",
+        serde_json::json!({
+            "runtime": "kokoro",
+            "stage": "import_check",
+            "result": "ok",
+            "python_path": python_path.to_string_lossy(),
+            "modules": ["kokoro_onnx", "onnxruntime", "numpy"],
+        }),
+    );
     Ok(python_path)
+}
+
+pub(crate) fn ensure_kokoro_runtime_now(
+    app: &tauri::AppHandle,
+) -> Result<std::path::PathBuf, String> {
+    let app_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("failed to resolve app data dir: {e}"))?;
+    let result = ensure_kokoro_runtime(app, &app_dir);
+    if let Err(e) = &result {
+        commands::logs::event(
+            "warn",
+            "runtime.bootstrap.repair_attempt",
+            serde_json::json!({
+                "runtime": "kokoro",
+                "result": "error",
+                "error_code": "RUNTIME_REPAIR_FAILED",
+                "error": e,
+            }),
+        );
+    } else {
+        commands::logs::event(
+            "info",
+            "runtime.bootstrap.repair_attempt",
+            serde_json::json!({
+                "runtime": "kokoro",
+                "result": "ok",
+            }),
+        );
+    }
+    result
 }
 
 fn log_kokoro_bootstrap_snapshot(
@@ -863,6 +952,17 @@ fn start_local_server_health_probe(app: &tauri::AppHandle) {
                 .await
                 .map(|r| r.status().is_success())
                 .unwrap_or(false);
+            commands::logs::event(
+                "debug",
+                "local_server.health",
+                serde_json::json!({
+                    "pid": pid,
+                    "port": port,
+                    "pid_alive": pid_ok,
+                    "http_health": health_ok,
+                    "consecutive_failures": consecutive_failures,
+                }),
+            );
 
             if pid_ok && health_ok {
                 consecutive_failures = 0;
@@ -877,6 +977,18 @@ fn start_local_server_health_probe(app: &tauri::AppHandle) {
                     health_ok,
                     pid,
                     port
+                );
+                commands::logs::event(
+                    "warn",
+                    "local_server.health",
+                    serde_json::json!({
+                        "pid": pid,
+                        "port": port,
+                        "pid_alive": pid_ok,
+                        "http_health": health_ok,
+                        "consecutive_failures": consecutive_failures,
+                        "result": "retrying",
+                    }),
                 );
                 continue;
             }
@@ -908,6 +1020,20 @@ fn start_local_server_health_probe(app: &tauri::AppHandle) {
                 port
             );
             log::warn!("[health-probe] {}", msg);
+            commands::logs::event(
+                "error",
+                "local_server.health",
+                serde_json::json!({
+                    "pid": pid,
+                    "port": port,
+                    "pid_alive": pid_ok,
+                    "http_health": health_ok,
+                    "consecutive_failures": consecutive_failures,
+                    "result": "unloaded",
+                    "error_code": "LOCAL_SERVER_UNHEALTHY",
+                    "message": msg,
+                }),
+            );
             let _ = app.emit("model:state_changed", ());
             let _ = app.emit("model:server_unhealthy", &msg);
             let _ = app.emit("local:error", &msg);

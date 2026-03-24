@@ -25,6 +25,7 @@ import struct
 import json
 import argparse
 import io
+import wave
 from pathlib import Path
 
 
@@ -46,6 +47,21 @@ def _resolve_voice_style_path(voices_path: str, voice: str) -> Path:
     raise FileNotFoundError(
         f"No voice style file found near '{voices_path}'. Tried: {', '.join(str(c) for c in candidates)}"
     )
+
+
+def _wav_bytes(samples, sample_rate: int) -> bytes:
+    import numpy as np
+
+    arr = np.asarray(samples, dtype=np.float32).reshape(-1)
+    arr = np.clip(arr, -1.0, 1.0)
+    pcm = (arr * 32767.0).astype(np.int16)
+    out = io.BytesIO()
+    with wave.open(out, "wb") as wf:
+        wf.setnchannels(1)
+        wf.setsampwidth(2)
+        wf.setframerate(int(sample_rate))
+        wf.writeframes(pcm.tobytes())
+    return out.getvalue()
 
 def main():
     parser = argparse.ArgumentParser(description="Persistent Kokoro TTS daemon")
@@ -84,7 +100,7 @@ def main():
             )
         print(f"[kokoro] Model loaded successfully (threads={n_threads})", file=sys.stderr, flush=True)
     except ImportError as e:
-        error_msg = f"Import error: {e}. Install with: pip install kokoro-onnx onnxruntime soundfile numpy"
+        error_msg = f"Import error: {e}. Install with: pip install kokoro-onnx onnxruntime numpy"
         print(f"[kokoro] {error_msg}", file=sys.stderr, flush=True)
         sys.exit(2)
     except Exception as e:
@@ -180,10 +196,7 @@ def main():
                         pass
 
                 # Encode to WAV
-                buf = io.BytesIO()
-                import soundfile as sf
-                sf.write(buf, samples, sr, format="WAV")
-                audio_bytes = buf.getvalue()
+                audio_bytes = _wav_bytes(samples, sr)
 
                 # Build response
                 response = json.dumps({

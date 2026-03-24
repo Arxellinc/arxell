@@ -9,8 +9,13 @@ use cpal::traits::{DeviceTrait, HostTrait};
 use serde::Serialize;
 use std::path::Path;
 use std::process::Command;
-use std::sync::{atomic::Ordering, Arc, Mutex};
+use std::sync::{
+    atomic::{AtomicU64, Ordering},
+    Arc, Mutex,
+};
 use tauri::{AppHandle, Emitter, Manager, State};
+
+static VOICE_REQUEST_SEQ: AtomicU64 = AtomicU64::new(1);
 
 #[cfg(target_os = "windows")]
 fn apply_no_window(cmd: &mut Command) {
@@ -81,6 +86,73 @@ fn python_interpreter_usable(python_bin: &str) -> bool {
     cmd.output()
         .map(|o| o.status.success())
         .unwrap_or(false)
+}
+
+fn next_voice_request_id() -> u64 {
+    VOICE_REQUEST_SEQ.fetch_add(1, Ordering::SeqCst)
+}
+
+fn classify_stt_error(error: &str) -> &'static str {
+    let e = error.to_ascii_lowercase();
+    if e.contains("model file not found") || e.contains("model_missing") {
+        "STT_MODEL_MISSING"
+    } else if e.contains("failed to start") || e.contains("python_launch_failed") {
+        "STT_PROCESS_LAUNCH_FAILED"
+    } else if e.contains("no stt url configured") {
+        "STT_URL_NOT_CONFIGURED"
+    } else if e.contains("request") || e.contains("http") {
+        "STT_HTTP_ERROR"
+    } else {
+        "STT_UNKNOWN_ERROR"
+    }
+}
+
+fn classify_tts_error(error: &str) -> &'static str {
+    let e = error.to_ascii_lowercase();
+    if e.contains("model path not configured") || e.contains("model_missing") {
+        "TTS_MODEL_MISSING"
+    } else if e.contains("voices") && e.contains("missing") {
+        "TTS_VOICES_MISSING"
+    } else if e.contains("python_launch_failed") || e.contains("failed to spawn") {
+        "TTS_PROCESS_LAUNCH_FAILED"
+    } else if e.contains("url not configured") {
+        "TTS_URL_NOT_CONFIGURED"
+    } else if e.contains("http") || e.contains("request") {
+        "TTS_HTTP_ERROR"
+    } else {
+        "TTS_UNKNOWN_ERROR"
+    }
+}
+
+fn python_has_kokoro_runtime(python_bin: &str) -> bool {
+    let mut cmd = Command::new(python_bin);
+    cmd.args(["-c", "import kokoro_onnx, onnxruntime, numpy"]);
+    apply_no_window(&mut cmd);
+    cmd.output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+}
+
+async fn ensure_kokoro_python_path(app: &AppHandle) -> String {
+    let resolved = resolved_kokoro_python_path(app);
+    if python_has_kokoro_runtime(&resolved) {
+        return resolved;
+    }
+
+    let app_clone = app.clone();
+    let repaired = tokio::task::spawn_blocking(move || {
+        crate::ensure_kokoro_runtime_now(&app_clone).map(|p| p.to_string_lossy().to_string())
+    })
+    .await
+    .ok()
+    .and_then(Result::ok);
+
+    if let Some(path) = repaired {
+        if python_has_kokoro_runtime(&path) {
+            return path;
+        }
+    }
+    resolved
 }
 
 fn resolved_kokoro_python_path(app: &AppHandle) -> String {
@@ -297,6 +369,7 @@ pub async fn cmd_voice_start(
 /// - `is_partial = false` → final utterance → emits `voice:transcript`
 /// - `is_partial = true`  → in-progress snapshot → emits `voice:partial`
 async fn transcribe_and_emit(app: AppHandle, samples: Vec<f32>, is_partial: bool) {
+    let request_id = next_voice_request_id();
     let state = app.state::<AppState>();
     let stt_engine = get_db_setting(&app, "stt_engine", "whisper_rs");
     let stt_url = get_db_setting(&app, "stt_url", "");
@@ -309,12 +382,33 @@ async fn transcribe_and_emit(app: AppHandle, samples: Vec<f32>, is_partial: bool
         samples.len() as f32 / 16000.0,
         stt_engine
     );
+    crate::commands::logs::event(
+        "info",
+        "stt.transcribe.request",
+        serde_json::json!({
+            "request_id": request_id,
+            "engine": stt_engine,
+            "is_partial": is_partial,
+            "samples": samples.len(),
+            "seconds": samples.len() as f64 / 16000.0,
+        }),
+    );
 
     // Encode PCM → WAV
     let wav_bytes = match pcm_to_wav(&samples, 16000) {
         Ok(b) => b,
         Err(e) => {
             log::error!("[STT] WAV encode failed: {}", e);
+            crate::commands::logs::event(
+                "error",
+                "stt.transcribe.result",
+                serde_json::json!({
+                    "request_id": request_id,
+                    "result": "error",
+                    "error_code": "STT_WAV_ENCODE_FAILED",
+                    "error": e.to_string(),
+                }),
+            );
             emit_error(&app, format!("Audio encode error: {e}"));
             finalize(&app);
             return;
@@ -337,6 +431,16 @@ async fn transcribe_and_emit(app: AppHandle, samples: Vec<f32>, is_partial: bool
                     .unwrap_or(false)
             };
             if whisper_rs_available {
+                crate::commands::logs::event(
+                    "debug",
+                    "stt.engine.resolve",
+                    serde_json::json!({
+                        "request_id": request_id,
+                        "engine": "whisper_rs",
+                        "model_path": model_path,
+                        "language": language,
+                    }),
+                );
                 log::info!(
                     "[STT] whisper-rs: model_path={} language={}",
                     model_path,
@@ -359,6 +463,19 @@ async fn transcribe_and_emit(app: AppHandle, samples: Vec<f32>, is_partial: bool
                 let model_size = get_db_setting(&app, "whisper_model_size", "tiny");
                 let model_dir = expand_home(&get_db_setting(&app, "whisper_model_dir", ""));
                 let python_bin = resolved_kokoro_python_path(&app);
+                crate::commands::logs::event(
+                    "debug",
+                    "stt.engine.resolve",
+                    serde_json::json!({
+                        "request_id": request_id,
+                        "engine": "whisper_py",
+                        "python_bin": python_bin,
+                        "script_path": script,
+                        "model_size": model_size,
+                        "model_dir": model_dir,
+                        "language": language,
+                    }),
+                );
                 log::info!(
                     "[STT] whisper-python fallback: python={} script={} model={} model_dir={} language={}",
                     python_bin,
@@ -386,6 +503,16 @@ async fn transcribe_and_emit(app: AppHandle, samples: Vec<f32>, is_partial: bool
             if stt_url.is_empty() {
                 Err("No STT URL configured. Set it in Voice settings or switch to Whisper (local).".to_string())
             } else {
+                crate::commands::logs::event(
+                    "debug",
+                    "stt.engine.resolve",
+                    serde_json::json!({
+                        "request_id": request_id,
+                        "engine": "external",
+                        "stt_url": stt_url,
+                        "base_url": base_url,
+                    }),
+                );
                 log::info!("[STT] external: POST {}", stt_url);
                 let client = crate::ai::client::AiClient::new(state.http_client.clone(), base_url, api_key, String::new());
                 client.transcribe_audio(&stt_url, wav_bytes).await.map_err(|e| e.to_string())
@@ -415,6 +542,16 @@ async fn transcribe_and_emit(app: AppHandle, samples: Vec<f32>, is_partial: bool
                 return;
             }
             log::info!("[STT] transcript: {:?} ({} chars)", trimmed, trimmed.len());
+            crate::commands::logs::event(
+                "info",
+                "stt.transcribe.result",
+                serde_json::json!({
+                    "request_id": request_id,
+                    "result": "ok",
+                    "chars": trimmed.len(),
+                    "is_partial": is_partial,
+                }),
+            );
             if trimmed.is_empty() {
                 log::warn!("[STT] empty transcript — is the model loaded / mic level sufficient?");
                 emit_error(
@@ -432,6 +569,17 @@ async fn transcribe_and_emit(app: AppHandle, samples: Vec<f32>, is_partial: bool
                 return;
             }
             log::error!("[STT] error: {}", e);
+            crate::commands::logs::event(
+                "error",
+                "stt.transcribe.result",
+                serde_json::json!({
+                    "request_id": request_id,
+                    "result": "error",
+                    "error_code": classify_stt_error(&e),
+                    "error": e,
+                    "is_partial": is_partial,
+                }),
+            );
             emit_error(&app, format!("STT error: {e}"));
         }
     }
@@ -505,8 +653,18 @@ pub async fn cmd_tts_speak(
     state: State<'_, AppState>,
     text: String,
 ) -> Result<TtsSpeakResult, String> {
+    let request_id = next_voice_request_id();
     let engine = get_db_setting(&app, "tts_engine", "kokoro");
     log::info!("[TTS] speak: engine={}, {} chars", engine, text.len());
+    crate::commands::logs::event(
+        "info",
+        "tts.request.start",
+        serde_json::json!({
+            "request_id": request_id,
+            "engine": engine,
+            "chars": text.len(),
+        }),
+    );
 
     match engine.as_str() {
         "kokoro" => {
@@ -514,7 +672,20 @@ pub async fn cmd_tts_speak(
             let model   = expand_home(&get_db_setting(&app, "kokoro_model_path", ""));
             let voices  = resolved_kokoro_voices_path(&app);
             let voice   = get_db_setting(&app, "kokoro_voice", "af_heart");
-            let python_bin = resolved_kokoro_python_path(&app);
+            let python_bin = ensure_kokoro_python_path(&app).await;
+            crate::commands::logs::event(
+                "debug",
+                "tts.engine.resolve",
+                serde_json::json!({
+                    "request_id": request_id,
+                    "engine": "kokoro",
+                    "python_bin": python_bin,
+                    "script_path": script,
+                    "model_path": model,
+                    "voices_path": voices,
+                    "voice": voice,
+                }),
+            );
             log::info!("[TTS] kokoro: voice={} model={} (persistent daemon)", voice, model);
 
             // Clone config for the blocking task
@@ -562,14 +733,38 @@ pub async fn cmd_tts_speak(
             .map_err(|e| e.to_string())?;
 
             match kokoro_result {
-                Ok(r) => Ok(TtsSpeakResult {
-                    audio_bytes: r.audio,
-                    phonemes: r.phonemes,
-                }),
+                Ok(r) => {
+                    crate::commands::logs::event(
+                        "info",
+                        "tts.request.result",
+                        serde_json::json!({
+                            "request_id": request_id,
+                            "result": "ok",
+                            "engine": "kokoro",
+                            "audio_bytes": r.audio.len(),
+                            "phonemes": r.phonemes.is_some(),
+                        }),
+                    );
+                    Ok(TtsSpeakResult {
+                        audio_bytes: r.audio,
+                        phonemes: r.phonemes,
+                    })
+                }
                 Err(kokoro_err) => {
                     log::warn!(
                         "[TTS] Kokoro failed ({}); attempting espeak-ng fallback",
                         kokoro_err
+                    );
+                    crate::commands::logs::event(
+                        "warn",
+                        "tts.request.fallback",
+                        serde_json::json!({
+                            "request_id": request_id,
+                            "from_engine": "kokoro",
+                            "to_engine": "espeak",
+                            "error_code": classify_tts_error(&kokoro_err),
+                            "error": kokoro_err,
+                        }),
                     );
                     let fallback_voice = get_db_setting(&app, "tts_voice", "en-us");
                     let text_fallback = text.clone();
@@ -583,10 +778,22 @@ pub async fn cmd_tts_speak(
                     .map_err(|e| e.to_string())?;
 
                     match fallback_result {
-                        Ok(audio) => Ok(TtsSpeakResult {
-                            audio_bytes: audio,
-                            phonemes: None,
-                        }),
+                        Ok(audio) => {
+                            crate::commands::logs::event(
+                                "info",
+                                "tts.request.result",
+                                serde_json::json!({
+                                    "request_id": request_id,
+                                    "result": "ok",
+                                    "engine": "espeak_fallback",
+                                    "audio_bytes": audio.len(),
+                                }),
+                            );
+                            Ok(TtsSpeakResult {
+                                audio_bytes: audio,
+                                phonemes: None,
+                            })
+                        }
                         Err(fallback_err) => Err(format!(
                             "Kokoro failed: {}. espeak-ng fallback failed: {}",
                             kokoro_err, fallback_err
@@ -599,6 +806,16 @@ pub async fn cmd_tts_speak(
         _ /* "external" */ => {
             let tts_url = get_db_setting(&app, "tts_url", "");
             if tts_url.is_empty() {
+                crate::commands::logs::event(
+                    "error",
+                    "tts.request.result",
+                    serde_json::json!({
+                        "request_id": request_id,
+                        "result": "error",
+                        "engine": "external",
+                        "error_code": "TTS_URL_NOT_CONFIGURED",
+                    }),
+                );
                 return Err("TTS URL not configured".to_string());
             }
             let api_key = get_db_setting(&app, "api_key", "lm-studio");
@@ -619,9 +836,30 @@ pub async fn cmd_tts_speak(
                 .map_err(|e| e.to_string())?;
 
             if !resp.status().is_success() {
+                crate::commands::logs::event(
+                    "error",
+                    "tts.request.result",
+                    serde_json::json!({
+                        "request_id": request_id,
+                        "result": "error",
+                        "engine": "external",
+                        "error_code": "TTS_HTTP_ERROR",
+                        "status": resp.status().as_u16(),
+                    }),
+                );
                 return Err(format!("TTS API error {}", resp.status()));
             }
             let bytes = resp.bytes().await.map_err(|e| e.to_string())?;
+            crate::commands::logs::event(
+                "info",
+                "tts.request.result",
+                serde_json::json!({
+                    "request_id": request_id,
+                    "result": "ok",
+                    "engine": "external",
+                    "audio_bytes": bytes.len(),
+                }),
+            );
             Ok(TtsSpeakResult { audio_bytes: bytes.to_vec(), phonemes: None })
         }
     }
@@ -651,7 +889,7 @@ pub async fn cmd_tts_check_engines(app: AppHandle) -> TtsEngineStatus {
     let script = script_path(&app, "tts_kokoro.py").unwrap_or_default();
     let model = expand_home(&get_db_setting(&app, "kokoro_model_path", ""));
     let voices = resolved_kokoro_voices_path(&app);
-    let python_bin = resolved_kokoro_python_path(&app);
+    let python_bin = ensure_kokoro_python_path(&app).await;
     let tts_url = get_db_setting(&app, "tts_url", "");
 
     let script_clone = script.clone();
@@ -676,7 +914,7 @@ pub async fn cmd_tts_check_engines(app: AppHandle) -> TtsEngineStatus {
         }
 
         let mut cmd = Command::new(&python_clone);
-        cmd.args(["-c", "import kokoro_onnx, soundfile, onnxruntime"]);
+        cmd.args(["-c", "import kokoro_onnx, onnxruntime, numpy"]);
         apply_no_window(&mut cmd);
         let out = cmd.output();
         match out {
@@ -780,7 +1018,7 @@ pub async fn cmd_tts_self_test(app: AppHandle) -> TtsSelfTestResult {
             let model = expand_home(&get_db_setting(&app, "kokoro_model_path", ""));
             let voices = resolved_kokoro_voices_path(&app);
             let voice = get_db_setting(&app, "kokoro_voice", "af_heart");
-            let python_bin = resolved_kokoro_python_path(&app);
+            let python_bin = ensure_kokoro_python_path(&app).await;
             let synth = tokio::task::spawn_blocking(move || {
                 local_tts::speak_kokoro(
                     &python_bin,

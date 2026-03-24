@@ -496,7 +496,7 @@ pub fn speak_kokoro(
     Ok(out.stdout)
 }
 
-/// Check whether Python3 + kokoro-onnx + soundfile are installed.
+/// Check whether Python + Kokoro runtime dependencies are installed.
 pub fn check_kokoro(script_path: &str, python_bin: &str) -> bool {
     let python_bin = if python_bin.is_empty() {
         "python3"
@@ -504,7 +504,7 @@ pub fn check_kokoro(script_path: &str, python_bin: &str) -> bool {
         python_bin
     };
     let mut cmd = Command::new(python_bin);
-    cmd.args(["-c", "import kokoro_onnx, soundfile, onnxruntime"])
+    cmd.args(["-c", "import kokoro_onnx, onnxruntime, numpy"])
         .stdout(Stdio::null())
         .stderr(Stdio::null());
     apply_no_window(&mut cmd);
