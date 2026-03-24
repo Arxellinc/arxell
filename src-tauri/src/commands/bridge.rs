@@ -658,30 +658,16 @@ pub fn cmd_bridge_get_messages(
     state: State<'_, AppState>,
     payload: ConversationCommand,
 ) -> Result<GetMessagesResult, String> {
-    let result = chat::cmd_chat_get_messages(state, payload.conversation_id);
-    match result {
-        Ok(messages) => {
-            emit_bridge_event(
-                &app,
-                BridgeEvent::CommandAccepted {
-                    correlation_id: payload.correlation_id,
-                    command: "get_messages".to_string(),
-                },
-            );
+    let correlation_id = payload.correlation_id.clone();
+    complete_bridge_command(
+        correlation_id,
+        "get_messages",
+        || {
+            let messages = chat::cmd_chat_get_messages(state, payload.conversation_id)?;
             Ok(GetMessagesResult { messages })
-        }
-        Err(message) => {
-            emit_bridge_event(
-                &app,
-                BridgeEvent::CommandFailed {
-                    correlation_id: payload.correlation_id,
-                    command: "get_messages".to_string(),
-                    message: message.clone(),
-                },
-            );
-            Err(message)
-        }
-    }
+        },
+        |event| emit_bridge_event(&app, event),
+    )
 }
 
 #[tauri::command]
@@ -690,30 +676,13 @@ pub fn cmd_bridge_clear_conversation(
     state: State<'_, AppState>,
     payload: ConversationCommand,
 ) -> Result<(), String> {
-    let result = chat::cmd_chat_clear(state, payload.conversation_id);
-    match result {
-        Ok(()) => {
-            emit_bridge_event(
-                &app,
-                BridgeEvent::CommandAccepted {
-                    correlation_id: payload.correlation_id,
-                    command: "clear_conversation".to_string(),
-                },
-            );
-            Ok(())
-        }
-        Err(message) => {
-            emit_bridge_event(
-                &app,
-                BridgeEvent::CommandFailed {
-                    correlation_id: payload.correlation_id,
-                    command: "clear_conversation".to_string(),
-                    message: message.clone(),
-                },
-            );
-            Err(message)
-        }
-    }
+    let correlation_id = payload.correlation_id.clone();
+    complete_bridge_command(
+        correlation_id,
+        "clear_conversation",
+        || chat::cmd_chat_clear(state, payload.conversation_id),
+        |event| emit_bridge_event(&app, event),
+    )
 }
 
 #[tauri::command]
@@ -722,30 +691,16 @@ pub fn cmd_bridge_regenerate_last_prompt(
     state: State<'_, AppState>,
     payload: ConversationCommand,
 ) -> Result<RegenerateLastPromptResult, String> {
-    let result = chat::cmd_chat_regenerate_last_prompt(state, payload.conversation_id);
-    match result {
-        Ok(prompt) => {
-            emit_bridge_event(
-                &app,
-                BridgeEvent::CommandAccepted {
-                    correlation_id: payload.correlation_id,
-                    command: "regenerate_last_prompt".to_string(),
-                },
-            );
+    let correlation_id = payload.correlation_id.clone();
+    complete_bridge_command(
+        correlation_id,
+        "regenerate_last_prompt",
+        || {
+            let prompt = chat::cmd_chat_regenerate_last_prompt(state, payload.conversation_id)?;
             Ok(RegenerateLastPromptResult { prompt })
-        }
-        Err(message) => {
-            emit_bridge_event(
-                &app,
-                BridgeEvent::CommandFailed {
-                    correlation_id: payload.correlation_id,
-                    command: "regenerate_last_prompt".to_string(),
-                    message: message.clone(),
-                },
-            );
-            Err(message)
-        }
-    }
+        },
+        |event| emit_bridge_event(&app, event),
+    )
 }
 
 #[cfg(test)]
@@ -1024,6 +979,97 @@ mod tests {
         );
 
         assert_eq!(result, Err("boom".to_string()));
+        assert_eq!(timeline.borrow().as_slice(), ["run", "emit"]);
+    }
+
+    #[test]
+    fn bridge_command_contract_get_messages_emits_accepted_after_run() {
+        let timeline = Rc::new(RefCell::new(Vec::<String>::new()));
+        let timeline_in_run = timeline.clone();
+        let timeline_in_emit = timeline.clone();
+
+        let result: Result<GetMessagesResult, String> = complete_bridge_command(
+            "corr-get-1".to_string(),
+            "get_messages",
+            move || {
+                timeline_in_run.borrow_mut().push("run".to_string());
+                Ok(GetMessagesResult {
+                    messages: Vec::new(),
+                })
+            },
+            move |event| {
+                timeline_in_emit.borrow_mut().push("emit".to_string());
+                assert!(matches!(
+                    event,
+                    BridgeEvent::CommandAccepted {
+                        correlation_id,
+                        command
+                    } if correlation_id == "corr-get-1" && command == "get_messages"
+                ));
+            },
+        );
+
+        assert!(result.is_ok());
+        assert_eq!(timeline.borrow().as_slice(), ["run", "emit"]);
+    }
+
+    #[test]
+    fn bridge_command_contract_clear_conversation_emits_accepted_after_run() {
+        let timeline = Rc::new(RefCell::new(Vec::<String>::new()));
+        let timeline_in_run = timeline.clone();
+        let timeline_in_emit = timeline.clone();
+
+        let result: Result<(), String> = complete_bridge_command(
+            "corr-clear-1".to_string(),
+            "clear_conversation",
+            move || {
+                timeline_in_run.borrow_mut().push("run".to_string());
+                Ok(())
+            },
+            move |event| {
+                timeline_in_emit.borrow_mut().push("emit".to_string());
+                assert!(matches!(
+                    event,
+                    BridgeEvent::CommandAccepted {
+                        correlation_id,
+                        command
+                    } if correlation_id == "corr-clear-1" && command == "clear_conversation"
+                ));
+            },
+        );
+
+        assert!(result.is_ok());
+        assert_eq!(timeline.borrow().as_slice(), ["run", "emit"]);
+    }
+
+    #[test]
+    fn bridge_command_contract_regenerate_last_prompt_emits_accepted_after_run() {
+        let timeline = Rc::new(RefCell::new(Vec::<String>::new()));
+        let timeline_in_run = timeline.clone();
+        let timeline_in_emit = timeline.clone();
+
+        let result: Result<RegenerateLastPromptResult, String> = complete_bridge_command(
+            "corr-regen-1".to_string(),
+            "regenerate_last_prompt",
+            move || {
+                timeline_in_run.borrow_mut().push("run".to_string());
+                Ok(RegenerateLastPromptResult {
+                    prompt: "next".to_string(),
+                })
+            },
+            move |event| {
+                timeline_in_emit.borrow_mut().push("emit".to_string());
+                assert!(matches!(
+                    event,
+                    BridgeEvent::CommandAccepted {
+                        correlation_id,
+                        command
+                    } if correlation_id == "corr-regen-1" && command == "regenerate_last_prompt"
+                ));
+            },
+        );
+
+        assert!(result.is_ok());
         assert_eq!(timeline.borrow().as_slice(), ["run", "emit"]);
     }
 
