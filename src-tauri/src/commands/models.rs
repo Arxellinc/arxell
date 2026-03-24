@@ -261,15 +261,15 @@ fn extract_i64(obj: &Value, keys: &[&str]) -> Option<i64> {
     None
 }
 
-fn extract_specs_from_model_json(
-    model_obj: Option<&Value>,
-) -> (
+type ModelSpecsTuple = (
     Option<i64>,
     Option<f64>,
     Option<i64>,
     Option<f64>,
     Option<f64>,
-) {
+);
+
+fn extract_specs_from_model_json(model_obj: Option<&Value>) -> ModelSpecsTuple {
     let Some(obj) = model_obj else {
         return (None, None, None, None, None);
     };
@@ -363,6 +363,7 @@ pub fn cmd_model_list_all(state: State<'_, AppState>) -> Result<Vec<ModelConfig>
 }
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub fn cmd_model_add(
     state: State<'_, AppState>,
     name: String,
@@ -438,6 +439,7 @@ pub fn cmd_model_add(
 }
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub fn cmd_model_update(
     state: State<'_, AppState>,
     id: String,

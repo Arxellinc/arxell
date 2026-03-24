@@ -6,19 +6,14 @@ use tauri::{AppHandle, Manager, State};
 use crate::AppState;
 
 /// Skill category determines how the skill is activated
-#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq)]
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum SkillCategory {
     /// Always injected into context (e.g., system prompt, available skills list)
     AlwaysActive,
     /// User can toggle on/off
+    #[default]
     UserSelectable,
-}
-
-impl Default for SkillCategory {
-    fn default() -> Self {
-        Self::UserSelectable
-    }
 }
 
 #[derive(Debug, Serialize, Deserialize)]

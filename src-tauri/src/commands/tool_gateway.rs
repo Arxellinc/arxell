@@ -729,6 +729,7 @@ fn build_coder_prompt_command(executable: &str, prompt: &str, model: Option<&str
 }
 
 #[cfg(test)]
+#[allow(dead_code)]
 fn build_coder_version_command(executable: &str) -> String {
     format!("{} --version", shell_quote_literal(executable))
 }

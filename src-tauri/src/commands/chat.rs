@@ -168,6 +168,7 @@ fn trim_latest_user_message(
     history.to_vec()
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn stream_via_standard_agent(
     app: AppHandle,
     assistant_id: String,
@@ -263,6 +264,7 @@ async fn stream_via_standard_agent(
 }
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub async fn cmd_chat_stream(
     app: AppHandle,
     state: State<'_, AppState>,

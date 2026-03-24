@@ -317,7 +317,10 @@ fn kokoro_python_candidates(app_dir: &std::path::Path) -> Vec<std::path::PathBuf
     }
     #[cfg(not(target_os = "windows"))]
     {
-        vec![base.join("bin").join("python3"), base.join("bin").join("python")]
+        vec![
+            base.join("bin").join("python3"),
+            base.join("bin").join("python"),
+        ]
     }
 }
 
@@ -325,7 +328,13 @@ fn default_kokoro_python_path(app_dir: &std::path::Path) -> std::path::PathBuf {
     kokoro_python_candidates(app_dir)
         .into_iter()
         .next()
-        .unwrap_or_else(|| app_dir.join("kokoro").join("runtime").join("venv").join("python"))
+        .unwrap_or_else(|| {
+            app_dir
+                .join("kokoro")
+                .join("runtime")
+                .join("venv")
+                .join("python")
+        })
 }
 
 fn resolve_existing_kokoro_python_path(app_dir: &std::path::Path) -> Option<std::path::PathBuf> {
@@ -621,8 +630,9 @@ fn ensure_kokoro_runtime(
     let runtime_dir = app_dir.join("kokoro").join("runtime").join("venv");
     let archive_name = kokoro_runtime_archive_name();
     let expected_python = default_kokoro_python_path(app_dir);
-    let archive_path = resolve_kokoro_runtime_archive_path(app, archive_name)
-        .ok_or_else(|| format!("failed to resolve bundled runtime archive path for {archive_name}"))?;
+    let archive_path = resolve_kokoro_runtime_archive_path(app, archive_name).ok_or_else(|| {
+        format!("failed to resolve bundled runtime archive path for {archive_name}")
+    })?;
     commands::logs::event(
         "info",
         "runtime.bootstrap.start",

@@ -109,13 +109,19 @@ impl VoicePipeline {
     }
 }
 
+impl Default for VoicePipeline {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 // ── Utterance message type ────────────────────────────────────────────────────
 
 /// Message sent from the capture loop to the transcription thread.
 ///
 /// - `Final`   — complete utterance; transcription thread emits `voice:transcript`
 /// - `Partial` — mid-speech snapshot for interim display / speculative prefill;
-///               transcription thread emits `voice:partial`
+///   transcription thread emits `voice:partial`
 pub enum VoiceUtterance {
     Final(Vec<f32>),
     Partial(Vec<f32>),
@@ -511,6 +517,7 @@ fn capture_loop(
 
 /// Finalise an utterance: send via channel if it meets min_speech_frames.
 /// The capture loop continues running - does NOT set running=false.
+#[allow(clippy::too_many_arguments)]
 fn deliver(
     app: &AppHandle,
     utterance_tx: &Sender<VoiceUtterance>,
@@ -638,7 +645,7 @@ mod tests {
 
     #[test]
     fn wav_clipping_does_not_panic() {
-        let result = pcm_to_wav(&vec![2.0f32, -2.0f32, 1.5f32, -1.5f32], 16000);
+        let result = pcm_to_wav(&[2.0f32, -2.0f32, 1.5f32, -1.5f32], 16000);
         assert!(result.is_ok(), "out-of-range samples should be clamped");
     }
 

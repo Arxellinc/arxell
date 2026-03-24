@@ -301,54 +301,390 @@ pub struct A2AWorkflowPreflightResult {
 
 fn node_type_defs() -> Vec<A2ANodeTypeDef> {
     vec![
-        A2ANodeTypeDef { id: "ai.agent", label: "Agent", category: "primary", tier: A2ANodeTier::Stable, description: "Agent-style prompt planning node", side_effecting: false },
-        A2ANodeTypeDef { id: "trigger.manual", label: "Manual Trigger", category: "triggers", tier: A2ANodeTier::Stable, description: "Manually start a workflow", side_effecting: false },
-        A2ANodeTypeDef { id: "trigger.schedule", label: "Schedule Trigger", category: "triggers", tier: A2ANodeTier::Beta, description: "Schedule-based trigger", side_effecting: false },
-        A2ANodeTypeDef { id: "trigger.webhook", label: "Webhook Trigger", category: "triggers", tier: A2ANodeTier::Beta, description: "Webhook-based trigger", side_effecting: false },
-        A2ANodeTypeDef { id: "trigger.error", label: "Error Trigger", category: "triggers", tier: A2ANodeTier::Beta, description: "Error-path trigger", side_effecting: false },
-        A2ANodeTypeDef { id: "logic.if", label: "IF", category: "flow_control", tier: A2ANodeTier::Stable, description: "Conditional branch", side_effecting: false },
-        A2ANodeTypeDef { id: "logic.switch", label: "Switch", category: "flow_control", tier: A2ANodeTier::Stable, description: "Route by rules or expression", side_effecting: false },
-        A2ANodeTypeDef { id: "core.merge", label: "Merge", category: "flow_control", tier: A2ANodeTier::Stable, description: "Merge streams", side_effecting: false },
-        A2ANodeTypeDef { id: "core.split_in_batches", label: "Split In Batches", category: "flow_control", tier: A2ANodeTier::Stable, description: "Split stream into loop+done outputs", side_effecting: false },
-        A2ANodeTypeDef { id: "core.noop", label: "NoOp", category: "flow_control", tier: A2ANodeTier::Stable, description: "Pass-through node", side_effecting: false },
-        A2ANodeTypeDef { id: "core.stop_and_error", label: "Stop And Error", category: "flow_control", tier: A2ANodeTier::Stable, description: "Stop run with explicit error", side_effecting: false },
-        A2ANodeTypeDef { id: "core.wait", label: "Wait", category: "flow_control", tier: A2ANodeTier::Stable, description: "Wait before passing output", side_effecting: false },
-        A2ANodeTypeDef { id: "transform.set", label: "Set", category: "transform", tier: A2ANodeTier::Stable, description: "Set object fields", side_effecting: false },
-        A2ANodeTypeDef { id: "transform.map", label: "Map", category: "transform", tier: A2ANodeTier::Stable, description: "Map fields", side_effecting: false },
-        A2ANodeTypeDef { id: "transform.filter", label: "Filter", category: "transform", tier: A2ANodeTier::Stable, description: "Filter items by conditions", side_effecting: false },
-        A2ANodeTypeDef { id: "transform.sort", label: "Sort", category: "transform", tier: A2ANodeTier::Stable, description: "Sort records by field", side_effecting: false },
-        A2ANodeTypeDef { id: "transform.limit", label: "Limit", category: "transform", tier: A2ANodeTier::Stable, description: "Limit first/last items", side_effecting: false },
-        A2ANodeTypeDef { id: "transform.remove_duplicates", label: "Remove Duplicates", category: "transform", tier: A2ANodeTier::Stable, description: "Drop duplicate records", side_effecting: false },
-        A2ANodeTypeDef { id: "transform.aggregate", label: "Aggregate", category: "transform", tier: A2ANodeTier::Stable, description: "Aggregate records into collection", side_effecting: false },
-        A2ANodeTypeDef { id: "transform.summarize", label: "Summarize", category: "transform", tier: A2ANodeTier::Stable, description: "Summarize grouped records", side_effecting: false },
-        A2ANodeTypeDef { id: "transform.rename_keys", label: "Rename Keys", category: "transform", tier: A2ANodeTier::Stable, description: "Rename object keys", side_effecting: false },
-        A2ANodeTypeDef { id: "transform.compare_datasets", label: "Compare Datasets", category: "transform", tier: A2ANodeTier::Stable, description: "Compare two datasets", side_effecting: false },
-        A2ANodeTypeDef { id: "transform.item_lists", label: "Item Lists", category: "transform", tier: A2ANodeTier::Stable, description: "Split/aggregate list fields", side_effecting: false },
-        A2ANodeTypeDef { id: "http.request", label: "HTTP Request", category: "utility", tier: A2ANodeTier::Stable, description: "HTTP request node", side_effecting: true },
-        A2ANodeTypeDef { id: "util.http_request", label: "HTTP Request", category: "utility", tier: A2ANodeTier::Stable, description: "HTTP request utility node", side_effecting: true },
-        A2ANodeTypeDef { id: "util.respond_to_webhook", label: "Respond To Webhook", category: "utility", tier: A2ANodeTier::Beta, description: "Webhook response node", side_effecting: true },
-        A2ANodeTypeDef { id: "util.read_write_file", label: "Read/Write File", category: "utility", tier: A2ANodeTier::Beta, description: "Filesystem read/write operation", side_effecting: true },
-        A2ANodeTypeDef { id: "util.crypto", label: "Crypto", category: "utility", tier: A2ANodeTier::Stable, description: "Hash/value transformation", side_effecting: false },
-        A2ANodeTypeDef { id: "util.datetime", label: "DateTime", category: "utility", tier: A2ANodeTier::Stable, description: "Date/time helper node", side_effecting: false },
-        A2ANodeTypeDef { id: "util.execute_workflow", label: "Execute Workflow", category: "utility", tier: A2ANodeTier::Hidden, description: "Inline subworkflow execution (not enabled)", side_effecting: true },
-        A2ANodeTypeDef { id: "util.send_email", label: "Send Email", category: "utility", tier: A2ANodeTier::Beta, description: "SMTP email send", side_effecting: true },
-        A2ANodeTypeDef { id: "util.sticky_note", label: "Sticky Note", category: "utility", tier: A2ANodeTier::Stable, description: "Non-executing note node", side_effecting: false },
-        A2ANodeTypeDef { id: "db.sqlite", label: "SQLite", category: "datastore", tier: A2ANodeTier::Beta, description: "SQLite query node", side_effecting: true },
-        A2ANodeTypeDef { id: "db.postgres", label: "Postgres", category: "datastore", tier: A2ANodeTier::Beta, description: "Postgres query node", side_effecting: true },
-        A2ANodeTypeDef { id: "db.redis", label: "Redis", category: "datastore", tier: A2ANodeTier::Beta, description: "Redis operation node", side_effecting: true },
-        A2ANodeTypeDef { id: "db.mysql", label: "MySQL", category: "datastore", tier: A2ANodeTier::Hidden, description: "MySQL runtime disabled", side_effecting: true },
-        A2ANodeTypeDef { id: "db.mariadb", label: "MariaDB", category: "datastore", tier: A2ANodeTier::Hidden, description: "MariaDB runtime disabled", side_effecting: true },
-        A2ANodeTypeDef { id: "db.mssql", label: "Microsoft SQL", category: "datastore", tier: A2ANodeTier::Hidden, description: "MSSQL runtime disabled", side_effecting: true },
-        A2ANodeTypeDef { id: "db.mongodb", label: "MongoDB", category: "datastore", tier: A2ANodeTier::Hidden, description: "MongoDB runtime disabled", side_effecting: true },
-        A2ANodeTypeDef { id: "llm.query", label: "LLM Query", category: "ai", tier: A2ANodeTier::Stable, description: "Prompt a model and return response", side_effecting: true },
-        A2ANodeTypeDef { id: "ai.chat_model", label: "Chat Model", category: "ai", tier: A2ANodeTier::Beta, description: "AI chat model connector", side_effecting: false },
-        A2ANodeTypeDef { id: "ai.memory", label: "Memory Connector", category: "ai", tier: A2ANodeTier::Beta, description: "AI memory connector", side_effecting: false },
-        A2ANodeTypeDef { id: "ai.tool", label: "Tool Connector", category: "ai", tier: A2ANodeTier::Beta, description: "AI tool connector", side_effecting: false },
-        A2ANodeTypeDef { id: "tool.invoke", label: "Tool Invoke", category: "ai", tier: A2ANodeTier::Beta, description: "Invoke tool action bridge", side_effecting: true },
-        A2ANodeTypeDef { id: "memory.read", label: "Memory Read", category: "ai", tier: A2ANodeTier::Stable, description: "Read memory entries", side_effecting: false },
-        A2ANodeTypeDef { id: "memory.write", label: "Memory Write", category: "ai", tier: A2ANodeTier::Stable, description: "Write memory entries", side_effecting: true },
-        A2ANodeTypeDef { id: "skill.run", label: "Skill Run", category: "ai", tier: A2ANodeTier::Beta, description: "Skill execution bridge", side_effecting: false },
-        A2ANodeTypeDef { id: "output.respond", label: "Output", category: "outputs", tier: A2ANodeTier::Stable, description: "Output/response node", side_effecting: false },
+        A2ANodeTypeDef {
+            id: "ai.agent",
+            label: "Agent",
+            category: "primary",
+            tier: A2ANodeTier::Stable,
+            description: "Agent-style prompt planning node",
+            side_effecting: false,
+        },
+        A2ANodeTypeDef {
+            id: "trigger.manual",
+            label: "Manual Trigger",
+            category: "triggers",
+            tier: A2ANodeTier::Stable,
+            description: "Manually start a workflow",
+            side_effecting: false,
+        },
+        A2ANodeTypeDef {
+            id: "trigger.schedule",
+            label: "Schedule Trigger",
+            category: "triggers",
+            tier: A2ANodeTier::Beta,
+            description: "Schedule-based trigger",
+            side_effecting: false,
+        },
+        A2ANodeTypeDef {
+            id: "trigger.webhook",
+            label: "Webhook Trigger",
+            category: "triggers",
+            tier: A2ANodeTier::Beta,
+            description: "Webhook-based trigger",
+            side_effecting: false,
+        },
+        A2ANodeTypeDef {
+            id: "trigger.error",
+            label: "Error Trigger",
+            category: "triggers",
+            tier: A2ANodeTier::Beta,
+            description: "Error-path trigger",
+            side_effecting: false,
+        },
+        A2ANodeTypeDef {
+            id: "logic.if",
+            label: "IF",
+            category: "flow_control",
+            tier: A2ANodeTier::Stable,
+            description: "Conditional branch",
+            side_effecting: false,
+        },
+        A2ANodeTypeDef {
+            id: "logic.switch",
+            label: "Switch",
+            category: "flow_control",
+            tier: A2ANodeTier::Stable,
+            description: "Route by rules or expression",
+            side_effecting: false,
+        },
+        A2ANodeTypeDef {
+            id: "core.merge",
+            label: "Merge",
+            category: "flow_control",
+            tier: A2ANodeTier::Stable,
+            description: "Merge streams",
+            side_effecting: false,
+        },
+        A2ANodeTypeDef {
+            id: "core.split_in_batches",
+            label: "Split In Batches",
+            category: "flow_control",
+            tier: A2ANodeTier::Stable,
+            description: "Split stream into loop+done outputs",
+            side_effecting: false,
+        },
+        A2ANodeTypeDef {
+            id: "core.noop",
+            label: "NoOp",
+            category: "flow_control",
+            tier: A2ANodeTier::Stable,
+            description: "Pass-through node",
+            side_effecting: false,
+        },
+        A2ANodeTypeDef {
+            id: "core.stop_and_error",
+            label: "Stop And Error",
+            category: "flow_control",
+            tier: A2ANodeTier::Stable,
+            description: "Stop run with explicit error",
+            side_effecting: false,
+        },
+        A2ANodeTypeDef {
+            id: "core.wait",
+            label: "Wait",
+            category: "flow_control",
+            tier: A2ANodeTier::Stable,
+            description: "Wait before passing output",
+            side_effecting: false,
+        },
+        A2ANodeTypeDef {
+            id: "transform.set",
+            label: "Set",
+            category: "transform",
+            tier: A2ANodeTier::Stable,
+            description: "Set object fields",
+            side_effecting: false,
+        },
+        A2ANodeTypeDef {
+            id: "transform.map",
+            label: "Map",
+            category: "transform",
+            tier: A2ANodeTier::Stable,
+            description: "Map fields",
+            side_effecting: false,
+        },
+        A2ANodeTypeDef {
+            id: "transform.filter",
+            label: "Filter",
+            category: "transform",
+            tier: A2ANodeTier::Stable,
+            description: "Filter items by conditions",
+            side_effecting: false,
+        },
+        A2ANodeTypeDef {
+            id: "transform.sort",
+            label: "Sort",
+            category: "transform",
+            tier: A2ANodeTier::Stable,
+            description: "Sort records by field",
+            side_effecting: false,
+        },
+        A2ANodeTypeDef {
+            id: "transform.limit",
+            label: "Limit",
+            category: "transform",
+            tier: A2ANodeTier::Stable,
+            description: "Limit first/last items",
+            side_effecting: false,
+        },
+        A2ANodeTypeDef {
+            id: "transform.remove_duplicates",
+            label: "Remove Duplicates",
+            category: "transform",
+            tier: A2ANodeTier::Stable,
+            description: "Drop duplicate records",
+            side_effecting: false,
+        },
+        A2ANodeTypeDef {
+            id: "transform.aggregate",
+            label: "Aggregate",
+            category: "transform",
+            tier: A2ANodeTier::Stable,
+            description: "Aggregate records into collection",
+            side_effecting: false,
+        },
+        A2ANodeTypeDef {
+            id: "transform.summarize",
+            label: "Summarize",
+            category: "transform",
+            tier: A2ANodeTier::Stable,
+            description: "Summarize grouped records",
+            side_effecting: false,
+        },
+        A2ANodeTypeDef {
+            id: "transform.rename_keys",
+            label: "Rename Keys",
+            category: "transform",
+            tier: A2ANodeTier::Stable,
+            description: "Rename object keys",
+            side_effecting: false,
+        },
+        A2ANodeTypeDef {
+            id: "transform.compare_datasets",
+            label: "Compare Datasets",
+            category: "transform",
+            tier: A2ANodeTier::Stable,
+            description: "Compare two datasets",
+            side_effecting: false,
+        },
+        A2ANodeTypeDef {
+            id: "transform.item_lists",
+            label: "Item Lists",
+            category: "transform",
+            tier: A2ANodeTier::Stable,
+            description: "Split/aggregate list fields",
+            side_effecting: false,
+        },
+        A2ANodeTypeDef {
+            id: "http.request",
+            label: "HTTP Request",
+            category: "utility",
+            tier: A2ANodeTier::Stable,
+            description: "HTTP request node",
+            side_effecting: true,
+        },
+        A2ANodeTypeDef {
+            id: "util.http_request",
+            label: "HTTP Request",
+            category: "utility",
+            tier: A2ANodeTier::Stable,
+            description: "HTTP request utility node",
+            side_effecting: true,
+        },
+        A2ANodeTypeDef {
+            id: "util.respond_to_webhook",
+            label: "Respond To Webhook",
+            category: "utility",
+            tier: A2ANodeTier::Beta,
+            description: "Webhook response node",
+            side_effecting: true,
+        },
+        A2ANodeTypeDef {
+            id: "util.read_write_file",
+            label: "Read/Write File",
+            category: "utility",
+            tier: A2ANodeTier::Beta,
+            description: "Filesystem read/write operation",
+            side_effecting: true,
+        },
+        A2ANodeTypeDef {
+            id: "util.crypto",
+            label: "Crypto",
+            category: "utility",
+            tier: A2ANodeTier::Stable,
+            description: "Hash/value transformation",
+            side_effecting: false,
+        },
+        A2ANodeTypeDef {
+            id: "util.datetime",
+            label: "DateTime",
+            category: "utility",
+            tier: A2ANodeTier::Stable,
+            description: "Date/time helper node",
+            side_effecting: false,
+        },
+        A2ANodeTypeDef {
+            id: "util.execute_workflow",
+            label: "Execute Workflow",
+            category: "utility",
+            tier: A2ANodeTier::Hidden,
+            description: "Inline subworkflow execution (not enabled)",
+            side_effecting: true,
+        },
+        A2ANodeTypeDef {
+            id: "util.send_email",
+            label: "Send Email",
+            category: "utility",
+            tier: A2ANodeTier::Beta,
+            description: "SMTP email send",
+            side_effecting: true,
+        },
+        A2ANodeTypeDef {
+            id: "util.sticky_note",
+            label: "Sticky Note",
+            category: "utility",
+            tier: A2ANodeTier::Stable,
+            description: "Non-executing note node",
+            side_effecting: false,
+        },
+        A2ANodeTypeDef {
+            id: "db.sqlite",
+            label: "SQLite",
+            category: "datastore",
+            tier: A2ANodeTier::Beta,
+            description: "SQLite query node",
+            side_effecting: true,
+        },
+        A2ANodeTypeDef {
+            id: "db.postgres",
+            label: "Postgres",
+            category: "datastore",
+            tier: A2ANodeTier::Beta,
+            description: "Postgres query node",
+            side_effecting: true,
+        },
+        A2ANodeTypeDef {
+            id: "db.redis",
+            label: "Redis",
+            category: "datastore",
+            tier: A2ANodeTier::Beta,
+            description: "Redis operation node",
+            side_effecting: true,
+        },
+        A2ANodeTypeDef {
+            id: "db.mysql",
+            label: "MySQL",
+            category: "datastore",
+            tier: A2ANodeTier::Hidden,
+            description: "MySQL runtime disabled",
+            side_effecting: true,
+        },
+        A2ANodeTypeDef {
+            id: "db.mariadb",
+            label: "MariaDB",
+            category: "datastore",
+            tier: A2ANodeTier::Hidden,
+            description: "MariaDB runtime disabled",
+            side_effecting: true,
+        },
+        A2ANodeTypeDef {
+            id: "db.mssql",
+            label: "Microsoft SQL",
+            category: "datastore",
+            tier: A2ANodeTier::Hidden,
+            description: "MSSQL runtime disabled",
+            side_effecting: true,
+        },
+        A2ANodeTypeDef {
+            id: "db.mongodb",
+            label: "MongoDB",
+            category: "datastore",
+            tier: A2ANodeTier::Hidden,
+            description: "MongoDB runtime disabled",
+            side_effecting: true,
+        },
+        A2ANodeTypeDef {
+            id: "llm.query",
+            label: "LLM Query",
+            category: "ai",
+            tier: A2ANodeTier::Stable,
+            description: "Prompt a model and return response",
+            side_effecting: true,
+        },
+        A2ANodeTypeDef {
+            id: "ai.chat_model",
+            label: "Chat Model",
+            category: "ai",
+            tier: A2ANodeTier::Beta,
+            description: "AI chat model connector",
+            side_effecting: false,
+        },
+        A2ANodeTypeDef {
+            id: "ai.memory",
+            label: "Memory Connector",
+            category: "ai",
+            tier: A2ANodeTier::Beta,
+            description: "AI memory connector",
+            side_effecting: false,
+        },
+        A2ANodeTypeDef {
+            id: "ai.tool",
+            label: "Tool Connector",
+            category: "ai",
+            tier: A2ANodeTier::Beta,
+            description: "AI tool connector",
+            side_effecting: false,
+        },
+        A2ANodeTypeDef {
+            id: "tool.invoke",
+            label: "Tool Invoke",
+            category: "ai",
+            tier: A2ANodeTier::Beta,
+            description: "Invoke tool action bridge",
+            side_effecting: true,
+        },
+        A2ANodeTypeDef {
+            id: "memory.read",
+            label: "Memory Read",
+            category: "ai",
+            tier: A2ANodeTier::Stable,
+            description: "Read memory entries",
+            side_effecting: false,
+        },
+        A2ANodeTypeDef {
+            id: "memory.write",
+            label: "Memory Write",
+            category: "ai",
+            tier: A2ANodeTier::Stable,
+            description: "Write memory entries",
+            side_effecting: true,
+        },
+        A2ANodeTypeDef {
+            id: "skill.run",
+            label: "Skill Run",
+            category: "ai",
+            tier: A2ANodeTier::Beta,
+            description: "Skill execution bridge",
+            side_effecting: false,
+        },
+        A2ANodeTypeDef {
+            id: "output.respond",
+            label: "Output",
+            category: "outputs",
+            tier: A2ANodeTier::Stable,
+            description: "Output/response node",
+            side_effecting: false,
+        },
     ]
 }
 
@@ -368,7 +704,10 @@ fn preflight_workflow_definition(definition: &A2AWorkflowDefinition) -> A2AWorkf
                 kind: "unsupported_node_type".to_string(),
                 node_id: Some(node.id.clone()),
                 node_type: Some(node.node_type.clone()),
-                message: format!("Node type '{}' is not supported in this build", node.node_type),
+                message: format!(
+                    "Node type '{}' is not supported in this build",
+                    node.node_type
+                ),
                 blocking: true,
             });
         }
@@ -2372,7 +2711,10 @@ pub async fn cmd_a2a_workflow_run_start(
     .to_string();
     let run_control = RunControl::new();
     if let Err(e) = set_run_control(run_id.as_str(), run_control) {
-        let db = state.a2a_db.lock().map_err(|lock_err| lock_err.to_string())?;
+        let db = state
+            .a2a_db
+            .lock()
+            .map_err(|lock_err| lock_err.to_string())?;
         workflow_store::set_run_status(
             &db,
             run_id.as_str(),
@@ -2481,7 +2823,15 @@ pub async fn cmd_a2a_workflow_node_test(
     let ctx = NodeContext {
         items_by_name: HashMap::new(),
     };
-    execute_node(&app, &state, None, &payload.node, &payload.input_items, &ctx).await
+    execute_node(
+        &app,
+        &state,
+        None,
+        &payload.node,
+        &payload.input_items,
+        &ctx,
+    )
+    .await
 }
 
 #[tauri::command]
@@ -2506,12 +2856,27 @@ pub fn cmd_a2a_workflow_run_cancel(
     let Some(run) = run else {
         return Ok(false);
     };
-    if matches!(run.status.as_str(), "succeeded" | "failed" | "canceled" | "timed_out") {
+    if matches!(
+        run.status.as_str(),
+        "succeeded" | "failed" | "canceled" | "timed_out"
+    ) {
         return Ok(false);
     }
-    workflow_store::set_run_status(&db, &run_id, "canceled", Some("Canceled by user".to_string()), None, None)
-        .map_err(|e| e.to_string())?;
-    emit_changed(&app, "run_canceled", Some(run.workflow_id.as_str()), Some(run_id.as_str()));
+    workflow_store::set_run_status(
+        &db,
+        &run_id,
+        "canceled",
+        Some("Canceled by user".to_string()),
+        None,
+        None,
+    )
+    .map_err(|e| e.to_string())?;
+    emit_changed(
+        &app,
+        "run_canceled",
+        Some(run.workflow_id.as_str()),
+        Some(run_id.as_str()),
+    );
     Ok(true)
 }
 
@@ -2542,7 +2907,12 @@ pub fn cmd_a2a_workflow_run_pause(
     }
     workflow_store::set_run_status(&db, &run_id, "paused", None, None, None)
         .map_err(|e| e.to_string())?;
-    emit_changed(&app, "run_paused", Some(run.workflow_id.as_str()), Some(run_id.as_str()));
+    emit_changed(
+        &app,
+        "run_paused",
+        Some(run.workflow_id.as_str()),
+        Some(run_id.as_str()),
+    );
     Ok(true)
 }
 
@@ -2573,7 +2943,12 @@ pub fn cmd_a2a_workflow_run_resume(
     }
     workflow_store::set_run_status(&db, &run_id, "running", None, None, None)
         .map_err(|e| e.to_string())?;
-    emit_changed(&app, "run_resumed", Some(run.workflow_id.as_str()), Some(run_id.as_str()));
+    emit_changed(
+        &app,
+        "run_resumed",
+        Some(run.workflow_id.as_str()),
+        Some(run_id.as_str()),
+    );
     Ok(true)
 }
 

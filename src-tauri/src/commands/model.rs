@@ -13,15 +13,6 @@ use std::path::Path;
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter, Manager, State};
 
-use crate::model_manager::system_info::{
-    get_runtime_status, get_storage_devices, get_system_identity, get_system_resources,
-    get_system_usage, RuntimeStatus, StorageDevice, SystemIdentity, SystemResources, SystemUsage,
-};
-use crate::model_manager::{
-    enumerate_devices, peek_model_metadata as read_model_metadata, ChatMessage,
-    DeviceInfo, EngineInstallResult, GenerationConfig, ModelError, ModelInfo, ModelLoadConfig,
-    ModelLoadProgress, ModelManagerState, ServeState, TokenCount,
-};
 #[cfg(any(
     feature = "vulkan",
     feature = "cuda",
@@ -29,6 +20,15 @@ use crate::model_manager::{
     feature = "rocm"
 ))]
 use crate::model_manager::load_model;
+use crate::model_manager::system_info::{
+    get_runtime_status, get_storage_devices, get_system_identity, get_system_resources,
+    get_system_usage, RuntimeStatus, StorageDevice, SystemIdentity, SystemResources, SystemUsage,
+};
+use crate::model_manager::{
+    enumerate_devices, peek_model_metadata as read_model_metadata, ChatMessage, DeviceInfo,
+    EngineInstallResult, GenerationConfig, ModelError, ModelInfo, ModelLoadConfig,
+    ModelLoadProgress, ModelManagerState, ServeState, TokenCount,
+};
 use crate::AppState;
 
 fn build_lightweight_model_info(path: &str, context_override: Option<u32>) -> ModelInfo {
@@ -201,7 +201,7 @@ pub async fn cmd_load_model(
         // (the value trained into the GGUF metadata, e.g. 131072 for Qwen2.5).
         // If an explicit override is provided, enforce a 16k minimum floor.
         let ctx_size = match config.context_override {
-            Some(n) => (n as u32).max(16_000),
+            Some(n) => n.max(16_000),
             None => 0, // Let llama-server use the model's GGUF native max context
         };
         let batch_size = config.batch_size.unwrap_or(512).clamp(1, 8192);
@@ -334,8 +334,7 @@ pub async fn cmd_load_model(
                 cache_type_v.as_deref(),
                 port,
                 state_file_path.as_deref(),
-            )
-            .map_err(|e| e)?;
+            )?;
 
             app.emit(
                 "model:load_progress",
@@ -918,7 +917,7 @@ pub fn cmd_get_peripheral_devices() -> Result<Vec<PeripheralDevice>, String> {
                 .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
         });
         out.dedup_by(|a, b| a.kind == b.kind && a.name.eq_ignore_ascii_case(&b.name));
-        return Ok(out);
+        Ok(out)
     }
 
     #[cfg(not(target_os = "linux"))]

@@ -68,7 +68,7 @@ fn wav_is_16_bit() {
 fn wav_byte_rate_is_correct() {
     // ByteRate = SampleRate * NumChannels * BitsPerSample / 8
     let wav = pcm_to_wav(&vec![0.0f32; 64], 16000).unwrap();
-    assert_eq!(wav_byte_rate(&wav), 16000 * 1 * 2);
+    assert_eq!(wav_byte_rate(&wav), 16000 * 2);
     println!("[PASS] Byte rate = 32000");
 }
 

@@ -377,8 +377,7 @@ pub fn check_vulkan_driver() -> DriverStatus {
                 let version = info
                     .lines()
                     .find(|l| l.contains("Vulkan Instance Version"))
-                    .map(|l| l.split(':').nth(1).map(|s| s.trim().to_string()))
-                    .flatten();
+                    .and_then(|l| l.split(':').nth(1).map(|s| s.trim().to_string()));
 
                 return DriverStatus {
                     driver_type: "vulkan".to_string(),
@@ -544,7 +543,7 @@ pub fn check_metal_driver() -> DriverStatus {
 pub fn get_gpus() -> Vec<GpuInfo> {
     #[cfg(target_os = "linux")]
     {
-        return get_gpus_linux();
+        get_gpus_linux()
     }
 
     #[cfg(not(target_os = "linux"))]
@@ -953,7 +952,7 @@ fn normalize_pci_bus_id(input: &str) -> String {
         u16::from_str_radix(domain_s, 16),
         u8::from_str_radix(bus_s, 16),
         u8::from_str_radix(dev_s, 16),
-        u8::from_str_radix(func_s, 10),
+        func_s.parse::<u8>(),
     );
 
     match parsed {

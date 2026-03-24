@@ -1808,9 +1808,8 @@ pub async fn run_pi_prompt(
             //  • api_type == "chat"  → explicitly chat-completions-only
             //  • probe returns 404   → /responses not supported
             //  • known non-responses host → skip the network round-trip
-            let needs_proxy = if api_type == "chat" {
-                true
-            } else if base_url_is_likely_non_responses(&cache_key) {
+            let needs_proxy = if api_type == "chat" || base_url_is_likely_non_responses(&cache_key)
+            {
                 true
             } else {
                 let probe_result = if let Some(cached) = responses_probe_cache.get(&cache_key) {

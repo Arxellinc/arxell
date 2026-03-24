@@ -181,6 +181,7 @@ impl<'a> A2ARuntime<'a> {
         Ok(edge_id)
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn register_artifact(
         &self,
         process_id: &str,

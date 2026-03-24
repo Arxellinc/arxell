@@ -15,7 +15,7 @@
 /// - dynamic-link: Dynamic linking
 /// - sampler: Sampling (only has effect on Android)
 /// - mtmd: Memory-mapped disk I/O (only has effect on Android)
-/// CPU is the default when no GPU features are enabled
+/// - cpu: default when no GPU features are enabled
 use std::env;
 use std::path::Path;
 use std::process::Command;
@@ -60,7 +60,7 @@ fn main() {
         ("cpu", "No GPU acceleration detected - using CPU")
     };
 
-    emit_backend(backend, &reason);
+    emit_backend(backend, reason);
 }
 
 /// Probe for CUDA toolkit

@@ -57,6 +57,7 @@ impl AiClient {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub async fn stream_chat(
         &self,
         app: AppHandle,

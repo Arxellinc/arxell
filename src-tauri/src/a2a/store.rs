@@ -757,6 +757,7 @@ pub fn list_agent_cards(conn: &Connection) -> Result<Vec<A2AAgentCardRecord>> {
     Ok(rows)
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn create_agent_card(
     conn: &Connection,
     name: String,
@@ -843,6 +844,7 @@ pub fn create_agent_card(
     Ok(record)
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn update_agent_card(
     conn: &Connection,
     card_id: &str,

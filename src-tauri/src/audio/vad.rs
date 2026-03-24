@@ -1,10 +1,12 @@
 use anyhow::Result;
 use tract_onnx::prelude::*;
 
+type VadModelPlan = SimplePlan<TypedFact, Box<dyn TypedOp>, Graph<TypedFact, Box<dyn TypedOp>>>;
+
 /// Silero VAD wrapper — GRU-based model with 3 inputs:
 /// input [1, 512], sr [1], state [2, 1, 64]
 pub struct SileroVad {
-    model: SimplePlan<TypedFact, Box<dyn TypedOp>, Graph<TypedFact, Box<dyn TypedOp>>>,
+    model: VadModelPlan,
     sample_rate: i64,
     state: Tensor, // GRU hidden state [2, 1, 64]
 }
@@ -71,7 +73,6 @@ mod tests {
 
     /// These tests require the ONNX model to be present at the standard resource path.
     /// If the model isn't found they are skipped (the constructor returns Err).
-
     fn sine_chunk(freq: f32, amplitude: f32) -> Vec<f32> {
         (0..512)
             .map(|i| (2.0 * std::f32::consts::PI * freq * i as f32 / 16000.0).sin() * amplitude)

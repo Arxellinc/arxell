@@ -389,9 +389,7 @@ pub fn check_whisper(python_bin: &str) -> bool {
         .stdout(Stdio::null())
         .stderr(Stdio::null());
     apply_no_window(&mut cmd);
-    cmd.status()
-        .map(|s| s.success())
-        .unwrap_or(false)
+    cmd.status().map(|s| s.success()).unwrap_or(false)
 }
 
 /// Transcribe using a shared persistent WhisperContext.
@@ -482,33 +480,27 @@ fn wav_to_pcm(wav_bytes: &[u8]) -> Result<Vec<f32>, String> {
     let mut pcm: Vec<f32> = Vec::new();
     match spec.sample_format {
         hound::SampleFormat::Float => {
-            let mut idx = 0usize;
-            for sample in reader.samples::<f32>() {
+            for (idx, sample) in reader.samples::<f32>().enumerate() {
                 let s = sample.map_err(|e| format!("WAV decode error: {e}"))?;
-                if idx % channels == 0 {
+                if idx.is_multiple_of(channels) {
                     pcm.push(s);
                 }
-                idx += 1;
             }
         }
         hound::SampleFormat::Int => {
             if spec.bits_per_sample <= 16 {
-                let mut idx = 0usize;
-                for sample in reader.samples::<i16>() {
+                for (idx, sample) in reader.samples::<i16>().enumerate() {
                     let s = sample.map_err(|e| format!("WAV decode error: {e}"))?;
-                    if idx % channels == 0 {
+                    if idx.is_multiple_of(channels) {
                         pcm.push(s as f32 / i16::MAX as f32);
                     }
-                    idx += 1;
                 }
             } else {
-                let mut idx = 0usize;
-                for sample in reader.samples::<i32>() {
+                for (idx, sample) in reader.samples::<i32>().enumerate() {
                     let s = sample.map_err(|e| format!("WAV decode error: {e}"))?;
-                    if idx % channels == 0 {
+                    if idx.is_multiple_of(channels) {
                         pcm.push(s as f32 / i32::MAX as f32);
                     }
-                    idx += 1;
                 }
             }
         }

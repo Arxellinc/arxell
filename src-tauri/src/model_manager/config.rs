@@ -174,8 +174,10 @@ mod tests {
 
     #[test]
     fn test_validate_clamps_temperature() {
-        let mut config = GenerationConfig::default();
-        config.temperature = 99.0;
+        let mut config = GenerationConfig {
+            temperature: 99.0,
+            ..GenerationConfig::default()
+        };
         config.validate();
         assert_eq!(config.temperature, 2.0);
 
@@ -186,8 +188,10 @@ mod tests {
 
     #[test]
     fn test_validate_clamps_top_p() {
-        let mut config = GenerationConfig::default();
-        config.top_p = 1.5;
+        let mut config = GenerationConfig {
+            top_p: 1.5,
+            ..GenerationConfig::default()
+        };
         config.validate();
         assert_eq!(config.top_p, 1.0);
 
@@ -198,8 +202,10 @@ mod tests {
 
     #[test]
     fn test_validate_clamps_top_k() {
-        let mut config = GenerationConfig::default();
-        config.top_k = 1000;
+        let mut config = GenerationConfig {
+            top_k: 1000,
+            ..GenerationConfig::default()
+        };
         config.validate();
         assert_eq!(config.top_k, 500);
 
@@ -210,8 +216,10 @@ mod tests {
 
     #[test]
     fn test_validate_clamps_mirostat_mode() {
-        let mut config = GenerationConfig::default();
-        config.mirostat_mode = 5;
+        let mut config = GenerationConfig {
+            mirostat_mode: 5,
+            ..GenerationConfig::default()
+        };
         config.validate();
         assert_eq!(config.mirostat_mode, 2);
     }

@@ -109,10 +109,10 @@ pub async fn cmd_voice_diagnostics(app: AppHandle) -> Vec<DiagResult> {
     let model = get_setting(&app, "model");
     let kokoro_model_path = get_setting(&app, "kokoro_model_path");
     let kokoro_voices_path = get_setting(&app, "kokoro_voices_path");
-    r.push(DiagResult::info("settings/model", format!("{}", model)));
+    r.push(DiagResult::info("settings/model", model.to_string()));
     r.push(DiagResult::info(
         "settings/tts_engine",
-        format!("{}", tts_engine),
+        tts_engine.to_string(),
     ));
 
     r.push(if !api_key.is_empty() {
@@ -125,7 +125,7 @@ pub async fn cmd_voice_diagnostics(app: AppHandle) -> Vec<DiagResult> {
     });
 
     r.push(if !stt_url.is_empty() {
-        DiagResult::pass("settings/stt_url", format!("{}", stt_url))
+        DiagResult::pass("settings/stt_url", stt_url.to_string())
     } else {
         DiagResult::fail("settings/stt_url", "empty — STT transcription disabled")
     });
@@ -355,7 +355,7 @@ pub async fn cmd_voice_diagnostics(app: AppHandle) -> Vec<DiagResult> {
             "no STT URL — transcription disabled",
         ));
     } else {
-        r.push(DiagResult::pass("stt/configured", format!("{}", stt_url)));
+        r.push(DiagResult::pass("stt/configured", stt_url.to_string()));
 
         let base = base_url_of(&stt_url);
         let client = reqwest::Client::builder()

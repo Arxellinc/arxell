@@ -42,6 +42,7 @@ pub type ModelRef = Arc<()>;
 ///
 /// `enable_thinking` is forwarded to `render_chat_template`; pass `Some(false)`
 /// to disable the reasoning block on thinking-capable models (e.g. GLM-4).
+#[allow(clippy::too_many_arguments)]
 pub fn run_inference_stream(
     model: ModelRef,
     model_info: &ModelInfo,

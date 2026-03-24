@@ -21,7 +21,7 @@ static ACTIVE_PROXY_REQUESTS: AtomicUsize = AtomicUsize::new(0);
 
 /// Extract a named query parameter from a raw URI string.
 fn query_param(uri: &str, key: &str) -> Option<String> {
-    let query = uri.splitn(2, '?').nth(1)?;
+    let query = uri.split_once('?')?.1;
     for part in query.split('&') {
         let mut kv = part.splitn(2, '=');
         let k = kv.next()?;

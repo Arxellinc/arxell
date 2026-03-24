@@ -127,7 +127,10 @@ pub async fn cmd_models_list(state: State<'_, AppState>) -> Result<Vec<String>, 
     let msg = format!("Could not parse models from response: {}", body);
     log::warn!("{}", msg);
     logs::warn(&msg);
-    Err(format!("Could not parse models from response. Expected OpenAI format ({{data: [{{id: ...}}]}}) or Ollama format ({{models: [{{name: ...}}]}})"))
+    Err(
+        "Could not parse models from response. Expected OpenAI format ({data: [{id: ...}]}) or Ollama format ({models: [{name: ...}]})"
+            .to_string(),
+    )
 }
 
 #[tauri::command]

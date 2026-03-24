@@ -279,12 +279,7 @@ pub fn adopt_or_cleanup_server(state_file: &Path) -> Option<crate::LocalServerHa
 
 /// Find a free TCP port starting at `start`
 pub fn find_free_port(start: u16) -> Option<u16> {
-    for port in start..=65535 {
-        if std::net::TcpListener::bind(("127.0.0.1", port)).is_ok() {
-            return Some(port);
-        }
-    }
-    None
+    (start..=65535).find(|&port| std::net::TcpListener::bind(("127.0.0.1", port)).is_ok())
 }
 
 /// Start a llama-server subprocess and return a handle to manage it.
@@ -292,6 +287,7 @@ pub fn find_free_port(start: u16) -> Option<u16> {
 /// `state_file` — if provided, a JSON file is written there so the next app
 /// startup can call `adopt_or_cleanup_server` to reuse the still-running server
 /// instead of killing and reloading the model.
+#[allow(clippy::too_many_arguments)]
 pub fn start_llama_server(
     engine_id: &str,
     binary_path: &Path,

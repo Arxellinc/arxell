@@ -155,6 +155,7 @@ pub fn cmd_a2a_agent_cards_list(
 }
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub fn cmd_a2a_agent_card_create(
     app: AppHandle,
     state: State<'_, AppState>,
@@ -205,6 +206,7 @@ pub fn cmd_a2a_agent_card_create(
 }
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub fn cmd_a2a_agent_card_update(
     app: AppHandle,
     state: State<'_, AppState>,

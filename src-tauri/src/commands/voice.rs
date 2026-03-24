@@ -43,7 +43,7 @@ fn get_db_setting(app: &AppHandle, key: &str, default: &str) -> String {
 /// Expand `~` to the user's home directory.
 fn expand_home(path: &str) -> String {
     if path.starts_with("~/") {
-        if let Some(home) = std::env::var("HOME").ok() {
+        if let Ok(home) = std::env::var("HOME") {
             return format!("{}{}", home, &path[1..]);
         }
     }
@@ -88,9 +88,7 @@ fn python_interpreter_usable(python_bin: &str) -> bool {
     let mut cmd = Command::new(python_bin);
     cmd.args(["-c", "import encodings"]);
     apply_no_window(&mut cmd);
-    cmd.output()
-        .map(|o| o.status.success())
-        .unwrap_or(false)
+    cmd.output().map(|o| o.status.success()).unwrap_or(false)
 }
 
 fn kokoro_python_candidates(app_dir: &std::path::Path) -> Vec<std::path::PathBuf> {
@@ -105,7 +103,10 @@ fn kokoro_python_candidates(app_dir: &std::path::Path) -> Vec<std::path::PathBuf
     }
     #[cfg(not(target_os = "windows"))]
     {
-        vec![base.join("bin").join("python3"), base.join("bin").join("python")]
+        vec![
+            base.join("bin").join("python3"),
+            base.join("bin").join("python"),
+        ]
     }
 }
 
@@ -149,9 +150,7 @@ fn python_has_kokoro_runtime(python_bin: &str) -> bool {
     let mut cmd = Command::new(python_bin);
     cmd.args(["-c", "import kokoro_onnx, onnxruntime, numpy"]);
     apply_no_window(&mut cmd);
-    cmd.output()
-        .map(|o| o.status.success())
-        .unwrap_or(false)
+    cmd.output().map(|o| o.status.success()).unwrap_or(false)
 }
 
 async fn ensure_kokoro_python_path(app: &AppHandle) -> String {
@@ -183,7 +182,8 @@ fn resolved_kokoro_python_path(app: &AppHandle) -> String {
     }
     if let Ok(app_dir) = app.path().app_data_dir() {
         for candidate in kokoro_python_candidates(&app_dir) {
-            if candidate.exists() && python_interpreter_usable(candidate.to_string_lossy().as_ref()) {
+            if candidate.exists() && python_interpreter_usable(candidate.to_string_lossy().as_ref())
+            {
                 return candidate.to_string_lossy().to_string();
             }
         }
@@ -244,7 +244,10 @@ fn resolved_kokoro_model_path(app: &AppHandle) -> String {
         }
     }
     if let Ok(resource_dir) = app.path().resource_dir() {
-        for rel in ["resources/voice/model_quantized.onnx", "voice/model_quantized.onnx"] {
+        for rel in [
+            "resources/voice/model_quantized.onnx",
+            "voice/model_quantized.onnx",
+        ] {
             let candidate = resource_dir.join(rel);
             if candidate.exists() {
                 return candidate.to_string_lossy().to_string();
@@ -1207,8 +1210,8 @@ pub async fn cmd_stt_check_engines(app: AppHandle) -> SttEngineStatus {
                 && Path::new(&script).exists()
                 && local_stt::check_whisper(&python_bin)
         })
-            .await
-            .unwrap_or(false)
+        .await
+        .unwrap_or(false)
     };
 
     let external = !stt_url.is_empty() && {

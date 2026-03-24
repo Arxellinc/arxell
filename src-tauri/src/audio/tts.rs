@@ -421,9 +421,7 @@ pub fn check_espeak() -> bool {
         .stdout(Stdio::null())
         .stderr(Stdio::null());
     apply_no_window(&mut cmd);
-    cmd.status()
-        .map(|s| s.success())
-        .unwrap_or(false)
+    cmd.status().map(|s| s.success()).unwrap_or(false)
 }
 
 // ── Kokoro ────────────────────────────────────────────────────────────────────
@@ -508,10 +506,7 @@ pub fn check_kokoro(script_path: &str, python_bin: &str) -> bool {
         .stdout(Stdio::null())
         .stderr(Stdio::null());
     apply_no_window(&mut cmd);
-    cmd.status()
-        .map(|s| s.success())
-        .unwrap_or(false)
-        && !script_path.is_empty()
+    cmd.status().map(|s| s.success()).unwrap_or(false) && !script_path.is_empty()
 }
 
 /// Attempt to list available Kokoro voices by inspecting the loaded model object.
