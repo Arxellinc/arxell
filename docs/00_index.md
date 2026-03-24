@@ -29,6 +29,8 @@ arx is a local-first Rust + Tauri desktop application for AI chat, local model s
 - [rebuild/week1-salvage-audit.md](./rebuild/week1-salvage-audit.md): Current keep/wrap/rewrite/delete inventory for rebuild planning.
 - [rebuild/compatibility-matrix.md](./rebuild/compatibility-matrix.md): Cross-platform subsystem status and required smoke checks.
 - [rebuild/phase-gate-checklist.md](./rebuild/phase-gate-checklist.md): Exit criteria checklist for each rebuild phase.
+- [rebuild/migration-strategy.md](./rebuild/migration-strategy.md): Rebuild migration policy, rollback, and explicit unsupported cases for RC.
+- [rebuild/phase6-hardening-tracker.md](./rebuild/phase6-hardening-tracker.md): Phase 6 P0/P1 and CI-stability evidence log.
 
 ## Which Doc Do I Need?
 - Install and run quickly: `03`, then `04`

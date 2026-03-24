@@ -65,3 +65,31 @@ Phase 3 snapshot:
 
 Remaining gap to close Phase 3:
 - None for current Phase 3 checklist scope.
+
+Phase 4 snapshot:
+- [x] Tool runner enforces validation/timeout/cancellation in application layer (`crates/application/src/tool_runtime.rs`)
+- [x] Tier-1 tools pass contract tests (`help.workspace.read_file` and `help.workspace.list_dir` tests in `src-tauri/src/commands/tool_gateway.rs`)
+- [x] Tool call telemetry includes `tool_call_id` (`AppEvent::ToolCallStarted` / `ToolCallFinished` assertions in tool runtime tests)
+- [x] No tool directly mutates UI state (application-layer tools are contract-bound and UI-agnostic)
+
+Remaining gap to close Phase 4:
+- None for current Phase 4 checklist scope.
+
+Phase 5 snapshot:
+- [x] Retrieval path does not mutate memory (`RetrieveMemoryUseCase` reads via `MemoryRetriever` only)
+- [x] Extraction path guarded by feature flag (`ExtractMemoryUseCase` + `MemoryExtractionFlag`)
+- [x] Agent loop bounds enforced (step/tool/time limits in `RunBoundedAgentUseCase`)
+- [x] Deterministic replay artifacts available (`AgentReplayArtifact::to_json()`)
+
+Remaining gap to close Phase 5:
+- None for current Phase 5 checklist scope.
+
+Phase 6 snapshot:
+- [ ] No P0/P1 open issues (tracked in `docs/rebuild/phase6-hardening-tracker.md`)
+- [ ] CI stable for five consecutive days (evidence table in `docs/rebuild/phase6-hardening-tracker.md`)
+- [x] Migration strategy documented (`docs/rebuild/migration-strategy.md`)
+- [ ] Packaging and install smoke checks pass on all OSes (job `Package + Install Smoke` in `.github/workflows/rebuild-ci.yml`)
+
+Remaining gap to close Phase 6:
+- Collect five consecutive days of green rebuild CI + package/install smoke evidence.
+- Confirm no P0/P1 issues remain open at RC cut.

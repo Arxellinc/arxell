@@ -1,5 +1,12 @@
+use arx_application::{EventPublisher as AppEventPublisher, InMemoryToolRegistry, ToolRunInput, ToolRunner};
+use arx_domain::{
+    tool::ToolContext, AppEvent, CorrelationId, DomainError, RunId, Tool, ToolDescriptor,
+    ToolInput, ToolOutput,
+};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, OnceLock};
 use tauri::{AppHandle, State};
 
 use super::{
@@ -15,6 +22,12 @@ pub struct ToolInvokeRequest {
     pub mode: ToolMode,
     #[serde(default)]
     pub payload: serde_json::Value,
+    #[serde(default)]
+    pub correlation_id: Option<String>,
+    #[serde(default)]
+    pub run_id: Option<String>,
+    #[serde(default)]
+    pub tool_call_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -35,6 +48,7 @@ struct ToolPolicy {
 const SANDBOX_ONLY: &[ToolMode] = &[ToolMode::Sandbox];
 const SANDBOX_SHELL: &[ToolMode] = &[ToolMode::Sandbox, ToolMode::Shell];
 const SANDBOX_SHELL_ROOT: &[ToolMode] = &[ToolMode::Sandbox, ToolMode::Shell, ToolMode::Root];
+static NEXT_TOOL_CALL_SEQ: AtomicU64 = AtomicU64::new(1);
 
 const TOOL_POLICIES: &[ToolPolicy] = &[
     ToolPolicy {
@@ -382,7 +396,7 @@ struct BrowserSearchKeySetPayload {
     api_key: String,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct WorkspacePathPayload {
     path: String,
@@ -622,6 +636,173 @@ struct AgentWorkflowRunPayload {
     input: Option<serde_json::Value>,
     trigger_type: Option<String>,
     timeout_ms: Option<u64>,
+}
+
+struct GatewayEventPublisher;
+
+impl AppEventPublisher for GatewayEventPublisher {
+    fn publish(&self, event: AppEvent) -> Result<(), DomainError> {
+        match event {
+            AppEvent::ToolCallStarted {
+                correlation_id,
+                run_id,
+                tool_call_id,
+                tool_id,
+            } => {
+                logs::info(&format!(
+                    "[tool-call start] correlation_id={} run_id={} tool_call_id={} tool_id={}",
+                    correlation_id.as_str(),
+                    run_id.as_str(),
+                    tool_call_id,
+                    tool_id
+                ));
+            }
+            AppEvent::ToolCallFinished {
+                correlation_id,
+                run_id,
+                tool_call_id,
+            } => {
+                logs::info(&format!(
+                    "[tool-call finish] correlation_id={} run_id={} tool_call_id={}",
+                    correlation_id.as_str(),
+                    run_id.as_str(),
+                    tool_call_id
+                ));
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+}
+
+struct HelpListDirTool;
+
+impl Tool for HelpListDirTool {
+    fn descriptor(&self) -> &ToolDescriptor {
+        static DESCRIPTOR: OnceLock<ToolDescriptor> = OnceLock::new();
+        DESCRIPTOR.get_or_init(|| ToolDescriptor {
+            id: "help.workspace.list_dir".to_string(),
+            version: "1.0.0".to_string(),
+            description: "List a workspace directory and return child entries".to_string(),
+        })
+    }
+
+    fn execute(
+        &self,
+        _context: &dyn ToolContext,
+        input: ToolInput,
+    ) -> Result<ToolOutput, DomainError> {
+        let payload: WorkspacePathPayload = serde_json::from_str(&input.payload_json)
+            .map_err(|e| DomainError::validation("payload_json", format!("invalid JSON: {e}")))?;
+        if payload.path.trim().is_empty() {
+            return Err(DomainError::validation("path", "must not be empty"));
+        }
+        let entries = workspace::cmd_workspace_list_dir(payload.path).map_err(|reason| {
+            DomainError::Internal {
+                reason: format!("workspace.list_dir failed: {reason}"),
+            }
+        })?;
+        let payload_json = serde_json::to_string(&serde_json::json!({ "entries": entries }))
+            .map_err(|e| DomainError::Internal {
+                reason: format!("failed to serialize list_dir output: {e}"),
+            })?;
+        Ok(ToolOutput { payload_json })
+    }
+}
+
+struct HelpReadFileTool;
+
+impl Tool for HelpReadFileTool {
+    fn descriptor(&self) -> &ToolDescriptor {
+        static DESCRIPTOR: OnceLock<ToolDescriptor> = OnceLock::new();
+        DESCRIPTOR.get_or_init(|| ToolDescriptor {
+            id: "help.workspace.read_file".to_string(),
+            version: "1.0.0".to_string(),
+            description: "Read a workspace file and return text content".to_string(),
+        })
+    }
+
+    fn execute(
+        &self,
+        _context: &dyn ToolContext,
+        input: ToolInput,
+    ) -> Result<ToolOutput, DomainError> {
+        let payload: WorkspacePathPayload = serde_json::from_str(&input.payload_json)
+            .map_err(|e| DomainError::validation("payload_json", format!("invalid JSON: {e}")))?;
+        if payload.path.trim().is_empty() {
+            return Err(DomainError::validation("path", "must not be empty"));
+        }
+        let content = workspace::cmd_workspace_read_file(payload.path).map_err(|reason| {
+            DomainError::Internal {
+                reason: format!("workspace.read_file failed: {reason}"),
+            }
+        })?;
+        let payload_json = serde_json::to_string(&serde_json::json!({ "content": content }))
+            .map_err(|e| DomainError::Internal {
+                reason: format!("failed to serialize read_file output: {e}"),
+            })?;
+        Ok(ToolOutput { payload_json })
+    }
+}
+
+fn build_tier1_registry() -> InMemoryToolRegistry {
+    let mut registry = InMemoryToolRegistry::default();
+    registry.register(Arc::new(HelpListDirTool));
+    registry.register(Arc::new(HelpReadFileTool));
+    registry
+}
+
+fn resolve_tool_run_ids(
+    request: &ToolInvokeRequest,
+) -> Result<(CorrelationId, RunId, String), String> {
+    let seq = NEXT_TOOL_CALL_SEQ.fetch_add(1, Ordering::Relaxed);
+    let correlation_raw = request
+        .correlation_id
+        .clone()
+        .unwrap_or_else(|| format!("tool-corr-{seq}"));
+    let run_raw = request
+        .run_id
+        .clone()
+        .unwrap_or_else(|| format!("tool-run-{seq}"));
+    let tool_call_id = request
+        .tool_call_id
+        .clone()
+        .unwrap_or_else(|| format!("tool-call-{seq}"));
+
+    let correlation_id =
+        CorrelationId::new(correlation_raw).map_err(|e| format!("invalid correlation_id: {e}"))?;
+    let run_id = RunId::new(run_raw).map_err(|e| format!("invalid run_id: {e}"))?;
+    Ok((correlation_id, run_id, tool_call_id))
+}
+
+fn run_tier1_tool(
+    request: &ToolInvokeRequest,
+    tool_id: &str,
+    payload_json: String,
+    timeout_ms: Option<u64>,
+) -> Result<serde_json::Value, String> {
+    let (correlation_id, run_id, tool_call_id) = resolve_tool_run_ids(request)?;
+    let registry = build_tier1_registry();
+    let publisher = GatewayEventPublisher;
+    let runner = ToolRunner {
+        registry: &registry,
+        event_publisher: &publisher,
+    };
+    let output = runner
+        .run_with_cancel_check(
+            ToolRunInput {
+                correlation_id,
+                run_id,
+                tool_call_id,
+                tool_id: tool_id.to_string(),
+                payload_json,
+                timeout_ms,
+            },
+            &|| false,
+        )
+        .map_err(|e| format!("tool runtime failure: {e}"))?;
+    serde_json::from_str::<serde_json::Value>(&output.payload_json)
+        .map_err(|e| format!("tool runtime returned invalid JSON payload: {e}"))
 }
 
 fn mode_allowed(mode: &ToolMode, allowed: &[ToolMode]) -> bool {
@@ -902,9 +1083,17 @@ pub async fn cmd_tool_invoke(
             let root = payload.root_guard.as_ref().unwrap();
             ensure_within_help_docs_root_existing(Path::new(&payload.path), Path::new(root))?;
 
-            let entries = workspace::cmd_workspace_list_dir(payload.path)?;
+            let runtime_payload = serde_json::to_string(&payload).map_err(|e| {
+                format!("Failed to serialize workspace.list_dir payload for runner: {e}")
+            })?;
+            let output = run_tier1_tool(
+                &request,
+                "help.workspace.list_dir",
+                runtime_payload,
+                Some(5_000),
+            )?;
             audit_allow(&request);
-            Ok(serde_json::json!({ "entries": entries }))
+            Ok(output)
         }
         ("help", "workspace.read_file") => {
             let payload: WorkspacePathPayload = serde_json::from_value(request.payload.clone())
@@ -923,9 +1112,17 @@ pub async fn cmd_tool_invoke(
             let root = payload.root_guard.as_ref().unwrap();
             ensure_within_help_docs_root_existing(Path::new(&payload.path), Path::new(root))?;
 
-            let content = workspace::cmd_workspace_read_file(payload.path)?;
+            let runtime_payload = serde_json::to_string(&payload).map_err(|e| {
+                format!("Failed to serialize workspace.read_file payload for runner: {e}")
+            })?;
+            let output = run_tier1_tool(
+                &request,
+                "help.workspace.read_file",
+                runtime_payload,
+                Some(5_000),
+            )?;
             audit_allow(&request);
-            Ok(serde_json::json!({ "content": content }))
+            Ok(output)
         }
         ("terminal", "terminal.resolve_path") => {
             let payload: TerminalResolvePayload = serde_json::from_value(request.payload.clone())
@@ -1631,6 +1828,20 @@ pub async fn cmd_tool_invoke(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    struct NoopToolContext;
+
+    impl ToolContext for NoopToolContext {
+        fn deadline_ms(&self) -> Option<u64> {
+            None
+        }
+
+        fn is_cancelled(&self) -> bool {
+            false
+        }
+    }
 
     #[test]
     fn test_lookup_policy() {
@@ -1687,5 +1898,101 @@ mod tests {
             resolve_coder_executable(Some(&"/usr/local/bin/codex".to_string())),
             "/usr/local/bin/codex"
         );
+    }
+
+    #[test]
+    fn test_resolve_tool_run_ids_generates_defaults() {
+        let request = ToolInvokeRequest {
+            tool_id: "help".to_string(),
+            action: "workspace.read_file".to_string(),
+            mode: ToolMode::Sandbox,
+            payload: serde_json::json!({}),
+            correlation_id: None,
+            run_id: None,
+            tool_call_id: None,
+        };
+        let (correlation_id, run_id, tool_call_id) = resolve_tool_run_ids(&request).unwrap();
+        assert!(correlation_id.as_str().starts_with("tool-corr-"));
+        assert!(run_id.as_str().starts_with("tool-run-"));
+        assert!(tool_call_id.starts_with("tool-call-"));
+    }
+
+    #[test]
+    fn test_resolve_tool_run_ids_rejects_invalid_ids() {
+        let request = ToolInvokeRequest {
+            tool_id: "help".to_string(),
+            action: "workspace.read_file".to_string(),
+            mode: ToolMode::Sandbox,
+            payload: serde_json::json!({}),
+            correlation_id: Some("".to_string()),
+            run_id: Some("run-1".to_string()),
+            tool_call_id: Some("call-1".to_string()),
+        };
+        let err = resolve_tool_run_ids(&request).unwrap_err();
+        assert!(err.contains("invalid correlation_id"));
+    }
+
+    #[test]
+    fn contract_help_read_file_tool_reads_content() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("arx-tool-gateway-{unique}"));
+        fs::create_dir_all(&root).unwrap();
+        let file_path = root.join("sample.txt");
+        fs::write(&file_path, "hello-tier1").unwrap();
+
+        let tool = HelpReadFileTool;
+        let output = tool
+            .execute(
+                &NoopToolContext,
+                ToolInput {
+                    payload_json: serde_json::json!({
+                        "path": file_path.to_string_lossy().to_string(),
+                        "rootGuard": root.to_string_lossy().to_string()
+                    })
+                    .to_string(),
+                },
+            )
+            .unwrap();
+        let value: serde_json::Value = serde_json::from_str(&output.payload_json).unwrap();
+        assert_eq!(value.get("content").and_then(|v| v.as_str()), Some("hello-tier1"));
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn contract_help_list_dir_tool_lists_children() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("arx-tool-gateway-list-{unique}"));
+        fs::create_dir_all(&root).unwrap();
+        fs::write(root.join("a.txt"), "x").unwrap();
+
+        let tool = HelpListDirTool;
+        let output = tool
+            .execute(
+                &NoopToolContext,
+                ToolInput {
+                    payload_json: serde_json::json!({
+                        "path": root.to_string_lossy().to_string(),
+                        "rootGuard": root.to_string_lossy().to_string()
+                    })
+                    .to_string(),
+                },
+            )
+            .unwrap();
+        let value: serde_json::Value = serde_json::from_str(&output.payload_json).unwrap();
+        let entries = value
+            .get("entries")
+            .and_then(|v| v.as_array())
+            .cloned()
+            .unwrap_or_default();
+        assert!(!entries.is_empty());
+
+        let _ = fs::remove_dir_all(root);
     }
 }
