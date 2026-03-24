@@ -5,20 +5,25 @@ import type {
   Project,
 } from "../types";
 import type { ToolInvokeRequest } from "../core/tooling/types";
+import { createCorrelationIdFrom, typedBridgeEnabledFrom } from "./bridgeRuntime.js";
 
 const typedBridgeEnabled = (): boolean => {
   const envEnabled = import.meta.env.VITE_TYPED_BRIDGE_ENABLED === "true";
   const localEnabled =
     typeof localStorage !== "undefined" &&
     localStorage.getItem("typed_bridge_enabled") === "true";
-  return envEnabled || localEnabled;
+  return typedBridgeEnabledFrom(envEnabled, localEnabled);
 };
 
 const createCorrelationId = (): string => {
-  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
-    return crypto.randomUUID();
-  }
-  return `corr-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  return createCorrelationIdFrom({
+    randomUuid:
+      typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+        ? crypto.randomUUID.bind(crypto)
+        : undefined,
+    now: () => Date.now(),
+    randomHex: () => Math.random().toString(16).slice(2),
+  });
 };
 
 // Settings

@@ -48,6 +48,9 @@ jobs:
       - name: Typecheck frontend
         run: npm run typecheck
 
+      - name: Bridge adapter tests
+        run: npm run test:bridge
+
       - name: Build frontend
         run: npm run build
 

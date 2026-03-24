@@ -6,6 +6,7 @@
     "dev": "vite",
     "start-dev": "npm run tauri dev",
     "typecheck": "tsc --noEmit",
+    "test:bridge": "node --test scripts/tests/bridgeRuntime.test.mjs",
     "build": "tsc && vite build && node scripts/prune_dist_assets.mjs",
     "preview": "vite preview",
     "tauri": "tauri",
