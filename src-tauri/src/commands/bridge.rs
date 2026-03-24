@@ -243,3 +243,116 @@ pub fn cmd_bridge_regenerate_last_prompt(
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn bridge_event_command_accepted_serializes_contract_shape() {
+        let event = BridgeEvent::CommandAccepted {
+            correlation_id: "corr-123".to_string(),
+            command: "send_message".to_string(),
+        };
+
+        let value = serde_json::to_value(event).expect("serialize bridge event");
+        assert_eq!(
+            value,
+            json!({
+                "type": "command_accepted",
+                "correlation_id": "corr-123",
+                "command": "send_message"
+            })
+        );
+    }
+
+    #[test]
+    fn bridge_event_command_failed_serializes_contract_shape() {
+        let event = BridgeEvent::CommandFailed {
+            correlation_id: "corr-789".to_string(),
+            command: "cancel_run".to_string(),
+            message: "run not found".to_string(),
+        };
+
+        let value = serde_json::to_value(event).expect("serialize bridge event");
+        assert_eq!(
+            value,
+            json!({
+                "type": "command_failed",
+                "correlation_id": "corr-789",
+                "command": "cancel_run",
+                "message": "run not found"
+            })
+        );
+    }
+
+    #[test]
+    fn send_message_result_serializes_camel_case_user_message() {
+        let result = SendMessageResult {
+            user_message: Message {
+                id: "m-1".to_string(),
+                conversation_id: "c-1".to_string(),
+                role: "user".to_string(),
+                content: "hello".to_string(),
+                created_at: 1_700_000_000_000,
+            },
+        };
+
+        let value = serde_json::to_value(result).expect("serialize send result");
+        assert_eq!(
+            value,
+            json!({
+                "userMessage": {
+                    "id": "m-1",
+                    "conversation_id": "c-1",
+                    "role": "user",
+                    "content": "hello",
+                    "created_at": 1700000000000_i64
+                }
+            })
+        );
+    }
+
+    #[test]
+    fn get_messages_result_serializes_camel_case_messages() {
+        let result = GetMessagesResult {
+            messages: vec![Message {
+                id: "m-2".to_string(),
+                conversation_id: "c-2".to_string(),
+                role: "assistant".to_string(),
+                content: "hi".to_string(),
+                created_at: 1_700_000_000_001,
+            }],
+        };
+
+        let value = serde_json::to_value(result).expect("serialize get messages result");
+        assert_eq!(
+            value,
+            json!({
+                "messages": [{
+                    "id": "m-2",
+                    "conversation_id": "c-2",
+                    "role": "assistant",
+                    "content": "hi",
+                    "created_at": 1700000000001_i64
+                }]
+            })
+        );
+    }
+
+    #[test]
+    fn regenerate_last_prompt_result_serializes_camel_case_prompt() {
+        let result = RegenerateLastPromptResult {
+            prompt: "what is next?".to_string(),
+        };
+
+        let value = serde_json::to_value(result).expect("serialize regenerate result");
+        assert_eq!(
+            value,
+            json!({
+                "prompt": "what is next?"
+            })
+        );
+    }
+}
