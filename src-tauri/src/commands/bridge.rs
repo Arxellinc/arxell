@@ -84,16 +84,19 @@ fn emit_bridge_event(app: &AppHandle, event: BridgeEvent) {
     let _ = app.emit("bridge:event", event);
 }
 
+fn truthy_flag(value: &str) -> bool {
+    matches!(
+        value.trim().to_ascii_lowercase().as_str(),
+        "1" | "true" | "yes" | "on"
+    )
+}
+
+fn resolve_bridge_application_enabled(env_value: Option<&str>, db_value: Option<&str>) -> bool {
+    env_value.map(truthy_flag).unwrap_or(false) || db_value.map(truthy_flag).unwrap_or(false)
+}
+
 fn bridge_application_enabled(state: &AppState) -> bool {
-    if std::env::var("ARX_BRIDGE_APPLICATION_ENABLED")
-        .map(|v| {
-            let n = v.trim().to_ascii_lowercase();
-            n == "1" || n == "true" || n == "yes" || n == "on"
-        })
-        .unwrap_or(false)
-    {
-        return true;
-    }
+    let env_value = std::env::var("ARX_BRIDGE_APPLICATION_ENABLED").ok();
 
     if let Ok(db) = state.db.lock() {
         let setting: Result<Option<String>, rusqlite::Error> = db
@@ -105,15 +108,11 @@ fn bridge_application_enabled(state: &AppState) -> bool {
             .optional();
 
         if let Ok(Some(value)) = setting {
-            let normalized = value.trim().to_ascii_lowercase();
-            return normalized == "1"
-                || normalized == "true"
-                || normalized == "yes"
-                || normalized == "on";
+            return resolve_bridge_application_enabled(env_value.as_deref(), Some(&value));
         }
     }
 
-    false
+    resolve_bridge_application_enabled(env_value.as_deref(), None)
 }
 
 fn get_setting(state: &AppState, key: &str, default: &str) -> String {
@@ -816,5 +815,38 @@ mod tests {
                 "prompt": "what is next?"
             })
         );
+    }
+
+    #[test]
+    fn bridge_flag_contract_env_true_enables_application_path() {
+        assert!(resolve_bridge_application_enabled(Some("true"), None));
+        assert!(resolve_bridge_application_enabled(Some("1"), None));
+        assert!(resolve_bridge_application_enabled(Some("on"), None));
+        assert!(resolve_bridge_application_enabled(Some("yes"), None));
+    }
+
+    #[test]
+    fn bridge_flag_contract_db_true_enables_application_path() {
+        assert!(resolve_bridge_application_enabled(None, Some("true")));
+        assert!(resolve_bridge_application_enabled(None, Some("1")));
+        assert!(resolve_bridge_application_enabled(None, Some("on")));
+        assert!(resolve_bridge_application_enabled(None, Some("yes")));
+    }
+
+    #[test]
+    fn bridge_flag_contract_false_when_both_sources_false() {
+        assert!(!resolve_bridge_application_enabled(None, None));
+        assert!(!resolve_bridge_application_enabled(Some("false"), None));
+        assert!(!resolve_bridge_application_enabled(None, Some("false")));
+        assert!(!resolve_bridge_application_enabled(Some("0"), Some("off")));
+    }
+
+    #[test]
+    fn bridge_flag_contract_env_takes_no_special_precedence_over_true_db() {
+        assert!(resolve_bridge_application_enabled(
+            Some("false"),
+            Some("true")
+        ));
+        assert!(resolve_bridge_application_enabled(Some("0"), Some("on")));
     }
 }
