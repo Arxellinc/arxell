@@ -272,4 +272,50 @@ mod tests {
             2
         );
     }
+
+    #[test]
+    fn contract_send_message_emits_chat_started_before_token_events() {
+        let message_store = FakeMessageStore::new();
+        let run_store = FakeRunStore::new();
+        let event_publisher = FakeEventPublisher::new();
+        let provider = FakeProvider {
+            deltas: vec!["a".to_string(), "b".to_string()],
+            response: "ab".to_string(),
+        };
+
+        let use_case = SendMessageUseCase {
+            message_store: &message_store,
+            run_store: &run_store,
+            event_publisher: &event_publisher,
+            provider: &provider,
+        };
+
+        let input = SendMessageInput {
+            correlation_id: CorrelationId::new("corr-contract-1").unwrap(),
+            run_id: RunId::new("run-contract-1").unwrap(),
+            conversation_id: ConversationId::new("c-contract-1").unwrap(),
+            user_message_id: MessageId::new("m-user-contract").unwrap(),
+            assistant_message_id: MessageId::new("m-assistant-contract").unwrap(),
+            model: "gpt-x".to_string(),
+            user_content: "contract".to_string(),
+            system_prompt: None,
+        };
+
+        let _ = use_case.execute(input).unwrap();
+
+        let events = event_publisher.events.lock().unwrap();
+        let chat_started_idx = events
+            .iter()
+            .position(|e| matches!(e, AppEvent::ChatStarted { .. }))
+            .expect("chat started event is required");
+        let first_token_idx = events
+            .iter()
+            .position(|e| matches!(e, AppEvent::TokenReceived { .. }))
+            .expect("token event is required");
+
+        assert!(
+            chat_started_idx < first_token_idx,
+            "chat_started must be emitted before any token"
+        );
+    }
 }

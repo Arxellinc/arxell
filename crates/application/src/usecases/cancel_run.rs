@@ -58,4 +58,19 @@ mod tests {
             .unwrap();
         assert!(output.cancelled);
     }
+
+    #[test]
+    fn contract_cancel_run_propagates_false_from_store() {
+        let use_case = CancelRunUseCase {
+            run_store: &FakeRunStore {
+                cancel_result: false,
+            },
+        };
+        let output = use_case
+            .execute(CancelRunInput {
+                run_id: RunId::new("run-contract-2").unwrap(),
+            })
+            .unwrap();
+        assert!(!output.cancelled);
+    }
 }

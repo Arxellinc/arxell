@@ -117,4 +117,20 @@ mod tests {
         let input = UserInput::new(convo, "hello").unwrap();
         assert_eq!(input.content, "hello");
     }
+
+    #[test]
+    fn contract_id_constructors_reject_whitespace_only_values() {
+        assert!(ConversationId::new("   ").is_err());
+        assert!(MessageId::new("\t").is_err());
+        assert!(RunId::new("\n").is_err());
+        assert!(CorrelationId::new(" ").is_err());
+    }
+
+    #[test]
+    fn contract_chat_message_requires_non_empty_content() {
+        let id = MessageId::new("m-contract").unwrap();
+        let convo = ConversationId::new("c-contract").unwrap();
+        let msg = ChatMessage::new(id, convo, MessageRole::User, "");
+        assert!(msg.is_err());
+    }
 }
