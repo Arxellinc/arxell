@@ -37,7 +37,8 @@ coverage/
 .nyc_output/
 *.tsbuildinfo
 
-# Icons: track only curated set used by frontend/src/icons/index.ts
+# BEGIN AUTO-GENERATED ICON ALLOWLIST
+# Icons: auto-managed from frontend/src/icons/index.ts
 frontend/src/icons/*.svg
 !frontend/src/icons/bot.svg
 !frontend/src/icons/chevron-left.svg
@@ -60,3 +61,4 @@ frontend/src/icons/*.svg
 !frontend/src/icons/sun.svg
 !frontend/src/icons/volume-2.svg
 !frontend/src/icons/wrench.svg
+# END AUTO-GENERATED ICON ALLOWLIST

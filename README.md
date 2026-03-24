@@ -37,6 +37,10 @@ This directory contains a clean architecture foundation for the new desktop AI a
 ## Run Full UI
 - `./scripts/start-full-ui.sh` starts frontend (`frontend`) + desktop runtime (`src-tauri`) together.
 
+## Icon Allowlist Sync
+- Add new icon imports in `frontend/src/icons/index.ts`.
+- Run `npm run icons:sync-ignore` from `frontend/` to refresh the `.gitignore` icon allowlist.
+
 ## Next implementation order
 1. Expand registry with isolated tools one-by-one.
 2. Integrate memory extraction/retrieval through dedicated memory service.
