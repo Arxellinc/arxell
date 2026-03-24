@@ -24,6 +24,8 @@ arx is a local-first Rust + Tauri desktop application for AI chat, local model s
 - [22_public_launch_checklist.md](./22_public_launch_checklist.md): Pre-announcement release and security checklist for open-source launch.
 - [23_github_security_verification.md](./23_github_security_verification.md): Manual GitHub settings audit for branch protection, required checks, and access controls.
 - [guardrails.md](./guardrails.md): Modular tool guardrails, capability modes, gateway policy, and console boundaries.
+- [rebuild-plan.md](./rebuild-plan.md): Six-week rebuild schedule, phase gates, testing pyramid, and cross-platform hardening policy.
+- [adr/README.md](./adr/README.md): Architecture Decision Record index and process.
 
 ## Which Doc Do I Need?
 - Install and run quickly: `03`, then `04`
@@ -33,3 +35,4 @@ arx is a local-first Rust + Tauri desktop application for AI chat, local model s
 - Contribute code: `09`, `10`, `11`
 - Operate and maintain over time: `13`, `14`
 - Customize look/feel: `12`
+- Follow rebuild execution and governance: `rebuild-plan`, `adr/`

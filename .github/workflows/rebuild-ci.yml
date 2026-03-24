@@ -1,0 +1,154 @@
+name: Rebuild CI
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - ".github/workflows/rebuild-ci.yml"
+      - "docs/rebuild-plan.md"
+      - "docs/adr/**"
+      - "src/**"
+      - "src-tauri/**"
+      - "crates/**"
+      - "apps/**"
+      - "package.json"
+      - "package-lock.json"
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/rebuild-ci.yml"
+      - "src/**"
+      - "src-tauri/**"
+      - "crates/**"
+      - "apps/**"
+      - "package.json"
+      - "package-lock.json"
+
+concurrency:
+  group: rebuild-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  frontend-quality:
+    name: Frontend Quality
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck frontend
+        run: npm run typecheck
+
+      - name: Build frontend
+        run: npm run build
+
+  rust-quality:
+    name: Rust Quality
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Linux deps for Tauri
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libgtk-3-dev \
+            libsoup-3.0-dev \
+            libwebkit2gtk-4.1-dev \
+            libjavascriptcoregtk-4.1-dev \
+            libasound2-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            pkg-config \
+            build-essential \
+            curl \
+            wget \
+            file \
+            libssl-dev
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Cargo fmt check
+        run: cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check
+
+      - name: Cargo clippy (deny warnings)
+        run: cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
+
+      - name: Cargo test
+        run: cargo test --manifest-path src-tauri/Cargo.toml --locked --no-fail-fast
+
+      - name: Contract tests (script hook)
+        shell: bash
+        run: |
+          if [ -x scripts/ci/run-contract-tests.sh ]; then
+            scripts/ci/run-contract-tests.sh
+          else
+            echo "No scripts/ci/run-contract-tests.sh yet; skipping."
+          fi
+
+      - name: Integration tests (script hook)
+        shell: bash
+        run: |
+          if [ -x scripts/ci/run-integration-tests.sh ]; then
+            scripts/ci/run-integration-tests.sh
+          else
+            echo "No scripts/ci/run-integration-tests.sh yet; skipping."
+          fi
+
+      - name: Upload trace artifacts (optional)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rebuild-traces-linux
+          path: artifacts/traces
+          if-no-files-found: ignore
+
+  platform-smoke:
+    name: Platform Smoke (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Cargo check smoke
+        run: cargo check --manifest-path src-tauri/Cargo.toml --locked
+
+      - name: Platform smoke script hook
+        shell: bash
+        run: |
+          if [ -x scripts/ci/platform-smoke.sh ]; then
+            scripts/ci/platform-smoke.sh
+          else
+            echo "No scripts/ci/platform-smoke.sh yet; skipping."
+          fi
+
