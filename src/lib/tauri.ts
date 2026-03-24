@@ -6,6 +6,21 @@ import type {
 } from "../types";
 import type { ToolInvokeRequest } from "../core/tooling/types";
 
+const typedBridgeEnabled = (): boolean => {
+  const envEnabled = import.meta.env.VITE_TYPED_BRIDGE_ENABLED === "true";
+  const localEnabled =
+    typeof localStorage !== "undefined" &&
+    localStorage.getItem("typed_bridge_enabled") === "true";
+  return envEnabled || localEnabled;
+};
+
+const createCorrelationId = (): string => {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+  return `corr-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+};
+
 // Settings
 export const settingsGet = (key: string) =>
   invoke<string | null>("cmd_settings_get", { key });
@@ -266,8 +281,23 @@ export const chatStream = (
   assistantMsgId?: string,
   screenshotBase64?: string,
   modeId?: "chat" | "voice" | "tools" | "full"
-) =>
-  invoke<Message>("cmd_chat_stream", {
+) => {
+  if (typedBridgeEnabled()) {
+    return invoke<{ userMessage: Message }>("cmd_bridge_send_message", {
+      payload: {
+        correlationId: createCorrelationId(),
+        conversationId,
+        content,
+        extraContext,
+        thinkingEnabled,
+        assistantMsgId,
+        screenshotBase64,
+        modeId,
+      },
+    }).then((res) => res.userMessage);
+  }
+
+  return invoke<Message>("cmd_chat_stream", {
     conversationId,
     content,
     extraContext,
@@ -276,9 +306,17 @@ export const chatStream = (
     screenshotBase64,
     modeId,
   });
+};
 
-
-export const chatCancel = () => invoke<void>("cmd_chat_cancel");
+export const chatCancel = () =>
+  typedBridgeEnabled()
+    ? invoke<void>("cmd_bridge_cancel_run", {
+        payload: {
+          correlationId: createCorrelationId(),
+          runId: null,
+        },
+      })
+    : invoke<void>("cmd_chat_cancel");
 
 export const prefillWarmup = (conversationId: string, partialText?: string) =>
   invoke<void>("cmd_prefill_warmup", { conversationId, partialText });
