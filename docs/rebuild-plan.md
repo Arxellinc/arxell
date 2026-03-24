@@ -135,4 +135,6 @@ If instability occurs, disable subsystem without blocking core chat.
 - ADR template: `docs/adr/000-template.md`
 - Initial ADRs: `docs/adr/001-004`
 - CI skeleton: `.github/workflows/rebuild-ci.yml`
-
+- Week 1 salvage audit: `docs/rebuild/week1-salvage-audit.md`
+- Compatibility matrix: `docs/rebuild/compatibility-matrix.md`
+- Phase-gate checklist: `docs/rebuild/phase-gate-checklist.md`

@@ -26,6 +26,9 @@ arx is a local-first Rust + Tauri desktop application for AI chat, local model s
 - [guardrails.md](./guardrails.md): Modular tool guardrails, capability modes, gateway policy, and console boundaries.
 - [rebuild-plan.md](./rebuild-plan.md): Six-week rebuild schedule, phase gates, testing pyramid, and cross-platform hardening policy.
 - [adr/README.md](./adr/README.md): Architecture Decision Record index and process.
+- [rebuild/week1-salvage-audit.md](./rebuild/week1-salvage-audit.md): Current keep/wrap/rewrite/delete inventory for rebuild planning.
+- [rebuild/compatibility-matrix.md](./rebuild/compatibility-matrix.md): Cross-platform subsystem status and required smoke checks.
+- [rebuild/phase-gate-checklist.md](./rebuild/phase-gate-checklist.md): Exit criteria checklist for each rebuild phase.
 
 ## Which Doc Do I Need?
 - Install and run quickly: `03`, then `04`
