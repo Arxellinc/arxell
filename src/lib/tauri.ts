@@ -327,13 +327,34 @@ export const prefillWarmup = (conversationId: string, partialText?: string) =>
   invoke<void>("cmd_prefill_warmup", { conversationId, partialText });
 
 export const chatGetMessages = (conversationId: string) =>
-  invoke<Message[]>("cmd_chat_get_messages", { conversationId });
+  typedBridgeEnabled()
+    ? invoke<{ messages: Message[] }>("cmd_bridge_get_messages", {
+        payload: {
+          correlationId: createCorrelationId(),
+          conversationId,
+        },
+      }).then((res) => res.messages)
+    : invoke<Message[]>("cmd_chat_get_messages", { conversationId });
 
 export const chatClear = (conversationId: string) =>
-  invoke<void>("cmd_chat_clear", { conversationId });
+  typedBridgeEnabled()
+    ? invoke<void>("cmd_bridge_clear_conversation", {
+        payload: {
+          correlationId: createCorrelationId(),
+          conversationId,
+        },
+      })
+    : invoke<void>("cmd_chat_clear", { conversationId });
 
 export const chatRegenerateLastPrompt = (conversationId: string) =>
-  invoke<string>("cmd_chat_regenerate_last_prompt", { conversationId });
+  typedBridgeEnabled()
+    ? invoke<{ prompt: string }>("cmd_bridge_regenerate_last_prompt", {
+        payload: {
+          correlationId: createCorrelationId(),
+          conversationId,
+        },
+      }).then((res) => res.prompt)
+    : invoke<string>("cmd_chat_regenerate_last_prompt", { conversationId });
 
 export const delegateModelStream = (params: {
   delegationId: string;

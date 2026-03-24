@@ -34,6 +34,25 @@ pub struct CancelRunCommand {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConversationCommand {
+    pub correlation_id: String,
+    pub conversation_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GetMessagesResult {
+    pub messages: Vec<Message>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RegenerateLastPromptResult {
+    pub prompt: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum BridgeEvent {
     CommandAccepted {
@@ -121,6 +140,102 @@ pub fn cmd_bridge_cancel_run(
                 BridgeEvent::CommandFailed {
                     correlation_id: payload.correlation_id,
                     command: "cancel_run".to_string(),
+                    message: message.clone(),
+                },
+            );
+            Err(message)
+        }
+    }
+}
+
+#[tauri::command]
+pub fn cmd_bridge_get_messages(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    payload: ConversationCommand,
+) -> Result<GetMessagesResult, String> {
+    let result = chat::cmd_chat_get_messages(state, payload.conversation_id);
+    match result {
+        Ok(messages) => {
+            emit_bridge_event(
+                &app,
+                BridgeEvent::CommandAccepted {
+                    correlation_id: payload.correlation_id,
+                    command: "get_messages".to_string(),
+                },
+            );
+            Ok(GetMessagesResult { messages })
+        }
+        Err(message) => {
+            emit_bridge_event(
+                &app,
+                BridgeEvent::CommandFailed {
+                    correlation_id: payload.correlation_id,
+                    command: "get_messages".to_string(),
+                    message: message.clone(),
+                },
+            );
+            Err(message)
+        }
+    }
+}
+
+#[tauri::command]
+pub fn cmd_bridge_clear_conversation(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    payload: ConversationCommand,
+) -> Result<(), String> {
+    let result = chat::cmd_chat_clear(state, payload.conversation_id);
+    match result {
+        Ok(()) => {
+            emit_bridge_event(
+                &app,
+                BridgeEvent::CommandAccepted {
+                    correlation_id: payload.correlation_id,
+                    command: "clear_conversation".to_string(),
+                },
+            );
+            Ok(())
+        }
+        Err(message) => {
+            emit_bridge_event(
+                &app,
+                BridgeEvent::CommandFailed {
+                    correlation_id: payload.correlation_id,
+                    command: "clear_conversation".to_string(),
+                    message: message.clone(),
+                },
+            );
+            Err(message)
+        }
+    }
+}
+
+#[tauri::command]
+pub fn cmd_bridge_regenerate_last_prompt(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    payload: ConversationCommand,
+) -> Result<RegenerateLastPromptResult, String> {
+    let result = chat::cmd_chat_regenerate_last_prompt(state, payload.conversation_id);
+    match result {
+        Ok(prompt) => {
+            emit_bridge_event(
+                &app,
+                BridgeEvent::CommandAccepted {
+                    correlation_id: payload.correlation_id,
+                    command: "regenerate_last_prompt".to_string(),
+                },
+            );
+            Ok(RegenerateLastPromptResult { prompt })
+        }
+        Err(message) => {
+            emit_bridge_event(
+                &app,
+                BridgeEvent::CommandFailed {
+                    correlation_id: payload.correlation_id,
+                    command: "regenerate_last_prompt".to_string(),
                     message: message.clone(),
                 },
             );
