@@ -1,5 +1,6 @@
 pub mod a2a;
 pub mod a2a_workflow;
+pub mod bridge;
 pub mod browser;
 pub mod chat;
 pub mod coder_runtime;

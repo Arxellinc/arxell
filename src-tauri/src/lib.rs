@@ -1383,6 +1383,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::chat::cmd_chat_stream,
             commands::chat::cmd_chat_cancel,
+            commands::bridge::cmd_bridge_send_message,
+            commands::bridge::cmd_bridge_cancel_run,
             commands::chat::cmd_prefill_warmup,
             commands::chat::cmd_chat_get_messages,
             commands::chat::cmd_chat_clear,
