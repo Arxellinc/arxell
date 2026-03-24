@@ -10,7 +10,7 @@ pub use command::AppCommand;
 pub use error::DomainError;
 pub use event::AppEvent;
 pub use memory::{MemoryCandidate, MemoryItem, MemoryRetriever, MemoryStore};
-pub use provider::{ProviderRequest, ProviderResponse, TokenSink};
+pub use provider::{ChatProvider, ProviderRequest, ProviderResponse, TokenSink};
 pub use tool::{Tool, ToolDescriptor, ToolInput, ToolOutput};
 pub use types::{
     ChatMessage, ConversationId, CorrelationId, MessageId, MessageRole, RunId, UserInput,

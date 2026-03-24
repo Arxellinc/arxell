@@ -1,0 +1,13 @@
+[package]
+name = "arx-application"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Application orchestration layer for Arx rebuild"
+
+[lib]
+name = "arx_application"
+path = "src/lib.rs"
+
+[dependencies]
+arx-domain = { path = "../domain" }

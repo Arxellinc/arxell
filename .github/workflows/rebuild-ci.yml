@@ -106,6 +106,17 @@ jobs:
             echo "No crates/domain/Cargo.toml yet; skipping."
           fi
 
+      - name: Application crate quality (if present)
+        shell: bash
+        run: |
+          if [ -f crates/application/Cargo.toml ]; then
+            cargo fmt --manifest-path crates/application/Cargo.toml --all -- --check
+            cargo clippy --manifest-path crates/application/Cargo.toml --all-targets -- -D warnings
+            cargo test --manifest-path crates/application/Cargo.toml
+          else
+            echo "No crates/application/Cargo.toml yet; skipping."
+          fi
+
       - name: Contract tests (script hook)
         shell: bash
         run: |
