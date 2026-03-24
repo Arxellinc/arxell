@@ -3,18 +3,32 @@ set -euo pipefail
 
 echo "[contract-tests] starting"
 
-if [[ -f "Cargo.toml" ]] && [[ -d "crates" ]]; then
-  echo "[contract-tests] workspace crates detected, running tagged contract tests"
-  cargo test --workspace --locked contract_
-  echo "[contract-tests] done"
-  exit 0
-fi
+ran_any=0
 
 if [[ -f "src-tauri/Cargo.toml" ]]; then
-  echo "[contract-tests] no workspace crates yet; running src-tauri contract-tagged tests if present"
-  cargo test --manifest-path src-tauri/Cargo.toml --locked contract_
-  echo "[contract-tests] done"
+  echo "[contract-tests] running explicit src-tauri bridge contract suite"
+  cargo test \
+    --manifest-path src-tauri/Cargo.toml \
+    --locked \
+    commands::bridge::tests
+  ran_any=1
+fi
+
+if [[ -f "crates/domain/Cargo.toml" ]]; then
+  echo "[contract-tests] running domain crate contract-tagged tests"
+  cargo test --manifest-path crates/domain/Cargo.toml --locked contract_
+  ran_any=1
+fi
+
+if [[ -f "crates/application/Cargo.toml" ]]; then
+  echo "[contract-tests] running application crate contract-tagged tests"
+  cargo test --manifest-path crates/application/Cargo.toml --locked contract_
+  ran_any=1
+fi
+
+if [[ "${ran_any}" -eq 0 ]]; then
+  echo "[contract-tests] no contract targets found; skipping"
   exit 0
 fi
 
-echo "[contract-tests] no Rust manifests found; skipping"
+echo "[contract-tests] done"
