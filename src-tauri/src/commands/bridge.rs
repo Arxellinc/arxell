@@ -84,6 +84,65 @@ fn emit_bridge_event(app: &AppHandle, event: BridgeEvent) {
     let _ = app.emit("bridge:event", event);
 }
 
+fn complete_bridge_command<T, F, E>(
+    correlation_id: String,
+    command: &str,
+    run: F,
+    mut emit: E,
+) -> Result<T, String>
+where
+    F: FnOnce() -> Result<T, String>,
+    E: FnMut(BridgeEvent),
+{
+    match run() {
+        Ok(ok) => {
+            emit(BridgeEvent::CommandAccepted {
+                correlation_id,
+                command: command.to_string(),
+            });
+            Ok(ok)
+        }
+        Err(message) => {
+            emit(BridgeEvent::CommandFailed {
+                correlation_id,
+                command: command.to_string(),
+                message: message.clone(),
+            });
+            Err(message)
+        }
+    }
+}
+
+async fn complete_bridge_command_async<T, Fut, F, E>(
+    correlation_id: String,
+    command: &str,
+    run: F,
+    mut emit: E,
+) -> Result<T, String>
+where
+    Fut: std::future::Future<Output = Result<T, String>>,
+    F: FnOnce() -> Fut,
+    E: FnMut(BridgeEvent),
+{
+    match run().await {
+        Ok(ok) => {
+            emit(BridgeEvent::CommandAccepted {
+                correlation_id,
+                command: command.to_string(),
+            });
+            Ok(ok)
+        }
+        Err(message) => {
+            emit(BridgeEvent::CommandFailed {
+                correlation_id,
+                command: command.to_string(),
+                message: message.clone(),
+            });
+            Err(message)
+        }
+    }
+}
+
 fn truthy_flag(value: &str) -> bool {
     matches!(
         value.trim().to_ascii_lowercase().as_str(),
@@ -543,48 +602,33 @@ pub async fn cmd_bridge_send_message(
     model_state: State<'_, ModelManagerState>,
     payload: SendMessageCommand,
 ) -> Result<SendMessageResult, String> {
-    let result = if bridge_application_enabled(&state) {
-        run_send_message_use_case(Some(&app), &state, &payload)
-    } else {
-        chat::cmd_chat_stream(
-            app.clone(),
-            state,
-            model_state,
-            payload.conversation_id.clone(),
-            payload.content.clone(),
-            payload.extra_context.clone(),
-            payload.thinking_enabled,
-            payload.assistant_msg_id.clone(),
-            payload.screenshot_base64.clone(),
-            payload.mode_id,
-        )
-        .await
-        .map(|user_message| SendMessageResult { user_message })
-    };
-
-    match result {
-        Ok(ok) => {
-            emit_bridge_event(
-                &app,
-                BridgeEvent::CommandAccepted {
-                    correlation_id: payload.correlation_id,
-                    command: "send_message".to_string(),
-                },
-            );
-            Ok(ok)
-        }
-        Err(message) => {
-            emit_bridge_event(
-                &app,
-                BridgeEvent::CommandFailed {
-                    correlation_id: payload.correlation_id,
-                    command: "send_message".to_string(),
-                    message: message.clone(),
-                },
-            );
-            Err(message)
-        }
-    }
+    let correlation_id = payload.correlation_id.clone();
+    complete_bridge_command_async(
+        correlation_id,
+        "send_message",
+        || async {
+            if bridge_application_enabled(&state) {
+                run_send_message_use_case(Some(&app), &state, &payload)
+            } else {
+                chat::cmd_chat_stream(
+                    app.clone(),
+                    state,
+                    model_state,
+                    payload.conversation_id.clone(),
+                    payload.content.clone(),
+                    payload.extra_context.clone(),
+                    payload.thinking_enabled,
+                    payload.assistant_msg_id.clone(),
+                    payload.screenshot_base64.clone(),
+                    payload.mode_id,
+                )
+                .await
+                .map(|user_message| SendMessageResult { user_message })
+            }
+        },
+        |event| emit_bridge_event(&app, event),
+    )
+    .await
 }
 
 #[tauri::command]
@@ -593,35 +637,19 @@ pub fn cmd_bridge_cancel_run(
     state: State<'_, AppState>,
     payload: CancelRunCommand,
 ) -> Result<(), String> {
-    let result = if bridge_application_enabled(&state) {
-        run_cancel_use_case(&state, &payload)
-    } else {
-        chat::cmd_chat_cancel(state)
-    };
-
-    match result {
-        Ok(()) => {
-            emit_bridge_event(
-                &app,
-                BridgeEvent::CommandAccepted {
-                    correlation_id: payload.correlation_id,
-                    command: "cancel_run".to_string(),
-                },
-            );
-            Ok(())
-        }
-        Err(message) => {
-            emit_bridge_event(
-                &app,
-                BridgeEvent::CommandFailed {
-                    correlation_id: payload.correlation_id,
-                    command: "cancel_run".to_string(),
-                    message: message.clone(),
-                },
-            );
-            Err(message)
-        }
-    }
+    let correlation_id = payload.correlation_id.clone();
+    complete_bridge_command(
+        correlation_id,
+        "cancel_run",
+        || {
+            if bridge_application_enabled(&state) {
+                run_cancel_use_case(&state, &payload)
+            } else {
+                chat::cmd_chat_cancel(state)
+            }
+        },
+        |event| emit_bridge_event(&app, event),
+    )
 }
 
 #[tauri::command]
@@ -724,6 +752,8 @@ pub fn cmd_bridge_regenerate_last_prompt(
 mod tests {
     use super::*;
     use serde_json::json;
+    use std::cell::RefCell;
+    use std::rc::Rc;
     use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
     use crate::AppState;
@@ -936,6 +966,65 @@ mod tests {
             Some("true")
         ));
         assert!(resolve_bridge_application_enabled(Some("0"), Some("on")));
+    }
+
+    #[test]
+    fn bridge_command_contract_success_emits_after_run() {
+        let timeline = Rc::new(RefCell::new(Vec::<String>::new()));
+        let timeline_in_run = timeline.clone();
+        let timeline_in_emit = timeline.clone();
+
+        let result: Result<i32, String> = complete_bridge_command(
+            "corr-success-1".to_string(),
+            "cancel_run",
+            move || {
+                timeline_in_run.borrow_mut().push("run".to_string());
+                Ok(7)
+            },
+            move |event| {
+                timeline_in_emit.borrow_mut().push("emit".to_string());
+                assert!(matches!(
+                    event,
+                    BridgeEvent::CommandAccepted {
+                        correlation_id,
+                        command
+                    } if correlation_id == "corr-success-1" && command == "cancel_run"
+                ));
+            },
+        );
+
+        assert_eq!(result, Ok(7));
+        assert_eq!(timeline.borrow().as_slice(), ["run", "emit"]);
+    }
+
+    #[test]
+    fn bridge_command_contract_failure_emits_after_run_with_error_message() {
+        let timeline = Rc::new(RefCell::new(Vec::<String>::new()));
+        let timeline_in_run = timeline.clone();
+        let timeline_in_emit = timeline.clone();
+
+        let result: Result<(), String> = complete_bridge_command(
+            "corr-fail-1".to_string(),
+            "send_message",
+            move || {
+                timeline_in_run.borrow_mut().push("run".to_string());
+                Err("boom".to_string())
+            },
+            move |event| {
+                timeline_in_emit.borrow_mut().push("emit".to_string());
+                assert!(matches!(
+                    event,
+                    BridgeEvent::CommandFailed {
+                        correlation_id,
+                        command,
+                        message
+                    } if correlation_id == "corr-fail-1" && command == "send_message" && message == "boom"
+                ));
+            },
+        );
+
+        assert_eq!(result, Err("boom".to_string()));
+        assert_eq!(timeline.borrow().as_slice(), ["run", "emit"]);
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
