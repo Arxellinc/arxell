@@ -2,7 +2,7 @@
 
 ## Summary
 
-Phase 3 ("Minimal vertical slice") is functionally complete for backend bridge flow and integration coverage, with one remaining cross-platform smoke validation gap.
+Phase 3 ("Minimal vertical slice") is complete for current checklist scope.
 
 ## Completed Evidence
 
@@ -15,10 +15,8 @@ Phase 3 ("Minimal vertical slice") is functionally complete for backend bridge f
   - `crates/application/src/usecases/send_message.rs`
   - `correlation_id` and `run_id` propagation validated in `ChatStarted` and `TokenReceived`
 
-## Open Gap
+## Closure Note
 
-- Platform smoke job does not yet execute the bridge chat slice on Windows/macOS/Linux; it currently validates compile/smoke hooks only.
-
-## Recommended Closure Action
-
-Add bridge chat slice smoke execution to `scripts/ci/platform-smoke.sh` so each OS lane validates the same minimal chat/cancel path before Phase 3 sign-off.
+- Platform smoke now executes the bridge chat slice explicitly via:
+  - `scripts/ci/platform-smoke.sh`
+  - `cargo test --manifest-path src-tauri/Cargo.toml --locked --test bridge_slice_integration_tests`

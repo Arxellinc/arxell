@@ -61,7 +61,7 @@ Phase 3 snapshot:
 - [x] Send/stream/cancel/persist chat works end-to-end (backend bridge slice contract + integration coverage)
 - [x] Trace IDs visible for each run in backend event flow (`correlation_id` + `run_id` contract assertions)
 - [x] Integration tests for chat slice pass (`src-tauri/tests/bridge_slice_integration_tests.rs`)
-- [ ] Platform smoke path for core chat passes on all OSes (platform-smoke currently validates compile/smoke hooks, not explicit chat-slice execution)
+- [x] Platform smoke path for core chat passes on all OSes (`scripts/ci/platform-smoke.sh` runs bridge slice integration smoke target)
 
 Remaining gap to close Phase 3:
-- Add explicit cross-platform bridge chat slice smoke execution (or equivalent platform-validated fixture) under `scripts/ci/platform-smoke.sh`.
+- None for current Phase 3 checklist scope.

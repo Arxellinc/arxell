@@ -6,6 +6,16 @@ echo "[platform-smoke] starting"
 if [[ -f "src-tauri/Cargo.toml" ]]; then
   echo "[platform-smoke] cargo check (src-tauri)"
   cargo check --manifest-path src-tauri/Cargo.toml --locked
+
+  if [[ -f "src-tauri/tests/bridge_slice_integration_tests.rs" ]]; then
+    echo "[platform-smoke] bridge slice integration smoke test"
+    cargo test \
+      --manifest-path src-tauri/Cargo.toml \
+      --locked \
+      --test bridge_slice_integration_tests
+  else
+    echo "[platform-smoke] bridge slice integration test not found; skipping"
+  fi
 fi
 
 if [[ -f "package.json" ]]; then
@@ -18,4 +28,3 @@ if [[ -f "package.json" ]]; then
 fi
 
 echo "[platform-smoke] done"
-
