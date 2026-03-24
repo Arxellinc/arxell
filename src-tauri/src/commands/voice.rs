@@ -330,18 +330,56 @@ async fn transcribe_and_emit(app: AppHandle, samples: Vec<f32>, is_partial: bool
                 &default_whisper_model_path(&app),
             ));
             let language = get_db_setting(&app, "whisper_rs_language", "en");
-            log::info!(
-                "[STT] whisper-rs: model_path={} language={}",
-                model_path,
-                language
-            );
-            let wav = wav_bytes.clone();
-            let ctx_handle = state.whisper_rs_ctx.clone();
-            tokio::task::spawn_blocking(move || {
-                local_stt::transcribe_whisper_rs_persistent(&ctx_handle, &wav, &model_path, &language)
-            })
-            .await
-            .unwrap_or_else(|e| Err(e.to_string()))
+            let whisper_rs_available = {
+                let model_path_check = model_path.clone();
+                tokio::task::spawn_blocking(move || local_stt::check_whisper_rs(&model_path_check))
+                    .await
+                    .unwrap_or(false)
+            };
+            if whisper_rs_available {
+                log::info!(
+                    "[STT] whisper-rs: model_path={} language={}",
+                    model_path,
+                    language
+                );
+                let wav = wav_bytes.clone();
+                let ctx_handle = state.whisper_rs_ctx.clone();
+                tokio::task::spawn_blocking(move || {
+                    local_stt::transcribe_whisper_rs_persistent(
+                        &ctx_handle,
+                        &wav,
+                        &model_path,
+                        &language,
+                    )
+                })
+                .await
+                .unwrap_or_else(|e| Err(e.to_string()))
+            } else {
+                let script = script_path(&app, "stt_whisper.py").unwrap_or_default();
+                let model_size = get_db_setting(&app, "whisper_model_size", "tiny");
+                let model_dir = expand_home(&get_db_setting(&app, "whisper_model_dir", ""));
+                let python_bin = resolved_kokoro_python_path(&app);
+                log::info!(
+                    "[STT] whisper-python fallback: python={} script={} model={} model_dir={} language={}",
+                    python_bin,
+                    script,
+                    model_size,
+                    model_dir,
+                    language
+                );
+                let wav = wav_bytes.clone();
+                tokio::task::spawn_blocking(move || {
+                    local_stt::transcribe_whisper(
+                        &wav,
+                        &python_bin,
+                        &script,
+                        &model_size,
+                        &model_dir,
+                    )
+                })
+                .await
+                .unwrap_or_else(|e| Err(e.to_string()))
+            }
         }
 
         _ /* "external" */ => {
@@ -857,6 +895,7 @@ pub async fn cmd_tts_self_test(app: AppHandle) -> TtsSelfTestResult {
 #[derive(Serialize)]
 pub struct SttEngineStatus {
     pub whisper_rs: bool,
+    pub whisper_py: bool,
     pub external: bool,
     pub current_engine: String,
 }
@@ -876,6 +915,17 @@ pub async fn cmd_stt_check_engines(app: AppHandle) -> SttEngineStatus {
         tokio::task::spawn_blocking(move || local_stt::check_whisper_rs(&whisper_rs_model_path))
             .await
             .unwrap_or(false);
+    let whisper_py = {
+        let script = script_path(&app, "stt_whisper.py").unwrap_or_default();
+        let python_bin = resolved_kokoro_python_path(&app);
+        tokio::task::spawn_blocking(move || {
+            !script.trim().is_empty()
+                && Path::new(&script).exists()
+                && local_stt::check_whisper(&python_bin)
+        })
+            .await
+            .unwrap_or(false)
+    };
 
     let external = !stt_url.is_empty() && {
         reqwest::Client::builder()
@@ -891,7 +941,8 @@ pub async fn cmd_stt_check_engines(app: AppHandle) -> SttEngineStatus {
     };
 
     SttEngineStatus {
-        whisper_rs,
+        whisper_rs: whisper_rs || whisper_py,
+        whisper_py,
         external,
         current_engine,
     }

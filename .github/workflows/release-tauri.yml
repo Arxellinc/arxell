@@ -15,7 +15,7 @@ jobs:
       matrix:
         include:
           - platform: "ubuntu-22.04"
-            args: ""
+            args: "--bundles appimage"
           - platform: "macos-latest"
             args: "-- --no-default-features --features custom-protocol"
           - platform: "windows-latest"

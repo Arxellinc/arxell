@@ -47,6 +47,7 @@ pub type WhisperRsHandle = Arc<Mutex<Option<()>>>;
 /// If the daemon crashes, it will be restarted on the next call.
 pub struct WhisperDaemon {
     child: Option<Child>,
+    python_bin: String,
     script_path: String,
     model_size: String,
     model_dir: String,
@@ -55,9 +56,21 @@ pub struct WhisperDaemon {
 
 impl WhisperDaemon {
     /// Create a new daemon handle (does not spawn the process yet).
-    pub fn new(script_path: &str, model_size: &str, model_dir: &str, language: &str) -> Self {
+    pub fn new(
+        python_bin: &str,
+        script_path: &str,
+        model_size: &str,
+        model_dir: &str,
+        language: &str,
+    ) -> Self {
         Self {
             child: None,
+            python_bin: if python_bin.is_empty() {
+                "python3"
+            } else {
+                python_bin
+            }
+            .to_string(),
             script_path: script_path.to_string(),
             model_size: if model_size.is_empty() {
                 "tiny"
@@ -112,7 +125,7 @@ impl WhisperDaemon {
             args.push(self.model_dir.clone());
         }
 
-        let mut cmd = Command::new("python3");
+        let mut cmd = Command::new(&self.python_bin);
         cmd.args(&args)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -280,6 +293,7 @@ pub type WhisperDaemonHandle = Arc<Mutex<Option<WhisperDaemon>>>;
 /// `model_dir`   — directory for model cache ("" = HuggingFace default)
 pub fn transcribe_whisper(
     wav_bytes: &[u8],
+    python_bin: &str,
     script_path: &str,
     model_size: &str,
     model_dir: &str,
@@ -300,7 +314,13 @@ pub fn transcribe_whisper(
         args.push(model_dir.to_string());
     }
 
-    let mut cmd = Command::new("python3");
+    let python_bin = if python_bin.is_empty() {
+        "python3"
+    } else {
+        python_bin
+    };
+
+    let mut cmd = Command::new(python_bin);
     cmd.args(&args)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -358,8 +378,13 @@ pub fn transcribe_whisper(
 }
 
 /// Check whether Python3 + faster-whisper are available.
-pub fn check_whisper() -> bool {
-    let mut cmd = Command::new("python3");
+pub fn check_whisper(python_bin: &str) -> bool {
+    let python_bin = if python_bin.is_empty() {
+        "python3"
+    } else {
+        python_bin
+    };
+    let mut cmd = Command::new(python_bin);
     cmd.args(["-c", "import faster_whisper"])
         .stdout(Stdio::null())
         .stderr(Stdio::null());

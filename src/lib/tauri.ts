@@ -380,6 +380,7 @@ export const ttsSelfTest = () =>
 
 export interface SttEngineStatus {
   whisper_rs: boolean;
+  whisper_py: boolean;
   external: boolean;
   current_engine: string;
 }

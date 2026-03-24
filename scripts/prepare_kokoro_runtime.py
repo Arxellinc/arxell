@@ -185,7 +185,7 @@ def _smoke_test(
         [
             str(venv_python),
             "-c",
-            "import kokoro_onnx, soundfile, onnxruntime; print('ok')",
+            "import kokoro_onnx, soundfile, onnxruntime, faster_whisper; print('ok')",
         ]
     )
 

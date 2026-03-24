@@ -5,6 +5,8 @@ import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { AlertTriangle, Cable, Download, Loader2, Rocket, Sparkles } from "lucide-react";
 import { llmModelAdd } from "../core/tooling/client";
 import { getKokoroBootstrapStatus, type KokoroBootstrapStatus } from "../lib/tauri";
+import { DEFAULT_MODEL_LOAD_CONFIG, useServeStore } from "../store/serveStore";
+import type { AvailableModel } from "../types/model";
 
 interface WelcomeModalProps {
   open: boolean;
@@ -202,6 +204,7 @@ export function WelcomeModal({
     setDownloadError(null);
     setDownloadInProgress(true);
     try {
+      let downloadedModel: AvailableModel | null = null;
       if (selectedModel.download.type === "custom") {
         const endpoint = normalizeApiBaseUrl(customEndpointUrl);
         const modelName = customModelName.trim();
@@ -217,7 +220,7 @@ export function WelcomeModal({
           is_primary: true,
         });
       } else if (selectedModel.download.type === "asset") {
-        await invoke("cmd_download_model_from_hf_asset", {
+        downloadedModel = await invoke<AvailableModel>("cmd_download_model_from_hf_asset", {
           repoId: selectedModel.download.repoId,
           fileName: selectedModel.download.fileName,
         });
@@ -230,12 +233,19 @@ export function WelcomeModal({
         if (!picked || typeof picked !== "string") {
           throw new Error("Model file selection was canceled.");
         }
-        await invoke("cmd_import_model_from_path", {
+        downloadedModel = await invoke<AvailableModel>("cmd_import_model_from_path", {
           sourcePath: picked,
         });
       } else {
-        await invoke("cmd_download_model_from_hf_query", {
+        downloadedModel = await invoke<AvailableModel>("cmd_download_model_from_hf_query", {
           query: selectedModel.download.query,
+        });
+      }
+      if (downloadedModel?.path) {
+        await useServeStore.getState().loadModel({
+          ...DEFAULT_MODEL_LOAD_CONFIG,
+          source: "LocalGguf",
+          path: downloadedModel.path,
         });
       }
       onOpenModelSetup();
