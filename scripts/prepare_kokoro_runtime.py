@@ -118,18 +118,13 @@ def _find_python_binary(root: Path) -> Path:
     return candidates[0]
 
 
-def _venv_python(venv_dir: Path) -> Path:
-    if os.name == "nt":
-        return venv_dir / "Scripts" / "python.exe"
-    for cand in (venv_dir / "bin" / "python3", venv_dir / "bin" / "python"):
-        if cand.exists():
-            return cand
-    return venv_dir / "bin" / "python3"
-
-
 def _standalone_root(standalone_python: Path) -> Path:
     # .../python/bin/python3 -> .../python
-    root = standalone_python.parent.parent
+    parent = standalone_python.parent
+    if parent.name.lower() in {"bin", "scripts"}:
+        root = parent.parent
+    else:
+        root = parent
     if not root.exists():
         raise RuntimeError(f"Standalone python root not found for {standalone_python}")
     return root
@@ -145,13 +140,13 @@ def _run(cmd: list[str], *, cwd: Path | None = None, input_text: str | None = No
     )
 
 
-def _zip_runtime(venv_dir: Path, archive_path: Path) -> None:
+def _zip_runtime(runtime_root: Path, archive_path: Path) -> None:
     archive_path.parent.mkdir(parents=True, exist_ok=True)
     with zipfile.ZipFile(archive_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
-        for file_path in sorted(venv_dir.rglob("*")):
+        for file_path in sorted(runtime_root.rglob("*")):
             if not file_path.is_file():
                 continue
-            rel = file_path.relative_to(venv_dir)
+            rel = file_path.relative_to(runtime_root)
             # Store files at archive root so runtime extraction lands directly at
             # .../kokoro/runtime/venv/{bin,Scripts,...} (no extra venv/ nesting).
             arcname = rel
@@ -164,26 +159,31 @@ def _zip_runtime(venv_dir: Path, archive_path: Path) -> None:
                 zf.writestr(info, src.read(), compress_type=zipfile.ZIP_DEFLATED)
 
 def _validate_runtime_archive_layout(archive_path: Path) -> None:
-    expected = "Scripts/python.exe" if os.name == "nt" else "bin/python3"
     with zipfile.ZipFile(archive_path, "r") as zf:
         names = {n for n in zf.namelist() if not n.endswith("/")}
-    if expected not in names:
+    expected_any = (
+        {"python.exe", "Scripts/python.exe", "bin/python.exe"}
+        if os.name == "nt"
+        else {"bin/python3", "bin/python"}
+    )
+    if not any(name in names for name in expected_any):
         raise RuntimeError(
-            f"Runtime archive missing expected interpreter path '{expected}' at archive root"
+            "Runtime archive missing expected interpreter path at archive root "
+            f"(one of: {sorted(expected_any)})"
         )
-    nested = f"venv/{expected}"
-    if nested in names:
+    nested_candidates = {f"venv/{n}" for n in expected_any}
+    if any(n in names for n in nested_candidates):
         raise RuntimeError(
-            f"Runtime archive has nested '{nested}' path; archive must be rooted at venv contents"
+            "Runtime archive has nested venv path; archive must be rooted at runtime contents"
         )
 
 
 def _smoke_test(
-    venv_python: Path, repo_root: Path, model_path: Path, voices_path: Path
+    runtime_python: Path, repo_root: Path, model_path: Path, voices_path: Path
 ) -> None:
     _run(
         [
-            str(venv_python),
+            str(runtime_python),
             "-c",
             "import kokoro_onnx, onnxruntime, numpy, faster_whisper; print('ok')",
         ]
@@ -192,7 +192,7 @@ def _smoke_test(
     tts_script = repo_root / "src-tauri" / "resources" / "scripts" / "voice" / "tts_kokoro.py"
     p = subprocess.run(
         [
-            str(venv_python),
+            str(runtime_python),
             str(tts_script),
             "--model",
             str(model_path),
@@ -277,7 +277,6 @@ def main() -> int:
         tmp = Path(td)
         archive = tmp / asset_name
         extract_dir = tmp / "extract"
-        venv_dir = tmp / "venv"
         _download(url, archive)
         extract_dir.mkdir(parents=True, exist_ok=True)
         with tarfile.open(archive, "r:gz") as tf:
@@ -285,31 +284,16 @@ def main() -> int:
 
         standalone_python = _find_python_binary(extract_dir)
         print(f"Standalone Python: {standalone_python}")
+        runtime_root = _standalone_root(standalone_python)
+        runtime_python = standalone_python
 
-        vpy: Path
-        try:
-            _run([str(standalone_python), "-m", "venv", str(venv_dir), "--copies"])
-            vpy = _venv_python(venv_dir)
-        except subprocess.CalledProcessError as exc:
-            # Some macOS CI images have intermittent ensurepip/venv failures with
-            # standalone Python. Fall back to using the standalone runtime directly.
-            print(
-                "WARNING: venv creation failed; falling back to standalone runtime "
-                f"layout ({exc})."
-            )
-            runtime_root = _standalone_root(standalone_python)
-            if venv_dir.exists():
-                shutil.rmtree(venv_dir)
-            shutil.copytree(runtime_root, venv_dir)
-            vpy = _venv_python(venv_dir)
-
-        _run([str(vpy), "-m", "pip", "install", "--upgrade", "pip"])
-        _run([str(vpy), "-m", "pip", "install", "-r", str(req_path)])
-        _smoke_test(vpy, repo_root, model_out, voices_path)
+        _run([str(runtime_python), "-m", "pip", "install", "--upgrade", "pip"])
+        _run([str(runtime_python), "-m", "pip", "install", "-r", str(req_path)])
+        _smoke_test(runtime_python, repo_root, model_out, voices_path)
 
         if archive_path.exists():
             archive_path.unlink()
-        _zip_runtime(venv_dir, archive_path)
+        _zip_runtime(runtime_root, archive_path)
         _validate_runtime_archive_layout(archive_path)
 
     print(f"Created runtime archive: {archive_path}")

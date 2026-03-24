@@ -296,25 +296,42 @@ fn resolve_existing_resource_path(
     None
 }
 
-fn default_kokoro_python_path(app_dir: &std::path::Path) -> std::path::PathBuf {
+fn resolve_kokoro_runtime_archive_path(
+    app: &tauri::AppHandle,
+    archive_name: &str,
+) -> Option<std::path::PathBuf> {
+    let rel_a = format!("resources/kokoro-runtime/{archive_name}");
+    let rel_b = format!("kokoro-runtime/{archive_name}");
+    resolve_existing_resource_path(app, &[&rel_a, &rel_b])
+}
+
+fn kokoro_python_candidates(app_dir: &std::path::Path) -> Vec<std::path::PathBuf> {
+    let base = app_dir.join("kokoro").join("runtime").join("venv");
     #[cfg(target_os = "windows")]
     {
-        app_dir
-            .join("kokoro")
-            .join("runtime")
-            .join("venv")
-            .join("Scripts")
-            .join("python.exe")
+        vec![
+            base.join("Scripts").join("python.exe"),
+            base.join("python.exe"),
+            base.join("bin").join("python.exe"),
+        ]
     }
     #[cfg(not(target_os = "windows"))]
     {
-        app_dir
-            .join("kokoro")
-            .join("runtime")
-            .join("venv")
-            .join("bin")
-            .join("python3")
+        vec![base.join("bin").join("python3"), base.join("bin").join("python")]
     }
+}
+
+fn default_kokoro_python_path(app_dir: &std::path::Path) -> std::path::PathBuf {
+    kokoro_python_candidates(app_dir)
+        .into_iter()
+        .next()
+        .unwrap_or_else(|| app_dir.join("kokoro").join("runtime").join("venv").join("python"))
+}
+
+fn resolve_existing_kokoro_python_path(app_dir: &std::path::Path) -> Option<std::path::PathBuf> {
+    kokoro_python_candidates(app_dir)
+        .into_iter()
+        .find(|p| p.exists())
 }
 
 fn resolve_kokoro_voices_path(kokoro_dir: &std::path::Path) -> std::path::PathBuf {
@@ -356,7 +373,8 @@ fn normalize_voice_paths(conn: &rusqlite::Connection, app_dir: &std::path::Path)
     let kokoro_voices = resolve_kokoro_voices_path(&kokoro_dir)
         .to_string_lossy()
         .to_string();
-    let kokoro_python = default_kokoro_python_path(app_dir)
+    let kokoro_python = resolve_existing_kokoro_python_path(app_dir)
+        .unwrap_or_else(|| default_kokoro_python_path(app_dir))
         .to_string_lossy()
         .to_string();
 
@@ -587,29 +605,24 @@ fn ensure_kokoro_runtime(
     app: &tauri::AppHandle,
     app_dir: &std::path::Path,
 ) -> Result<std::path::PathBuf, String> {
-    let python_path = default_kokoro_python_path(app_dir);
-    if python_path.exists() && check_kokoro_runtime_with_python(&python_path) {
-        return Ok(python_path);
+    if let Some(existing) = resolve_existing_kokoro_python_path(app_dir) {
+        if check_kokoro_runtime_with_python(&existing) {
+            return Ok(existing);
+        }
     }
 
     let _guard = KOKORO_RUNTIME_SETUP_LOCK.lock().unwrap();
-    if python_path.exists() && check_kokoro_runtime_with_python(&python_path) {
-        return Ok(python_path);
+    if let Some(existing) = resolve_existing_kokoro_python_path(app_dir) {
+        if check_kokoro_runtime_with_python(&existing) {
+            return Ok(existing);
+        }
     }
 
-    let runtime_dir = python_path
-        .parent()
-        .and_then(|p| p.parent())
-        .map(|p| p.to_path_buf())
-        .ok_or_else(|| "failed to resolve Kokoro venv path".to_string())?;
+    let runtime_dir = app_dir.join("kokoro").join("runtime").join("venv");
     let archive_name = kokoro_runtime_archive_name();
-    let archive_path = app
-        .path()
-        .resolve(
-            format!("resources/kokoro-runtime/{archive_name}"),
-            tauri::path::BaseDirectory::Resource,
-        )
-        .map_err(|e| format!("failed to resolve bundled runtime archive path: {e}"))?;
+    let expected_python = default_kokoro_python_path(app_dir);
+    let archive_path = resolve_kokoro_runtime_archive_path(app, archive_name)
+        .ok_or_else(|| format!("failed to resolve bundled runtime archive path for {archive_name}"))?;
     commands::logs::event(
         "info",
         "runtime.bootstrap.start",
@@ -619,8 +632,8 @@ fn ensure_kokoro_runtime(
             "arch": std::env::consts::ARCH,
             "archive_path": archive_path.to_string_lossy(),
             "archive_exists": archive_path.exists(),
-            "python_path": python_path.to_string_lossy(),
-            "python_exists": python_path.exists(),
+            "python_path": expected_python.to_string_lossy(),
+            "python_exists": expected_python.exists(),
         }),
     );
     if !archive_path.exists() {
@@ -653,7 +666,7 @@ fn ensure_kokoro_runtime(
             "result": "ok",
         }),
     );
-    if !python_path.exists() {
+    let Some(python_path) = resolve_existing_kokoro_python_path(app_dir) else {
         commands::logs::event(
             "error",
             "runtime.bootstrap.verify",
@@ -662,14 +675,14 @@ fn ensure_kokoro_runtime(
                 "stage": "python_present",
                 "result": "error",
                 "error_code": "PYTHON_BIN_MISSING",
-                "python_path": python_path.to_string_lossy(),
+                "python_path": expected_python.to_string_lossy(),
             }),
         );
         return Err(format!(
-            "Runtime extracted but Python interpreter is missing at {}",
-            python_path.to_string_lossy()
+            "Runtime extracted but Python interpreter is missing. Checked candidates under {}",
+            runtime_dir.to_string_lossy()
         ));
-    }
+    };
     chmod_runtime_binaries(&python_path)?;
     rewrite_pyvenv_home(&python_path)?;
     validate_kokoro_runtime_with_python(&python_path)?;
@@ -727,13 +740,7 @@ fn log_kokoro_bootstrap_snapshot(
 ) {
     let python_path = default_kokoro_python_path(app_dir);
     let archive_name = kokoro_runtime_archive_name();
-    let archive_path = app
-        .path()
-        .resolve(
-            format!("resources/kokoro-runtime/{archive_name}"),
-            tauri::path::BaseDirectory::Resource,
-        )
-        .ok();
+    let archive_path = resolve_kokoro_runtime_archive_path(app, archive_name);
     let archive_exists = archive_path.as_ref().map(|p| p.exists()).unwrap_or(false);
     let archive_size = archive_path
         .as_ref()

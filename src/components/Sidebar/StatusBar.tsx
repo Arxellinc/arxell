@@ -228,7 +228,7 @@ export function StatusBar() {
       ? "kokoro ✓"
       : ttsEngines.espeak
       ? "fallback: espeak"
-      : "not found"
+      : (ttsEngines.kokoro_reason?.split(":")[0] || "not found")
     : ttsEngines.external
     ? "online"
     : "offline";

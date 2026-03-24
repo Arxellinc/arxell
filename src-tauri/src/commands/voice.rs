@@ -52,10 +52,15 @@ fn expand_home(path: &str) -> String {
 
 /// Resolve a voice script from the Tauri resource directory.
 fn script_path(app: &AppHandle, name: &str) -> Option<String> {
-    app.path()
-        .resource_dir()
-        .ok()
-        .map(|d| d.join("resources/scripts/voice").join(name))
+    let base = app.path().resource_dir().ok()?;
+    let candidates = [
+        base.join("resources/scripts/voice").join(name),
+        base.join("scripts/voice").join(name),
+        base.join(name),
+    ];
+    candidates
+        .into_iter()
+        .find(|p| p.exists())
         .and_then(|p| p.to_str().map(|s| s.to_string()))
 }
 
@@ -86,6 +91,22 @@ fn python_interpreter_usable(python_bin: &str) -> bool {
     cmd.output()
         .map(|o| o.status.success())
         .unwrap_or(false)
+}
+
+fn kokoro_python_candidates(app_dir: &std::path::Path) -> Vec<std::path::PathBuf> {
+    let base = app_dir.join("kokoro").join("runtime").join("venv");
+    #[cfg(target_os = "windows")]
+    {
+        vec![
+            base.join("Scripts").join("python.exe"),
+            base.join("python.exe"),
+            base.join("bin").join("python.exe"),
+        ]
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        vec![base.join("bin").join("python3"), base.join("bin").join("python")]
+    }
 }
 
 fn next_voice_request_id() -> u64 {
@@ -161,22 +182,10 @@ fn resolved_kokoro_python_path(app: &AppHandle) -> String {
         return configured;
     }
     if let Ok(app_dir) = app.path().app_data_dir() {
-        #[cfg(target_os = "windows")]
-        let candidate = app_dir
-            .join("kokoro")
-            .join("runtime")
-            .join("venv")
-            .join("Scripts")
-            .join("python.exe");
-        #[cfg(not(target_os = "windows"))]
-        let candidate = app_dir
-            .join("kokoro")
-            .join("runtime")
-            .join("venv")
-            .join("bin")
-            .join("python3");
-        if candidate.exists() && python_interpreter_usable(candidate.to_string_lossy().as_ref()) {
-            return candidate.to_string_lossy().to_string();
+        for candidate in kokoro_python_candidates(&app_dir) {
+            if candidate.exists() && python_interpreter_usable(candidate.to_string_lossy().as_ref()) {
+                return candidate.to_string_lossy().to_string();
+            }
         }
     }
     let fallback = default_python_bin();
@@ -199,6 +208,19 @@ fn resolved_kokoro_voices_path(app: &AppHandle) -> String {
                 return candidate.to_string_lossy().to_string();
             }
         }
+        if let Ok(resource_dir) = app.path().resource_dir() {
+            for rel in [
+                "resources/voice/af_heart.bin",
+                "resources/voice/af.bin",
+                "voice/af_heart.bin",
+                "voice/af.bin",
+            ] {
+                let candidate = resource_dir.join(rel);
+                if candidate.exists() {
+                    return candidate.to_string_lossy().to_string();
+                }
+            }
+        }
         if !configured.trim().is_empty() {
             return configured;
         }
@@ -206,6 +228,28 @@ fn resolved_kokoro_voices_path(app: &AppHandle) -> String {
             .join("af_heart.bin")
             .to_string_lossy()
             .to_string();
+    }
+    configured
+}
+
+fn resolved_kokoro_model_path(app: &AppHandle) -> String {
+    let configured = expand_home(&get_db_setting(app, "kokoro_model_path", ""));
+    if !configured.trim().is_empty() && Path::new(&configured).exists() {
+        return configured;
+    }
+    if let Ok(app_dir) = app.path().app_data_dir() {
+        let candidate = app_dir.join("kokoro").join("model_quantized.onnx");
+        if candidate.exists() {
+            return candidate.to_string_lossy().to_string();
+        }
+    }
+    if let Ok(resource_dir) = app.path().resource_dir() {
+        for rel in ["resources/voice/model_quantized.onnx", "voice/model_quantized.onnx"] {
+            let candidate = resource_dir.join(rel);
+            if candidate.exists() {
+                return candidate.to_string_lossy().to_string();
+            }
+        }
     }
     configured
 }
@@ -669,7 +713,7 @@ pub async fn cmd_tts_speak(
     match engine.as_str() {
         "kokoro" => {
             let script  = script_path(&app, "tts_kokoro_persistent.py").unwrap_or_default();
-            let model   = expand_home(&get_db_setting(&app, "kokoro_model_path", ""));
+            let model   = resolved_kokoro_model_path(&app);
             let voices  = resolved_kokoro_voices_path(&app);
             let voice   = get_db_setting(&app, "kokoro_voice", "af_heart");
             let python_bin = ensure_kokoro_python_path(&app).await;
@@ -887,9 +931,11 @@ pub fn cmd_get_kokoro_bootstrap_status() -> crate::KokoroBootstrapStatus {
 pub async fn cmd_tts_check_engines(app: AppHandle) -> TtsEngineStatus {
     let current_engine = get_db_setting(&app, "tts_engine", "kokoro");
     let script = script_path(&app, "tts_kokoro.py").unwrap_or_default();
-    let model = expand_home(&get_db_setting(&app, "kokoro_model_path", ""));
+    let model = resolved_kokoro_model_path(&app);
     let voices = resolved_kokoro_voices_path(&app);
-    let python_bin = ensure_kokoro_python_path(&app).await;
+    // Keep passive status checks non-invasive and fast.
+    // Runtime repair is done in cmd_tts_speak / self-test paths.
+    let python_bin = resolved_kokoro_python_path(&app);
     let tts_url = get_db_setting(&app, "tts_url", "");
 
     let script_clone = script.clone();
@@ -1015,7 +1061,7 @@ pub async fn cmd_tts_self_test(app: AppHandle) -> TtsSelfTestResult {
                 return result;
             }
             let script = script_path(&app, "tts_kokoro.py").unwrap_or_default();
-            let model = expand_home(&get_db_setting(&app, "kokoro_model_path", ""));
+            let model = resolved_kokoro_model_path(&app);
             let voices = resolved_kokoro_voices_path(&app);
             let voice = get_db_setting(&app, "kokoro_voice", "af_heart");
             let python_bin = ensure_kokoro_python_path(&app).await;
@@ -1214,7 +1260,7 @@ pub async fn cmd_tts_list_voices(app: AppHandle) -> Vec<String> {
     let python_bin = resolved_kokoro_python_path(&app);
     let mut voices = match engine.as_str() {
         "kokoro" => {
-            let model = expand_home(&get_db_setting(&app, "kokoro_model_path", ""));
+            let model = resolved_kokoro_model_path(&app);
             let voices_path = resolved_kokoro_voices_path(&app);
             tokio::task::spawn_blocking(move || {
                 local_tts::list_kokoro_voices(&model, &voices_path, &python_bin)

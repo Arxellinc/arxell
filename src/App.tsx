@@ -26,6 +26,7 @@ const SIDEBAR_DEFAULT = 278;
 // Allow chat panel to expand much wider when dragging the center/right divider.
 const WORKSPACE_MIN = 180;
 const WORKSPACE_MAX = 1600;
+const CHAT_MIN = 320;
 const DIVIDER_WIDTH = 3;
 const DIVIDER_COUNT = 2;
 const WELCOME_DISMISS_KEY = "ui_welcome_modal_dismissed";
@@ -100,6 +101,23 @@ function getDefaultWorkspaceWidth(sidebarWidth: number): number {
   // Bias default layout slightly toward chat width.
   const preferred = available * 0.48;
   return Math.max(WORKSPACE_MIN, Math.min(WORKSPACE_MAX, preferred));
+}
+
+function clampPanelWidths(sidebar: number, workspace: number): [number, number] {
+  if (typeof window === "undefined") return [sidebar, workspace];
+  const maxFixedTotal = Math.max(
+    SIDEBAR_MIN + WORKSPACE_MIN,
+    window.innerWidth - DIVIDER_WIDTH * DIVIDER_COUNT - CHAT_MIN
+  );
+  const clampedSidebar = Math.max(
+    SIDEBAR_MIN,
+    Math.min(SIDEBAR_MAX, sidebar, maxFixedTotal - WORKSPACE_MIN)
+  );
+  const clampedWorkspace = Math.max(
+    WORKSPACE_MIN,
+    Math.min(WORKSPACE_MAX, workspace, maxFixedTotal - clampedSidebar)
+  );
+  return [clampedSidebar, clampedWorkspace];
 }
 
 function extractNameFromUserText(text: string): string | null {
@@ -304,13 +322,33 @@ export default function App() {
   };
 
   const resizeSidebar = (delta: number) => {
-    setSidebarWidth((w) => Math.max(SIDEBAR_MIN, Math.min(SIDEBAR_MAX, w + delta)));
+    const [nextSidebar, nextWorkspace] = clampPanelWidths(
+      sidebarWidth + delta,
+      workspaceWidth
+    );
+    setSidebarWidth(nextSidebar);
+    setWorkspaceWidth(nextWorkspace);
   };
 
   const resizeWorkspace = (delta: number) => {
     // Divider is on the left edge of workspace: drag right → shrink workspace
-    setWorkspaceWidth((w) => Math.max(WORKSPACE_MIN, Math.min(WORKSPACE_MAX, w - delta)));
+    const [nextSidebar, nextWorkspace] = clampPanelWidths(
+      sidebarWidth,
+      workspaceWidth - delta
+    );
+    setSidebarWidth(nextSidebar);
+    setWorkspaceWidth(nextWorkspace);
   };
+
+  useEffect(() => {
+    const onResize = () => {
+      const [nextSidebar, nextWorkspace] = clampPanelWidths(sidebarWidth, workspaceWidth);
+      if (nextSidebar !== sidebarWidth) setSidebarWidth(nextSidebar);
+      if (nextWorkspace !== workspaceWidth) setWorkspaceWidth(nextWorkspace);
+    };
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, [sidebarWidth, workspaceWidth]);
 
   if (uiMode === "avatar_presentation") {
     return <AvatarPresentationMode />;
@@ -396,7 +434,7 @@ export default function App() {
         />
 
         {/* Right: Workspace */}
-        <div style={{ width: workspaceWidth }} className="flex-shrink-0 min-w-0">
+        <div style={{ width: workspaceWidth }} className="flex-shrink-0 min-w-0 min-h-0 overflow-hidden">
           <WorkspacePanel />
         </div>
       </div>

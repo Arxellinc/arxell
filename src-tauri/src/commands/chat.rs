@@ -277,6 +277,20 @@ pub async fn cmd_chat_stream(
 ) -> Result<Message, String> {
     let prefer_api_source = primary_llm_source_is_api(&state);
 
+    if !prefer_api_source {
+        let local_server_active = is_managed_local_server_active(&state);
+        let has_inprocess_model = {
+            let manager = model_state.0.read().await;
+            manager.model.is_some()
+        };
+        if !local_server_active && !has_inprocess_model {
+            return Err(
+                "No local model runtime is active. Load a local model with an available backend, or switch Primary LLM source to API."
+                    .to_string(),
+            );
+        }
+    }
+
     // Prefer a running local llama-server over the settings base_url.
     // If the tracked local server port is no longer reachable, drop the stale
     // handle and fall back to configured base_url so chat doesn't hard-fail.

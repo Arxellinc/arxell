@@ -18,10 +18,17 @@ use crate::model_manager::system_info::{
     get_system_usage, RuntimeStatus, StorageDevice, SystemIdentity, SystemResources, SystemUsage,
 };
 use crate::model_manager::{
-    enumerate_devices, load_model, peek_model_metadata as read_model_metadata, ChatMessage,
+    enumerate_devices, peek_model_metadata as read_model_metadata, ChatMessage,
     DeviceInfo, EngineInstallResult, GenerationConfig, ModelError, ModelInfo, ModelLoadConfig,
     ModelLoadProgress, ModelManagerState, ServeState, TokenCount,
 };
+#[cfg(any(
+    feature = "vulkan",
+    feature = "cuda",
+    feature = "metal",
+    feature = "rocm"
+))]
+use crate::model_manager::load_model;
 use crate::AppState;
 
 fn build_lightweight_model_info(path: &str, context_override: Option<u32>) -> ModelInfo {
@@ -384,13 +391,13 @@ pub async fn cmd_load_model(
             return Ok(model_info);
         }
 
-        // No external binary — metadata-only path (no inference)
-        let result = load_model(&config, &app).await.map_err(|e| e.to_string())?;
-        let (_, model_info) = result;
-        let mut manager = state.0.write().await;
-        manager.model_info = Some(model_info.clone());
-        let _ = app.emit("model:state_changed", ());
-        Ok(model_info)
+        // No external binary and no compiled in-process backend.
+        // Do NOT report success here — chat would later route to a dead localhost URL.
+        let msg = "No local inference backend available on this build. \
+Install an external engine binary (llama-server) or switch Primary LLM source to API."
+            .to_string();
+        let _ = app.emit("local:error", &msg);
+        Err(msg)
     }
 }
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import platform
 import sys
+import zipfile
 from pathlib import Path
 
 
@@ -36,6 +37,21 @@ def main() -> int:
             "ERROR: Bundled Kokoro runtime archive is missing for this build target:\n"
             f"  expected: {archive}\n"
             "Run scripts/prepare_kokoro_runtime.py before packaging.",
+            file=sys.stderr,
+        )
+        return 1
+    with zipfile.ZipFile(archive, "r") as zf:
+        names = {n for n in zf.namelist() if not n.endswith("/")}
+    expected_any = (
+        {"python.exe", "Scripts/python.exe", "bin/python.exe"}
+        if platform.system().lower() == "windows"
+        else {"bin/python3", "bin/python"}
+    )
+    if not any(name in names for name in expected_any):
+        print(
+            "ERROR: Runtime archive does not contain an expected Python interpreter path.\n"
+            f"  expected one of: {sorted(expected_any)}\n"
+            f"  archive: {archive}",
             file=sys.stderr,
         )
         return 1
