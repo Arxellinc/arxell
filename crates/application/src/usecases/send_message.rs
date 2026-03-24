@@ -318,4 +318,61 @@ mod tests {
             "chat_started must be emitted before any token"
         );
     }
+
+    #[test]
+    fn contract_send_message_propagates_correlation_and_run_ids_in_events() {
+        let message_store = FakeMessageStore::new();
+        let run_store = FakeRunStore::new();
+        let event_publisher = FakeEventPublisher::new();
+        let provider = FakeProvider {
+            deltas: vec!["x".to_string(), "y".to_string()],
+            response: "xy".to_string(),
+        };
+
+        let use_case = SendMessageUseCase {
+            message_store: &message_store,
+            run_store: &run_store,
+            event_publisher: &event_publisher,
+            provider: &provider,
+        };
+
+        let correlation_id = CorrelationId::new("corr-contract-ids-1").unwrap();
+        let run_id = RunId::new("run-contract-ids-1").unwrap();
+        let input = SendMessageInput {
+            correlation_id: correlation_id.clone(),
+            run_id: run_id.clone(),
+            conversation_id: ConversationId::new("c-contract-ids-1").unwrap(),
+            user_message_id: MessageId::new("m-user-contract-ids").unwrap(),
+            assistant_message_id: MessageId::new("m-assistant-contract-ids").unwrap(),
+            model: "gpt-x".to_string(),
+            user_content: "contract".to_string(),
+            system_prompt: None,
+        };
+
+        let _ = use_case.execute(input).unwrap();
+
+        let events = event_publisher.events.lock().unwrap();
+        assert!(
+            events.iter().any(|event| matches!(
+                event,
+                AppEvent::ChatStarted {
+                    correlation_id: cid,
+                    run_id: rid,
+                    ..
+                } if cid == &correlation_id && rid == &run_id
+            )),
+            "chat_started must include the originating correlation_id and run_id"
+        );
+        assert!(
+            events.iter().any(|event| matches!(
+                event,
+                AppEvent::TokenReceived {
+                    correlation_id: cid,
+                    run_id: rid,
+                    ..
+                } if cid == &correlation_id && rid == &run_id
+            )),
+            "token events must include the originating correlation_id and run_id"
+        );
+    }
 }
