@@ -36,3 +36,27 @@ Thumbs.db
 coverage/
 .nyc_output/
 *.tsbuildinfo
+
+# Icons: track only curated set used by frontend/src/icons/index.ts
+frontend/src/icons/*.svg
+!frontend/src/icons/bot.svg
+!frontend/src/icons/chevron-left.svg
+!frontend/src/icons/columns-2.svg
+!frontend/src/icons/cpu.svg
+!frontend/src/icons/folder.svg
+!frontend/src/icons/history.svg
+!frontend/src/icons/layout-panel-left.svg
+!frontend/src/icons/list.svg
+!frontend/src/icons/menu.svg
+!frontend/src/icons/message-square.svg
+!frontend/src/icons/messages-square.svg
+!frontend/src/icons/mic.svg
+!frontend/src/icons/moon.svg
+!frontend/src/icons/package-search.svg
+!frontend/src/icons/play.svg
+!frontend/src/icons/settings.svg
+!frontend/src/icons/sliders-horizontal.svg
+!frontend/src/icons/square-terminal.svg
+!frontend/src/icons/sun.svg
+!frontend/src/icons/volume-2.svg
+!frontend/src/icons/wrench.svg
