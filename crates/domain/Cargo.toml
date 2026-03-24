@@ -1,0 +1,12 @@
+[package]
+name = "arx-domain"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Core domain contracts and types for Arx rebuild"
+
+[lib]
+name = "arx_domain"
+path = "src/lib.rs"
+
+[dependencies]

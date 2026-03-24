@@ -95,6 +95,17 @@ jobs:
       - name: Cargo test
         run: cargo test --manifest-path src-tauri/Cargo.toml --locked --no-fail-fast
 
+      - name: Domain crate quality (if present)
+        shell: bash
+        run: |
+          if [ -f crates/domain/Cargo.toml ]; then
+            cargo fmt --manifest-path crates/domain/Cargo.toml --all -- --check
+            cargo clippy --manifest-path crates/domain/Cargo.toml --all-targets -- -D warnings
+            cargo test --manifest-path crates/domain/Cargo.toml
+          else
+            echo "No crates/domain/Cargo.toml yet; skipping."
+          fi
+
       - name: Contract tests (script hook)
         shell: bash
         run: |
@@ -151,4 +162,3 @@ jobs:
           else
             echo "No scripts/ci/platform-smoke.sh yet; skipping."
           fi
-
