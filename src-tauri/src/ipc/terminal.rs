@@ -1,8 +1,9 @@
 use crate::app::terminal_service::TerminalService;
 use crate::contracts::{
-    EventSeverity, EventStage, Subsystem, TerminalCloseSessionRequest, TerminalCloseSessionResponse,
-    TerminalInputRequest, TerminalInputResponse, TerminalOpenSessionRequest,
-    TerminalOpenSessionResponse, TerminalResizeRequest, TerminalResizeResponse,
+    EventSeverity, EventStage, Subsystem, TerminalCloseSessionRequest,
+    TerminalCloseSessionResponse, TerminalInputRequest, TerminalInputResponse,
+    TerminalOpenSessionRequest, TerminalOpenSessionResponse, TerminalResizeRequest,
+    TerminalResizeResponse,
 };
 use crate::observability::EventHub;
 use serde_json::json;
@@ -89,7 +90,10 @@ impl TerminalCommandHandler {
         result
     }
 
-    pub async fn resize(&self, req: TerminalResizeRequest) -> Result<TerminalResizeResponse, String> {
+    pub async fn resize(
+        &self,
+        req: TerminalResizeRequest,
+    ) -> Result<TerminalResizeResponse, String> {
         self.hub.emit(self.hub.make_event(
             &req.correlation_id,
             Subsystem::Ipc,

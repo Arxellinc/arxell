@@ -1,8 +1,8 @@
 pub mod bridge;
 pub mod chat;
-pub mod terminal;
 #[cfg(feature = "tauri-runtime")]
 pub mod tauri_bridge;
+pub mod terminal;
 
 use crate::app::chat_service::ChatService;
 use crate::app::terminal_service::TerminalService;

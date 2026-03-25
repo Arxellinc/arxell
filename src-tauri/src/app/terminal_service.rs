@@ -1,10 +1,11 @@
 use crate::contracts::{
-    EventSeverity, EventStage, Subsystem, TerminalCloseSessionRequest, TerminalCloseSessionResponse,
-    TerminalInputRequest, TerminalInputResponse, TerminalOpenSessionRequest,
-    TerminalOpenSessionResponse, TerminalResizeRequest, TerminalResizeResponse,
+    EventSeverity, EventStage, Subsystem, TerminalCloseSessionRequest,
+    TerminalCloseSessionResponse, TerminalInputRequest, TerminalInputResponse,
+    TerminalOpenSessionRequest, TerminalOpenSessionResponse, TerminalResizeRequest,
+    TerminalResizeResponse,
 };
 use crate::observability::EventHub;
-use portable_pty::{Child, CommandBuilder, MasterPty, PtySize, native_pty_system};
+use portable_pty::{native_pty_system, Child, CommandBuilder, MasterPty, PtySize};
 use serde_json::json;
 use std::collections::HashMap;
 use std::io::{Read, Write};

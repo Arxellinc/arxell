@@ -1,7 +1,7 @@
 import { APP_ICON } from "../icons/map";
 import { bindChatPanel, renderChatActions, renderChatBody } from "./chatPanel";
 import { bindHistoryPanel, renderHistoryActions, renderHistoryBody } from "./historyPanel";
-import { renderLlamaCppActions, renderLlamaCppBody } from "./llamaCppPanel";
+import { bindLlamaCppPanel, renderLlamaCppActions, renderLlamaCppBody } from "./llamaCppPanel";
 import { renderModelManagerActions, renderModelManagerBody } from "./modelManagerPanel";
 import { renderSttActions, renderSttBody } from "./sttPanel";
 import type {
@@ -66,7 +66,7 @@ export function getPanelDefinition(
     return {
       title: "llama.cpp",
       icon: APP_ICON.sidebar.llamaCpp,
-      renderBody: renderLlamaCppBody,
+      renderBody: () => renderLlamaCppBody(state),
       renderActions: renderLlamaCppActions
     };
   }
@@ -99,5 +99,10 @@ export function attachPrimaryPanelInteractions(
 
   if (tab === "history") {
     bindHistoryPanel(bindings.onCreateConversation, bindings.onSelectConversation);
+    return;
+  }
+
+  if (tab === "llama_cpp") {
+    bindLlamaCppPanel(bindings);
   }
 }

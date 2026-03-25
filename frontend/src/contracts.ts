@@ -125,6 +125,72 @@ export interface WorkspaceToolSetEnabledResponse {
   enabled: boolean;
 }
 
+export interface LlamaRuntimeStatusRequest {
+  correlationId: string;
+}
+
+export interface LlamaRuntimePrerequisite {
+  key: string;
+  ok: boolean;
+  message: string;
+}
+
+export interface LlamaRuntimeEngine {
+  engineId: string;
+  backend: string;
+  label: string;
+  isApplicable: boolean;
+  isInstalled: boolean;
+  isReady: boolean;
+  binaryPath: string | null;
+  prerequisites: LlamaRuntimePrerequisite[];
+}
+
+export interface LlamaRuntimeStatusResponse {
+  correlationId: string;
+  state: string;
+  activeEngineId: string | null;
+  endpoint: string | null;
+  pid: number | null;
+  engines: LlamaRuntimeEngine[];
+}
+
+export interface LlamaRuntimeInstallRequest {
+  correlationId: string;
+  engineId: string;
+}
+
+export interface LlamaRuntimeInstallResponse {
+  correlationId: string;
+  engineId: string;
+  installedPath: string;
+}
+
+export interface LlamaRuntimeStartRequest {
+  correlationId: string;
+  engineId: string;
+  modelPath: string;
+  port?: number;
+  ctxSize?: number;
+  nGpuLayers?: number;
+}
+
+export interface LlamaRuntimeStartResponse {
+  correlationId: string;
+  engineId: string;
+  endpoint: string;
+  pid: number;
+}
+
+export interface LlamaRuntimeStopRequest {
+  correlationId: string;
+}
+
+export interface LlamaRuntimeStopResponse {
+  correlationId: string;
+  stopped: boolean;
+}
+
 export interface ChatStreamStartPayload {
   conversationId: string;
 }
@@ -144,6 +210,7 @@ export type Subsystem =
   | "frontend"
   | "ipc"
   | "service"
+  | "runtime"
   | "registry"
   | "tool"
   | "memory"

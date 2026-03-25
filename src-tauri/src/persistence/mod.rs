@@ -8,7 +8,10 @@ use std::sync::Mutex;
 
 pub trait ConversationRepository: Send + Sync {
     fn append_message(&self, message: &ConversationMessageRecord) -> Result<(), String>;
-    fn list_messages(&self, conversation_id: &str) -> Result<Vec<ConversationMessageRecord>, String>;
+    fn list_messages(
+        &self,
+        conversation_id: &str,
+    ) -> Result<Vec<ConversationMessageRecord>, String>;
     fn list_conversations(&self) -> Result<Vec<ConversationSummaryRecord>, String>;
 }
 
@@ -74,7 +77,10 @@ impl ConversationRepository for FileConversationRepository {
         Ok(())
     }
 
-    fn list_messages(&self, conversation_id: &str) -> Result<Vec<ConversationMessageRecord>, String> {
+    fn list_messages(
+        &self,
+        conversation_id: &str,
+    ) -> Result<Vec<ConversationMessageRecord>, String> {
         let file = OpenOptions::new()
             .read(true)
             .open(&self.path)

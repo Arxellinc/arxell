@@ -10,7 +10,7 @@ use crate::persistence::ConversationRepository;
 use crate::tools::registry::ToolRegistry;
 use serde_json::json;
 use std::sync::Arc;
-use tokio::time::{Duration, sleep};
+use tokio::time::{sleep, Duration};
 
 pub struct ChatService {
     hub: EventHub,
@@ -94,17 +94,19 @@ impl ChatService {
 
         let assistant_message = format!("Echoed safely via registry: {echoed_input}");
 
-        self.hub.emit(self.hub.make_event(
-            &req.correlation_id,
-            Subsystem::Service,
-            "chat.stream.start",
-            EventStage::Start,
-            EventSeverity::Info,
-            serde_json::to_value(ChatStreamStartPayload {
-                conversation_id: req.conversation_id.clone(),
-            })
-            .unwrap_or_else(|_| json!({})),
-        ));
+        self.hub.emit(
+            self.hub.make_event(
+                &req.correlation_id,
+                Subsystem::Service,
+                "chat.stream.start",
+                EventStage::Start,
+                EventSeverity::Info,
+                serde_json::to_value(ChatStreamStartPayload {
+                    conversation_id: req.conversation_id.clone(),
+                })
+                .unwrap_or_else(|_| json!({})),
+            ),
+        );
 
         let mut built = String::new();
         for token in assistant_message.split_whitespace() {
@@ -113,34 +115,38 @@ impl ChatService {
             }
             built.push_str(token);
 
-            self.hub.emit(self.hub.make_event(
-                &req.correlation_id,
-                Subsystem::Service,
-                "chat.stream.chunk",
-                EventStage::Progress,
-                EventSeverity::Info,
-                serde_json::to_value(ChatStreamChunkPayload {
-                    conversation_id: req.conversation_id.clone(),
-                    delta: format!("{token} "),
-                    done: false,
-                })
-                .unwrap_or_else(|_| json!({})),
-            ));
+            self.hub.emit(
+                self.hub.make_event(
+                    &req.correlation_id,
+                    Subsystem::Service,
+                    "chat.stream.chunk",
+                    EventStage::Progress,
+                    EventSeverity::Info,
+                    serde_json::to_value(ChatStreamChunkPayload {
+                        conversation_id: req.conversation_id.clone(),
+                        delta: format!("{token} "),
+                        done: false,
+                    })
+                    .unwrap_or_else(|_| json!({})),
+                ),
+            );
             sleep(Duration::from_millis(30)).await;
         }
 
-        self.hub.emit(self.hub.make_event(
-            &req.correlation_id,
-            Subsystem::Service,
-            "chat.stream.complete",
-            EventStage::Complete,
-            EventSeverity::Info,
-            serde_json::to_value(ChatStreamCompletePayload {
-                conversation_id: req.conversation_id.clone(),
-                assistant_length: built.len(),
-            })
-            .unwrap_or_else(|_| json!({})),
-        ));
+        self.hub.emit(
+            self.hub.make_event(
+                &req.correlation_id,
+                Subsystem::Service,
+                "chat.stream.complete",
+                EventStage::Complete,
+                EventSeverity::Info,
+                serde_json::to_value(ChatStreamCompletePayload {
+                    conversation_id: req.conversation_id.clone(),
+                    assistant_length: built.len(),
+                })
+                .unwrap_or_else(|_| json!({})),
+            ),
+        );
 
         let response = ChatSendResponse {
             conversation_id: req.conversation_id,
@@ -267,17 +273,19 @@ impl ChatService {
             EventSeverity::Info,
             json!({ "conversationId": message.conversation_id, "role": message.role }),
         ));
-        self.conversation_repo.append_message(message).map_err(|e| {
-            self.hub.emit(self.hub.make_event(
-                correlation_id,
-                Subsystem::Persistence,
-                "conversation.append",
-                EventStage::Error,
-                EventSeverity::Error,
-                json!({"error": e}),
-            ));
-            e
-        })?;
+        self.conversation_repo
+            .append_message(message)
+            .map_err(|e| {
+                self.hub.emit(self.hub.make_event(
+                    correlation_id,
+                    Subsystem::Persistence,
+                    "conversation.append",
+                    EventStage::Error,
+                    EventSeverity::Error,
+                    json!({"error": e}),
+                ));
+                e
+            })?;
         self.hub.emit(self.hub.make_event(
             correlation_id,
             Subsystem::Persistence,

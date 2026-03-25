@@ -1,4 +1,5 @@
 pub mod chat_service;
+pub mod runtime_service;
 pub mod terminal_service;
 
 use crate::ipc::IpcLayer;
@@ -13,15 +14,17 @@ use std::sync::Arc;
 pub struct AppContext {
     pub ipc: IpcLayer,
     pub workspace_tools: Arc<WorkspaceToolsService>,
+    pub runtime: Arc<runtime_service::LlamaRuntimeService>,
 }
 
 impl AppContext {
     pub fn new() -> Self {
         let hub = EventHub::new();
         let memory = Arc::new(InMemoryMemoryManager::new());
-        let conversation_repo =
-            Arc::new(FileConversationRepository::new(FileConversationRepository::default_path())
-                .expect("failed to initialize conversation repository"));
+        let conversation_repo = Arc::new(
+            FileConversationRepository::new(FileConversationRepository::default_path())
+                .expect("failed to initialize conversation repository"),
+        );
 
         let mut registry = ToolRegistry::new(hub.clone());
         registry.register(EchoTool);
@@ -35,11 +38,13 @@ impl AppContext {
         ));
         let terminal = Arc::new(terminal_service::TerminalService::new(hub.clone()));
         let workspace_tools = Arc::new(WorkspaceToolsService::new());
+        let runtime = Arc::new(runtime_service::LlamaRuntimeService::new(hub.clone()));
 
         let ipc = IpcLayer::new(hub, service, terminal);
         Self {
             ipc,
             workspace_tools,
+            runtime,
         }
     }
 }
@@ -58,6 +63,7 @@ impl AppContext {
             terminal: Arc::new(self.ipc.terminal.clone()),
             hub: self.ipc.event_hub(),
             workspace_tools: Arc::clone(&self.workspace_tools),
+            runtime: Arc::clone(&self.runtime),
         }
     }
 }

@@ -224,11 +224,98 @@ pub struct WorkspaceToolSetEnabledResponse {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LlamaRuntimeStatusRequest {
+    pub correlation_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LlamaRuntimePrerequisite {
+    pub key: String,
+    pub ok: bool,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LlamaRuntimeEngine {
+    pub engine_id: String,
+    pub backend: String,
+    pub label: String,
+    pub is_applicable: bool,
+    pub is_installed: bool,
+    pub is_ready: bool,
+    pub binary_path: Option<String>,
+    pub prerequisites: Vec<LlamaRuntimePrerequisite>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LlamaRuntimeStatusResponse {
+    pub correlation_id: String,
+    pub state: String,
+    pub active_engine_id: Option<String>,
+    pub endpoint: Option<String>,
+    pub pid: Option<u32>,
+    pub engines: Vec<LlamaRuntimeEngine>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LlamaRuntimeInstallRequest {
+    pub correlation_id: String,
+    pub engine_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LlamaRuntimeInstallResponse {
+    pub correlation_id: String,
+    pub engine_id: String,
+    pub installed_path: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LlamaRuntimeStartRequest {
+    pub correlation_id: String,
+    pub engine_id: String,
+    pub model_path: String,
+    pub port: Option<u16>,
+    pub ctx_size: Option<u32>,
+    pub n_gpu_layers: Option<i32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LlamaRuntimeStartResponse {
+    pub correlation_id: String,
+    pub engine_id: String,
+    pub endpoint: String,
+    pub pid: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LlamaRuntimeStopRequest {
+    pub correlation_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LlamaRuntimeStopResponse {
+    pub correlation_id: String,
+    pub stopped: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Subsystem {
     Frontend,
     Ipc,
     Service,
+    Runtime,
     Registry,
     Tool,
     Memory,

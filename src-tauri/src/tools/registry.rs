@@ -1,4 +1,6 @@
-use crate::contracts::{EventSeverity, EventStage, Subsystem, ToolInvokeRequest, ToolInvokeResponse};
+use crate::contracts::{
+    EventSeverity, EventStage, Subsystem, ToolInvokeRequest, ToolInvokeResponse,
+};
 use crate::observability::EventHub;
 use crate::tools::tool::{Tool, ToolError};
 use serde_json::json;

@@ -923,3 +923,54 @@ body {
 .icon-light {
   color: var(--icon-light);
 }
+
+.llama-actions {
+  display: inline-flex;
+  gap: 6px;
+}
+
+.llama-form {
+  display: grid;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.llama-input {
+  width: 100%;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  color: inherit;
+  border-radius: 8px;
+  padding: 6px 10px;
+}
+
+.llama-prereqs {
+  margin-top: 14px;
+  display: grid;
+  gap: 6px;
+}
+
+.llama-logs {
+  margin-top: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 10px;
+  min-height: 160px;
+  max-height: 260px;
+  overflow: auto;
+  padding: 10px;
+  background: rgba(8, 11, 16, 0.7);
+  display: grid;
+  gap: 6px;
+}
+
+.llama-log-line {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono",
+    "Courier New", monospace;
+  font-size: 12px;
+  line-height: 1.4;
+  color: rgba(224, 232, 246, 0.9);
+}
+
+.llama-log-line.is-empty {
+  color: rgba(224, 232, 246, 0.58);
+}

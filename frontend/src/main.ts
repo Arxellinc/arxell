@@ -4,6 +4,7 @@ import type {
   AppEvent,
   ChatStreamChunkPayload,
   ConversationSummaryRecord,
+  LlamaRuntimeStatusResponse,
   WorkspaceToolRecord
 } from "./contracts";
 import { iconHtml } from "./icons";
@@ -50,6 +51,14 @@ const state: {
   conversations: ConversationSummaryRecord[];
   workspaceTools: WorkspaceToolRecord[];
   displayMode: DisplayMode;
+  llamaRuntime: LlamaRuntimeStatusResponse | null;
+  llamaRuntimeSelectedEngineId: string;
+  llamaRuntimeModelPath: string;
+  llamaRuntimePort: number;
+  llamaRuntimeCtxSize: number;
+  llamaRuntimeGpuLayers: number;
+  llamaRuntimeBusy: boolean;
+  llamaRuntimeLogs: string[];
 } = {
   conversationId: "foundation-chat",
   messages: [],
@@ -62,7 +71,15 @@ const state: {
   activeTerminalSessionId: null,
   conversations: [],
   workspaceTools: [],
-  displayMode: "dark"
+  displayMode: "dark",
+  llamaRuntime: null,
+  llamaRuntimeSelectedEngineId: "llama.cpp-cpu",
+  llamaRuntimeModelPath: "",
+  llamaRuntimePort: 8080,
+  llamaRuntimeCtxSize: 8192,
+  llamaRuntimeGpuLayers: 999,
+  llamaRuntimeBusy: false,
+  llamaRuntimeLogs: []
 };
 
 let clientRef: ChatIpcClient | null = null;
@@ -110,7 +127,15 @@ function render(): void {
   const panel = getPanelDefinition(state.sidebarTab, {
     conversationId: state.conversationId,
     messages: state.messages,
-    conversations: state.conversations
+    conversations: state.conversations,
+    llamaRuntime: state.llamaRuntime,
+    llamaRuntimeSelectedEngineId: state.llamaRuntimeSelectedEngineId,
+    llamaRuntimeModelPath: state.llamaRuntimeModelPath,
+    llamaRuntimePort: state.llamaRuntimePort,
+    llamaRuntimeCtxSize: state.llamaRuntimeCtxSize,
+    llamaRuntimeGpuLayers: state.llamaRuntimeGpuLayers,
+    llamaRuntimeBusy: state.llamaRuntimeBusy,
+    llamaRuntimeLogs: state.llamaRuntimeLogs
   });
 
   app.innerHTML = `
@@ -237,6 +262,21 @@ async function refreshTools(): Promise<void> {
   state.workspaceTools = response.tools;
 }
 
+async function refreshLlamaRuntime(): Promise<void> {
+  if (!clientRef) return;
+  const response = await clientRef.getLlamaRuntimeStatus({ correlationId: nextCorrelationId() });
+  state.llamaRuntime = response;
+  if (
+    response.engines.length &&
+    !response.engines.some((engine) => engine.engineId === state.llamaRuntimeSelectedEngineId)
+  ) {
+    const firstEngine = response.engines.at(0);
+    if (firstEngine) {
+      state.llamaRuntimeSelectedEngineId = firstEngine.engineId;
+    }
+  }
+}
+
 function renderAndBind(sendMessage: (text: string) => Promise<void>): void {
   render();
   attachDividerResize();
@@ -256,6 +296,64 @@ function renderAndBind(sendMessage: (text: string) => Promise<void>): void {
     onSelectConversation: async (conversationId: string) => {
       await loadConversation(conversationId);
       renderAndBind(sendMessage);
+    },
+    onLlamaRuntimeRefresh: async () => {
+      state.llamaRuntimeBusy = true;
+      try {
+        await refreshLlamaRuntime();
+      } finally {
+        state.llamaRuntimeBusy = false;
+      }
+      renderAndBind(sendMessage);
+    },
+    onLlamaRuntimeInstall: async (engineId: string) => {
+      if (!clientRef) return;
+      state.llamaRuntimeBusy = true;
+      state.llamaRuntimeSelectedEngineId = engineId;
+      try {
+        await clientRef.installLlamaRuntimeEngine({
+          correlationId: nextCorrelationId(),
+          engineId
+        });
+        await refreshLlamaRuntime();
+      } finally {
+        state.llamaRuntimeBusy = false;
+      }
+      renderAndBind(sendMessage);
+    },
+    onLlamaRuntimeStart: async ({ engineId, modelPath, port, ctxSize, nGpuLayers }) => {
+      if (!clientRef) return;
+      state.llamaRuntimeBusy = true;
+      state.llamaRuntimeSelectedEngineId = engineId;
+      state.llamaRuntimeModelPath = modelPath;
+      state.llamaRuntimePort = port;
+      state.llamaRuntimeCtxSize = ctxSize;
+      state.llamaRuntimeGpuLayers = nGpuLayers;
+      try {
+        await clientRef.startLlamaRuntime({
+          correlationId: nextCorrelationId(),
+          engineId,
+          modelPath,
+          port,
+          ctxSize,
+          nGpuLayers
+        });
+        await refreshLlamaRuntime();
+      } finally {
+        state.llamaRuntimeBusy = false;
+      }
+      renderAndBind(sendMessage);
+    },
+    onLlamaRuntimeStop: async () => {
+      if (!clientRef) return;
+      state.llamaRuntimeBusy = true;
+      try {
+        await clientRef.stopLlamaRuntime({ correlationId: nextCorrelationId() });
+        await refreshLlamaRuntime();
+      } finally {
+        state.llamaRuntimeBusy = false;
+      }
+      renderAndBind(sendMessage);
     }
   });
 }
@@ -274,10 +372,13 @@ function attachSidebarInteractions(sendMessage: (text: string) => Promise<void>)
   const tabs = document.querySelectorAll<HTMLButtonElement>("[data-sidebar-tab]");
 
   tabs.forEach((tab) => {
-    tab.onclick = () => {
+    tab.onclick = async () => {
       const nextTab = tab.dataset.sidebarTab as SidebarTab | undefined;
       if (!nextTab) return;
       state.sidebarTab = nextTab;
+      if (nextTab === "llama_cpp") {
+        await refreshLlamaRuntime();
+      }
       renderAndBind(sendMessage);
     };
   });
@@ -404,6 +505,7 @@ async function bootstrap(): Promise<void> {
 
   await refreshConversations();
   await refreshTools();
+  await refreshLlamaRuntime();
   const firstConversation = state.conversations[0];
   if (firstConversation) {
     state.conversationId = firstConversation.conversationId;
@@ -440,6 +542,22 @@ async function bootstrap(): Promise<void> {
 
     if (isNoisyTerminalControlEvent(event)) {
       return;
+    }
+
+    if (event.action.startsWith("llama.runtime")) {
+      const payloadText =
+        event.payload && typeof event.payload === "object"
+          ? JSON.stringify(event.payload)
+          : String(event.payload);
+      state.llamaRuntimeLogs.push(
+        `${new Date(event.timestampMs).toLocaleTimeString()} ${event.action} ${event.stage} ${payloadText}`
+      );
+      if (state.llamaRuntimeLogs.length > 300) {
+        state.llamaRuntimeLogs.splice(0, state.llamaRuntimeLogs.length - 300);
+      }
+      if (event.stage === "complete" || event.stage === "error") {
+        void refreshLlamaRuntime().then(() => renderAndBind(sendMessage));
+      }
     }
 
     state.events.push(event);

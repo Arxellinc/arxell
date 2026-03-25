@@ -8,14 +8,17 @@ use app_foundation::app::AppContext;
 #[cfg(feature = "tauri-runtime")]
 use app_foundation::contracts::{
     ChatGetMessagesRequest, ChatGetMessagesResponse, ChatListConversationsRequest,
-    ChatListConversationsResponse, ChatSendRequest, ChatSendResponse, TerminalCloseSessionRequest,
-    TerminalCloseSessionResponse, TerminalInputRequest, TerminalInputResponse,
-    TerminalOpenSessionRequest, TerminalOpenSessionResponse, TerminalResizeRequest,
-    TerminalResizeResponse, WorkspaceToolSetEnabledRequest, WorkspaceToolSetEnabledResponse,
-    WorkspaceToolsListRequest, WorkspaceToolsListResponse,
+    ChatListConversationsResponse, ChatSendRequest, ChatSendResponse, LlamaRuntimeInstallRequest,
+    LlamaRuntimeInstallResponse, LlamaRuntimeStartRequest, LlamaRuntimeStartResponse,
+    LlamaRuntimeStatusRequest, LlamaRuntimeStatusResponse, LlamaRuntimeStopRequest,
+    LlamaRuntimeStopResponse, TerminalCloseSessionRequest, TerminalCloseSessionResponse,
+    TerminalInputRequest, TerminalInputResponse, TerminalOpenSessionRequest,
+    TerminalOpenSessionResponse, TerminalResizeRequest, TerminalResizeResponse,
+    WorkspaceToolSetEnabledRequest, WorkspaceToolSetEnabledResponse, WorkspaceToolsListRequest,
+    WorkspaceToolsListResponse,
 };
 #[cfg(feature = "tauri-runtime")]
-use app_foundation::ipc::tauri_bridge::{TauriBridgeState, attach_event_forwarder};
+use app_foundation::ipc::tauri_bridge::{attach_event_forwarder, TauriBridgeState};
 #[cfg(feature = "tauri-runtime")]
 use serde::{Deserialize, Serialize};
 #[cfg(feature = "tauri-runtime")]
@@ -63,6 +66,7 @@ fn main() {
         terminal: std::sync::Arc::new(app_context.ipc.terminal.clone()),
         hub: hub.clone(),
         workspace_tools: std::sync::Arc::clone(&app_context.workspace_tools),
+        runtime: std::sync::Arc::clone(&app_context.runtime),
     };
 
     tauri::Builder::default()
@@ -78,7 +82,9 @@ fn main() {
                 return;
             }
             match event {
-                WindowEvent::Moved(_) | WindowEvent::Resized(_) | WindowEvent::CloseRequested { .. } => {
+                WindowEvent::Moved(_)
+                | WindowEvent::Resized(_)
+                | WindowEvent::CloseRequested { .. } => {
                     persist_window_state(window);
                 }
                 _ => {}
@@ -94,7 +100,11 @@ fn main() {
             cmd_terminal_resize,
             cmd_terminal_close_session,
             cmd_workspace_tools_list,
-            cmd_workspace_tool_set_enabled
+            cmd_workspace_tool_set_enabled,
+            cmd_llama_runtime_status,
+            cmd_llama_runtime_install_engine,
+            cmd_llama_runtime_start,
+            cmd_llama_runtime_stop
         ])
         .run(tauri::generate_context!())
         .expect("failed to run tauri app");
@@ -193,6 +203,89 @@ async fn cmd_workspace_tool_set_enabled(
 }
 
 #[cfg(feature = "tauri-runtime")]
+#[tauri::command]
+async fn cmd_llama_runtime_status(
+    app: tauri::AppHandle,
+    state: State<'_, TauriBridgeState>,
+    request: LlamaRuntimeStatusRequest,
+) -> Result<LlamaRuntimeStatusResponse, String> {
+    let app_data = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("failed to resolve app data dir: {e}"))?;
+    Ok(state
+        .runtime
+        .status(request.correlation_id.as_str(), app_data.as_path()))
+}
+
+#[cfg(feature = "tauri-runtime")]
+#[tauri::command]
+async fn cmd_llama_runtime_install_engine(
+    app: tauri::AppHandle,
+    state: State<'_, TauriBridgeState>,
+    request: LlamaRuntimeInstallRequest,
+) -> Result<LlamaRuntimeInstallResponse, String> {
+    let app_data = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("failed to resolve app data dir: {e}"))?;
+    let bundled = resolve_bundled_engine_binary(&app, request.engine_id.as_str());
+    state.runtime.install_engine(
+        request.correlation_id.as_str(),
+        request.engine_id.as_str(),
+        app_data.as_path(),
+        bundled,
+    )
+}
+
+#[cfg(feature = "tauri-runtime")]
+#[tauri::command]
+async fn cmd_llama_runtime_start(
+    app: tauri::AppHandle,
+    state: State<'_, TauriBridgeState>,
+    request: LlamaRuntimeStartRequest,
+) -> Result<LlamaRuntimeStartResponse, String> {
+    let app_data = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("failed to resolve app data dir: {e}"))?;
+    state.runtime.start(&request, app_data.as_path())
+}
+
+#[cfg(feature = "tauri-runtime")]
+#[tauri::command]
+async fn cmd_llama_runtime_stop(
+    state: State<'_, TauriBridgeState>,
+    request: LlamaRuntimeStopRequest,
+) -> Result<LlamaRuntimeStopResponse, String> {
+    state.runtime.stop(request.correlation_id.as_str())
+}
+
+#[cfg(feature = "tauri-runtime")]
+fn resolve_bundled_engine_binary(app: &tauri::AppHandle, engine_id: &str) -> Option<PathBuf> {
+    let os = std::env::consts::OS;
+    let arch = std::env::consts::ARCH;
+    let binary_name = app_foundation::app::runtime_service::engine_binary_filename();
+    let rel_candidates = [
+        format!("llama-runtime/{engine_id}/{binary_name}"),
+        format!("resources/llama-runtime/{engine_id}/{binary_name}"),
+        format!("llama-runtime/{os}-{arch}/{engine_id}/{binary_name}"),
+        format!("resources/llama-runtime/{os}-{arch}/{engine_id}/{binary_name}"),
+    ];
+    for rel in rel_candidates {
+        if let Ok(path) = app
+            .path()
+            .resolve(rel.as_str(), tauri::path::BaseDirectory::Resource)
+        {
+            if path.is_file() {
+                return Some(path);
+            }
+        }
+    }
+    None
+}
+
+#[cfg(feature = "tauri-runtime")]
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 struct PersistedWindowState {
@@ -246,10 +339,14 @@ fn restore_window_state(window: &tauri::WebviewWindow) {
     };
 
     if let (Some(width), Some(height)) = (state.width, state.height) {
-        let _ = window.set_size(tauri::Size::Physical(tauri::PhysicalSize::new(width, height)));
+        let _ = window.set_size(tauri::Size::Physical(tauri::PhysicalSize::new(
+            width, height,
+        )));
     }
     if let (Some(x), Some(y)) = (state.x, state.y) {
-        let _ = window.set_position(tauri::Position::Physical(tauri::PhysicalPosition::new(x, y)));
+        let _ = window.set_position(tauri::Position::Physical(tauri::PhysicalPosition::new(
+            x, y,
+        )));
     }
     if state.maximized {
         let _ = window.maximize();

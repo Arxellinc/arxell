@@ -4,6 +4,14 @@ import type {
   ChatGetMessagesResponse,
   ChatListConversationsRequest,
   ChatListConversationsResponse,
+  LlamaRuntimeInstallRequest,
+  LlamaRuntimeInstallResponse,
+  LlamaRuntimeStartRequest,
+  LlamaRuntimeStartResponse,
+  LlamaRuntimeStatusRequest,
+  LlamaRuntimeStatusResponse,
+  LlamaRuntimeStopRequest,
+  LlamaRuntimeStopResponse,
   ChatSendRequest,
   ChatSendResponse,
   TerminalCloseSessionRequest,
@@ -35,6 +43,12 @@ export interface ChatIpcClient {
   setWorkspaceToolEnabled(
     request: WorkspaceToolSetEnabledRequest
   ): Promise<WorkspaceToolSetEnabledResponse>;
+  getLlamaRuntimeStatus(request: LlamaRuntimeStatusRequest): Promise<LlamaRuntimeStatusResponse>;
+  installLlamaRuntimeEngine(
+    request: LlamaRuntimeInstallRequest
+  ): Promise<LlamaRuntimeInstallResponse>;
+  startLlamaRuntime(request: LlamaRuntimeStartRequest): Promise<LlamaRuntimeStartResponse>;
+  stopLlamaRuntime(request: LlamaRuntimeStopRequest): Promise<LlamaRuntimeStopResponse>;
   onEvent(listener: (event: AppEvent) => void): () => void;
 }
 
@@ -127,6 +141,28 @@ class TauriChatIpcClient implements ChatIpcClient {
     return this.invokeFn<WorkspaceToolSetEnabledResponse>("cmd_workspace_tool_set_enabled", {
       request
     });
+  }
+
+  getLlamaRuntimeStatus(
+    request: LlamaRuntimeStatusRequest
+  ): Promise<LlamaRuntimeStatusResponse> {
+    return this.invokeFn<LlamaRuntimeStatusResponse>("cmd_llama_runtime_status", { request });
+  }
+
+  installLlamaRuntimeEngine(
+    request: LlamaRuntimeInstallRequest
+  ): Promise<LlamaRuntimeInstallResponse> {
+    return this.invokeFn<LlamaRuntimeInstallResponse>("cmd_llama_runtime_install_engine", {
+      request
+    });
+  }
+
+  startLlamaRuntime(request: LlamaRuntimeStartRequest): Promise<LlamaRuntimeStartResponse> {
+    return this.invokeFn<LlamaRuntimeStartResponse>("cmd_llama_runtime_start", { request });
+  }
+
+  stopLlamaRuntime(request: LlamaRuntimeStopRequest): Promise<LlamaRuntimeStopResponse> {
+    return this.invokeFn<LlamaRuntimeStopResponse>("cmd_llama_runtime_stop", { request });
   }
 }
 
@@ -293,6 +329,102 @@ export class MockChatIpcClient implements ChatIpcClient {
       toolId: request.toolId,
       enabled: request.enabled,
       correlationId: request.correlationId
+    };
+  }
+
+  async getLlamaRuntimeStatus(
+    request: LlamaRuntimeStatusRequest
+  ): Promise<LlamaRuntimeStatusResponse> {
+    return {
+      correlationId: request.correlationId,
+      state: "idle",
+      activeEngineId: null,
+      endpoint: null,
+      pid: null,
+      engines: [
+        {
+          engineId: "llama.cpp-cpu",
+          backend: "cpu",
+          label: "llama.cpp (CPU)",
+          isApplicable: true,
+          isInstalled: false,
+          isReady: false,
+          binaryPath: null,
+          prerequisites: []
+        },
+        {
+          engineId: "llama.cpp-vulkan",
+          backend: "vulkan",
+          label: "llama.cpp (Vulkan)",
+          isApplicable: true,
+          isInstalled: false,
+          isReady: false,
+          binaryPath: null,
+          prerequisites: [
+            {
+              key: "vulkaninfo",
+              ok: false,
+              message: "Missing Vulkan runtime/driver"
+            }
+          ]
+        }
+      ]
+    };
+  }
+
+  async installLlamaRuntimeEngine(
+    request: LlamaRuntimeInstallRequest
+  ): Promise<LlamaRuntimeInstallResponse> {
+    this.emit({
+      timestampMs: Date.now(),
+      correlationId: request.correlationId,
+      subsystem: "runtime",
+      action: "llama.runtime.install",
+      stage: "progress",
+      severity: "info",
+      payload: { engineId: request.engineId, message: "Mock install completed" }
+    });
+    return {
+      correlationId: request.correlationId,
+      engineId: request.engineId,
+      installedPath: `/tmp/${request.engineId}/llama-server`
+    };
+  }
+
+  async startLlamaRuntime(request: LlamaRuntimeStartRequest): Promise<LlamaRuntimeStartResponse> {
+    this.emit({
+      timestampMs: Date.now(),
+      correlationId: request.correlationId,
+      subsystem: "runtime",
+      action: "llama.runtime.start",
+      stage: "progress",
+      severity: "info",
+      payload: {
+        engineId: request.engineId,
+        line: `mock runtime started with model ${request.modelPath}`
+      }
+    });
+    return {
+      correlationId: request.correlationId,
+      engineId: request.engineId,
+      endpoint: `http://127.0.0.1:${request.port ?? 8080}/v1`,
+      pid: 12345
+    };
+  }
+
+  async stopLlamaRuntime(request: LlamaRuntimeStopRequest): Promise<LlamaRuntimeStopResponse> {
+    this.emit({
+      timestampMs: Date.now(),
+      correlationId: request.correlationId,
+      subsystem: "runtime",
+      action: "llama.runtime.stop",
+      stage: "complete",
+      severity: "info",
+      payload: { stopped: true }
+    });
+    return {
+      correlationId: request.correlationId,
+      stopped: true
     };
   }
 

@@ -1,7 +1,7 @@
 use crate::app::chat_service::ChatService;
 use crate::contracts::{
-    ChatGetMessagesRequest, ChatGetMessagesResponse, ChatSendRequest, ChatSendResponse,
-    ChatListConversationsRequest, ChatListConversationsResponse, EventSeverity, EventStage,
+    ChatGetMessagesRequest, ChatGetMessagesResponse, ChatListConversationsRequest,
+    ChatListConversationsResponse, ChatSendRequest, ChatSendResponse, EventSeverity, EventStage,
     Subsystem,
 };
 use crate::observability::EventHub;
