@@ -35,6 +35,7 @@ import type {
   WorkspaceToolSetEnabledRequest,
   WorkspaceToolSetEnabledResponse
 } from "./contracts";
+import { APP_BUILD_VERSION } from "./version";
 
 export interface ChatIpcClient {
   getAppVersion(): Promise<AppVersionResponse>;
@@ -220,7 +221,7 @@ export class MockChatIpcClient implements ChatIpcClient {
   ]);
 
   async getAppVersion(): Promise<AppVersionResponse> {
-    return { version: "dev" };
+    return { version: APP_BUILD_VERSION };
   }
 
   onEvent(listener: (event: AppEvent) => void): () => void {

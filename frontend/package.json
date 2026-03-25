@@ -7,7 +7,9 @@
     "dev": "vite",
     "build": "vite build",
     "check": "tsc --noEmit",
-    "icons:sync-ignore": "node ../scripts/sync-icon-gitignore.mjs"
+    "icons:sync-ignore": "node ../scripts/sync-icon-gitignore.mjs",
+    "version:sync": "node ../scripts/version-sync.mjs",
+    "version:check": "node ../scripts/version-sync.mjs --check"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.8.0",

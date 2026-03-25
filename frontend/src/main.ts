@@ -31,6 +31,7 @@ import {
   renderWorkspaceToolsBody
 } from "./workspace-tools/panel";
 import { renderChatMessages } from "./panels/chatPanel";
+import { APP_BUILD_VERSION, normalizeVersionLabel } from "./version";
 
 const terminalManager = new TerminalManager();
 const MAX_CONSOLE_ENTRIES = 600;
@@ -40,7 +41,7 @@ const MIC_PERMISSION_BUBBLE_DISMISSED_KEY = "arxell.micPermissionBubbleDismissed
 const CHAT_ID_ALPHANUM = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
 let chatStreamDomUpdateScheduled = false;
 let chatThinkingDelegationInstalled = false;
-const FALLBACK_APP_VERSION = "dev";
+const FALLBACK_APP_VERSION = normalizeVersionLabel(APP_BUILD_VERSION);
 
 function generateChatConversationId(): string {
   let suffix = "";
@@ -1710,7 +1711,7 @@ async function bootstrap(): Promise<void> {
   try {
     const version = (await client.getAppVersion()).version.trim();
     if (version) {
-      state.appVersion = version;
+      state.appVersion = normalizeVersionLabel(version);
     }
   } catch {
     state.appVersion = FALLBACK_APP_VERSION;
