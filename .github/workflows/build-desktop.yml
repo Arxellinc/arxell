@@ -39,7 +39,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          version="$(node -e 'const fs=require("fs"); const toml=fs.readFileSync("src-tauri/Cargo.toml","utf8"); const m=toml.match(/^version\\s*=\\s*"([^"]+)"\\s*$/m); if(!m){console.error("Could not find package version in src-tauri/Cargo.toml"); process.exit(1);} process.stdout.write(m[1]);')"
+          version="$(node -e 'const fs=require("fs"); const toml=fs.readFileSync("src-tauri/Cargo.toml","utf8"); const m=toml.match(/^\\s*version\\s*=\\s*"([^"]+)"\\s*$/m); if(!m){console.error("Could not find package version in src-tauri/Cargo.toml"); process.exit(1);} process.stdout.write(m[1]);')"
           echo "version=${version}" >> "${GITHUB_OUTPUT}"
           echo "App version: ${version}"
 
