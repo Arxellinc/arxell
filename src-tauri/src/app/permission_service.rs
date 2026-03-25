@@ -143,7 +143,13 @@ impl PermissionService {
         })
     }
 
-    fn emit(&self, correlation_id: &str, stage: EventStage, severity: EventSeverity, payload: serde_json::Value) {
+    fn emit(
+        &self,
+        correlation_id: &str,
+        stage: EventStage,
+        severity: EventSeverity,
+        payload: serde_json::Value,
+    ) {
         self.hub.emit(self.hub.make_event(
             correlation_id,
             Subsystem::Runtime,

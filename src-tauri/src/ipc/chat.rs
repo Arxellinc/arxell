@@ -1,8 +1,9 @@
 use crate::app::chat_service::ChatService;
 use crate::contracts::{
-    ChatCancelRequest, ChatCancelResponse, ChatDeleteConversationRequest, ChatDeleteConversationResponse, ChatGetMessagesRequest, ChatGetMessagesResponse, ChatListConversationsRequest,
-    ChatListConversationsResponse, ChatSendRequest, ChatSendResponse, EventSeverity, EventStage,
-    Subsystem,
+    ChatCancelRequest, ChatCancelResponse, ChatDeleteConversationRequest,
+    ChatDeleteConversationResponse, ChatGetMessagesRequest, ChatGetMessagesResponse,
+    ChatListConversationsRequest, ChatListConversationsResponse, ChatSendRequest, ChatSendResponse,
+    EventSeverity, EventStage, Subsystem,
 };
 use crate::observability::EventHub;
 use serde_json::json;
@@ -68,7 +69,10 @@ impl ChatCommandHandler {
 
         let result = self
             .service
-            .cancel_message(req.correlation_id.as_str(), req.target_correlation_id.as_str())
+            .cancel_message(
+                req.correlation_id.as_str(),
+                req.target_correlation_id.as_str(),
+            )
             .await;
 
         match &result {

@@ -7,16 +7,21 @@ use app_foundation::contracts::ChatSendRequest;
 use app_foundation::app::AppContext;
 #[cfg(feature = "tauri-runtime")]
 use app_foundation::contracts::{
-    ChatCancelRequest, ChatCancelResponse, ChatDeleteConversationRequest, ChatDeleteConversationResponse, ChatGetMessagesRequest, ChatGetMessagesResponse, ChatListConversationsRequest,
-    ChatListConversationsResponse, ChatSendRequest, ChatSendResponse, DevicesProbeMicrophoneRequest,
-    DevicesProbeMicrophoneResponse, LlamaRuntimeInstallRequest, LlamaRuntimeInstallResponse,
-    LlamaRuntimeStartRequest, LlamaRuntimeStartResponse, LlamaRuntimeStatusRequest,
-    LlamaRuntimeStatusResponse, LlamaRuntimeStopRequest, LlamaRuntimeStopResponse,
+    AppVersionResponse, ChatCancelRequest, ChatCancelResponse, ChatDeleteConversationRequest,
+    ChatDeleteConversationResponse, ChatGetMessagesRequest, ChatGetMessagesResponse,
+    ChatListConversationsRequest, ChatListConversationsResponse, ChatSendRequest, ChatSendResponse,
+    DevicesProbeMicrophoneRequest, DevicesProbeMicrophoneResponse, LlamaRuntimeInstallRequest,
+    LlamaRuntimeInstallResponse, LlamaRuntimeStartRequest, LlamaRuntimeStartResponse,
+    LlamaRuntimeStatusRequest, LlamaRuntimeStatusResponse, LlamaRuntimeStopRequest,
+    LlamaRuntimeStopResponse, ModelManagerDeleteInstalledRequest,
+    ModelManagerDeleteInstalledResponse, ModelManagerDownloadHfRequest,
+    ModelManagerDownloadHfResponse, ModelManagerListCatalogCsvRequest,
+    ModelManagerListCatalogCsvResponse, ModelManagerListInstalledRequest,
+    ModelManagerListInstalledResponse, ModelManagerSearchHfRequest, ModelManagerSearchHfResponse,
     TerminalCloseSessionRequest, TerminalCloseSessionResponse, TerminalInputRequest,
     TerminalInputResponse, TerminalOpenSessionRequest, TerminalOpenSessionResponse,
     TerminalResizeRequest, TerminalResizeResponse, WorkspaceToolSetEnabledRequest,
     WorkspaceToolSetEnabledResponse, WorkspaceToolsListRequest, WorkspaceToolsListResponse,
-    AppVersionResponse,
 };
 #[cfg(feature = "tauri-runtime")]
 use app_foundation::ipc::tauri_bridge::{attach_event_forwarder, TauriBridgeState};
@@ -71,6 +76,7 @@ fn main() {
         workspace_tools: std::sync::Arc::clone(&app_context.workspace_tools),
         runtime: std::sync::Arc::clone(&app_context.runtime),
         permissions: std::sync::Arc::clone(&app_context.permissions),
+        model_manager: std::sync::Arc::clone(&app_context.model_manager),
     };
 
     tauri::Builder::default()
@@ -118,7 +124,12 @@ fn main() {
             cmd_llama_runtime_status,
             cmd_llama_runtime_install_engine,
             cmd_llama_runtime_start,
-            cmd_llama_runtime_stop
+            cmd_llama_runtime_stop,
+            cmd_model_manager_list_installed,
+            cmd_model_manager_search_hf,
+            cmd_model_manager_download_hf,
+            cmd_model_manager_delete_installed,
+            cmd_model_manager_list_catalog_csv
         ])
         .run(tauri::generate_context!())
         .expect("failed to run tauri app");
@@ -269,7 +280,8 @@ async fn cmd_llama_runtime_status(
         .runtime
         .status(request.correlation_id.as_str(), app_data.as_path());
     for engine in status.engines.iter_mut() {
-        engine.is_bundled = resolve_bundled_engine_binary(&app, engine.engine_id.as_str()).is_some();
+        engine.is_bundled =
+            resolve_bundled_engine_binary(&app, engine.engine_id.as_str()).is_some();
     }
     Ok(status)
 }
@@ -323,6 +335,136 @@ async fn cmd_llama_runtime_stop(
     request: LlamaRuntimeStopRequest,
 ) -> Result<LlamaRuntimeStopResponse, String> {
     state.runtime.stop(request.correlation_id.as_str())
+}
+
+#[cfg(feature = "tauri-runtime")]
+#[tauri::command]
+async fn cmd_model_manager_list_installed(
+    app: tauri::AppHandle,
+    state: State<'_, TauriBridgeState>,
+    request: ModelManagerListInstalledRequest,
+) -> Result<ModelManagerListInstalledResponse, String> {
+    let app_data = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("failed to resolve app data dir: {e}"))?;
+    let service = std::sync::Arc::clone(&state.model_manager);
+    let correlation_id = request.correlation_id.clone();
+    let app_data_owned = app_data.clone();
+    let models = tokio::task::spawn_blocking(move || {
+        service.list_installed(correlation_id.as_str(), app_data_owned.as_path())
+    })
+    .await
+    .map_err(|e| format!("model manager list task failed: {e}"))??;
+    Ok(ModelManagerListInstalledResponse {
+        correlation_id: request.correlation_id,
+        models,
+    })
+}
+
+#[cfg(feature = "tauri-runtime")]
+#[tauri::command]
+async fn cmd_model_manager_search_hf(
+    state: State<'_, TauriBridgeState>,
+    request: ModelManagerSearchHfRequest,
+) -> Result<ModelManagerSearchHfResponse, String> {
+    let service = std::sync::Arc::clone(&state.model_manager);
+    let correlation_id = request.correlation_id.clone();
+    let query = request.query.clone();
+    let limit = request.limit.unwrap_or(8) as usize;
+    let results = tokio::task::spawn_blocking(move || {
+        service.search_hf(correlation_id.as_str(), &query, limit)
+    })
+    .await
+    .map_err(|e| format!("model manager search task failed: {e}"))??;
+    Ok(ModelManagerSearchHfResponse {
+        correlation_id: request.correlation_id,
+        results,
+    })
+}
+
+#[cfg(feature = "tauri-runtime")]
+#[tauri::command]
+async fn cmd_model_manager_download_hf(
+    app: tauri::AppHandle,
+    state: State<'_, TauriBridgeState>,
+    request: ModelManagerDownloadHfRequest,
+) -> Result<ModelManagerDownloadHfResponse, String> {
+    let app_data = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("failed to resolve app data dir: {e}"))?;
+    let service = std::sync::Arc::clone(&state.model_manager);
+    let correlation_id = request.correlation_id.clone();
+    let repo_id = request.repo_id.clone();
+    let file_name = request.file_name.clone();
+    let app_data_owned = app_data.clone();
+    let model = tokio::task::spawn_blocking(move || {
+        service.download_from_hf(
+            correlation_id.as_str(),
+            app_data_owned.as_path(),
+            repo_id.as_str(),
+            file_name.as_deref(),
+        )
+    })
+    .await
+    .map_err(|e| format!("model manager download task failed: {e}"))??;
+    Ok(ModelManagerDownloadHfResponse {
+        correlation_id: request.correlation_id,
+        model,
+    })
+}
+
+#[cfg(feature = "tauri-runtime")]
+#[tauri::command]
+async fn cmd_model_manager_delete_installed(
+    app: tauri::AppHandle,
+    state: State<'_, TauriBridgeState>,
+    request: ModelManagerDeleteInstalledRequest,
+) -> Result<ModelManagerDeleteInstalledResponse, String> {
+    let app_data = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("failed to resolve app data dir: {e}"))?;
+    let service = std::sync::Arc::clone(&state.model_manager);
+    let correlation_id = request.correlation_id.clone();
+    let model_id = request.model_id.clone();
+    let app_data_owned = app_data.clone();
+    tokio::task::spawn_blocking(move || {
+        service.delete_installed(
+            correlation_id.as_str(),
+            app_data_owned.as_path(),
+            model_id.as_str(),
+        )
+    })
+    .await
+    .map_err(|e| format!("model manager delete task failed: {e}"))??;
+    Ok(ModelManagerDeleteInstalledResponse {
+        correlation_id: request.correlation_id,
+        model_id: request.model_id,
+        deleted: true,
+    })
+}
+
+#[cfg(feature = "tauri-runtime")]
+#[tauri::command]
+async fn cmd_model_manager_list_catalog_csv(
+    state: State<'_, TauriBridgeState>,
+    request: ModelManagerListCatalogCsvRequest,
+) -> Result<ModelManagerListCatalogCsvResponse, String> {
+    let service = std::sync::Arc::clone(&state.model_manager);
+    let correlation_id = request.correlation_id.clone();
+    let list_name = request.list_name.clone();
+    let rows = tokio::task::spawn_blocking(move || {
+        service.list_catalog_csv(correlation_id.as_str(), list_name.as_str())
+    })
+    .await
+    .map_err(|e| format!("model manager list catalog csv task failed: {e}"))??;
+    Ok(ModelManagerListCatalogCsvResponse {
+        correlation_id: request.correlation_id,
+        list_name: request.list_name,
+        rows,
+    })
 }
 
 #[cfg(feature = "tauri-runtime")]

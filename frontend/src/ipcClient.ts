@@ -19,6 +19,16 @@ import type {
   LlamaRuntimeStatusResponse,
   LlamaRuntimeStopRequest,
   LlamaRuntimeStopResponse,
+  ModelManagerDeleteInstalledRequest,
+  ModelManagerDeleteInstalledResponse,
+  ModelManagerDownloadHfRequest,
+  ModelManagerDownloadHfResponse,
+  ModelManagerListCatalogCsvRequest,
+  ModelManagerListCatalogCsvResponse,
+  ModelManagerListInstalledRequest,
+  ModelManagerListInstalledResponse,
+  ModelManagerSearchHfRequest,
+  ModelManagerSearchHfResponse,
   ChatSendRequest,
   ChatSendResponse,
   TerminalCloseSessionRequest,
@@ -62,6 +72,19 @@ export interface ChatIpcClient {
   ): Promise<LlamaRuntimeInstallResponse>;
   startLlamaRuntime(request: LlamaRuntimeStartRequest): Promise<LlamaRuntimeStartResponse>;
   stopLlamaRuntime(request: LlamaRuntimeStopRequest): Promise<LlamaRuntimeStopResponse>;
+  modelManagerListInstalled(
+    request: ModelManagerListInstalledRequest
+  ): Promise<ModelManagerListInstalledResponse>;
+  modelManagerSearchHf(request: ModelManagerSearchHfRequest): Promise<ModelManagerSearchHfResponse>;
+  modelManagerDownloadHf(
+    request: ModelManagerDownloadHfRequest
+  ): Promise<ModelManagerDownloadHfResponse>;
+  modelManagerDeleteInstalled(
+    request: ModelManagerDeleteInstalledRequest
+  ): Promise<ModelManagerDeleteInstalledResponse>;
+  modelManagerListCatalogCsv(
+    request: ModelManagerListCatalogCsvRequest
+  ): Promise<ModelManagerListCatalogCsvResponse>;
   probeMicrophoneDevice(
     request: DevicesProbeMicrophoneRequest
   ): Promise<DevicesProbeMicrophoneResponse>;
@@ -197,6 +220,44 @@ class TauriChatIpcClient implements ChatIpcClient {
     return this.invokeFn<LlamaRuntimeStopResponse>("cmd_llama_runtime_stop", { request });
   }
 
+  modelManagerListInstalled(
+    request: ModelManagerListInstalledRequest
+  ): Promise<ModelManagerListInstalledResponse> {
+    return this.invokeFn<ModelManagerListInstalledResponse>("cmd_model_manager_list_installed", {
+      request
+    });
+  }
+
+  modelManagerSearchHf(request: ModelManagerSearchHfRequest): Promise<ModelManagerSearchHfResponse> {
+    return this.invokeFn<ModelManagerSearchHfResponse>("cmd_model_manager_search_hf", {
+      request
+    });
+  }
+
+  modelManagerDownloadHf(
+    request: ModelManagerDownloadHfRequest
+  ): Promise<ModelManagerDownloadHfResponse> {
+    return this.invokeFn<ModelManagerDownloadHfResponse>("cmd_model_manager_download_hf", {
+      request
+    });
+  }
+
+  modelManagerDeleteInstalled(
+    request: ModelManagerDeleteInstalledRequest
+  ): Promise<ModelManagerDeleteInstalledResponse> {
+    return this.invokeFn<ModelManagerDeleteInstalledResponse>("cmd_model_manager_delete_installed", {
+      request
+    });
+  }
+
+  modelManagerListCatalogCsv(
+    request: ModelManagerListCatalogCsvRequest
+  ): Promise<ModelManagerListCatalogCsvResponse> {
+    return this.invokeFn<ModelManagerListCatalogCsvResponse>("cmd_model_manager_list_catalog_csv", {
+      request
+    });
+  }
+
   probeMicrophoneDevice(
     request: DevicesProbeMicrophoneRequest
   ): Promise<DevicesProbeMicrophoneResponse> {
@@ -288,12 +349,18 @@ export class MockChatIpcClient implements ChatIpcClient {
       payload: { conversationId: request.conversationId, assistantLength: text.length }
     });
 
-    const response: ChatSendResponse = {
-      conversationId: request.conversationId,
-      assistantMessage: text,
-      assistantThinking: thinking || undefined,
-      correlationId: request.correlationId
-    };
+    const response: ChatSendResponse = thinking
+      ? {
+          conversationId: request.conversationId,
+          assistantMessage: text,
+          assistantThinking: thinking,
+          correlationId: request.correlationId
+        }
+      : {
+          conversationId: request.conversationId,
+          assistantMessage: text,
+          correlationId: request.correlationId
+        };
 
     this.emit({
       timestampMs: Date.now(),
@@ -527,6 +594,60 @@ export class MockChatIpcClient implements ChatIpcClient {
     return {
       correlationId: request.correlationId,
       stopped: true
+    };
+  }
+
+  async modelManagerListInstalled(
+    request: ModelManagerListInstalledRequest
+  ): Promise<ModelManagerListInstalledResponse> {
+    return {
+      correlationId: request.correlationId,
+      models: []
+    };
+  }
+
+  async modelManagerSearchHf(
+    request: ModelManagerSearchHfRequest
+  ): Promise<ModelManagerSearchHfResponse> {
+    return {
+      correlationId: request.correlationId,
+      results: []
+    };
+  }
+
+  async modelManagerDownloadHf(
+    request: ModelManagerDownloadHfRequest
+  ): Promise<ModelManagerDownloadHfResponse> {
+    const fileName = request.fileName?.trim() || "downloaded-model.gguf";
+    return {
+      correlationId: request.correlationId,
+      model: {
+        id: fileName,
+        name: fileName,
+        path: `/tmp/models/${fileName}`,
+        sizeMb: 0,
+        modifiedMs: Date.now()
+      }
+    };
+  }
+
+  async modelManagerDeleteInstalled(
+    request: ModelManagerDeleteInstalledRequest
+  ): Promise<ModelManagerDeleteInstalledResponse> {
+    return {
+      correlationId: request.correlationId,
+      modelId: request.modelId,
+      deleted: true
+    };
+  }
+
+  async modelManagerListCatalogCsv(
+    request: ModelManagerListCatalogCsvRequest
+  ): Promise<ModelManagerListCatalogCsvResponse> {
+    return {
+      correlationId: request.correlationId,
+      listName: request.listName,
+      rows: []
     };
   }
 

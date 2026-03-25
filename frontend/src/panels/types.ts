@@ -1,4 +1,9 @@
-import type { ConversationSummaryRecord, LlamaRuntimeStatusResponse } from "../contracts";
+import type {
+  ConversationSummaryRecord,
+  LlamaRuntimeStatusResponse,
+  ModelManagerHfCandidate,
+  ModelManagerInstalledModel
+} from "../contracts";
 import type { IconName } from "../icons";
 
 export type SidebarTab =
@@ -46,9 +51,38 @@ export interface PrimaryPanelRenderState {
   llamaRuntimePort: number;
   llamaRuntimeCtxSize: number;
   llamaRuntimeGpuLayers: number;
+  llamaRuntimeThreads: number | null;
+  llamaRuntimeBatchSize: number | null;
+  llamaRuntimeUbatchSize: number | null;
+  llamaRuntimeTemperature: number;
+  llamaRuntimeTopP: number;
+  llamaRuntimeTopK: number;
+  llamaRuntimeRepeatPenalty: number;
+  llamaRuntimeFlashAttn: boolean;
+  llamaRuntimeMmap: boolean;
+  llamaRuntimeMlock: boolean;
+  llamaRuntimeSeed: number | null;
   llamaRuntimeMaxTokens: number | null;
   llamaRuntimeBusy: boolean;
   llamaRuntimeLogs: string[];
+  modelManagerInstalled: ModelManagerInstalledModel[];
+  modelManagerQuery: string;
+  modelManagerCollection: string;
+  modelManagerSearchResults: ModelManagerHfCandidate[];
+  modelManagerBusy: boolean;
+  modelManagerMessage: string | null;
+  modelManagerUnslothUdCatalog: Array<{
+    repoId: string;
+    modelName: string;
+    parameterCount: string;
+    udAssets: Array<{
+      fileName: string;
+      quant: string;
+      sizeGb: string;
+    }>;
+    selectedAssetFileName: string;
+  }>;
+  modelManagerUnslothUdLoading: boolean;
 }
 
 export interface PrimaryPanelDefinition {
@@ -82,6 +116,26 @@ export interface PrimaryPanelBindings {
     port: number;
     ctxSize: number;
     nGpuLayers: number;
+    threads: number | null;
+    batchSize: number | null;
+    ubatchSize: number | null;
+    temperature: number;
+    topP: number;
+    topK: number;
+    repeatPenalty: number;
+    flashAttn: boolean;
+    mmap: boolean;
+    mlock: boolean;
+    seed: number | null;
   }) => Promise<void>;
   onLlamaRuntimeStop: () => Promise<void>;
+  onModelManagerRefreshInstalled: () => Promise<void>;
+  onModelManagerSetQuery: (query: string) => Promise<void>;
+  onModelManagerSetCollection: (collection: string) => Promise<void>;
+  onModelManagerSearchHf: () => Promise<void>;
+  onModelManagerDownloadHf: (args: { repoId: string; fileName: string }) => Promise<void>;
+  onModelManagerSetUdQuant: (args: { repoId: string; fileName: string }) => Promise<void>;
+  onModelManagerUseAsLlamaPath: (modelPath: string) => Promise<void>;
+  onModelManagerEjectActive: () => Promise<void>;
+  onModelManagerDeleteInstalled: (modelId: string) => Promise<void>;
 }

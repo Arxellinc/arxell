@@ -7,8 +7,8 @@ use crate::observability::EventHub;
 use flate2::read::GzDecoder;
 use serde::Deserialize;
 use serde_json::json;
-use std::io::{BufRead, BufReader};
 use std::ffi::OsString;
+use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Mutex};
@@ -287,6 +287,17 @@ impl LlamaRuntimeService {
                 "engineId": request.engine_id,
                 "modelPath": request.model_path,
                 "port": request.port.unwrap_or(DEFAULT_PORT),
+                "threads": request.threads,
+                "batchSize": request.batch_size,
+                "ubatchSize": request.ubatch_size,
+                "temperature": request.temperature,
+                "topP": request.top_p,
+                "topK": request.top_k,
+                "repeatPenalty": request.repeat_penalty,
+                "flashAttn": request.flash_attn,
+                "mmap": request.mmap,
+                "mlock": request.mlock,
+                "seed": request.seed
             }),
         );
 
@@ -319,13 +330,25 @@ impl LlamaRuntimeService {
         let port = request.port.unwrap_or(DEFAULT_PORT);
         let ctx = request.ctx_size.unwrap_or(DEFAULT_CTX);
         let ngl = request.n_gpu_layers.unwrap_or(DEFAULT_N_GPU_LAYERS);
+        let threads = request.threads.filter(|v| *v > 0);
+        let batch_size = request.batch_size.filter(|v| *v > 0);
+        let ubatch_size = request.ubatch_size.filter(|v| *v > 0);
+        let temperature = request.temperature.unwrap_or(0.7).clamp(0.0, 2.0);
+        let top_p = request.top_p.unwrap_or(0.95).clamp(0.0, 1.0);
+        let top_k = request.top_k.unwrap_or(40).max(1);
+        let repeat_penalty = request.repeat_penalty.unwrap_or(1.1).max(0.0);
+        let flash_attn = request.flash_attn.unwrap_or(false);
+        let mmap = request.mmap.unwrap_or(true);
+        let mlock = request.mlock.unwrap_or(false);
+        let seed = request.seed;
 
         let mut command = Command::new(&binary_path);
         let engine_dir = binary_path
             .parent()
             .map(std::path::Path::to_path_buf)
             .unwrap_or_else(|| app_data_dir.to_path_buf());
-        let disable_thinking_for_qwen = should_disable_thinking_for_model(request.model_path.as_str());
+        let disable_thinking_for_qwen =
+            should_disable_thinking_for_model(request.model_path.as_str());
         command
             .arg("--model")
             .arg(request.model_path.as_str())
@@ -339,6 +362,36 @@ impl LlamaRuntimeService {
             .arg(ngl.to_string())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
+        if let Some(v) = threads {
+            command.arg("--threads").arg(v.to_string());
+        }
+        if let Some(v) = batch_size {
+            command.arg("--batch-size").arg(v.to_string());
+        }
+        if let Some(v) = ubatch_size {
+            command.arg("--ubatch-size").arg(v.to_string());
+        }
+        command
+            .arg("--temp")
+            .arg(temperature.to_string())
+            .arg("--top-p")
+            .arg(top_p.to_string())
+            .arg("--top-k")
+            .arg(top_k.to_string())
+            .arg("--repeat-penalty")
+            .arg(repeat_penalty.to_string());
+        if flash_attn {
+            command.arg("--flash-attn");
+        }
+        if !mmap {
+            command.arg("--no-mmap");
+        }
+        if mlock {
+            command.arg("--mlock");
+        }
+        if let Some(v) = seed {
+            command.arg("--seed").arg(v.to_string());
+        }
         if disable_thinking_for_qwen {
             command
                 .arg("--chat-template-kwargs")
@@ -346,7 +399,10 @@ impl LlamaRuntimeService {
         }
         #[cfg(target_os = "linux")]
         {
-            command.env("LD_LIBRARY_PATH", prepend_env_path("LD_LIBRARY_PATH", &engine_dir));
+            command.env(
+                "LD_LIBRARY_PATH",
+                prepend_env_path("LD_LIBRARY_PATH", &engine_dir),
+            );
         }
         #[cfg(target_os = "macos")]
         {
@@ -714,13 +770,11 @@ fn detect_engines(app_data_dir: &Path) -> Vec<LlamaRuntimeEngine> {
 
 fn backend_prerequisites(backend: &str) -> Vec<LlamaRuntimePrerequisite> {
     match backend {
-        "cuda" => vec![
-            bool_prereq(
-                "nvidia-smi",
-                command_succeeds("nvidia-smi", &["--query-gpu=name", "--format=csv,noheader"]),
-                "NVIDIA driver tooling",
-            ),
-        ],
+        "cuda" => vec![bool_prereq(
+            "nvidia-smi",
+            command_succeeds("nvidia-smi", &["--query-gpu=name", "--format=csv,noheader"]),
+            "NVIDIA driver tooling",
+        )],
         "vulkan" => vec![bool_prereq(
             "vulkan-runtime",
             detect_vulkan_runtime(),
@@ -1017,7 +1071,9 @@ fn select_release_asset(
     match (os_key, engine_id) {
         ("linux", "llama.cpp-cpu") => {
             required.extend(["ubuntu"]);
-            forbidden.extend(["vulkan", "cuda", "rocm", "hip", "aclgraph", "s390x", "cudart"]);
+            forbidden.extend([
+                "vulkan", "cuda", "rocm", "hip", "aclgraph", "s390x", "cudart",
+            ]);
         }
         ("linux", "llama.cpp-vulkan") => {
             required.extend(["ubuntu", "vulkan"]);
@@ -1085,8 +1141,8 @@ fn extract_archive(archive_path: &Path, out_dir: &Path) -> Result<(), String> {
     if name.ends_with(".zip") {
         let file = std::fs::File::open(archive_path)
             .map_err(|e| format!("failed opening zip archive: {e}"))?;
-        let mut zip = zip::ZipArchive::new(file)
-            .map_err(|e| format!("failed reading zip archive: {e}"))?;
+        let mut zip =
+            zip::ZipArchive::new(file).map_err(|e| format!("failed reading zip archive: {e}"))?;
         for i in 0..zip.len() {
             let mut entry = zip
                 .by_index(i)

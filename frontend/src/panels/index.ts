@@ -3,7 +3,11 @@ import { bindChatPanel, renderChatActions, renderChatBody } from "./chatPanel";
 import { renderDevicesActions, renderDevicesBody } from "./devicesPanel";
 import { bindHistoryPanel, renderHistoryActions, renderHistoryBody } from "./historyPanel";
 import { bindLlamaCppPanel, renderLlamaCppActions, renderLlamaCppBody } from "./llamaCppPanel";
-import { renderModelManagerActions, renderModelManagerBody } from "./modelManagerPanel";
+import {
+  bindModelManagerPanel,
+  renderModelManagerActions,
+  renderModelManagerBody
+} from "./modelManagerPanel";
 import { renderSttActions, renderSttBody } from "./sttPanel";
 import type {
   PrimaryPanelBindings,
@@ -85,7 +89,7 @@ export function getPanelDefinition(
     return {
       title: "Model Manager",
       icon: APP_ICON.sidebar.modelManager,
-      renderBody: renderModelManagerBody,
+      renderBody: () => renderModelManagerBody(state),
       renderActions: renderModelManagerActions
     };
   }
@@ -164,5 +168,10 @@ export function attachPrimaryPanelInteractions(
 
   if (tab === "llama_cpp") {
     bindLlamaCppPanel(bindings);
+    return;
+  }
+
+  if (tab === "model_manager") {
+    bindModelManagerPanel(bindings);
   }
 }

@@ -2,6 +2,13 @@ import type { PrimaryPanelBindings, PrimaryPanelRenderState } from "./types";
 import { iconHtml } from "../icons";
 import { escapeHtml } from "./utils";
 
+function modelNameFromPath(path: string): string {
+  const trimmed = path.trim();
+  if (!trimmed) return "";
+  const parts = trimmed.split(/[\\/]/);
+  return parts[parts.length - 1] ?? trimmed;
+}
+
 export function renderLlamaCppActions(): string {
   return `
     <div class="llama-actions">
@@ -14,6 +21,37 @@ export function renderLlamaCppActions(): string {
 }
 
 export function renderLlamaCppBody(state: PrimaryPanelRenderState): string {
+  const activeModelName = modelNameFromPath(state.llamaRuntimeModelPath || "");
+  const currentModelPath = state.llamaRuntimeModelPath.trim();
+  const installedModelOptions = state.modelManagerInstalled
+    .map((model) => {
+      const selected = model.path === currentModelPath ? " selected" : "";
+      return `<option value="${escapeHtml(model.path)}"${selected}>${escapeHtml(model.name)}</option>`;
+    })
+    .join("");
+  const hasCurrentInInstalled = state.modelManagerInstalled.some(
+    (model) => model.path === currentModelPath
+  );
+  const customOption =
+    currentModelPath && !hasCurrentInInstalled
+      ? `<option value="${escapeHtml(currentModelPath)}" selected>${escapeHtml(modelNameFromPath(currentModelPath))} (custom)</option>`
+      : "";
+  const placeholderSelected = !currentModelPath ? " selected" : "";
+  const modelPathOptions = `<option value="" disabled${placeholderSelected}>Select model...</option>${customOption}${installedModelOptions}`;
+  const activeRows = activeModelName
+    ? `
+      <div class="model-manager-installed-row">
+        <span class="model-manager-installed-model" title="${escapeHtml(activeModelName)}">${escapeHtml(activeModelName)}</span>
+        <span class="model-manager-active-check" aria-label="Loaded" title="Loaded">✓</span>
+        <span class="model-manager-active-endpoint">${escapeHtml(
+          state.llamaRuntime?.endpoint ?? "offline"
+        )}</span>
+        <span class="model-manager-installed-actions">
+          <button type="button" class="model-manager-row-icon-btn is-danger" title="Eject model and stop llama.cpp" aria-label="Eject model and stop llama.cpp" data-model-eject-active="true">⏏</button>
+        </span>
+      </div>
+    `
+    : `<div class="model-manager-installed-row is-empty"><span>No active model selected</span><span>-</span><span>-</span><span>-</span></div>`;
   const runtime = state.llamaRuntime;
   const selected =
     runtime?.engines.find((e) => e.engineId === state.llamaRuntimeSelectedEngineId) ??
@@ -84,56 +122,61 @@ export function renderLlamaCppBody(state: PrimaryPanelRenderState): string {
 
   return `
     <div class="primary-pane-body">
-      <div class="llama-status-table">
-        <div class="llama-status-inline">
-          <div class="llama-status-item">
-            <span class="llama-status-label">State:</span>
-            <span class="llama-status-value">${escapeHtml(runtime?.state ?? "unknown")}</span>
+      <div class="llama-form">
+        <h3 class="model-manager-title">Active Models</h3>
+        <div class="model-manager-installed-table is-active">
+          <div class="model-manager-installed-header">
+            <span>Model</span>
+            <span>State</span>
+            <span>Endpoint</span>
+            <span>Action</span>
           </div>
-          <div class="llama-status-item">
-            <span class="llama-status-label">Engine:</span>
-            <span class="llama-status-value">${escapeHtml(runtime?.activeEngineId ?? "none")}</span>
-          </div>
-          <div class="llama-status-item">
-            <span class="llama-status-label">Endpoint:</span>
-            <span class="llama-status-value">${escapeHtml(runtime?.endpoint ?? "offline")}</span>
-          </div>
+          ${activeRows}
         </div>
       </div>
 
-      <div class="llama-form">
+      <div class="llama-form llama-settings-form">
         <br />
+        <div class="model-manager-installed-table is-engine">
+          <div class="model-manager-installed-header">
+            <span>Engine</span>
+            <span>Backend</span>
+            <span>State</span>
+            <span>Action</span>
+          </div>
+          <div class="model-manager-installed-row">
+            <span><select id="llamaEngineSelect" class="llama-input">${engineOptions}</select></span>
+            <span>${escapeHtml(selected?.backend ?? "unknown")}</span>
+            <span>${escapeHtml(readyMeta)}</span>
+            <span class="model-manager-installed-actions">-</span>
+          </div>
+        </div>
         <h3>Settings</h3>
         <div class="config-row">
-          <span class="config-key">GPU Acceleration</span>
-          <span class="config-value">${escapeHtml(detectedGpu.label)}</span>
-          <span class="config-meta">${escapeHtml(detectedGpu.meta)}</span>
-        </div>
-        <label class="config-row">
-          <span class="config-key">Engine</span>
-          <select id="llamaEngineSelect" class="llama-input">${engineOptions}</select>
-          <span class="config-meta">${escapeHtml(selected?.backend ?? "unknown")}</span>
-        </label>
-        <div class="config-row">
           <span class="config-key">Model Path</span>
-          <div class="llama-input-with-action">
-            <input
-              id="llamaModelPathInput"
-              class="llama-input"
-              value="${escapeHtml(state.llamaRuntimeModelPath)}"
-              aria-label="Model Path"
-            />
+          <select
+            id="llamaModelPathSelect"
+            class="llama-input"
+            aria-label="Model Path"
+          >
+            ${modelPathOptions}
+          </select>
+          <span class="config-meta">
             <button
               type="button"
-              class="llama-input-action"
+              class="llama-input-action llama-input-action-icon-only"
               id="llamaModelPathBrowseBtn"
               aria-label="Browse model path"
               title="Browse model path"
             >
-              ${iconHtml("folder", { size: 16, tone: "dark" })}<span>Browse</span>
+              ${iconHtml("folder", { size: 16, tone: "dark" })}
             </button>
-          </div>
-          <span class="config-meta">GGUF</span>
+          </span>
+        </div>
+        <div class="config-row">
+          <span class="config-key">GPU Acceleration</span>
+          <span class="config-value">${escapeHtml(detectedGpu.label)}</span>
+          <span class="config-meta">${escapeHtml(detectedGpu.meta)}</span>
         </div>
         <label class="config-row">
           <span class="config-key">Port</span>
@@ -149,6 +192,137 @@ export function renderLlamaCppBody(state: PrimaryPanelRenderState): string {
           <span class="config-key">GPU Layers</span>
           <input id="llamaGpuLayersInput" class="llama-input" type="number" value="${state.llamaRuntimeGpuLayers}" min="-1" max="999" />
           <span class="config-meta">-1/999 = auto</span>
+        </label>
+        <label class="config-row">
+          <span class="config-key">Threads</span>
+          <input
+            id="llamaThreadsInput"
+            class="llama-input"
+            type="number"
+            value="${state.llamaRuntimeThreads ?? ""}"
+            min="1"
+            max="256"
+            placeholder="auto"
+          />
+          <span class="config-meta">auto if blank</span>
+        </label>
+        <label class="config-row">
+          <span class="config-key">Batch Size</span>
+          <input
+            id="llamaBatchSizeInput"
+            class="llama-input"
+            type="number"
+            value="${state.llamaRuntimeBatchSize ?? ""}"
+            min="1"
+            max="65536"
+          />
+          <span class="config-meta">tokens</span>
+        </label>
+        <label class="config-row">
+          <span class="config-key">Ubatch Size</span>
+          <input
+            id="llamaUbatchSizeInput"
+            class="llama-input"
+            type="number"
+            value="${state.llamaRuntimeUbatchSize ?? ""}"
+            min="1"
+            max="65536"
+          />
+          <span class="config-meta">tokens</span>
+        </label>
+        <label class="config-row">
+          <span class="config-key">Temperature</span>
+          <input
+            id="llamaTemperatureInput"
+            class="llama-input"
+            type="number"
+            value="${state.llamaRuntimeTemperature}"
+            min="0"
+            max="2"
+            step="0.01"
+          />
+          <span class="config-meta">sampling</span>
+        </label>
+        <label class="config-row">
+          <span class="config-key">Top P</span>
+          <input
+            id="llamaTopPInput"
+            class="llama-input"
+            type="number"
+            value="${state.llamaRuntimeTopP}"
+            min="0"
+            max="1"
+            step="0.01"
+          />
+          <span class="config-meta">sampling</span>
+        </label>
+        <label class="config-row">
+          <span class="config-key">Top K</span>
+          <input
+            id="llamaTopKInput"
+            class="llama-input"
+            type="number"
+            value="${state.llamaRuntimeTopK}"
+            min="0"
+            max="500"
+          />
+          <span class="config-meta">sampling</span>
+        </label>
+        <label class="config-row">
+          <span class="config-key">Repeat Penalty</span>
+          <input
+            id="llamaRepeatPenaltyInput"
+            class="llama-input"
+            type="number"
+            value="${state.llamaRuntimeRepeatPenalty}"
+            min="0.8"
+            max="2"
+            step="0.01"
+          />
+          <span class="config-meta">sampling</span>
+        </label>
+        <label class="config-row">
+          <span class="config-key">Seed</span>
+          <input
+            id="llamaSeedInput"
+            class="llama-input"
+            type="number"
+            value="${state.llamaRuntimeSeed ?? ""}"
+            min="0"
+            max="4294967295"
+            placeholder="random"
+          />
+          <span class="config-meta">random if blank</span>
+        </label>
+        <label class="config-row">
+          <span class="config-key">Flash Attention</span>
+          <span class="llama-checkbox-inline">
+            <input id="llamaFlashAttnInput" type="checkbox" ${
+              state.llamaRuntimeFlashAttn ? "checked" : ""
+            } />
+            <span>Enabled</span>
+          </span>
+          <span class="config-meta">--flash-attn</span>
+        </label>
+        <label class="config-row">
+          <span class="config-key">mmap</span>
+          <span class="llama-checkbox-inline">
+            <input id="llamaMmapInput" type="checkbox" ${
+              state.llamaRuntimeMmap ? "checked" : ""
+            } />
+            <span>Enabled</span>
+          </span>
+          <span class="config-meta">disable uses --no-mmap</span>
+        </label>
+        <label class="config-row">
+          <span class="config-key">mlock</span>
+          <span class="llama-checkbox-inline">
+            <input id="llamaMlockInput" type="checkbox" ${
+              state.llamaRuntimeMlock ? "checked" : ""
+            } />
+            <span>Enabled</span>
+          </span>
+          <span class="config-meta">--mlock</span>
         </label>
         <label class="config-row">
           <span class="config-key">Max Tokens</span>
@@ -174,25 +348,7 @@ export function renderLlamaCppBody(state: PrimaryPanelRenderState): string {
         </button>
       </div>
 
-      <div class="llama-prereqs">
-        <div class="config-key">Prerequisites</div>
-        ${
-          prerequisites.length
-            ? prerequisites
-                .map(
-                  (item) => `
-              <div class="config-row">
-                <span class="config-key">${escapeHtml(item.key)}</span>
-                <span class="config-value">${escapeHtml(item.message)}</span>
-                <span class="config-meta">${escapeHtml(item.ok ? "OK" : "Missing")}</span>
-              </div>
-            `
-                )
-                .join("")
-            : `<div class="config-row"><span class="config-key">none</span><span class="config-value">No extra prerequisites required.</span><span class="config-meta">OK</span></div>`
-        }
-      </div>
-
+      <div class="config-key">Console</div>
       <div class="llama-runtime-console" id="llamaLogs">${runtimeConsoleHtml}</div>
     </div>
   `;
@@ -203,7 +359,7 @@ export function bindLlamaCppPanel(bindings: PrimaryPanelBindings): void {
     const engineId =
       document.querySelector<HTMLSelectElement>("#llamaEngineSelect")?.value || "llama.cpp-cpu";
     const modelPath =
-      document.querySelector<HTMLInputElement>("#llamaModelPathInput")?.value.trim() || "";
+      document.querySelector<HTMLSelectElement>("#llamaModelPathSelect")?.value.trim() || "";
     const port = Number.parseInt(
       document.querySelector<HTMLInputElement>("#llamaPortInput")?.value || "1420",
       10
@@ -216,12 +372,52 @@ export function bindLlamaCppPanel(bindings: PrimaryPanelBindings): void {
       document.querySelector<HTMLInputElement>("#llamaGpuLayersInput")?.value || "999",
       10
     );
+    const threadsRaw =
+      document.querySelector<HTMLInputElement>("#llamaThreadsInput")?.value.trim() ?? "";
+    const threadsParsed = threadsRaw ? Number.parseInt(threadsRaw, 10) : Number.NaN;
+    const batchRaw =
+      document.querySelector<HTMLInputElement>("#llamaBatchSizeInput")?.value.trim() ?? "";
+    const batchParsed = batchRaw ? Number.parseInt(batchRaw, 10) : Number.NaN;
+    const ubatchRaw =
+      document.querySelector<HTMLInputElement>("#llamaUbatchSizeInput")?.value.trim() ?? "";
+    const ubatchParsed = ubatchRaw ? Number.parseInt(ubatchRaw, 10) : Number.NaN;
+    const temperature = Number.parseFloat(
+      document.querySelector<HTMLInputElement>("#llamaTemperatureInput")?.value || "0.7"
+    );
+    const topP = Number.parseFloat(
+      document.querySelector<HTMLInputElement>("#llamaTopPInput")?.value || "0.95"
+    );
+    const topK = Number.parseInt(
+      document.querySelector<HTMLInputElement>("#llamaTopKInput")?.value || "40",
+      10
+    );
+    const repeatPenalty = Number.parseFloat(
+      document.querySelector<HTMLInputElement>("#llamaRepeatPenaltyInput")?.value || "1.1"
+    );
+    const seedRaw = document.querySelector<HTMLInputElement>("#llamaSeedInput")?.value.trim() ?? "";
+    const seedParsed = seedRaw ? Number.parseInt(seedRaw, 10) : Number.NaN;
+    const flashAttn =
+      document.querySelector<HTMLInputElement>("#llamaFlashAttnInput")?.checked ?? true;
+    const mmap = document.querySelector<HTMLInputElement>("#llamaMmapInput")?.checked ?? true;
+    const mlock =
+      document.querySelector<HTMLInputElement>("#llamaMlockInput")?.checked ?? false;
     return {
       engineId,
       modelPath,
       port,
       ctxSize,
-      nGpuLayers
+      nGpuLayers,
+      threads: Number.isFinite(threadsParsed) ? threadsParsed : null,
+      batchSize: Number.isFinite(batchParsed) ? batchParsed : null,
+      ubatchSize: Number.isFinite(ubatchParsed) ? ubatchParsed : null,
+      temperature: Number.isFinite(temperature) ? temperature : 0.7,
+      topP: Number.isFinite(topP) ? topP : 0.95,
+      topK: Number.isFinite(topK) ? topK : 40,
+      repeatPenalty: Number.isFinite(repeatPenalty) ? repeatPenalty : 1.1,
+      flashAttn,
+      mmap,
+      mlock,
+      seed: Number.isFinite(seedParsed) ? seedParsed : null
     };
   };
 
@@ -247,6 +443,15 @@ export function bindLlamaCppPanel(bindings: PrimaryPanelBindings): void {
       event.preventDefault();
       event.stopPropagation();
       await bindings.onLlamaRuntimeBrowseModelPath();
+    };
+  }
+
+  const modelPathSelect = document.querySelector<HTMLSelectElement>("#llamaModelPathSelect");
+  if (modelPathSelect) {
+    modelPathSelect.onchange = async () => {
+      const modelPath = modelPathSelect.value.trim();
+      if (!modelPath) return;
+      await bindings.onModelManagerUseAsLlamaPath(modelPath);
     };
   }
 
@@ -297,4 +502,11 @@ export function bindLlamaCppPanel(bindings: PrimaryPanelBindings): void {
       await bindings.onLlamaRuntimeStop();
     };
   }
+
+  const ejectBtns = document.querySelectorAll<HTMLButtonElement>("[data-model-eject-active]");
+  ejectBtns.forEach((btn) => {
+    btn.onclick = async () => {
+      await bindings.onModelManagerEjectActive();
+    };
+  });
 }

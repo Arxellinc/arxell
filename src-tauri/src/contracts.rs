@@ -328,6 +328,17 @@ pub struct LlamaRuntimeStartRequest {
     pub port: Option<u16>,
     pub ctx_size: Option<u32>,
     pub n_gpu_layers: Option<i32>,
+    pub threads: Option<u32>,
+    pub batch_size: Option<u32>,
+    pub ubatch_size: Option<u32>,
+    pub temperature: Option<f32>,
+    pub top_p: Option<f32>,
+    pub top_k: Option<u32>,
+    pub repeat_penalty: Option<f32>,
+    pub flash_attn: Option<bool>,
+    pub mmap: Option<bool>,
+    pub mlock: Option<bool>,
+    pub seed: Option<u32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -350,6 +361,111 @@ pub struct LlamaRuntimeStopRequest {
 pub struct LlamaRuntimeStopResponse {
     pub correlation_id: String,
     pub stopped: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ModelManagerListInstalledRequest {
+    pub correlation_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ModelManagerInstalledModel {
+    pub id: String,
+    pub name: String,
+    pub path: String,
+    pub size_mb: u64,
+    pub modified_ms: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ModelManagerListInstalledResponse {
+    pub correlation_id: String,
+    pub models: Vec<ModelManagerInstalledModel>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ModelManagerSearchHfRequest {
+    pub correlation_id: String,
+    pub query: String,
+    pub limit: Option<u32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ModelManagerHfCandidate {
+    pub id: String,
+    pub repo_id: String,
+    pub file_name: String,
+    pub size_mb: Option<u64>,
+    pub download_url: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ModelManagerSearchHfResponse {
+    pub correlation_id: String,
+    pub results: Vec<ModelManagerHfCandidate>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ModelManagerDownloadHfRequest {
+    pub correlation_id: String,
+    pub repo_id: String,
+    pub file_name: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ModelManagerDownloadHfResponse {
+    pub correlation_id: String,
+    pub model: ModelManagerInstalledModel,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ModelManagerDeleteInstalledRequest {
+    pub correlation_id: String,
+    pub model_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ModelManagerDeleteInstalledResponse {
+    pub correlation_id: String,
+    pub model_id: String,
+    pub deleted: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ModelManagerListCatalogCsvRequest {
+    pub correlation_id: String,
+    pub list_name: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ModelManagerCatalogCsvRow {
+    pub repo_id: String,
+    pub model_name: String,
+    pub parameter_count: String,
+    pub file_name: String,
+    pub quant: String,
+    pub size_mb: Option<u64>,
+    pub download_url: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ModelManagerListCatalogCsvResponse {
+    pub correlation_id: String,
+    pub list_name: String,
+    pub rows: Vec<ModelManagerCatalogCsvRow>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

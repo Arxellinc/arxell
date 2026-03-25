@@ -1,5 +1,5 @@
-use crate::contracts::{ConversationMessageRecord, ConversationSummaryRecord};
 use crate::contracts::MessageRole;
+use crate::contracts::{ConversationMessageRecord, ConversationSummaryRecord};
 use rusqlite::{params, Connection};
 use serde_json::Deserializer;
 use std::collections::HashMap;
@@ -18,7 +18,10 @@ pub trait ConversationRepository: Send + Sync {
     fn conversation_message_count(&self, conversation_id: &str) -> Result<usize, String>;
     fn get_conversation_title(&self, conversation_id: &str) -> Result<Option<String>, String>;
     fn upsert_conversation_title(&self, conversation_id: &str, title: &str) -> Result<(), String>;
-    fn get_model_family_thinking_strategy(&self, model_family: &str) -> Result<Option<String>, String>;
+    fn get_model_family_thinking_strategy(
+        &self,
+        model_family: &str,
+    ) -> Result<Option<String>, String>;
     fn upsert_model_family_thinking_strategy(
         &self,
         model_family: &str,
@@ -268,7 +271,10 @@ impl ConversationRepository for SqliteConversationRepository {
         Ok(())
     }
 
-    fn get_model_family_thinking_strategy(&self, model_family: &str) -> Result<Option<String>, String> {
+    fn get_model_family_thinking_strategy(
+        &self,
+        model_family: &str,
+    ) -> Result<Option<String>, String> {
         let conn = self.open_connection()?;
         let normalized = normalize_model_family(model_family);
         let direct = conn
@@ -501,7 +507,10 @@ impl ConversationRepository for FileConversationRepository {
         Ok(())
     }
 
-    fn get_model_family_thinking_strategy(&self, _model_family: &str) -> Result<Option<String>, String> {
+    fn get_model_family_thinking_strategy(
+        &self,
+        _model_family: &str,
+    ) -> Result<Option<String>, String> {
         Ok(None)
     }
 

@@ -200,6 +200,17 @@ export interface LlamaRuntimeStartRequest {
   port?: number;
   ctxSize?: number;
   nGpuLayers?: number;
+  threads?: number;
+  batchSize?: number;
+  ubatchSize?: number;
+  temperature?: number;
+  topP?: number;
+  topK?: number;
+  repeatPenalty?: number;
+  flashAttn?: boolean;
+  mmap?: boolean;
+  mlock?: boolean;
+  seed?: number;
 }
 
 export interface LlamaRuntimeStartResponse {
@@ -216,6 +227,85 @@ export interface LlamaRuntimeStopRequest {
 export interface LlamaRuntimeStopResponse {
   correlationId: string;
   stopped: boolean;
+}
+
+export interface ModelManagerListInstalledRequest {
+  correlationId: string;
+}
+
+export interface ModelManagerInstalledModel {
+  id: string;
+  name: string;
+  path: string;
+  sizeMb: number;
+  modifiedMs: number;
+}
+
+export interface ModelManagerListInstalledResponse {
+  correlationId: string;
+  models: ModelManagerInstalledModel[];
+}
+
+export interface ModelManagerSearchHfRequest {
+  correlationId: string;
+  query: string;
+  limit?: number;
+}
+
+export interface ModelManagerHfCandidate {
+  id: string;
+  repoId: string;
+  fileName: string;
+  sizeMb: number | null;
+  downloadUrl: string | null;
+}
+
+export interface ModelManagerSearchHfResponse {
+  correlationId: string;
+  results: ModelManagerHfCandidate[];
+}
+
+export interface ModelManagerDownloadHfRequest {
+  correlationId: string;
+  repoId: string;
+  fileName?: string;
+}
+
+export interface ModelManagerDownloadHfResponse {
+  correlationId: string;
+  model: ModelManagerInstalledModel;
+}
+
+export interface ModelManagerDeleteInstalledRequest {
+  correlationId: string;
+  modelId: string;
+}
+
+export interface ModelManagerDeleteInstalledResponse {
+  correlationId: string;
+  modelId: string;
+  deleted: boolean;
+}
+
+export interface ModelManagerCatalogCsvRow {
+  repoId: string;
+  modelName: string;
+  parameterCount: string;
+  fileName: string;
+  quant: string;
+  sizeMb: number | null;
+  downloadUrl: string;
+}
+
+export interface ModelManagerListCatalogCsvRequest {
+  correlationId: string;
+  listName: string;
+}
+
+export interface ModelManagerListCatalogCsvResponse {
+  correlationId: string;
+  listName: string;
+  rows: ModelManagerCatalogCsvRow[];
 }
 
 export interface DevicesProbeMicrophoneRequest {

@@ -1,8 +1,9 @@
 use crate::contracts::{
-    ChatCancelResponse, ChatGetMessagesRequest, ChatGetMessagesResponse, ChatListConversationsRequest,
-    ChatListConversationsResponse, ChatDeleteConversationResponse, ChatSendRequest, ChatSendResponse, ChatStreamChunkPayload,
-    ChatStreamCompletePayload, ChatStreamReasoningChunkPayload, ChatStreamStartPayload,
-    ConversationMessageRecord, EventSeverity, EventStage, MessageRole, Subsystem,
+    ChatCancelResponse, ChatDeleteConversationResponse, ChatGetMessagesRequest,
+    ChatGetMessagesResponse, ChatListConversationsRequest, ChatListConversationsResponse,
+    ChatSendRequest, ChatSendResponse, ChatStreamChunkPayload, ChatStreamCompletePayload,
+    ChatStreamReasoningChunkPayload, ChatStreamStartPayload, ConversationMessageRecord,
+    EventSeverity, EventStage, MessageRole, Subsystem,
 };
 use crate::memory::MemoryManager;
 use crate::observability::EventHub;
@@ -228,8 +229,8 @@ impl ChatService {
     ) -> Result<String, String> {
         let endpoint = std::env::var("FOUNDATION_LLM_ENDPOINT")
             .unwrap_or_else(|_| "http://127.0.0.1:1420/v1/chat/completions".to_string());
-        let model = std::env::var("FOUNDATION_LLM_MODEL")
-            .unwrap_or_else(|_| "local-model".to_string());
+        let model =
+            std::env::var("FOUNDATION_LLM_MODEL").unwrap_or_else(|_| "local-model".to_string());
 
         let mut transcript = String::new();
         for item in history.iter().take(6) {
@@ -285,7 +286,10 @@ impl ChatService {
             .await
             .map_err(|e| format!("failed requesting title from local runtime: {e}"))?;
         if response.status() != StatusCode::OK {
-            return Err(format!("title generation failed with status {}", response.status()));
+            return Err(format!(
+                "title generation failed with status {}",
+                response.status()
+            ));
         }
         let body = response
             .json::<serde_json::Value>()
@@ -324,8 +328,8 @@ impl ChatService {
     ) -> Result<LocalLlamaResponse, String> {
         let endpoint = std::env::var("FOUNDATION_LLM_ENDPOINT")
             .unwrap_or_else(|_| "http://127.0.0.1:1420/v1/chat/completions".to_string());
-        let model = std::env::var("FOUNDATION_LLM_MODEL")
-            .unwrap_or_else(|_| "local-model".to_string());
+        let model =
+            std::env::var("FOUNDATION_LLM_MODEL").unwrap_or_else(|_| "local-model".to_string());
         let max_tokens = resolve_chat_max_tokens(requested_max_tokens);
 
         let history = self
@@ -416,7 +420,9 @@ impl ChatService {
             .send()
             .await
             .map_err(|e| {
-                format!("failed calling local llama runtime at {endpoint}: {e}. Is llama.cpp running?")
+                format!(
+                    "failed calling local llama runtime at {endpoint}: {e}. Is llama.cpp running?"
+                )
             })?;
         if response.status() != StatusCode::OK {
             let code = response.status();
@@ -450,11 +456,9 @@ impl ChatService {
         let mut raw_response_body = String::new();
         let mut stream_done = false;
 
-        while let Some(chunk) = response
-            .chunk()
-            .await
-            .map_err(|e| format!("failed reading streaming response from local llama runtime: {e}"))?
-        {
+        while let Some(chunk) = response.chunk().await.map_err(|e| {
+            format!("failed reading streaming response from local llama runtime: {e}")
+        })? {
             if self.is_cancelled(correlation_id) {
                 break;
             }
@@ -494,7 +498,7 @@ impl ChatService {
                 line_buffer.trim(),
                 &mut assistant,
                 &mut reasoning,
-                )?;
+            )?;
         }
 
         // Some runtimes reply with JSON/NDJSON despite stream=true.
@@ -1062,10 +1066,7 @@ fn normalize_title(input: &str) -> String {
         .trim_matches('"')
         .trim_matches('\'')
         .replace('\n', " ");
-    let compact = cleaned
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ");
+    let compact = cleaned.split_whitespace().collect::<Vec<_>>().join(" ");
     if compact.is_empty() {
         return String::new();
     }
@@ -1274,19 +1275,21 @@ fn handle_stream_line(
     }
     if !assistant_delta.is_empty() {
         assistant.push_str(assistant_delta.as_str());
-        service.hub.emit(service.hub.make_event(
-            correlation_id,
-            Subsystem::Service,
-            "chat.stream.chunk",
-            EventStage::Progress,
-            EventSeverity::Info,
-            serde_json::to_value(ChatStreamChunkPayload {
-                conversation_id: conversation_id.to_string(),
-                delta: assistant_delta,
-                done: false,
-            })
-            .unwrap_or_else(|_| json!({})),
-        ));
+        service.hub.emit(
+            service.hub.make_event(
+                correlation_id,
+                Subsystem::Service,
+                "chat.stream.chunk",
+                EventStage::Progress,
+                EventSeverity::Info,
+                serde_json::to_value(ChatStreamChunkPayload {
+                    conversation_id: conversation_id.to_string(),
+                    delta: assistant_delta,
+                    done: false,
+                })
+                .unwrap_or_else(|_| json!({})),
+            ),
+        );
     }
     Ok(false)
 }
@@ -1302,19 +1305,21 @@ fn push_reasoning_delta(
         return;
     }
     reasoning.push_str(delta);
-    service.hub.emit(service.hub.make_event(
-        correlation_id,
-        Subsystem::Service,
-        "chat.stream.reasoning_chunk",
-        EventStage::Progress,
-        EventSeverity::Info,
-        serde_json::to_value(ChatStreamReasoningChunkPayload {
-            conversation_id: conversation_id.to_string(),
-            delta: delta.to_string(),
-            done: false,
-        })
-        .unwrap_or_else(|_| json!({})),
-    ));
+    service.hub.emit(
+        service.hub.make_event(
+            correlation_id,
+            Subsystem::Service,
+            "chat.stream.reasoning_chunk",
+            EventStage::Progress,
+            EventSeverity::Info,
+            serde_json::to_value(ChatStreamReasoningChunkPayload {
+                conversation_id: conversation_id.to_string(),
+                delta: delta.to_string(),
+                done: false,
+            })
+            .unwrap_or_else(|_| json!({})),
+        ),
+    );
 }
 
 struct LocalLlamaResponse {
@@ -1366,7 +1371,11 @@ fn value_to_text(value: &serde_json::Value) -> Option<String> {
             .get("text")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string())
-            .or_else(|| obj.get("content").and_then(|v| v.as_str()).map(|s| s.to_string())),
+            .or_else(|| {
+                obj.get("content")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string())
+            }),
         _ => None,
     }
 }
@@ -1406,7 +1415,10 @@ fn extract_assistant_from_non_sse_body(
     if assistant.trim().is_empty() {
         None
     } else {
-        Some(ParsedAssistantBody { assistant, reasoning })
+        Some(ParsedAssistantBody {
+            assistant,
+            reasoning,
+        })
     }
 }
 
@@ -1520,6 +1532,9 @@ fn extract_assistant_from_json_value(
     if assistant.trim().is_empty() {
         None
     } else {
-        Some(ParsedAssistantBody { assistant, reasoning })
+        Some(ParsedAssistantBody {
+            assistant,
+            reasoning,
+        })
     }
 }

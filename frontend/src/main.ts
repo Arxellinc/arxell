@@ -6,6 +6,8 @@ import type {
   ChatStreamReasoningChunkPayload,
   ConversationSummaryRecord,
   LlamaRuntimeStatusResponse,
+  ModelManagerHfCandidate,
+  ModelManagerInstalledModel,
   WorkspaceToolRecord
 } from "./contracts";
 import { iconHtml } from "./icons";
@@ -171,12 +173,41 @@ const state: {
   llamaRuntimePort: number;
   llamaRuntimeCtxSize: number;
   llamaRuntimeGpuLayers: number;
+  llamaRuntimeThreads: number | null;
+  llamaRuntimeBatchSize: number | null;
+  llamaRuntimeUbatchSize: number | null;
+  llamaRuntimeTemperature: number;
+  llamaRuntimeTopP: number;
+  llamaRuntimeTopK: number;
+  llamaRuntimeRepeatPenalty: number;
+  llamaRuntimeFlashAttn: boolean;
+  llamaRuntimeMmap: boolean;
+  llamaRuntimeMlock: boolean;
+  llamaRuntimeSeed: number | null;
   llamaRuntimeMaxTokens: number | null;
   llamaRuntimeBusy: boolean;
   llamaRuntimeLogs: string[];
   llamaRuntimeContextTokens: number | null;
   llamaRuntimeContextCapacity: number | null;
   llamaRuntimeTokensPerSecond: number | null;
+  modelManagerInstalled: ModelManagerInstalledModel[];
+  modelManagerQuery: string;
+  modelManagerCollection: string;
+  modelManagerSearchResults: ModelManagerHfCandidate[];
+  modelManagerBusy: boolean;
+  modelManagerMessage: string | null;
+  modelManagerUnslothUdCatalog: Array<{
+    repoId: string;
+    modelName: string;
+    parameterCount: string;
+    udAssets: Array<{
+      fileName: string;
+      quant: string;
+      sizeGb: string;
+    }>;
+    selectedAssetFileName: string;
+  }>;
+  modelManagerUnslothUdLoading: boolean;
 } = {
   conversationId: generateChatConversationId(),
   messages: [],
@@ -209,12 +240,31 @@ const state: {
   llamaRuntimePort: 1420,
   llamaRuntimeCtxSize: 8192,
   llamaRuntimeGpuLayers: 999,
+  llamaRuntimeThreads: null,
+  llamaRuntimeBatchSize: 512,
+  llamaRuntimeUbatchSize: 512,
+  llamaRuntimeTemperature: 0.7,
+  llamaRuntimeTopP: 0.95,
+  llamaRuntimeTopK: 40,
+  llamaRuntimeRepeatPenalty: 1.1,
+  llamaRuntimeFlashAttn: false,
+  llamaRuntimeMmap: true,
+  llamaRuntimeMlock: false,
+  llamaRuntimeSeed: null,
   llamaRuntimeMaxTokens: loadPersistedLlamaMaxTokens(),
   llamaRuntimeBusy: false,
   llamaRuntimeLogs: [],
   llamaRuntimeContextTokens: null,
   llamaRuntimeContextCapacity: null,
-  llamaRuntimeTokensPerSecond: null
+  llamaRuntimeTokensPerSecond: null,
+  modelManagerInstalled: [],
+  modelManagerQuery: "",
+  modelManagerCollection: "unsloth_ud",
+  modelManagerSearchResults: [],
+  modelManagerBusy: false,
+  modelManagerMessage: null,
+  modelManagerUnslothUdCatalog: [],
+  modelManagerUnslothUdLoading: false
 };
 
 let clientRef: ChatIpcClient | null = null;
@@ -245,10 +295,12 @@ async function detectSpeakerPermission(): Promise<DevicesState["speakerPermissio
   return state === "granted" ? "enabled" : "not_enabled";
 }
 
-async function queryPermissionState(name: PermissionName): Promise<PermissionState | null> {
+async function queryPermissionState(
+  name: PermissionName | "speaker-selection"
+): Promise<PermissionState | null> {
   try {
     if (navigator.permissions?.query) {
-      const status = await navigator.permissions.query({ name });
+      const status = await navigator.permissions.query({ name: name as PermissionName });
       return status.state;
     }
   } catch {
@@ -266,7 +318,7 @@ function defaultAudioDeviceLabel(
   if (!kindDevices.length) return fallback;
   const explicitDefault = kindDevices.find((device) => device.deviceId === "default");
   const chosen = explicitDefault ?? kindDevices[0];
-  return chosen.label?.trim() || `${fallback} (name hidden until permission granted)`;
+  return chosen?.label?.trim() || `${fallback} (name hidden until permission granted)`;
 }
 
 async function refreshDevicesState(): Promise<void> {
@@ -570,9 +622,28 @@ function render(): void {
     llamaRuntimePort: state.llamaRuntimePort,
     llamaRuntimeCtxSize: state.llamaRuntimeCtxSize,
     llamaRuntimeGpuLayers: state.llamaRuntimeGpuLayers,
+    llamaRuntimeThreads: state.llamaRuntimeThreads,
+    llamaRuntimeBatchSize: state.llamaRuntimeBatchSize,
+    llamaRuntimeUbatchSize: state.llamaRuntimeUbatchSize,
+    llamaRuntimeTemperature: state.llamaRuntimeTemperature,
+    llamaRuntimeTopP: state.llamaRuntimeTopP,
+    llamaRuntimeTopK: state.llamaRuntimeTopK,
+    llamaRuntimeRepeatPenalty: state.llamaRuntimeRepeatPenalty,
+    llamaRuntimeFlashAttn: state.llamaRuntimeFlashAttn,
+    llamaRuntimeMmap: state.llamaRuntimeMmap,
+    llamaRuntimeMlock: state.llamaRuntimeMlock,
+    llamaRuntimeSeed: state.llamaRuntimeSeed,
     llamaRuntimeMaxTokens: state.llamaRuntimeMaxTokens,
     llamaRuntimeBusy: state.llamaRuntimeBusy,
-    llamaRuntimeLogs: state.llamaRuntimeLogs
+    llamaRuntimeLogs: state.llamaRuntimeLogs,
+    modelManagerInstalled: state.modelManagerInstalled,
+    modelManagerQuery: state.modelManagerQuery,
+    modelManagerCollection: state.modelManagerCollection,
+    modelManagerSearchResults: state.modelManagerSearchResults,
+    modelManagerBusy: state.modelManagerBusy,
+    modelManagerMessage: state.modelManagerMessage,
+    modelManagerUnslothUdCatalog: state.modelManagerUnslothUdCatalog,
+    modelManagerUnslothUdLoading: state.modelManagerUnslothUdLoading
   });
 
   const primaryPaneHtml = `
@@ -872,18 +943,21 @@ function extractRuntimeProcessLine(event: AppEvent): string | null {
 
 function updateRuntimeMetricsFromLine(line: string): void {
   const ctxMatch = line.match(/n_ctx_slot\s*=\s*(\d+)/i);
-  if (ctxMatch) {
-    state.llamaRuntimeContextCapacity = Number.parseInt(ctxMatch[1], 10);
+  const ctxValue = ctxMatch?.[1];
+  if (ctxValue) {
+    state.llamaRuntimeContextCapacity = Number.parseInt(ctxValue, 10);
   }
 
   const tokensMatch = line.match(/n_tokens\s*=\s*(\d+)/i);
-  if (tokensMatch) {
-    state.llamaRuntimeContextTokens = Number.parseInt(tokensMatch[1], 10);
+  const tokenValue = tokensMatch?.[1];
+  if (tokenValue) {
+    state.llamaRuntimeContextTokens = Number.parseInt(tokenValue, 10);
   }
 
   const tpsMatch = line.match(/([0-9]+(?:\.[0-9]+)?)\s+tokens per second/i);
-  if (tpsMatch) {
-    state.llamaRuntimeTokensPerSecond = Number.parseFloat(tpsMatch[1]);
+  const tpsValue = tpsMatch?.[1];
+  if (tpsValue) {
+    state.llamaRuntimeTokensPerSecond = Number.parseFloat(tpsValue);
   }
 }
 
@@ -893,6 +967,18 @@ function modelNameFromPath(path: string): string {
   const normalized = trimmed.replace(/\\/g, "/");
   const tail = normalized.split("/").filter(Boolean).at(-1) ?? normalized;
   return tail || "none";
+}
+
+function prettifyRepoName(repoId: string): string {
+  const slug = repoId.split("/").at(-1) ?? repoId;
+  const cleaned = slug.replace(/-GGUF(?:-UD)?$/i, "");
+  return cleaned.replace(/-/g, " ");
+}
+
+function extractParamCountLabel(repoId: string): string {
+  const match = repoId.match(/(\d+(?:\.\d+)?B(?:-A\d+B)?)/i);
+  const label = match?.[1];
+  return label ? label.toUpperCase() : "n/a";
 }
 
 function formatPercent(value: number): string {
@@ -962,6 +1048,80 @@ async function refreshTools(): Promise<void> {
   if (!clientRef) return;
   const response = await clientRef.listWorkspaceTools({ correlationId: nextCorrelationId() });
   state.workspaceTools = response.tools;
+}
+
+async function refreshModelManagerInstalled(): Promise<void> {
+  if (!clientRef) return;
+  const response = await clientRef.modelManagerListInstalled({
+    correlationId: nextCorrelationId()
+  });
+  state.modelManagerInstalled = response.models;
+}
+
+async function refreshModelManagerUnslothUdCatalog(): Promise<void> {
+  if (!clientRef) return;
+  state.modelManagerUnslothUdLoading = true;
+  try {
+    const csv = await clientRef.modelManagerListCatalogCsv({
+      correlationId: nextCorrelationId(),
+      listName: "Unsloth Dynamic Quants"
+    });
+    const grouped = new Map<
+      string,
+      {
+        repoId: string;
+        modelName: string;
+        parameterCount: string;
+        udAssets: Array<{ fileName: string; quant: string; sizeGb: string }>;
+      }
+    >();
+    for (const row of csv.rows) {
+      if (!row.quant || !row.fileName) continue;
+      const key = row.repoId;
+      const current = grouped.get(key) ?? {
+        repoId: row.repoId,
+        modelName: row.modelName || prettifyRepoName(row.repoId),
+        parameterCount: row.parameterCount || extractParamCountLabel(row.repoId),
+        udAssets: []
+      };
+      current.udAssets.push({
+        fileName: row.fileName,
+        quant: row.quant.replace(/^UD[-_]?/i, ""),
+        sizeGb:
+          typeof row.sizeMb === "number" && Number.isFinite(row.sizeMb)
+            ? `${(row.sizeMb / 1024).toFixed(1)} GB`
+            : "n/a"
+      });
+      grouped.set(key, current);
+    }
+    const rows = [...grouped.values()]
+      .map((row) => {
+        row.udAssets.sort((a, b) => a.quant.localeCompare(b.quant));
+        const preferred = row.udAssets.find((asset) =>
+          asset.quant.toUpperCase().includes("Q4_K_XL")
+        );
+        return {
+          repoId: row.repoId,
+          modelName: row.modelName,
+          parameterCount: row.parameterCount,
+          udAssets: row.udAssets,
+          selectedAssetFileName: preferred?.fileName ?? row.udAssets[0]?.fileName ?? ""
+        };
+      })
+      .sort((a, b) => a.modelName.localeCompare(b.modelName));
+    if (rows.length > 0) {
+      state.modelManagerUnslothUdCatalog = rows;
+      state.modelManagerUnslothUdLoading = false;
+      state.modelManagerMessage = `Loaded ${rows.length} UD model(s) from CSV.`;
+      return;
+    }
+    state.modelManagerUnslothUdCatalog = [];
+    state.modelManagerMessage = "No UD models found in CSV catalog.";
+  } catch {
+    state.modelManagerUnslothUdCatalog = [];
+    state.modelManagerMessage = "Failed to load UD CSV catalog.";
+  }
+  state.modelManagerUnslothUdLoading = false;
 }
 
 async function refreshLlamaRuntime(): Promise<void> {
@@ -1323,7 +1483,24 @@ function renderAndBind(sendMessage: (text: string) => Promise<void>): void {
       state.llamaRuntimeLogs = [];
       renderAndBind(sendMessage);
     },
-    onLlamaRuntimeStart: async ({ engineId, modelPath, port, ctxSize, nGpuLayers }) => {
+    onLlamaRuntimeStart: async ({
+      engineId,
+      modelPath,
+      port,
+      ctxSize,
+      nGpuLayers,
+      threads,
+      batchSize,
+      ubatchSize,
+      temperature,
+      topP,
+      topK,
+      repeatPenalty,
+      flashAttn,
+      mmap,
+      mlock,
+      seed
+    }) => {
       if (!clientRef) return;
       state.llamaRuntimeBusy = true;
       state.llamaRuntimeSelectedEngineId = engineId;
@@ -1332,6 +1509,17 @@ function renderAndBind(sendMessage: (text: string) => Promise<void>): void {
       state.llamaRuntimePort = port;
       state.llamaRuntimeCtxSize = ctxSize;
       state.llamaRuntimeGpuLayers = nGpuLayers;
+      state.llamaRuntimeThreads = threads;
+      state.llamaRuntimeBatchSize = batchSize;
+      state.llamaRuntimeUbatchSize = ubatchSize;
+      state.llamaRuntimeTemperature = temperature;
+      state.llamaRuntimeTopP = topP;
+      state.llamaRuntimeTopK = topK;
+      state.llamaRuntimeRepeatPenalty = repeatPenalty;
+      state.llamaRuntimeFlashAttn = flashAttn;
+      state.llamaRuntimeMmap = mmap;
+      state.llamaRuntimeMlock = mlock;
+      state.llamaRuntimeSeed = seed;
       try {
         await refreshLlamaRuntime();
         const selectedEngine = state.llamaRuntime?.engines.find(
@@ -1383,14 +1571,26 @@ function renderAndBind(sendMessage: (text: string) => Promise<void>): void {
           }
         }
 
-        await clientRef.startLlamaRuntime({
+        const startRequest = {
           correlationId: nextCorrelationId(),
           engineId,
           modelPath,
           port,
           ctxSize,
-          nGpuLayers
-        });
+          nGpuLayers,
+          temperature,
+          topP,
+          topK,
+          repeatPenalty,
+          flashAttn,
+          mmap,
+          mlock,
+          ...(threads !== null ? { threads } : {}),
+          ...(batchSize !== null ? { batchSize } : {}),
+          ...(ubatchSize !== null ? { ubatchSize } : {}),
+          ...(seed !== null ? { seed } : {})
+        };
+        await clientRef.startLlamaRuntime(startRequest);
         await refreshLlamaRuntime();
       } catch (error) {
         pushConsoleEntry(
@@ -1417,6 +1617,137 @@ function renderAndBind(sendMessage: (text: string) => Promise<void>): void {
         state.llamaRuntimeBusy = false;
       }
       renderAndBind(sendMessage);
+    },
+    onModelManagerRefreshInstalled: async () => {
+      state.modelManagerBusy = true;
+      state.modelManagerMessage = "Refreshing installed models...";
+      try {
+        await refreshModelManagerInstalled();
+        state.modelManagerMessage = `Found ${state.modelManagerInstalled.length} installed model(s).`;
+      } catch (error) {
+        state.modelManagerMessage = `Refresh failed: ${String(error)}`;
+      } finally {
+        state.modelManagerBusy = false;
+      }
+      renderAndBind(sendMessage);
+    },
+    onModelManagerSetQuery: async (query: string) => {
+      state.modelManagerQuery = query.trim();
+      renderAndBind(sendMessage);
+    },
+    onModelManagerSetCollection: async (collection: string) => {
+      state.modelManagerCollection = collection.trim() || "unsloth_ud";
+      if (state.modelManagerCollection === "unsloth_ud" && !state.modelManagerUnslothUdCatalog.length) {
+        state.modelManagerMessage = "Loading Unsloth UD quant catalog...";
+        await refreshModelManagerUnslothUdCatalog();
+        state.modelManagerMessage = `Loaded ${state.modelManagerUnslothUdCatalog.length} UD model(s).`;
+      }
+      renderAndBind(sendMessage);
+    },
+    onModelManagerSearchHf: async () => {
+      if (!clientRef) return;
+      const query = state.modelManagerQuery.trim();
+      const collectionPrefix: Record<string, string> = {
+        all: "",
+        unsloth_ud: "unsloth",
+        arxell: "Arxell",
+        qwen: "Qwen",
+        glm: "GLM",
+        ministral: "Ministral"
+      };
+      const prefix = collectionPrefix[state.modelManagerCollection] ?? "";
+      const effectiveQuery = `${prefix} ${query}`.trim();
+      if (!effectiveQuery) {
+        state.modelManagerMessage = "Enter a Hugging Face search query.";
+        renderAndBind(sendMessage);
+        return;
+      }
+      state.modelManagerBusy = true;
+      state.modelManagerMessage = `Searching Hugging Face for "${effectiveQuery}"...`;
+      try {
+        const response = await clientRef.modelManagerSearchHf({
+          correlationId: nextCorrelationId(),
+          query: effectiveQuery,
+          limit: 8
+        });
+        state.modelManagerSearchResults = response.results;
+        state.modelManagerMessage = `Search complete: ${response.results.length} candidate(s).`;
+      } catch (error) {
+        state.modelManagerMessage = `Search failed: ${String(error)}`;
+      } finally {
+        state.modelManagerBusy = false;
+      }
+      renderAndBind(sendMessage);
+    },
+    onModelManagerDownloadHf: async ({ repoId, fileName }) => {
+      if (!clientRef) return;
+      state.modelManagerBusy = true;
+      state.modelManagerMessage = `Downloading ${repoId}/${fileName}...`;
+      try {
+        const response = await clientRef.modelManagerDownloadHf({
+          correlationId: nextCorrelationId(),
+          repoId,
+          fileName
+        });
+        await refreshModelManagerInstalled();
+        state.modelManagerMessage = `Downloaded ${response.model.name}.`;
+      } catch (error) {
+        state.modelManagerMessage = `Download failed: ${String(error)}`;
+      } finally {
+        state.modelManagerBusy = false;
+      }
+      renderAndBind(sendMessage);
+    },
+    onModelManagerSetUdQuant: async ({ repoId, fileName }) => {
+      state.modelManagerUnslothUdCatalog = state.modelManagerUnslothUdCatalog.map((row) =>
+        row.repoId === repoId ? { ...row, selectedAssetFileName: fileName } : row
+      );
+      renderAndBind(sendMessage);
+    },
+    onModelManagerUseAsLlamaPath: async (modelPath: string) => {
+      state.llamaRuntimeModelPath = modelPath;
+      persistLlamaModelPath(modelPath);
+      state.modelManagerMessage = `Selected model for llama.cpp: ${modelPath}`;
+      renderAndBind(sendMessage);
+    },
+    onModelManagerEjectActive: async () => {
+      if (!clientRef) return;
+      state.modelManagerBusy = true;
+      state.modelManagerMessage = "Ejecting active model and stopping llama.cpp...";
+      try {
+        await clientRef.stopLlamaRuntime({ correlationId: nextCorrelationId() });
+      } catch {
+        // Ignore stop failure and still clear local model selection.
+      }
+      try {
+        state.llamaRuntimeModelPath = "";
+        persistLlamaModelPath("");
+        await refreshLlamaRuntime();
+        state.modelManagerMessage = "Active model ejected and llama.cpp stopped.";
+      } catch (error) {
+        state.modelManagerMessage = `Eject completed, refresh failed: ${String(error)}`;
+      } finally {
+        state.modelManagerBusy = false;
+      }
+      renderAndBind(sendMessage);
+    },
+    onModelManagerDeleteInstalled: async (modelId: string) => {
+      if (!clientRef) return;
+      state.modelManagerBusy = true;
+      state.modelManagerMessage = `Removing ${modelId}...`;
+      try {
+        await clientRef.modelManagerDeleteInstalled({
+          correlationId: nextCorrelationId(),
+          modelId
+        });
+        await refreshModelManagerInstalled();
+        state.modelManagerMessage = `Removed ${modelId}.`;
+      } catch (error) {
+        state.modelManagerMessage = `Remove failed: ${String(error)}`;
+      } finally {
+        state.modelManagerBusy = false;
+      }
+      renderAndBind(sendMessage);
     }
   });
 }
@@ -1438,9 +1769,28 @@ function currentPrimaryPanelRenderState() {
     llamaRuntimePort: state.llamaRuntimePort,
     llamaRuntimeCtxSize: state.llamaRuntimeCtxSize,
     llamaRuntimeGpuLayers: state.llamaRuntimeGpuLayers,
+    llamaRuntimeThreads: state.llamaRuntimeThreads,
+    llamaRuntimeBatchSize: state.llamaRuntimeBatchSize,
+    llamaRuntimeUbatchSize: state.llamaRuntimeUbatchSize,
+    llamaRuntimeTemperature: state.llamaRuntimeTemperature,
+    llamaRuntimeTopP: state.llamaRuntimeTopP,
+    llamaRuntimeTopK: state.llamaRuntimeTopK,
+    llamaRuntimeRepeatPenalty: state.llamaRuntimeRepeatPenalty,
+    llamaRuntimeFlashAttn: state.llamaRuntimeFlashAttn,
+    llamaRuntimeMmap: state.llamaRuntimeMmap,
+    llamaRuntimeMlock: state.llamaRuntimeMlock,
+    llamaRuntimeSeed: state.llamaRuntimeSeed,
     llamaRuntimeMaxTokens: state.llamaRuntimeMaxTokens,
     llamaRuntimeBusy: state.llamaRuntimeBusy,
-    llamaRuntimeLogs: state.llamaRuntimeLogs
+    llamaRuntimeLogs: state.llamaRuntimeLogs,
+    modelManagerInstalled: state.modelManagerInstalled,
+    modelManagerQuery: state.modelManagerQuery,
+    modelManagerCollection: state.modelManagerCollection,
+    modelManagerSearchResults: state.modelManagerSearchResults,
+    modelManagerBusy: state.modelManagerBusy,
+    modelManagerMessage: state.modelManagerMessage,
+    modelManagerUnslothUdCatalog: state.modelManagerUnslothUdCatalog,
+    modelManagerUnslothUdLoading: state.modelManagerUnslothUdLoading
   };
 }
 
@@ -1723,6 +2073,10 @@ async function bootstrap(): Promise<void> {
   await refreshTools();
   await refreshDevicesState();
   await refreshLlamaRuntime();
+  await refreshModelManagerInstalled();
+  if (state.modelManagerCollection === "unsloth_ud") {
+    await refreshModelManagerUnslothUdCatalog();
+  }
   await autoStartLlamaRuntimeIfConfigured();
   await loadConversation(state.conversationId);
 
@@ -1801,6 +2155,18 @@ async function bootstrap(): Promise<void> {
       }
     }
 
+    if (event.action.startsWith("model.manager.")) {
+      if (event.stage === "start") {
+        state.modelManagerBusy = true;
+      }
+      if (event.stage === "complete" || event.stage === "error") {
+        state.modelManagerBusy = false;
+      }
+      if (event.stage === "error") {
+        state.modelManagerMessage = `Model manager error: ${safePayloadPreview(event.payload)}`;
+      }
+    }
+
     state.events.push(event);
 
     if (event.action === "chat.stream.chunk") {
@@ -1834,13 +2200,20 @@ async function bootstrap(): Promise<void> {
     renderAndBind(sendMessage);
 
     try {
-      const response = await clientRef.sendMessage({
+      const requestPayload = {
         conversationId: state.conversationId,
         userMessage: normalizedUserText,
         correlationId,
-        thinkingEnabled: state.chatThinkingEnabled,
-        maxTokens: state.llamaRuntimeMaxTokens ?? undefined
-      });
+        thinkingEnabled: state.chatThinkingEnabled
+      } as const;
+      const response = await clientRef.sendMessage(
+        state.llamaRuntimeMaxTokens === null
+          ? requestPayload
+          : {
+              ...requestPayload,
+              maxTokens: state.llamaRuntimeMaxTokens
+            }
+      );
 
       const existing = state.messages.find(
         (m) => m.role === "assistant" && m.correlationId === response.correlationId
