@@ -11,6 +11,15 @@ export function renderWorkspacePane(
   toolsActionsHtml: string,
   activeTab: WorkspaceTab
 ): string {
+  const contentActionsHtml =
+    activeTab === "events"
+      ? consoleActionsHtml
+      : activeTab === "tools"
+        ? toolsActionsHtml
+        : "";
+  const workspaceContentClass = contentActionsHtml
+    ? "workspace-content"
+    : "workspace-content no-actions";
   return `
     <section class="pane workspace-pane">
       <header class="pane-topbar workspace-pane-topbar">
@@ -28,15 +37,9 @@ export function renderWorkspacePane(
           </button>
         </div>
         </div>
-        ${
-          activeTab === "tools"
-            ? `<div class="workspace-pane-actions">${toolsActionsHtml}</div>`
-            : activeTab === "events"
-              ? `<div class="workspace-pane-actions">${consoleActionsHtml}</div>`
-              : "<span></span>"
-        }
       </header>
-      <div class="workspace-content">
+      <div class="${workspaceContentClass}">
+        ${contentActionsHtml ? `<div class="workspace-panel-actions">${contentActionsHtml}</div>` : ""}
         ${
           activeTab === "events"
             ? consoleHtml

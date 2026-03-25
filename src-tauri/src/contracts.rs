@@ -7,6 +7,8 @@ pub struct ChatSendRequest {
     pub conversation_id: String,
     pub user_message: String,
     pub correlation_id: String,
+    pub thinking_enabled: Option<bool>,
+    pub max_tokens: Option<u32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -14,7 +16,23 @@ pub struct ChatSendRequest {
 pub struct ChatSendResponse {
     pub conversation_id: String,
     pub assistant_message: String,
+    pub assistant_thinking: Option<String>,
     pub correlation_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChatCancelRequest {
+    pub correlation_id: String,
+    pub target_correlation_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChatCancelResponse {
+    pub correlation_id: String,
+    pub target_correlation_id: String,
+    pub cancelled: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -38,6 +56,7 @@ pub struct ConversationMessageRecord {
 #[serde(rename_all = "camelCase")]
 pub struct ConversationSummaryRecord {
     pub conversation_id: String,
+    pub title: String,
     pub message_count: usize,
     pub last_message_preview: String,
     pub updated_at_ms: i64,
@@ -69,6 +88,21 @@ pub struct ChatListConversationsRequest {
 pub struct ChatListConversationsResponse {
     pub conversations: Vec<ConversationSummaryRecord>,
     pub correlation_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChatDeleteConversationRequest {
+    pub conversation_id: String,
+    pub correlation_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChatDeleteConversationResponse {
+    pub conversation_id: String,
+    pub correlation_id: String,
+    pub deleted: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -144,6 +178,14 @@ pub struct ChatStreamStartPayload {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ChatStreamChunkPayload {
+    pub conversation_id: String,
+    pub delta: String,
+    pub done: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChatStreamReasoningChunkPayload {
     pub conversation_id: String,
     pub delta: String,
     pub done: bool,
@@ -244,6 +286,7 @@ pub struct LlamaRuntimeEngine {
     pub backend: String,
     pub label: String,
     pub is_applicable: bool,
+    pub is_bundled: bool,
     pub is_installed: bool,
     pub is_ready: bool,
     pub binary_path: Option<String>,
@@ -307,6 +350,23 @@ pub struct LlamaRuntimeStopRequest {
 pub struct LlamaRuntimeStopResponse {
     pub correlation_id: String,
     pub stopped: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DevicesProbeMicrophoneRequest {
+    pub correlation_id: String,
+    pub attempt_open: Option<bool>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DevicesProbeMicrophoneResponse {
+    pub correlation_id: String,
+    pub status: String,
+    pub message: String,
+    pub input_device_count: usize,
+    pub default_input_name: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

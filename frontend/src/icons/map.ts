@@ -7,6 +7,7 @@ export const APP_ICON = {
     chat: "message-square",
     history: "history",
     workspace: "folder",
+    devices: "monitor",
     tts: "volume-2",
     stt: "mic",
     llamaCpp: "cpu",
@@ -24,12 +25,15 @@ export const APP_ICON = {
     tools: "wrench"
   },
   action: {
-    chatNew: "list",
+    chatNew: "plus",
+    chatClear: "trash-2",
+    chatThinking: "brain",
     chatSend: "play",
     workspaceActions: "sliders-horizontal",
     toolsPanel: "wrench",
     displayModeDark: "moon",
-    displayModeLight: "sun"
+    displayModeLight: "sun",
+    layoutOrientation: "proportions"
   }
 } as const satisfies {
   brand: IconName;
@@ -38,6 +42,7 @@ export const APP_ICON = {
     chat: IconName;
     history: IconName;
     workspace: IconName;
+    devices: IconName;
     tts: IconName;
     stt: IconName;
     llamaCpp: IconName;
@@ -56,10 +61,13 @@ export const APP_ICON = {
   };
   action: {
     chatNew: IconName;
+    chatClear: IconName;
+    chatThinking: IconName;
     chatSend: IconName;
     workspaceActions: IconName;
     toolsPanel: IconName;
     displayModeDark: IconName;
     displayModeLight: IconName;
+    layoutOrientation: IconName;
   };
 };

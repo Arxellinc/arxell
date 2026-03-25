@@ -4,12 +4,26 @@ export interface ChatSendRequest {
   conversationId: string;
   userMessage: string;
   correlationId: string;
+  thinkingEnabled?: boolean;
+  maxTokens?: number;
 }
 
 export interface ChatSendResponse {
   conversationId: string;
   assistantMessage: string;
+  assistantThinking?: string;
   correlationId: string;
+}
+
+export interface ChatCancelRequest {
+  correlationId: string;
+  targetCorrelationId: string;
+}
+
+export interface ChatCancelResponse {
+  correlationId: string;
+  targetCorrelationId: string;
+  cancelled: boolean;
 }
 
 export type MessageRole = "user" | "assistant";
@@ -35,6 +49,7 @@ export interface ChatGetMessagesResponse {
 
 export interface ConversationSummaryRecord {
   conversationId: string;
+  title: string;
   messageCount: number;
   lastMessagePreview: string;
   updatedAtMs: number;
@@ -47,6 +62,17 @@ export interface ChatListConversationsRequest {
 export interface ChatListConversationsResponse {
   conversations: ConversationSummaryRecord[];
   correlationId: string;
+}
+
+export interface ChatDeleteConversationRequest {
+  conversationId: string;
+  correlationId: string;
+}
+
+export interface ChatDeleteConversationResponse {
+  conversationId: string;
+  correlationId: string;
+  deleted: boolean;
 }
 
 export interface TerminalOpenSessionRequest {
@@ -140,6 +166,7 @@ export interface LlamaRuntimeEngine {
   backend: string;
   label: string;
   isApplicable: boolean;
+  isBundled: boolean;
   isInstalled: boolean;
   isReady: boolean;
   binaryPath: string | null;
@@ -191,11 +218,30 @@ export interface LlamaRuntimeStopResponse {
   stopped: boolean;
 }
 
+export interface DevicesProbeMicrophoneRequest {
+  correlationId: string;
+  attemptOpen?: boolean;
+}
+
+export interface DevicesProbeMicrophoneResponse {
+  correlationId: string;
+  status: "enabled" | "not_enabled" | "no_device";
+  message: string;
+  inputDeviceCount: number;
+  defaultInputName: string | null;
+}
+
 export interface ChatStreamStartPayload {
   conversationId: string;
 }
 
 export interface ChatStreamChunkPayload {
+  conversationId: string;
+  delta: string;
+  done: boolean;
+}
+
+export interface ChatStreamReasoningChunkPayload {
   conversationId: string;
   delta: string;
   done: boolean;

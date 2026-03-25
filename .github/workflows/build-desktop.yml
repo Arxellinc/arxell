@@ -155,6 +155,7 @@ jobs:
               ("llama.cpp-cuda", ["ubuntu", "cuda", "x64"], ["vulkan", "rocm", "hip", "aclgraph", "s390x", "cudart"]),
               ("llama.cpp-rocm", ["ubuntu", "rocm", "x64"], ["vulkan", "cuda", "aclgraph", "s390x", "cudart"]),
             ]
+            required_engines = ["llama.cpp-cpu", "llama.cpp-vulkan"]
           elif os_key == "windows":
             targets = [
               ("llama.cpp-cpu", ["win", "cpu", "x64"], ["vulkan", "cuda", "hip", "cudart"]),
@@ -162,11 +163,13 @@ jobs:
               ("llama.cpp-cuda", ["win", "cuda", "x64"], ["vulkan", "hip", "cudart"]),
               ("llama.cpp-rocm", ["win", "hip", "radeon", "x64"], ["vulkan", "cuda", "cudart"]),
             ]
+            required_engines = ["llama.cpp-cpu", "llama.cpp-vulkan"]
           else:
             targets = [
               ("llama.cpp-metal", ["macos", "x64"], ["xcframework"]),
               ("llama.cpp-cpu", ["macos", "x64"], ["xcframework"]),
             ]
+            required_engines = ["llama.cpp-cpu", "llama.cpp-metal"]
 
           repo_root = pathlib.Path(".").resolve()
           resources_root = repo_root / "src-tauri" / "resources" / "llama-runtime"
@@ -176,6 +179,7 @@ jobs:
           resources_root.mkdir(parents=True, exist_ok=True)
 
           selected = {}
+          prepared = {}
           downloaded = {}
           binary_name = "llama-server.exe" if os_key == "windows" else "llama-server"
 
@@ -217,11 +221,20 @@ jobs:
             if os_key != "windows":
               binary_dest.chmod(binary_dest.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
             print(f"[llama-runtime] prepared {engine_id}: {binary_dest}")
+            prepared[engine_id] = {
+              "name": name,
+              "url": url,
+              "binaryPath": str(binary_dest.relative_to(repo_root)),
+            }
+
+          missing_required = [engine_id for engine_id in required_engines if engine_id not in prepared]
+          if missing_required:
+            raise RuntimeError(f"Missing required bundled llama runtime engines for {runner_os}: {missing_required}")
 
           manifest = {
             "releaseTag": tag,
             "runnerOs": runner_os,
-            "engines": selected,
+            "engines": prepared,
           }
           (resources_root / "manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
           print("[llama-runtime] manifest written")

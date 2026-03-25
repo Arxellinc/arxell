@@ -1,40 +1,42 @@
 use crate::contracts::{
-    ChatGetMessagesRequest, ChatGetMessagesResponse, ChatListConversationsRequest,
-    ChatListConversationsResponse, ChatSendRequest, ChatSendResponse, ChatStreamChunkPayload,
-    ChatStreamCompletePayload, ChatStreamStartPayload, ConversationMessageRecord, EventSeverity,
-    EventStage, MessageRole, Subsystem, ToolInvokeRequest, ToolMode,
+    ChatCancelResponse, ChatGetMessagesRequest, ChatGetMessagesResponse, ChatListConversationsRequest,
+    ChatListConversationsResponse, ChatDeleteConversationResponse, ChatSendRequest, ChatSendResponse, ChatStreamChunkPayload,
+    ChatStreamCompletePayload, ChatStreamReasoningChunkPayload, ChatStreamStartPayload,
+    ConversationMessageRecord, EventSeverity, EventStage, MessageRole, Subsystem,
 };
 use crate::memory::MemoryManager;
 use crate::observability::EventHub;
 use crate::persistence::ConversationRepository;
-use crate::tools::registry::ToolRegistry;
+use reqwest::StatusCode;
 use serde_json::json;
+use std::collections::HashSet;
 use std::sync::Arc;
-use tokio::time::{sleep, Duration};
+use std::sync::Mutex;
+use tokio::time::Duration;
 
 pub struct ChatService {
     hub: EventHub,
-    registry: Arc<ToolRegistry>,
     memory: Arc<dyn MemoryManager>,
     conversation_repo: Arc<dyn ConversationRepository>,
+    cancelled_correlations: Arc<Mutex<HashSet<String>>>,
 }
 
 impl ChatService {
     pub fn new(
         hub: EventHub,
-        registry: Arc<ToolRegistry>,
         memory: Arc<dyn MemoryManager>,
         conversation_repo: Arc<dyn ConversationRepository>,
     ) -> Self {
         Self {
             hub,
-            registry,
             memory,
             conversation_repo,
+            cancelled_correlations: Arc::new(Mutex::new(HashSet::new())),
         }
     }
 
     pub async fn send_message(&self, req: ChatSendRequest) -> Result<ChatSendResponse, String> {
+        self.clear_cancelled(req.correlation_id.as_str());
         self.hub.emit(self.hub.make_event(
             &req.correlation_id,
             Subsystem::Service,
@@ -57,22 +59,22 @@ impl ChatService {
             },
         )?;
 
-        let tool_result = match self.registry.invoke(ToolInvokeRequest {
-            correlation_id: req.correlation_id.clone(),
-            tool_id: "echo".to_string(),
-            action: "echo.say".to_string(),
-            mode: ToolMode::Sandbox,
-            payload: json!({"input": req.user_message}),
-        }) {
-            Ok(ok) => ok,
-            Err(err) => {
+        let llm_response = self
+            .request_local_llama_response(
+                &req.conversation_id,
+                &req.correlation_id,
+                req.thinking_enabled.unwrap_or(false),
+                req.max_tokens,
+            )
+            .await
+            .map_err(|err| {
                 self.hub.emit(self.hub.make_event(
                     &req.correlation_id,
                     Subsystem::Service,
                     "chat.stream.error",
                     EventStage::Error,
                     EventSeverity::Error,
-                    json!({"message": err.to_string()}),
+                    json!({"message": err}),
                 ));
                 self.hub.emit(self.hub.make_event(
                     &req.correlation_id,
@@ -80,77 +82,15 @@ impl ChatService {
                     "chat.send_message",
                     EventStage::Error,
                     EventSeverity::Error,
-                    json!({"error": err.to_string()}),
+                    json!({"error": err}),
                 ));
-                return Err(err.to_string());
-            }
-        };
-
-        let echoed_input = tool_result
-            .data
-            .get("input")
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
-
-        let assistant_message = format!("Echoed safely via registry: {echoed_input}");
-
-        self.hub.emit(
-            self.hub.make_event(
-                &req.correlation_id,
-                Subsystem::Service,
-                "chat.stream.start",
-                EventStage::Start,
-                EventSeverity::Info,
-                serde_json::to_value(ChatStreamStartPayload {
-                    conversation_id: req.conversation_id.clone(),
-                })
-                .unwrap_or_else(|_| json!({})),
-            ),
-        );
-
-        let mut built = String::new();
-        for token in assistant_message.split_whitespace() {
-            if !built.is_empty() {
-                built.push(' ');
-            }
-            built.push_str(token);
-
-            self.hub.emit(
-                self.hub.make_event(
-                    &req.correlation_id,
-                    Subsystem::Service,
-                    "chat.stream.chunk",
-                    EventStage::Progress,
-                    EventSeverity::Info,
-                    serde_json::to_value(ChatStreamChunkPayload {
-                        conversation_id: req.conversation_id.clone(),
-                        delta: format!("{token} "),
-                        done: false,
-                    })
-                    .unwrap_or_else(|_| json!({})),
-                ),
-            );
-            sleep(Duration::from_millis(30)).await;
-        }
-
-        self.hub.emit(
-            self.hub.make_event(
-                &req.correlation_id,
-                Subsystem::Service,
-                "chat.stream.complete",
-                EventStage::Complete,
-                EventSeverity::Info,
-                serde_json::to_value(ChatStreamCompletePayload {
-                    conversation_id: req.conversation_id.clone(),
-                    assistant_length: built.len(),
-                })
-                .unwrap_or_else(|_| json!({})),
-            ),
-        );
+                err
+            })?;
 
         let response = ChatSendResponse {
             conversation_id: req.conversation_id,
-            assistant_message,
+            assistant_message: llm_response.assistant_message,
+            assistant_thinking: llm_response.assistant_thinking,
             correlation_id: req.correlation_id.clone(),
         };
         self.append_message(
@@ -163,6 +103,12 @@ impl ChatService {
                 timestamp_ms: now_ms(),
             },
         )?;
+        let _ = self
+            .maybe_generate_conversation_title(
+                response.conversation_id.as_str(),
+                req.correlation_id.as_str(),
+            )
+            .await;
 
         self.hub.emit(self.hub.make_event(
             &req.correlation_id,
@@ -174,6 +120,744 @@ impl ChatService {
         ));
 
         Ok(response)
+    }
+
+    pub async fn cancel_message(
+        &self,
+        correlation_id: &str,
+        target_correlation_id: &str,
+    ) -> Result<ChatCancelResponse, String> {
+        self.mark_cancelled(target_correlation_id);
+        self.hub.emit(self.hub.make_event(
+            correlation_id,
+            Subsystem::Service,
+            "chat.cancel_message",
+            EventStage::Complete,
+            EventSeverity::Warn,
+            json!({
+                "targetCorrelationId": target_correlation_id,
+                "cancelled": true
+            }),
+        ));
+        Ok(ChatCancelResponse {
+            correlation_id: correlation_id.to_string(),
+            target_correlation_id: target_correlation_id.to_string(),
+            cancelled: true,
+        })
+    }
+
+    pub async fn delete_conversation(
+        &self,
+        correlation_id: &str,
+        conversation_id: &str,
+    ) -> Result<ChatDeleteConversationResponse, String> {
+        self.hub.emit(self.hub.make_event(
+            correlation_id,
+            Subsystem::Service,
+            "chat.delete_conversation",
+            EventStage::Start,
+            EventSeverity::Info,
+            json!({ "conversationId": conversation_id }),
+        ));
+        let deleted = self
+            .conversation_repo
+            .delete_conversation(conversation_id)
+            .map_err(|e| {
+                self.hub.emit(self.hub.make_event(
+                    correlation_id,
+                    Subsystem::Service,
+                    "chat.delete_conversation",
+                    EventStage::Error,
+                    EventSeverity::Error,
+                    json!({ "conversationId": conversation_id, "error": e }),
+                ));
+                e
+            })?;
+        self.hub.emit(self.hub.make_event(
+            correlation_id,
+            Subsystem::Service,
+            "chat.delete_conversation",
+            EventStage::Complete,
+            EventSeverity::Info,
+            json!({ "conversationId": conversation_id, "deleted": deleted }),
+        ));
+        Ok(ChatDeleteConversationResponse {
+            conversation_id: conversation_id.to_string(),
+            correlation_id: correlation_id.to_string(),
+            deleted,
+        })
+    }
+
+    async fn maybe_generate_conversation_title(
+        &self,
+        conversation_id: &str,
+        correlation_id: &str,
+    ) -> Result<(), String> {
+        let message_count = self
+            .conversation_repo
+            .conversation_message_count(conversation_id)?;
+        if message_count < 3 {
+            return Ok(());
+        }
+        if self
+            .conversation_repo
+            .get_conversation_title(conversation_id)?
+            .is_some()
+        {
+            return Ok(());
+        }
+
+        let history = self.conversation_repo.list_messages(conversation_id)?;
+        let title = self
+            .generate_title_with_llm(conversation_id, correlation_id, &history)
+            .await
+            .unwrap_or_else(|_| fallback_title(&history));
+        let normalized = normalize_title(title.as_str());
+        if normalized.is_empty() {
+            return Ok(());
+        }
+        self.conversation_repo
+            .upsert_conversation_title(conversation_id, normalized.as_str())
+    }
+
+    async fn generate_title_with_llm(
+        &self,
+        conversation_id: &str,
+        correlation_id: &str,
+        history: &[ConversationMessageRecord],
+    ) -> Result<String, String> {
+        let endpoint = std::env::var("FOUNDATION_LLM_ENDPOINT")
+            .unwrap_or_else(|_| "http://127.0.0.1:1420/v1/chat/completions".to_string());
+        let model = std::env::var("FOUNDATION_LLM_MODEL")
+            .unwrap_or_else(|_| "local-model".to_string());
+
+        let mut transcript = String::new();
+        for item in history.iter().take(6) {
+            let role = match item.role {
+                MessageRole::User => "User",
+                MessageRole::Assistant => "Assistant",
+            };
+            if !transcript.is_empty() {
+                transcript.push('\n');
+            }
+            transcript.push_str(role);
+            transcript.push_str(": ");
+            transcript.push_str(item.content.trim());
+        }
+
+        let payload = OpenAiChatRequest {
+            model,
+            messages: vec![
+                OpenAiMessage {
+                    role: "system".to_string(),
+                    content: "Generate one concise objective title. Use exactly one prefix: 'Casual chat about ...', 'Technical discussion about ...', 'Brainstorming on ...', or 'Research on ...'. Keep it short and neutral. Output title text only, no quotes."
+                        .to_string(),
+                },
+                OpenAiMessage {
+                    role: "user".to_string(),
+                    content: format!("Conversation id: {conversation_id}\n\n{transcript}"),
+                },
+            ],
+            stream: false,
+            max_tokens: Some(24),
+            temperature: Some(0.2),
+            extra_body: None,
+        };
+
+        self.hub.emit(self.hub.make_event(
+            correlation_id,
+            Subsystem::Service,
+            "chat.title.generate",
+            EventStage::Start,
+            EventSeverity::Info,
+            json!({ "conversationId": conversation_id }),
+        ));
+
+        let client = reqwest::Client::builder()
+            .connect_timeout(Duration::from_secs(4))
+            .timeout(Duration::from_secs(15))
+            .build()
+            .map_err(|e| format!("failed creating title HTTP client: {e}"))?;
+        let response = client
+            .post(endpoint.as_str())
+            .json(&payload)
+            .send()
+            .await
+            .map_err(|e| format!("failed requesting title from local runtime: {e}"))?;
+        if response.status() != StatusCode::OK {
+            return Err(format!("title generation failed with status {}", response.status()));
+        }
+        let body = response
+            .json::<serde_json::Value>()
+            .await
+            .map_err(|e| format!("failed parsing title generation response: {e}"))?;
+
+        let title = body
+            .get("choices")
+            .and_then(|v| v.get(0))
+            .and_then(|choice| {
+                choice
+                    .get("message")
+                    .and_then(|m| m.get("content"))
+                    .and_then(value_to_text)
+                    .or_else(|| choice.get("text").and_then(value_to_text))
+            })
+            .unwrap_or_default();
+
+        self.hub.emit(self.hub.make_event(
+            correlation_id,
+            Subsystem::Service,
+            "chat.title.generate",
+            EventStage::Complete,
+            EventSeverity::Info,
+            json!({ "conversationId": conversation_id, "titleLength": title.len() }),
+        ));
+        Ok(title)
+    }
+
+    async fn request_local_llama_response(
+        &self,
+        conversation_id: &str,
+        correlation_id: &str,
+        thinking_enabled: bool,
+        requested_max_tokens: Option<u32>,
+    ) -> Result<LocalLlamaResponse, String> {
+        let endpoint = std::env::var("FOUNDATION_LLM_ENDPOINT")
+            .unwrap_or_else(|_| "http://127.0.0.1:1420/v1/chat/completions".to_string());
+        let model = std::env::var("FOUNDATION_LLM_MODEL")
+            .unwrap_or_else(|_| "local-model".to_string());
+        let max_tokens = resolve_chat_max_tokens(requested_max_tokens);
+
+        let history = self
+            .conversation_repo
+            .list_messages(conversation_id)
+            .map_err(|e| format!("failed reading conversation history: {e}"))?;
+        let mut messages: Vec<OpenAiMessage> = history
+            .iter()
+            .rev()
+            .take(24)
+            .collect::<Vec<_>>()
+            .into_iter()
+            .rev()
+            .map(|item| OpenAiMessage {
+                role: match item.role {
+                    MessageRole::User => "user".to_string(),
+                    MessageRole::Assistant => "assistant".to_string(),
+                },
+                content: item.content.clone(),
+            })
+            .collect();
+        let model_family = infer_model_family(model.as_str());
+        let strategy = if thinking_enabled {
+            ThinkingDisableStrategy::None
+        } else {
+            self.resolve_thinking_strategy(model_family.as_str())
+        };
+
+        if matches!(
+            strategy,
+            ThinkingDisableStrategy::SystemPrompt | ThinkingDisableStrategy::Both
+        ) {
+            messages.insert(
+                0,
+                OpenAiMessage {
+                    role: "system".to_string(),
+                    content: "Return only the final answer. Do not include chain-of-thought, reasoning traces, or <think> tags."
+                        .to_string(),
+                },
+            );
+        }
+
+        let payload = OpenAiChatRequest {
+            model,
+            messages,
+            stream: true,
+            max_tokens,
+            temperature: Some(0.7),
+            extra_body: if matches!(
+                strategy,
+                ThinkingDisableStrategy::ChatTemplate | ThinkingDisableStrategy::Both
+            ) {
+                Some(json!({
+                    "cache_prompt": false,
+                    "chat_template_kwargs": {
+                        "enable_thinking": false
+                    }
+                }))
+            } else {
+                Some(json!({
+                    "cache_prompt": false
+                }))
+            },
+        };
+
+        self.hub.emit(self.hub.make_event(
+            correlation_id,
+            Subsystem::Service,
+            "chat.llm.request",
+            EventStage::Start,
+            EventSeverity::Info,
+            json!({
+                "endpoint": endpoint,
+                "modelFamily": model_family,
+                "thinkingDisableStrategy": strategy.as_str(),
+                "maxTokens": max_tokens
+            }),
+        ));
+
+        let client = reqwest::Client::builder()
+            .connect_timeout(Duration::from_secs(5))
+            .timeout(Duration::from_secs(60))
+            .build()
+            .map_err(|e| format!("failed creating HTTP client: {e}"))?;
+        let mut response = client
+            .post(endpoint.as_str())
+            .json(&payload)
+            .send()
+            .await
+            .map_err(|e| {
+                format!("failed calling local llama runtime at {endpoint}: {e}. Is llama.cpp running?")
+            })?;
+        if response.status() != StatusCode::OK {
+            let code = response.status();
+            let body = response
+                .text()
+                .await
+                .unwrap_or_else(|_| "<unreadable body>".to_string());
+            return Err(format!(
+                "local llama runtime returned {code}: {}",
+                truncate_for_error(body.as_str())
+            ));
+        }
+
+        self.hub.emit(
+            self.hub.make_event(
+                correlation_id,
+                Subsystem::Service,
+                "chat.stream.start",
+                EventStage::Start,
+                EventSeverity::Info,
+                serde_json::to_value(ChatStreamStartPayload {
+                    conversation_id: conversation_id.to_string(),
+                })
+                .unwrap_or_else(|_| json!({})),
+            ),
+        );
+
+        let mut assistant = String::new();
+        let mut reasoning = String::new();
+        let mut line_buffer = String::new();
+        let mut raw_response_body = String::new();
+        let mut stream_done = false;
+
+        while let Some(chunk) = response
+            .chunk()
+            .await
+            .map_err(|e| format!("failed reading streaming response from local llama runtime: {e}"))?
+        {
+            if self.is_cancelled(correlation_id) {
+                break;
+            }
+            let chunk_text = String::from_utf8_lossy(&chunk);
+            raw_response_body.push_str(chunk_text.as_ref());
+            line_buffer.push_str(chunk_text.as_ref());
+            while let Some(pos) = line_buffer.find('\n') {
+                let mut line = line_buffer[..pos].to_string();
+                line_buffer.drain(..=pos);
+                if line.ends_with('\r') {
+                    line.pop();
+                }
+                if handle_stream_line(
+                    self,
+                    conversation_id,
+                    correlation_id,
+                    thinking_enabled,
+                    line.as_str(),
+                    &mut assistant,
+                    &mut reasoning,
+                )? {
+                    stream_done = true;
+                    break;
+                }
+            }
+            if stream_done {
+                break;
+            }
+        }
+
+        if !stream_done && !line_buffer.trim().is_empty() {
+            let _ = handle_stream_line(
+                self,
+                conversation_id,
+                correlation_id,
+                thinking_enabled,
+                line_buffer.trim(),
+                &mut assistant,
+                &mut reasoning,
+                )?;
+        }
+
+        // Some runtimes reply with JSON/NDJSON despite stream=true.
+        if assistant.trim().is_empty() && !raw_response_body.trim().is_empty() {
+            if let Some(parsed) =
+                extract_assistant_from_non_sse_body(raw_response_body.as_str(), thinking_enabled)
+            {
+                assistant = parsed.assistant;
+                if thinking_enabled && !parsed.reasoning.is_empty() {
+                    reasoning.push_str(parsed.reasoning.as_str());
+                }
+            }
+        }
+
+        let assistant_raw = normalize_generated_text(assistant.clone());
+        let assistant = normalize_generated_text(if thinking_enabled {
+            assistant_raw.clone()
+        } else {
+            strip_think_blocks(assistant_raw.as_str())
+        });
+        let mut assistant = assistant.trim().to_string();
+        let reasoning_normalized = normalize_generated_text(reasoning.clone());
+        if assistant.is_empty() && !assistant_raw.trim().is_empty() {
+            self.hub.emit(self.hub.make_event(
+                correlation_id,
+                Subsystem::Service,
+                "chat.stream.think_only_fallback",
+                EventStage::Progress,
+                EventSeverity::Warn,
+                json!({
+                    "message": "assistant text empty after think-block stripping; using raw assistant text"
+                }),
+            ));
+            assistant = assistant_raw.trim().to_string();
+        }
+        if assistant.is_empty() {
+            self.hub.emit(self.hub.make_event(
+                correlation_id,
+                Subsystem::Service,
+                "chat.stream.fallback",
+                EventStage::Progress,
+                EventSeverity::Warn,
+                json!({ "message": "streamed response had no assistant text; retrying non-stream request" }),
+            ));
+            assistant = self
+                .request_nonstream_fallback(
+                    endpoint.as_str(),
+                    payload.model.as_str(),
+                    &payload.messages,
+                    thinking_enabled,
+                    strategy,
+                    max_tokens,
+                )
+                .await?;
+        }
+        if assistant.is_empty() && !reasoning_normalized.trim().is_empty() {
+            self.hub.emit(self.hub.make_event(
+                correlation_id,
+                Subsystem::Service,
+                "chat.stream.reasoning_only",
+                EventStage::Progress,
+                EventSeverity::Warn,
+                json!({
+                    "message": "assistant text empty; promoting reasoning content to assistant response"
+                }),
+            ));
+            assistant = if thinking_enabled {
+                reasoning_normalized.clone()
+            } else {
+                strip_think_blocks(reasoning_normalized.as_str())
+            };
+            assistant = normalize_generated_text(assistant);
+        }
+        if !thinking_enabled && looks_like_reasoning_trace(assistant.as_str()) {
+            self.hub.emit(self.hub.make_event(
+                correlation_id,
+                Subsystem::Service,
+                "chat.no_thinking.rewrite",
+                EventStage::Progress,
+                EventSeverity::Warn,
+                json!({
+                    "message": "detected reasoning-style output while thinking is off; rewriting to final answer"
+                }),
+            ));
+            let latest_user_message = payload
+                .messages
+                .iter()
+                .rev()
+                .find(|m| m.role == "user")
+                .map(|m| m.content.as_str())
+                .unwrap_or("");
+            if let Ok(rewritten) = self
+                .rewrite_reasoning_to_final_answer(
+                    endpoint.as_str(),
+                    payload.model.as_str(),
+                    latest_user_message,
+                    assistant.as_str(),
+                )
+                .await
+            {
+                if !rewritten.trim().is_empty() {
+                    assistant = rewritten;
+                }
+            }
+        }
+        if assistant.is_empty() {
+            return Err("local llama response had no assistant text payload".to_string());
+        }
+        if self.is_cancelled(correlation_id) {
+            self.hub.emit(self.hub.make_event(
+                correlation_id,
+                Subsystem::Service,
+                "chat.stream.cancelled",
+                EventStage::Complete,
+                EventSeverity::Warn,
+                json!({ "assistantLength": assistant.len() }),
+            ));
+        }
+        let assistant_thinking = if thinking_enabled {
+            let normalized = reasoning_normalized;
+            if normalized.is_empty() {
+                None
+            } else {
+                Some(normalized)
+            }
+        } else {
+            None
+        };
+
+        self.hub.emit(
+            self.hub.make_event(
+                correlation_id,
+                Subsystem::Service,
+                "chat.stream.complete",
+                EventStage::Complete,
+                EventSeverity::Info,
+                serde_json::to_value(ChatStreamCompletePayload {
+                    conversation_id: conversation_id.to_string(),
+                    assistant_length: assistant.len(),
+                })
+                .unwrap_or_else(|_| json!({})),
+            ),
+        );
+
+        self.hub.emit(self.hub.make_event(
+            correlation_id,
+            Subsystem::Service,
+            "chat.llm.request",
+            EventStage::Complete,
+            EventSeverity::Info,
+            json!({
+                "ok": true,
+                "assistantLength": assistant.len(),
+                "thinkingLength": assistant_thinking.as_ref().map(|value| value.len()).unwrap_or(0)
+            }),
+        ));
+        Ok(LocalLlamaResponse {
+            assistant_message: assistant,
+            assistant_thinking,
+        })
+    }
+
+    fn mark_cancelled(&self, target_correlation_id: &str) {
+        if let Ok(mut set) = self.cancelled_correlations.lock() {
+            set.insert(target_correlation_id.to_string());
+        }
+    }
+
+    fn clear_cancelled(&self, target_correlation_id: &str) {
+        if let Ok(mut set) = self.cancelled_correlations.lock() {
+            set.remove(target_correlation_id);
+        }
+    }
+
+    fn is_cancelled(&self, target_correlation_id: &str) -> bool {
+        self.cancelled_correlations
+            .lock()
+            .map(|set| set.contains(target_correlation_id))
+            .unwrap_or(false)
+    }
+
+    async fn request_nonstream_fallback(
+        &self,
+        endpoint: &str,
+        model: &str,
+        messages: &[OpenAiMessage],
+        thinking_enabled: bool,
+        strategy: ThinkingDisableStrategy,
+        max_tokens: Option<u32>,
+    ) -> Result<String, String> {
+        let client = reqwest::Client::builder()
+            .connect_timeout(Duration::from_secs(5))
+            .timeout(Duration::from_secs(60))
+            .build()
+            .map_err(|e| format!("failed creating fallback HTTP client: {e}"))?;
+        let payload = OpenAiChatRequest {
+            model: model.to_string(),
+            messages: messages.to_vec(),
+            stream: false,
+            max_tokens,
+            temperature: Some(0.7),
+            extra_body: if matches!(
+                strategy,
+                ThinkingDisableStrategy::ChatTemplate | ThinkingDisableStrategy::Both
+            ) {
+                Some(json!({
+                    "cache_prompt": false,
+                    "chat_template_kwargs": {
+                        "enable_thinking": false
+                    }
+                }))
+            } else {
+                Some(json!({
+                    "cache_prompt": false
+                }))
+            },
+        };
+
+        let response = client
+            .post(endpoint)
+            .json(&payload)
+            .send()
+            .await
+            .map_err(|e| format!("fallback request to local runtime failed: {e}"))?;
+        if response.status() != StatusCode::OK {
+            return Err(format!(
+                "fallback request failed with status {}",
+                response.status()
+            ));
+        }
+        let body = response
+            .json::<serde_json::Value>()
+            .await
+            .map_err(|e| format!("failed parsing fallback response: {e}"))?;
+        let text = body
+            .get("choices")
+            .and_then(|v| v.get(0))
+            .and_then(|choice| {
+                choice
+                    .get("message")
+                    .and_then(|m| m.get("content"))
+                    .and_then(value_to_text)
+                    .or_else(|| choice.get("text").and_then(value_to_text))
+                    .or_else(|| choice.get("content").and_then(value_to_text))
+                    .or_else(|| {
+                        choice
+                            .get("message")
+                            .and_then(|m| m.get("reasoning_content"))
+                            .and_then(value_to_text)
+                    })
+                    .or_else(|| {
+                        choice
+                            .get("message")
+                            .and_then(|m| m.get("reasoning"))
+                            .and_then(value_to_text)
+                    })
+                    .or_else(|| choice.get("reasoning_content").and_then(value_to_text))
+                    .or_else(|| choice.get("reasoning").and_then(value_to_text))
+            })
+            .or_else(|| {
+                body.get("message")
+                    .and_then(|m| m.get("reasoning_content"))
+                    .and_then(value_to_text)
+            })
+            .or_else(|| {
+                body.get("message")
+                    .and_then(|m| m.get("reasoning"))
+                    .and_then(value_to_text)
+            })
+            .or_else(|| body.get("reasoning_content").and_then(value_to_text))
+            .or_else(|| body.get("reasoning").and_then(value_to_text))
+            .unwrap_or_default();
+        let normalized_raw = normalize_generated_text(text);
+        let normalized = if thinking_enabled {
+            normalized_raw.clone()
+        } else {
+            let stripped = normalize_generated_text(strip_think_blocks(normalized_raw.as_str()));
+            if stripped.is_empty() && !normalized_raw.trim().is_empty() {
+                normalized_raw
+            } else {
+                stripped
+            }
+        };
+        Ok(normalized.trim().to_string())
+    }
+
+    async fn rewrite_reasoning_to_final_answer(
+        &self,
+        endpoint: &str,
+        model: &str,
+        user_prompt: &str,
+        reasoning_output: &str,
+    ) -> Result<String, String> {
+        let client = reqwest::Client::builder()
+            .connect_timeout(Duration::from_secs(5))
+            .timeout(Duration::from_secs(45))
+            .build()
+            .map_err(|e| format!("failed creating rewrite HTTP client: {e}"))?;
+        let payload = OpenAiChatRequest {
+            model: model.to_string(),
+            messages: vec![
+                OpenAiMessage {
+                    role: "system".to_string(),
+                    content: "Return only a concise final answer for the user. Do not include analysis, reasoning steps, chain-of-thought, headings, or bullet lists."
+                        .to_string(),
+                },
+                OpenAiMessage {
+                    role: "user".to_string(),
+                    content: format!(
+                        "User prompt:\n{}\n\nDraft output:\n{}\n\nRewrite the draft as final answer only.",
+                        user_prompt, reasoning_output
+                    ),
+                },
+            ],
+            stream: false,
+            max_tokens: Some(256),
+            temperature: Some(0.2),
+            extra_body: Some(json!({
+                "cache_prompt": false,
+                "chat_template_kwargs": {
+                    "enable_thinking": false
+                }
+            })),
+        };
+        let response = client
+            .post(endpoint)
+            .json(&payload)
+            .send()
+            .await
+            .map_err(|e| format!("rewrite request to local runtime failed: {e}"))?;
+        if response.status() != StatusCode::OK {
+            return Err(format!(
+                "rewrite request failed with status {}",
+                response.status()
+            ));
+        }
+        let body = response
+            .json::<serde_json::Value>()
+            .await
+            .map_err(|e| format!("failed parsing rewrite response: {e}"))?;
+        let rewritten = body
+            .get("choices")
+            .and_then(|v| v.get(0))
+            .and_then(|choice| {
+                choice
+                    .get("message")
+                    .and_then(|m| m.get("content"))
+                    .and_then(value_to_text)
+                    .or_else(|| choice.get("text").and_then(value_to_text))
+                    .or_else(|| choice.get("content").and_then(value_to_text))
+            })
+            .unwrap_or_default();
+        Ok(normalize_generated_text(rewritten).trim().to_string())
+    }
+
+    fn resolve_thinking_strategy(&self, model_family: &str) -> ThinkingDisableStrategy {
+        let raw = self
+            .conversation_repo
+            .get_model_family_thinking_strategy(model_family)
+            .ok()
+            .flatten()
+            .unwrap_or_else(|| "both".to_string());
+        ThinkingDisableStrategy::from_str(raw.as_str())
     }
 
     pub async fn get_messages(
@@ -255,7 +939,15 @@ impl ChatService {
         ));
 
         Ok(ChatListConversationsResponse {
-            conversations,
+            conversations: conversations
+                .into_iter()
+                .map(|mut item| {
+                    if item.title.trim().is_empty() {
+                        item.title = truncate_for_error(item.last_message_preview.as_str());
+                    }
+                    item
+                })
+                .collect(),
             correlation_id: req.correlation_id,
         })
     }
@@ -298,10 +990,536 @@ impl ChatService {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+enum ThinkingDisableStrategy {
+    None,
+    SystemPrompt,
+    ChatTemplate,
+    Both,
+}
+
+impl ThinkingDisableStrategy {
+    fn from_str(value: &str) -> Self {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "system_prompt" | "system" | "prompt" => Self::SystemPrompt,
+            "chat_template" | "template" => Self::ChatTemplate,
+            "both" => Self::Both,
+            _ => Self::Both,
+        }
+    }
+
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::None => "none",
+            Self::SystemPrompt => "system_prompt",
+            Self::ChatTemplate => "chat_template",
+            Self::Both => "both",
+        }
+    }
+}
+
 fn now_ms() -> i64 {
     use std::time::{SystemTime, UNIX_EPOCH};
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_millis() as i64)
         .unwrap_or(0)
+}
+
+fn truncate_for_error(input: &str) -> String {
+    const MAX: usize = 320;
+    if input.chars().count() <= MAX {
+        return input.to_string();
+    }
+    let mut out = String::new();
+    for (idx, ch) in input.chars().enumerate() {
+        if idx >= MAX {
+            out.push_str("...");
+            return out;
+        }
+        out.push(ch);
+    }
+    out
+}
+
+fn fallback_title(history: &[ConversationMessageRecord]) -> String {
+    let first_user = history
+        .iter()
+        .find(|item| matches!(item.role, MessageRole::User))
+        .map(|item| item.content.as_str())
+        .unwrap_or("New Chat");
+    let core = truncate_for_error(first_user)
+        .trim()
+        .trim_matches('"')
+        .trim_matches('\'')
+        .replace('\n', " ");
+    format!("Casual chat about {}", core)
+}
+
+fn normalize_title(input: &str) -> String {
+    let cleaned = input
+        .trim()
+        .trim_matches('"')
+        .trim_matches('\'')
+        .replace('\n', " ");
+    let compact = cleaned
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    if compact.is_empty() {
+        return String::new();
+    }
+    let mut out = String::new();
+    for (i, ch) in compact.chars().enumerate() {
+        if i >= 72 {
+            break;
+        }
+        out.push(ch);
+    }
+    enforce_title_prefix(out)
+}
+
+fn infer_model_family(model: &str) -> String {
+    let lower = model.trim().to_ascii_lowercase();
+    if lower.contains("qwen") {
+        return "qwen".to_string();
+    }
+    if lower.contains("deepseek") {
+        return "deepseek".to_string();
+    }
+    if lower.contains("llama") {
+        return "llama".to_string();
+    }
+    if lower.contains("mistral") {
+        return "mistral".to_string();
+    }
+    if lower.contains("gemma") {
+        return "gemma".to_string();
+    }
+    if lower.contains("phi") {
+        return "phi".to_string();
+    }
+    lower
+        .split(|c: char| !c.is_ascii_alphanumeric())
+        .find(|token| !token.is_empty())
+        .unwrap_or("default")
+        .to_string()
+}
+
+fn enforce_title_prefix(input: String) -> String {
+    let value = input.trim();
+    if value.is_empty() {
+        return String::new();
+    }
+    let allowed = [
+        "Casual chat about ",
+        "Technical discussion about ",
+        "Brainstorming on ",
+        "Research on ",
+    ];
+    for prefix in allowed {
+        if value.starts_with(prefix) {
+            return value.to_string();
+        }
+    }
+    format!("Casual chat about {}", value)
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+struct OpenAiMessage {
+    role: String,
+    content: String,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+struct OpenAiChatRequest {
+    model: String,
+    messages: Vec<OpenAiMessage>,
+    stream: bool,
+    max_tokens: Option<u32>,
+    temperature: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    extra_body: Option<serde_json::Value>,
+}
+
+fn strip_think_blocks(input: &str) -> String {
+    let mut out = String::new();
+    let mut rest = input;
+    loop {
+        let Some(start) = rest.find("<think>") else {
+            out.push_str(rest);
+            break;
+        };
+        out.push_str(&rest[..start]);
+        let after_start = &rest[start + "<think>".len()..];
+        if let Some(end) = after_start.find("</think>") {
+            rest = &after_start[end + "</think>".len()..];
+        } else {
+            // Malformed/incomplete block; drop remainder after opening tag.
+            break;
+        }
+    }
+    out.lines()
+        .map(str::trim_end)
+        .filter(|line| !line.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn normalize_generated_text(input: String) -> String {
+    input
+        .replace("\r\n", "\n")
+        .replace("\r", "\n")
+        .lines()
+        .map(str::trim_end)
+        .collect::<Vec<_>>()
+        .join("\n")
+        .trim()
+        .to_string()
+}
+
+fn looks_like_reasoning_trace(input: &str) -> bool {
+    let lower = input.trim().to_ascii_lowercase();
+    if lower.is_empty() {
+        return false;
+    }
+    lower.starts_with("thinking process")
+        || lower.starts_with("reasoning:")
+        || lower.starts_with("analysis:")
+        || lower.contains("final answer:")
+        || lower.contains("step-by-step")
+}
+
+fn resolve_chat_max_tokens(requested: Option<u32>) -> Option<u32> {
+    if let Some(value) = requested {
+        return Some(value.clamp(128, 4096));
+    }
+    std::env::var("FOUNDATION_LLM_MAX_TOKENS")
+        .ok()
+        .and_then(|value| value.trim().parse::<u32>().ok())
+        .map(|value| value.clamp(128, 4096))
+}
+
+fn handle_stream_line(
+    service: &ChatService,
+    conversation_id: &str,
+    correlation_id: &str,
+    thinking_enabled: bool,
+    line: &str,
+    assistant: &mut String,
+    reasoning: &mut String,
+) -> Result<bool, String> {
+    let trimmed = line.trim();
+    if trimmed.is_empty() {
+        return Ok(false);
+    }
+    let Some(data) = trimmed.strip_prefix("data:") else {
+        return Ok(false);
+    };
+    let data = data.trim();
+    if data.is_empty() {
+        return Ok(false);
+    }
+    if data.eq("[DONE]") {
+        return Ok(true);
+    }
+
+    let parsed: serde_json::Value = match serde_json::from_str(data) {
+        Ok(value) => value,
+        Err(_) => return Ok(false),
+    };
+    let Some(choice) = parsed
+        .get("choices")
+        .and_then(|choices| choices.get(0))
+        .and_then(|value| value.as_object())
+    else {
+        return Ok(false);
+    };
+
+    let mut assistant_delta = String::new();
+    if let Some(delta) = choice.get("delta").and_then(|v| v.as_object()) {
+        if let Some(content) = delta.get("content").and_then(value_to_text) {
+            assistant_delta.push_str(content.as_str());
+        }
+        if let Some(text) = delta.get("text").and_then(|v| v.as_str()) {
+            assistant_delta.push_str(text);
+        }
+        if let Some(reasoning_delta) = delta
+            .get("reasoning_content")
+            .and_then(value_to_text)
+            .or_else(|| delta.get("reasoning").and_then(value_to_text))
+        {
+            if thinking_enabled {
+                push_reasoning_delta(
+                    service,
+                    conversation_id,
+                    correlation_id,
+                    reasoning,
+                    reasoning_delta.as_str(),
+                );
+            } else if !reasoning_delta.is_empty() {
+                reasoning.push_str(reasoning_delta.as_str());
+            }
+            if assistant_delta.is_empty() {
+                assistant_delta.push_str(reasoning_delta.as_str());
+            }
+        }
+    }
+    if assistant_delta.is_empty() {
+        if let Some(text) = choice.get("text").and_then(|v| v.as_str()) {
+            assistant_delta.push_str(text);
+        } else if let Some(content) = choice.get("content").and_then(value_to_text) {
+            assistant_delta.push_str(content.as_str());
+        }
+    }
+    if !assistant_delta.is_empty() {
+        assistant.push_str(assistant_delta.as_str());
+        service.hub.emit(service.hub.make_event(
+            correlation_id,
+            Subsystem::Service,
+            "chat.stream.chunk",
+            EventStage::Progress,
+            EventSeverity::Info,
+            serde_json::to_value(ChatStreamChunkPayload {
+                conversation_id: conversation_id.to_string(),
+                delta: assistant_delta,
+                done: false,
+            })
+            .unwrap_or_else(|_| json!({})),
+        ));
+    }
+    Ok(false)
+}
+
+fn push_reasoning_delta(
+    service: &ChatService,
+    conversation_id: &str,
+    correlation_id: &str,
+    reasoning: &mut String,
+    delta: &str,
+) {
+    if delta.is_empty() {
+        return;
+    }
+    reasoning.push_str(delta);
+    service.hub.emit(service.hub.make_event(
+        correlation_id,
+        Subsystem::Service,
+        "chat.stream.reasoning_chunk",
+        EventStage::Progress,
+        EventSeverity::Info,
+        serde_json::to_value(ChatStreamReasoningChunkPayload {
+            conversation_id: conversation_id.to_string(),
+            delta: delta.to_string(),
+            done: false,
+        })
+        .unwrap_or_else(|_| json!({})),
+    ));
+}
+
+struct LocalLlamaResponse {
+    assistant_message: String,
+    assistant_thinking: Option<String>,
+}
+
+struct ParsedAssistantBody {
+    assistant: String,
+    reasoning: String,
+}
+
+fn value_to_text(value: &serde_json::Value) -> Option<String> {
+    match value {
+        serde_json::Value::String(s) => Some(s.clone()),
+        serde_json::Value::Array(items) => {
+            let mut out = String::new();
+            for item in items {
+                match item {
+                    serde_json::Value::String(s) => {
+                        if !out.is_empty() {
+                            out.push('\n');
+                        }
+                        out.push_str(s);
+                    }
+                    serde_json::Value::Object(obj) => {
+                        if let Some(text) = obj.get("text").and_then(|v| v.as_str()) {
+                            if !out.is_empty() {
+                                out.push('\n');
+                            }
+                            out.push_str(text);
+                        } else if let Some(content) = obj.get("content").and_then(|v| v.as_str()) {
+                            if !out.is_empty() {
+                                out.push('\n');
+                            }
+                            out.push_str(content);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            if out.trim().is_empty() {
+                None
+            } else {
+                Some(out)
+            }
+        }
+        serde_json::Value::Object(obj) => obj
+            .get("text")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
+            .or_else(|| obj.get("content").and_then(|v| v.as_str()).map(|s| s.to_string())),
+        _ => None,
+    }
+}
+
+fn extract_assistant_from_non_sse_body(
+    body: &str,
+    thinking_enabled: bool,
+) -> Option<ParsedAssistantBody> {
+    let trimmed = body.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    if let Ok(json) = serde_json::from_str::<serde_json::Value>(trimmed) {
+        if let Some(parsed) = extract_assistant_from_json_value(&json, thinking_enabled) {
+            return Some(parsed);
+        }
+    }
+
+    // NDJSON fallback: parse each line and accumulate delta/content.
+    let mut assistant = String::new();
+    let mut reasoning = String::new();
+    for line in trimmed.lines() {
+        let candidate = line.trim();
+        if candidate.is_empty() {
+            continue;
+        }
+        let json: serde_json::Value = match serde_json::from_str(candidate) {
+            Ok(value) => value,
+            Err(_) => continue,
+        };
+        if let Some(parsed) = extract_assistant_from_json_value(&json, thinking_enabled) {
+            assistant.push_str(parsed.assistant.as_str());
+            reasoning.push_str(parsed.reasoning.as_str());
+        }
+    }
+    if assistant.trim().is_empty() {
+        None
+    } else {
+        Some(ParsedAssistantBody { assistant, reasoning })
+    }
+}
+
+fn extract_assistant_from_json_value(
+    json: &serde_json::Value,
+    thinking_enabled: bool,
+) -> Option<ParsedAssistantBody> {
+    let mut assistant = String::new();
+    let mut reasoning = String::new();
+
+    if let Some(choice) = json
+        .get("choices")
+        .and_then(|choices| choices.get(0))
+        .and_then(|value| value.as_object())
+    {
+        if let Some(delta) = choice.get("delta").and_then(|v| v.as_object()) {
+            if let Some(text) = delta.get("content").and_then(value_to_text) {
+                assistant.push_str(text.as_str());
+            }
+            if let Some(text) = delta.get("text").and_then(value_to_text) {
+                assistant.push_str(text.as_str());
+            }
+            if thinking_enabled {
+                if let Some(text) = delta.get("reasoning_content").and_then(value_to_text) {
+                    reasoning.push_str(text.as_str());
+                } else if let Some(text) = delta.get("reasoning").and_then(value_to_text) {
+                    reasoning.push_str(text.as_str());
+                }
+            }
+        }
+
+        if assistant.is_empty() {
+            if let Some(text) = choice
+                .get("message")
+                .and_then(|m| m.get("content"))
+                .and_then(value_to_text)
+            {
+                assistant.push_str(text.as_str());
+                if thinking_enabled {
+                    if let Some(thinking) = choice
+                        .get("message")
+                        .and_then(|m| m.get("reasoning_content"))
+                        .and_then(value_to_text)
+                    {
+                        reasoning.push_str(thinking.as_str());
+                    } else if let Some(thinking) = choice
+                        .get("message")
+                        .and_then(|m| m.get("reasoning"))
+                        .and_then(value_to_text)
+                    {
+                        reasoning.push_str(thinking.as_str());
+                    }
+                }
+            } else if let Some(text) = choice.get("text").and_then(value_to_text) {
+                assistant.push_str(text.as_str());
+            } else if let Some(text) = choice.get("content").and_then(value_to_text) {
+                assistant.push_str(text.as_str());
+            }
+        }
+        if let Some(text) = choice
+            .get("message")
+            .and_then(|m| m.get("reasoning_content"))
+            .and_then(value_to_text)
+            .or_else(|| {
+                choice
+                    .get("message")
+                    .and_then(|m| m.get("reasoning"))
+                    .and_then(value_to_text)
+            })
+            .or_else(|| choice.get("reasoning_content").and_then(value_to_text))
+            .or_else(|| choice.get("reasoning").and_then(value_to_text))
+        {
+            reasoning.push_str(text.as_str());
+            if assistant.is_empty() {
+                assistant.push_str(text.as_str());
+            }
+        }
+    }
+
+    if assistant.is_empty() {
+        if let Some(text) = json
+            .get("message")
+            .and_then(|v| v.get("content"))
+            .and_then(value_to_text)
+        {
+            assistant.push_str(text.as_str());
+        } else if let Some(text) = json.get("content").and_then(value_to_text) {
+            assistant.push_str(text.as_str());
+        } else if let Some(text) = json.get("response").and_then(value_to_text) {
+            assistant.push_str(text.as_str());
+        }
+    }
+    if let Some(text) = json
+        .get("message")
+        .and_then(|m| m.get("reasoning_content"))
+        .and_then(value_to_text)
+        .or_else(|| {
+            json.get("message")
+                .and_then(|m| m.get("reasoning"))
+                .and_then(value_to_text)
+        })
+        .or_else(|| json.get("reasoning_content").and_then(value_to_text))
+        .or_else(|| json.get("reasoning").and_then(value_to_text))
+    {
+        reasoning.push_str(text.as_str());
+        if assistant.is_empty() {
+            assistant.push_str(text.as_str());
+        }
+    }
+
+    if assistant.trim().is_empty() {
+        None
+    } else {
+        Some(ParsedAssistantBody { assistant, reasoning })
+    }
 }

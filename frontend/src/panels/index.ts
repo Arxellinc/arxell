@@ -1,5 +1,6 @@
 import { APP_ICON } from "../icons/map";
 import { bindChatPanel, renderChatActions, renderChatBody } from "./chatPanel";
+import { renderDevicesActions, renderDevicesBody } from "./devicesPanel";
 import { bindHistoryPanel, renderHistoryActions, renderHistoryBody } from "./historyPanel";
 import { bindLlamaCppPanel, renderLlamaCppActions, renderLlamaCppBody } from "./llamaCppPanel";
 import { renderModelManagerActions, renderModelManagerBody } from "./modelManagerPanel";
@@ -22,7 +23,7 @@ export function getPanelDefinition(
       title: "Chat",
       icon: APP_ICON.pane.chat,
       renderBody: () => renderChatBody(state),
-      renderActions: renderChatActions
+      renderActions: () => renderChatActions(state)
     };
   }
 
@@ -41,6 +42,15 @@ export function getPanelDefinition(
       icon: APP_ICON.sidebar.workspace,
       renderBody: () => renderWorkspaceBody(state),
       renderActions: renderWorkspaceActions
+    };
+  }
+
+  if (tab === "devices") {
+    return {
+      title: "Devices",
+      icon: APP_ICON.sidebar.devices,
+      renderBody: () => renderDevicesBody(state),
+      renderActions: renderDevicesActions
     };
   }
 
@@ -90,15 +100,66 @@ export function getPanelDefinition(
 
 export function attachPrimaryPanelInteractions(
   tab: SidebarTab,
+  state: PrimaryPanelRenderState,
   bindings: PrimaryPanelBindings
 ): void {
   if (tab === "chat") {
-    bindChatPanel(bindings.onSendMessage);
+    bindChatPanel(
+      bindings.onSendMessage,
+      bindings.onToggleThinkingPanel,
+      bindings.onStopCurrentResponse,
+      state.chatStreaming
+    );
+    const newBtn = document.querySelector<HTMLButtonElement>("#chatNewBtn");
+    if (newBtn) {
+      newBtn.onclick = async () => {
+        await bindings.onCreateConversation();
+      };
+    }
+    const clearBtn = document.querySelector<HTMLButtonElement>("#chatClearBtn");
+    if (clearBtn) {
+      clearBtn.onclick = async () => {
+        await bindings.onClearChat();
+      };
+    }
+    const thinkingToggleBtn = document.querySelector<HTMLButtonElement>("#chatThinkingToggleBtn");
+    if (thinkingToggleBtn) {
+      thinkingToggleBtn.onclick = async () => {
+        await bindings.onToggleChatThinking();
+      };
+    }
     return;
   }
 
   if (tab === "history") {
-    bindHistoryPanel(bindings.onCreateConversation, bindings.onSelectConversation);
+    bindHistoryPanel(
+      bindings.onCreateConversation,
+      bindings.onSelectConversation,
+      bindings.onExportConversation,
+      bindings.onDeleteConversation
+    );
+    return;
+  }
+
+  if (tab === "devices") {
+    const refreshBtn = document.querySelector<HTMLButtonElement>("#devicesRefreshBtn");
+    if (refreshBtn) {
+      refreshBtn.onclick = async () => {
+        await bindings.onDevicesRefresh();
+      };
+    }
+    const requestMicBtn = document.querySelector<HTMLButtonElement>("#devicesRequestMicBtn");
+    if (requestMicBtn) {
+      requestMicBtn.onclick = async () => {
+        await bindings.onRequestMicrophoneAccess();
+      };
+    }
+    const requestSpeakerBtn = document.querySelector<HTMLButtonElement>("#devicesRequestSpeakerBtn");
+    if (requestSpeakerBtn) {
+      requestSpeakerBtn.onclick = async () => {
+        await bindings.onRequestSpeakerAccess();
+      };
+    }
     return;
   }
 

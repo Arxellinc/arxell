@@ -1,6 +1,6 @@
 use crate::app::chat_service::ChatService;
 use crate::contracts::{
-    ChatGetMessagesRequest, ChatGetMessagesResponse, ChatListConversationsRequest,
+    ChatCancelRequest, ChatCancelResponse, ChatDeleteConversationRequest, ChatDeleteConversationResponse, ChatGetMessagesRequest, ChatGetMessagesResponse, ChatListConversationsRequest,
     ChatListConversationsResponse, ChatSendRequest, ChatSendResponse, EventSeverity, EventStage,
     Subsystem,
 };
@@ -44,6 +44,46 @@ impl ChatCommandHandler {
                 &req.correlation_id,
                 Subsystem::Ipc,
                 "cmd.chat.send_message",
+                EventStage::Error,
+                EventSeverity::Error,
+                json!({"error": err}),
+            )),
+        }
+
+        result
+    }
+
+    pub async fn cancel_message(
+        &self,
+        req: ChatCancelRequest,
+    ) -> Result<ChatCancelResponse, String> {
+        self.hub.emit(self.hub.make_event(
+            &req.correlation_id,
+            Subsystem::Ipc,
+            "cmd.chat.cancel_message",
+            EventStage::Start,
+            EventSeverity::Info,
+            json!({"targetCorrelationId": req.target_correlation_id}),
+        ));
+
+        let result = self
+            .service
+            .cancel_message(req.correlation_id.as_str(), req.target_correlation_id.as_str())
+            .await;
+
+        match &result {
+            Ok(response) => self.hub.emit(self.hub.make_event(
+                &response.correlation_id,
+                Subsystem::Ipc,
+                "cmd.chat.cancel_message",
+                EventStage::Complete,
+                EventSeverity::Info,
+                json!({"cancelled": response.cancelled}),
+            )),
+            Err(err) => self.hub.emit(self.hub.make_event(
+                &req.correlation_id,
+                Subsystem::Ipc,
+                "cmd.chat.cancel_message",
                 EventStage::Error,
                 EventSeverity::Error,
                 json!({"error": err}),
@@ -118,6 +158,46 @@ impl ChatCommandHandler {
                 &req.correlation_id,
                 Subsystem::Ipc,
                 "cmd.chat.list_conversations",
+                EventStage::Error,
+                EventSeverity::Error,
+                json!({"error": err}),
+            )),
+        }
+
+        result
+    }
+
+    pub async fn delete_conversation(
+        &self,
+        req: ChatDeleteConversationRequest,
+    ) -> Result<ChatDeleteConversationResponse, String> {
+        self.hub.emit(self.hub.make_event(
+            &req.correlation_id,
+            Subsystem::Ipc,
+            "cmd.chat.delete_conversation",
+            EventStage::Start,
+            EventSeverity::Info,
+            json!({"conversationId": req.conversation_id}),
+        ));
+
+        let result = self
+            .service
+            .delete_conversation(req.correlation_id.as_str(), req.conversation_id.as_str())
+            .await;
+
+        match &result {
+            Ok(response) => self.hub.emit(self.hub.make_event(
+                &response.correlation_id,
+                Subsystem::Ipc,
+                "cmd.chat.delete_conversation",
+                EventStage::Complete,
+                EventSeverity::Info,
+                json!({"deleted": response.deleted}),
+            )),
+            Err(err) => self.hub.emit(self.hub.make_event(
+                &req.correlation_id,
+                Subsystem::Ipc,
+                "cmd.chat.delete_conversation",
                 EventStage::Error,
                 EventSeverity::Error,
                 json!({"error": err}),

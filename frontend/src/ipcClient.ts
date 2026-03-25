@@ -1,9 +1,15 @@
 import type {
   AppEvent,
+  ChatCancelRequest,
+  ChatCancelResponse,
+  ChatDeleteConversationRequest,
+  ChatDeleteConversationResponse,
   ChatGetMessagesRequest,
   ChatGetMessagesResponse,
   ChatListConversationsRequest,
   ChatListConversationsResponse,
+  DevicesProbeMicrophoneRequest,
+  DevicesProbeMicrophoneResponse,
   LlamaRuntimeInstallRequest,
   LlamaRuntimeInstallResponse,
   LlamaRuntimeStartRequest,
@@ -31,8 +37,12 @@ import type {
 
 export interface ChatIpcClient {
   sendMessage(request: ChatSendRequest): Promise<ChatSendResponse>;
+  cancelMessage(request: ChatCancelRequest): Promise<ChatCancelResponse>;
   getMessages(request: ChatGetMessagesRequest): Promise<ChatGetMessagesResponse>;
   listConversations(request: ChatListConversationsRequest): Promise<ChatListConversationsResponse>;
+  deleteConversation(
+    request: ChatDeleteConversationRequest
+  ): Promise<ChatDeleteConversationResponse>;
   openTerminalSession(request: TerminalOpenSessionRequest): Promise<TerminalOpenSessionResponse>;
   sendTerminalInput(request: TerminalInputRequest): Promise<TerminalInputResponse>;
   resizeTerminal(request: TerminalResizeRequest): Promise<TerminalResizeResponse>;
@@ -49,6 +59,9 @@ export interface ChatIpcClient {
   ): Promise<LlamaRuntimeInstallResponse>;
   startLlamaRuntime(request: LlamaRuntimeStartRequest): Promise<LlamaRuntimeStartResponse>;
   stopLlamaRuntime(request: LlamaRuntimeStopRequest): Promise<LlamaRuntimeStopResponse>;
+  probeMicrophoneDevice(
+    request: DevicesProbeMicrophoneRequest
+  ): Promise<DevicesProbeMicrophoneResponse>;
   onEvent(listener: (event: AppEvent) => void): () => void;
 }
 
@@ -99,6 +112,10 @@ class TauriChatIpcClient implements ChatIpcClient {
     return this.invokeFn<ChatSendResponse>("cmd_chat_send_message", { request });
   }
 
+  cancelMessage(request: ChatCancelRequest): Promise<ChatCancelResponse> {
+    return this.invokeFn<ChatCancelResponse>("cmd_chat_cancel_message", { request });
+  }
+
   getMessages(request: ChatGetMessagesRequest): Promise<ChatGetMessagesResponse> {
     return this.invokeFn<ChatGetMessagesResponse>("cmd_chat_get_messages", { request });
   }
@@ -107,6 +124,14 @@ class TauriChatIpcClient implements ChatIpcClient {
     request: ChatListConversationsRequest
   ): Promise<ChatListConversationsResponse> {
     return this.invokeFn<ChatListConversationsResponse>("cmd_chat_list_conversations", {
+      request
+    });
+  }
+
+  deleteConversation(
+    request: ChatDeleteConversationRequest
+  ): Promise<ChatDeleteConversationResponse> {
+    return this.invokeFn<ChatDeleteConversationResponse>("cmd_chat_delete_conversation", {
       request
     });
   }
@@ -164,6 +189,14 @@ class TauriChatIpcClient implements ChatIpcClient {
   stopLlamaRuntime(request: LlamaRuntimeStopRequest): Promise<LlamaRuntimeStopResponse> {
     return this.invokeFn<LlamaRuntimeStopResponse>("cmd_llama_runtime_stop", { request });
   }
+
+  probeMicrophoneDevice(
+    request: DevicesProbeMicrophoneRequest
+  ): Promise<DevicesProbeMicrophoneResponse> {
+    return this.invokeFn<DevicesProbeMicrophoneResponse>("cmd_devices_probe_microphone", {
+      request
+    });
+  }
 }
 
 export class MockChatIpcClient implements ChatIpcClient {
@@ -199,6 +232,24 @@ export class MockChatIpcClient implements ChatIpcClient {
     });
 
     const text = `Echoed safely via registry: ${request.userMessage}`;
+    const thinking = request.thinkingEnabled
+      ? "Checking local mock registry response synthesis."
+      : "";
+    if (thinking) {
+      this.emit({
+        timestampMs: Date.now(),
+        correlationId: request.correlationId,
+        subsystem: "service",
+        action: "chat.stream.reasoning_chunk",
+        stage: "progress",
+        severity: "info",
+        payload: {
+          conversationId: request.conversationId,
+          delta: thinking,
+          done: false
+        }
+      });
+    }
     for (const token of text.split(" ")) {
       this.emit({
         timestampMs: Date.now(),
@@ -229,6 +280,7 @@ export class MockChatIpcClient implements ChatIpcClient {
     const response: ChatSendResponse = {
       conversationId: request.conversationId,
       assistantMessage: text,
+      assistantThinking: thinking || undefined,
       correlationId: request.correlationId
     };
 
@@ -243,6 +295,23 @@ export class MockChatIpcClient implements ChatIpcClient {
     });
 
     return response;
+  }
+
+  async cancelMessage(request: ChatCancelRequest): Promise<ChatCancelResponse> {
+    this.emit({
+      timestampMs: Date.now(),
+      correlationId: request.correlationId,
+      subsystem: "ipc",
+      action: "cmd.chat.cancel_message",
+      stage: "complete",
+      severity: "info",
+      payload: { cancelled: true, targetCorrelationId: request.targetCorrelationId }
+    });
+    return {
+      correlationId: request.correlationId,
+      targetCorrelationId: request.targetCorrelationId,
+      cancelled: true
+    };
   }
 
   async getMessages(request: ChatGetMessagesRequest): Promise<ChatGetMessagesResponse> {
@@ -260,12 +329,32 @@ export class MockChatIpcClient implements ChatIpcClient {
       conversations: [
         {
           conversationId: "foundation-chat",
+          title: "Foundation Chat",
           messageCount: 0,
           lastMessagePreview: "No messages yet",
           updatedAtMs: Date.now()
         }
       ],
       correlationId: request.correlationId
+    };
+  }
+
+  async deleteConversation(
+    request: ChatDeleteConversationRequest
+  ): Promise<ChatDeleteConversationResponse> {
+    this.emit({
+      timestampMs: Date.now(),
+      correlationId: request.correlationId,
+      subsystem: "ipc",
+      action: "cmd.chat.delete_conversation",
+      stage: "complete",
+      severity: "info",
+      payload: { deleted: true, conversationId: request.conversationId }
+    });
+    return {
+      conversationId: request.conversationId,
+      correlationId: request.correlationId,
+      deleted: true
     };
   }
 
@@ -347,6 +436,7 @@ export class MockChatIpcClient implements ChatIpcClient {
           backend: "cpu",
           label: "llama.cpp (CPU)",
           isApplicable: true,
+          isBundled: false,
           isInstalled: false,
           isReady: false,
           binaryPath: null,
@@ -357,6 +447,7 @@ export class MockChatIpcClient implements ChatIpcClient {
           backend: "vulkan",
           label: "llama.cpp (Vulkan)",
           isApplicable: true,
+          isBundled: false,
           isInstalled: false,
           isReady: false,
           binaryPath: null,
@@ -407,7 +498,7 @@ export class MockChatIpcClient implements ChatIpcClient {
     return {
       correlationId: request.correlationId,
       engineId: request.engineId,
-      endpoint: `http://127.0.0.1:${request.port ?? 8080}/v1`,
+      endpoint: `http://127.0.0.1:${request.port ?? 1420}/v1`,
       pid: 12345
     };
   }
@@ -425,6 +516,44 @@ export class MockChatIpcClient implements ChatIpcClient {
     return {
       correlationId: request.correlationId,
       stopped: true
+    };
+  }
+
+  async probeMicrophoneDevice(
+    request: DevicesProbeMicrophoneRequest
+  ): Promise<DevicesProbeMicrophoneResponse> {
+    const hasMediaDevices =
+      typeof navigator !== "undefined" &&
+      !!navigator.mediaDevices &&
+      !!navigator.mediaDevices.enumerateDevices;
+    if (!hasMediaDevices) {
+      return {
+        correlationId: request.correlationId,
+        status: "no_device",
+        message: "No media devices API",
+        inputDeviceCount: 0,
+        defaultInputName: null
+      };
+    }
+
+    const devices = await navigator.mediaDevices.enumerateDevices();
+    const audioInputs = devices.filter((device) => device.kind === "audioinput");
+    if (!audioInputs.length) {
+      return {
+        correlationId: request.correlationId,
+        status: "no_device",
+        message: "No microphone detected",
+        inputDeviceCount: 0,
+        defaultInputName: null
+      };
+    }
+
+      return {
+        correlationId: request.correlationId,
+        status: "enabled",
+        message: "Mock microphone probe succeeded",
+      inputDeviceCount: audioInputs.length,
+      defaultInputName: audioInputs[0]?.label || null
     };
   }
 

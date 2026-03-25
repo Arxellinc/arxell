@@ -7,15 +7,15 @@ use app_foundation::contracts::ChatSendRequest;
 use app_foundation::app::AppContext;
 #[cfg(feature = "tauri-runtime")]
 use app_foundation::contracts::{
-    ChatGetMessagesRequest, ChatGetMessagesResponse, ChatListConversationsRequest,
-    ChatListConversationsResponse, ChatSendRequest, ChatSendResponse, LlamaRuntimeInstallRequest,
-    LlamaRuntimeInstallResponse, LlamaRuntimeStartRequest, LlamaRuntimeStartResponse,
-    LlamaRuntimeStatusRequest, LlamaRuntimeStatusResponse, LlamaRuntimeStopRequest,
-    LlamaRuntimeStopResponse, TerminalCloseSessionRequest, TerminalCloseSessionResponse,
-    TerminalInputRequest, TerminalInputResponse, TerminalOpenSessionRequest,
-    TerminalOpenSessionResponse, TerminalResizeRequest, TerminalResizeResponse,
-    WorkspaceToolSetEnabledRequest, WorkspaceToolSetEnabledResponse, WorkspaceToolsListRequest,
-    WorkspaceToolsListResponse,
+    ChatCancelRequest, ChatCancelResponse, ChatDeleteConversationRequest, ChatDeleteConversationResponse, ChatGetMessagesRequest, ChatGetMessagesResponse, ChatListConversationsRequest,
+    ChatListConversationsResponse, ChatSendRequest, ChatSendResponse, DevicesProbeMicrophoneRequest,
+    DevicesProbeMicrophoneResponse, LlamaRuntimeInstallRequest, LlamaRuntimeInstallResponse,
+    LlamaRuntimeStartRequest, LlamaRuntimeStartResponse, LlamaRuntimeStatusRequest,
+    LlamaRuntimeStatusResponse, LlamaRuntimeStopRequest, LlamaRuntimeStopResponse,
+    TerminalCloseSessionRequest, TerminalCloseSessionResponse, TerminalInputRequest,
+    TerminalInputResponse, TerminalOpenSessionRequest, TerminalOpenSessionResponse,
+    TerminalResizeRequest, TerminalResizeResponse, WorkspaceToolSetEnabledRequest,
+    WorkspaceToolSetEnabledResponse, WorkspaceToolsListRequest, WorkspaceToolsListResponse,
 };
 #[cfg(feature = "tauri-runtime")]
 use app_foundation::ipc::tauri_bridge::{attach_event_forwarder, TauriBridgeState};
@@ -44,6 +44,8 @@ async fn main() {
         conversation_id: "foundation-demo".to_string(),
         user_message: "Hello foundation".to_string(),
         correlation_id: "demo-001".to_string(),
+        thinking_enabled: Some(true),
+        max_tokens: None,
     };
 
     let result = app.ipc.chat.send_message(request).await;
@@ -67,9 +69,11 @@ fn main() {
         hub: hub.clone(),
         workspace_tools: std::sync::Arc::clone(&app_context.workspace_tools),
         runtime: std::sync::Arc::clone(&app_context.runtime),
+        permissions: std::sync::Arc::clone(&app_context.permissions),
     };
 
     tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
         .setup(move |app| {
             attach_event_forwarder(app.handle().clone(), hub.clone());
             if let Some(window) = app.get_webview_window("main") {
@@ -85,6 +89,11 @@ fn main() {
                 WindowEvent::Moved(_)
                 | WindowEvent::Resized(_)
                 | WindowEvent::CloseRequested { .. } => {
+                    if matches!(event, WindowEvent::CloseRequested { .. }) {
+                        if let Some(state) = window.try_state::<TauriBridgeState>() {
+                            state.runtime.shutdown("app-window-close");
+                        }
+                    }
                     persist_window_state(window);
                 }
                 _ => {}
@@ -93,6 +102,8 @@ fn main() {
         .manage(state)
         .invoke_handler(tauri::generate_handler![
             cmd_chat_send_message,
+            cmd_chat_cancel_message,
+            cmd_chat_delete_conversation,
             cmd_chat_get_messages,
             cmd_chat_list_conversations,
             cmd_terminal_open_session,
@@ -101,6 +112,7 @@ fn main() {
             cmd_terminal_close_session,
             cmd_workspace_tools_list,
             cmd_workspace_tool_set_enabled,
+            cmd_devices_probe_microphone,
             cmd_llama_runtime_status,
             cmd_llama_runtime_install_engine,
             cmd_llama_runtime_start,
@@ -117,6 +129,24 @@ async fn cmd_chat_send_message(
     request: ChatSendRequest,
 ) -> Result<ChatSendResponse, String> {
     state.chat.send_message(request).await
+}
+
+#[cfg(feature = "tauri-runtime")]
+#[tauri::command]
+async fn cmd_chat_cancel_message(
+    state: State<'_, TauriBridgeState>,
+    request: ChatCancelRequest,
+) -> Result<ChatCancelResponse, String> {
+    state.chat.cancel_message(request).await
+}
+
+#[cfg(feature = "tauri-runtime")]
+#[tauri::command]
+async fn cmd_chat_delete_conversation(
+    state: State<'_, TauriBridgeState>,
+    request: ChatDeleteConversationRequest,
+) -> Result<ChatDeleteConversationResponse, String> {
+    state.chat.delete_conversation(request).await
 }
 
 #[cfg(feature = "tauri-runtime")]
@@ -204,6 +234,18 @@ async fn cmd_workspace_tool_set_enabled(
 
 #[cfg(feature = "tauri-runtime")]
 #[tauri::command]
+async fn cmd_devices_probe_microphone(
+    state: State<'_, TauriBridgeState>,
+    request: DevicesProbeMicrophoneRequest,
+) -> Result<DevicesProbeMicrophoneResponse, String> {
+    let service = std::sync::Arc::clone(&state.permissions);
+    tokio::task::spawn_blocking(move || service.probe_microphone(request))
+        .await
+        .map_err(|e| format!("devices probe task failed: {e}"))?
+}
+
+#[cfg(feature = "tauri-runtime")]
+#[tauri::command]
 async fn cmd_llama_runtime_status(
     app: tauri::AppHandle,
     state: State<'_, TauriBridgeState>,
@@ -213,9 +255,13 @@ async fn cmd_llama_runtime_status(
         .path()
         .app_data_dir()
         .map_err(|e| format!("failed to resolve app data dir: {e}"))?;
-    Ok(state
+    let mut status = state
         .runtime
-        .status(request.correlation_id.as_str(), app_data.as_path()))
+        .status(request.correlation_id.as_str(), app_data.as_path());
+    for engine in status.engines.iter_mut() {
+        engine.is_bundled = resolve_bundled_engine_binary(&app, engine.engine_id.as_str()).is_some();
+    }
+    Ok(status)
 }
 
 #[cfg(feature = "tauri-runtime")]
@@ -230,12 +276,20 @@ async fn cmd_llama_runtime_install_engine(
         .app_data_dir()
         .map_err(|e| format!("failed to resolve app data dir: {e}"))?;
     let bundled = resolve_bundled_engine_binary(&app, request.engine_id.as_str());
-    state.runtime.install_engine(
-        request.correlation_id.as_str(),
-        request.engine_id.as_str(),
-        app_data.as_path(),
-        bundled,
-    )
+    let runtime = std::sync::Arc::clone(&state.runtime);
+    let correlation_id = request.correlation_id.clone();
+    let engine_id = request.engine_id.clone();
+    let app_data_owned = app_data.clone();
+    tokio::task::spawn_blocking(move || {
+        runtime.install_engine(
+            correlation_id.as_str(),
+            engine_id.as_str(),
+            app_data_owned.as_path(),
+            bundled,
+        )
+    })
+    .await
+    .map_err(|e| format!("llama runtime install task failed: {e}"))?
 }
 
 #[cfg(feature = "tauri-runtime")]

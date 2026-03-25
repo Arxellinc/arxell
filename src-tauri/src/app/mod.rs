@@ -1,13 +1,12 @@
 pub mod chat_service;
+pub mod permission_service;
 pub mod runtime_service;
 pub mod terminal_service;
 
 use crate::ipc::IpcLayer;
 use crate::memory::InMemoryMemoryManager;
 use crate::observability::EventHub;
-use crate::persistence::FileConversationRepository;
-use crate::tools::echo_tool::EchoTool;
-use crate::tools::registry::ToolRegistry;
+use crate::persistence::SqliteConversationRepository;
 use crate::workspace_tools::WorkspaceToolsService;
 use std::sync::Arc;
 
@@ -15,6 +14,7 @@ pub struct AppContext {
     pub ipc: IpcLayer,
     pub workspace_tools: Arc<WorkspaceToolsService>,
     pub runtime: Arc<runtime_service::LlamaRuntimeService>,
+    pub permissions: Arc<permission_service::PermissionService>,
 }
 
 impl AppContext {
@@ -22,29 +22,26 @@ impl AppContext {
         let hub = EventHub::new();
         let memory = Arc::new(InMemoryMemoryManager::new());
         let conversation_repo = Arc::new(
-            FileConversationRepository::new(FileConversationRepository::default_path())
+            SqliteConversationRepository::new(SqliteConversationRepository::default_path())
                 .expect("failed to initialize conversation repository"),
         );
 
-        let mut registry = ToolRegistry::new(hub.clone());
-        registry.register(EchoTool);
-        let registry = Arc::new(registry);
-
         let service = Arc::new(chat_service::ChatService::new(
             hub.clone(),
-            Arc::clone(&registry),
             memory,
             conversation_repo,
         ));
         let terminal = Arc::new(terminal_service::TerminalService::new(hub.clone()));
         let workspace_tools = Arc::new(WorkspaceToolsService::new());
         let runtime = Arc::new(runtime_service::LlamaRuntimeService::new(hub.clone()));
+        let permissions = Arc::new(permission_service::PermissionService::new(hub.clone()));
 
         let ipc = IpcLayer::new(hub, service, terminal);
         Self {
             ipc,
             workspace_tools,
             runtime,
+            permissions,
         }
     }
 }
@@ -64,6 +61,7 @@ impl AppContext {
             hub: self.ipc.event_hub(),
             workspace_tools: Arc::clone(&self.workspace_tools),
             runtime: Arc::clone(&self.runtime),
+            permissions: Arc::clone(&self.permissions),
         }
     }
 }
