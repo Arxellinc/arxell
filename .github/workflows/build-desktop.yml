@@ -39,7 +39,15 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          version="$(node -e 'const fs=require("fs"); const toml=fs.readFileSync("src-tauri/Cargo.toml","utf8"); const m=toml.match(/^\\s*version\\s*=\\s*"([^"]+)"\\s*$/m); if(!m){console.error("Could not find package version in src-tauri/Cargo.toml"); process.exit(1);} process.stdout.write(m[1]);')"
+          if command -v python3 >/dev/null 2>&1; then
+            PY=python3
+          elif command -v python >/dev/null 2>&1; then
+            PY=python
+          else
+            echo "Python executable not found on runner" >&2
+            exit 1
+          fi
+          version="$("$PY" -c 'import pathlib,re,sys; t=pathlib.Path("src-tauri/Cargo.toml").read_text(encoding="utf-8"); m=re.search(r"(?m)^\\s*version\\s*=\\s*\"([^\"]+)\"\\s*$", t); print(m.group(1) if m else (sys.stderr.write("Could not find package version in src-tauri/Cargo.toml\\n") or sys.exit(1)))')"
           echo "version=${version}" >> "${GITHUB_OUTPUT}"
           echo "App version: ${version}"
 
