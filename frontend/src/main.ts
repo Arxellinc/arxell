@@ -73,7 +73,7 @@ const state: {
   workspaceTools: [],
   displayMode: "dark",
   llamaRuntime: null,
-  llamaRuntimeSelectedEngineId: "llama.cpp-cpu",
+  llamaRuntimeSelectedEngineId: "",
   llamaRuntimeModelPath: "",
   llamaRuntimePort: 8080,
   llamaRuntimeCtxSize: 8192,
@@ -274,14 +274,30 @@ async function refreshLlamaRuntime(): Promise<void> {
   if (!clientRef) return;
   const response = await clientRef.getLlamaRuntimeStatus({ correlationId: nextCorrelationId() });
   state.llamaRuntime = response;
-  if (
-    response.engines.length &&
-    !response.engines.some((engine) => engine.engineId === state.llamaRuntimeSelectedEngineId)
-  ) {
-    const firstEngine = response.engines.at(0);
-    if (firstEngine) {
-      state.llamaRuntimeSelectedEngineId = firstEngine.engineId;
-    }
+  const hasSelected = response.engines.some(
+    (engine) => engine.engineId === state.llamaRuntimeSelectedEngineId
+  );
+  if (hasSelected) return;
+
+  const preferredLinuxVulkan = response.engines.find(
+    (engine) => engine.backend === "vulkan" && engine.isReady
+  );
+  if (preferredLinuxVulkan) {
+    state.llamaRuntimeSelectedEngineId = preferredLinuxVulkan.engineId;
+    return;
+  }
+
+  const preferredAnyGpu = response.engines.find(
+    (engine) => engine.backend !== "cpu" && engine.isReady
+  );
+  if (preferredAnyGpu) {
+    state.llamaRuntimeSelectedEngineId = preferredAnyGpu.engineId;
+    return;
+  }
+
+  const firstEngine = response.engines.at(0);
+  if (firstEngine) {
+    state.llamaRuntimeSelectedEngineId = firstEngine.engineId;
   }
 }
 

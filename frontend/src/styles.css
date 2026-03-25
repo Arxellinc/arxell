@@ -944,6 +944,19 @@ body {
   padding: 6px 10px;
 }
 
+select.llama-input {
+  appearance: none;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  color-scheme: dark;
+  background-color: rgba(16, 21, 30, 0.95);
+}
+
+select.llama-input option {
+  background: #111823;
+  color: #eaf0ff;
+}
+
 .llama-prereqs {
   margin-top: 14px;
   display: grid;
