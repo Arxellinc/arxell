@@ -1,4 +1,5 @@
 import { useAuth } from "@clerk/react-router";
+import { isClerkEnabled } from "./runtimeFlags";
 
 type GetTokenOptions = {
   template?: string;
@@ -17,9 +18,7 @@ const NO_AUTH: OptionalAuth = {
 };
 
 export function useOptionalAuth(): OptionalAuth {
-  const clerkEnabled = Boolean(
-    (import.meta.env.VITE_CLERK_PUBLISHABLE_KEY ?? "").trim()
-  );
+  const clerkEnabled = isClerkEnabled();
   if (!clerkEnabled) {
     return NO_AUTH;
   }

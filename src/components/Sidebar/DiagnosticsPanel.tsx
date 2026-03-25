@@ -7,6 +7,7 @@ import { useChatStore } from "../../store/chatStore";
 import { useNotesStore } from "../../store/notesStore";
 import { dispatchChatMessage } from "../../lib/chatDispatch";
 import type { ToolId } from "../../core/tooling/types";
+import { readRuntimeDiagnostics } from "../../lib/runtimeDiagnostics";
 
 // Derive a section label from a result name like "stt/transcribe_test"
 function sectionOf(name: string) {
@@ -468,12 +469,19 @@ export function DiagnosticsPanel() {
         return `${header}\n${rows}`;
       });
 
+    const runtimeRows = readRuntimeDiagnostics()
+      .slice(-80)
+      .map((row) => `- ${row.ts} [${row.kind}] ${row.detail}`);
+
     const report = [
       `Diagnostics Export`,
       `Generated: ${new Date().toISOString()}`,
       `Total Failures: ${totalErrors}`,
       "",
       ...blocks,
+      "",
+      "## Runtime Diagnostics",
+      ...(runtimeRows.length > 0 ? runtimeRows : ["- none"]),
     ].join("\n");
 
     try {

@@ -19,6 +19,7 @@ import { useSystemAlertStore } from "./store/systemAlertStore";
 import { listen } from "@tauri-apps/api/event";
 import { prewarmPiBootstrap } from "./lib/piBootstrap";
 import { initHotPlugListeners } from "./audio/reconcile";
+import { isClerkEnabled } from "./lib/runtimeFlags";
 
 const SIDEBAR_MIN = 160;
 const SIDEBAR_MAX = 420;
@@ -30,9 +31,7 @@ const CHAT_MIN = 320;
 const DIVIDER_WIDTH = 3;
 const DIVIDER_COUNT = 2;
 const WELCOME_DISMISS_KEY = "ui_welcome_modal_dismissed";
-const CLERK_ENABLED = Boolean(
-  (import.meta.env.VITE_CLERK_PUBLISHABLE_KEY ?? "").trim()
-);
+const CLERK_ENABLED = isClerkEnabled();
 
 function ResizeDivider({
   onDelta,
@@ -355,7 +354,7 @@ export default function App() {
   }
 
   return (
-    <div className="flex h-screen w-screen flex-col bg-bg-norm overflow-hidden text-text-norm select-none">
+    <div className="flex h-dvh w-full min-w-0 flex-col bg-bg-norm overflow-hidden text-text-norm select-none">
       <div className="h-10 flex-shrink-0 border-b border-line-med bg-bg-norm px-3">
         <div className="flex h-full items-center justify-between gap-2">
           <div className="flex items-center gap-2">
