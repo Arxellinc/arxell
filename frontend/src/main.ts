@@ -236,6 +236,14 @@ function isNoisyTerminalControlEvent(event: AppEvent): boolean {
   return event.action === "cmd.terminal.resize" || event.action === "cmd.terminal.send_input";
 }
 
+function isNoisyRuntimeStatusEvent(event: AppEvent): boolean {
+  return (
+    event.subsystem === "runtime" &&
+    event.action === "llama.runtime.status" &&
+    event.stage === "complete"
+  );
+}
+
 async function refreshConversations(): Promise<void> {
   if (!clientRef) return;
   const list = await clientRef.listConversations({ correlationId: nextCorrelationId() });
@@ -517,11 +525,13 @@ async function bootstrap(): Promise<void> {
   });
 
   client.onEvent((event) => {
-    pushConsoleEntry(
-      event.severity === "error" ? "error" : "info",
-      "app",
-      `[${event.subsystem}] ${event.action} ${event.stage} corr=${event.correlationId}`
-    );
+    if (!isNoisyRuntimeStatusEvent(event)) {
+      pushConsoleEntry(
+        event.severity === "error" ? "error" : "info",
+        "app",
+        `[${event.subsystem}] ${event.action} ${event.stage} corr=${event.correlationId}`
+      );
+    }
 
     if (event.action === "terminal.output") {
       const output = parseTerminalOutput(event.payload);
@@ -545,17 +555,22 @@ async function bootstrap(): Promise<void> {
     }
 
     if (event.action.startsWith("llama.runtime")) {
-      const payloadText =
-        event.payload && typeof event.payload === "object"
-          ? JSON.stringify(event.payload)
-          : String(event.payload);
-      state.llamaRuntimeLogs.push(
-        `${new Date(event.timestampMs).toLocaleTimeString()} ${event.action} ${event.stage} ${payloadText}`
-      );
-      if (state.llamaRuntimeLogs.length > 300) {
-        state.llamaRuntimeLogs.splice(0, state.llamaRuntimeLogs.length - 300);
+      if (!isNoisyRuntimeStatusEvent(event)) {
+        const payloadText =
+          event.payload && typeof event.payload === "object"
+            ? JSON.stringify(event.payload)
+            : String(event.payload);
+        state.llamaRuntimeLogs.push(
+          `${new Date(event.timestampMs).toLocaleTimeString()} ${event.action} ${event.stage} ${payloadText}`
+        );
+        if (state.llamaRuntimeLogs.length > 300) {
+          state.llamaRuntimeLogs.splice(0, state.llamaRuntimeLogs.length - 300);
+        }
       }
-      if (event.stage === "complete" || event.stage === "error") {
+      if (
+        (event.stage === "complete" || event.stage === "error") &&
+        event.action !== "llama.runtime.status"
+      ) {
         void refreshLlamaRuntime().then(() => renderAndBind(sendMessage));
       }
     }
