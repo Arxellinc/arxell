@@ -509,6 +509,7 @@ body {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 0.4rem;
   padding: 0 4px;
 }
 
@@ -534,6 +535,60 @@ body {
   font-size: 0.68rem;
   color: var(--muted);
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+  flex: 1;
+  font-weight: 350;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.runtime-item {
+  min-width: 0;
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.12rem;
+  overflow: hidden;
+}
+
+.runtime-label {
+  color: color-mix(in oklab, var(--muted) 86%, var(--ink) 14%);
+  display: inline-block;
+  width: 64px;
+  flex: 0 0 64px;
+}
+
+.runtime-value {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.runtime-item-runtime {
+  width: 124px;
+  flex: 0 0 124px;
+}
+
+.runtime-item-engine {
+  width: 128px;
+  flex: 0 0 128px;
+}
+
+.runtime-item-model {
+  width: 280px;
+  flex: 0 0 280px;
+}
+
+.runtime-item-context {
+  width: 176px;
+  flex: 0 0 176px;
+}
+
+.runtime-item-speed {
+  width: 118px;
+  flex: 0 0 118px;
 }
 
 .runtime-title {
@@ -826,8 +881,9 @@ body {
   min-height: 24px;
   border-radius: 999px;
   padding: 0;
-  display: grid;
-  place-items: center;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   text-align: center;
   line-height: 1;
   font-size: 16px;
@@ -835,6 +891,21 @@ body {
   color: var(--icon-light);
   box-sizing: border-box;
   background: var(--icon-dark);
+}
+
+.composer .send-icon-glyph {
+  display: block;
+  width: 1em;
+  line-height: 1;
+  text-align: center;
+}
+
+.composer .send-icon-glyph.is-play {
+  transform: translate(2px, -1px);
+}
+
+.composer .send-icon-glyph.is-stop {
+  transform: translateY(-1px);
 }
 
 .workspace-content {

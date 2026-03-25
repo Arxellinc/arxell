@@ -106,7 +106,6 @@ export function attachPrimaryPanelInteractions(
   if (tab === "chat") {
     bindChatPanel(
       bindings.onSendMessage,
-      bindings.onToggleThinkingPanel,
       bindings.onStopCurrentResponse,
       state.chatStreaming
     );

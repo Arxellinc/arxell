@@ -370,6 +370,12 @@ pub struct DevicesProbeMicrophoneResponse {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AppVersionResponse {
+    pub version: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Subsystem {
     Frontend,

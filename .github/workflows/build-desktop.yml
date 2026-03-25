@@ -34,6 +34,25 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Read app version
+        id: app_version
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(python - <<'PY'
+import pathlib
+import re
+
+cargo_toml = pathlib.Path("src-tauri/Cargo.toml").read_text(encoding="utf-8")
+match = re.search(r'(?m)^version\s*=\s*"([^"]+)"\s*$', cargo_toml)
+if not match:
+  raise SystemExit("Could not find package version in src-tauri/Cargo.toml")
+print(match.group(1))
+PY
+)"
+          echo "version=${version}" >> "${GITHUB_OUTPUT}"
+          echo "App version: ${version}"
+
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
@@ -54,6 +73,8 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y \
+            pkg-config \
+            libasound2-dev \
             libwebkit2gtk-4.1-dev \
             libgtk-3-dev \
             libayatana-appindicator3-dev \
@@ -69,6 +90,7 @@ jobs:
         run: npm run build
 
       - name: Prepare bundled llama.cpp runtimes
+        shell: bash
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
@@ -246,13 +268,13 @@ jobs:
       - name: Upload binary artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.platform.name }}
+          name: ${{ matrix.platform.name }}-v${{ steps.app_version.outputs.version }}
           path: ${{ matrix.platform.artifact_path }}
           if-no-files-found: error
 
       - name: Upload bundled runtime manifest
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.platform.name }}-llama-runtime-manifest
+          name: ${{ matrix.platform.name }}-v${{ steps.app_version.outputs.version }}-llama-runtime-manifest
           path: src-tauri/resources/llama-runtime/manifest.json
           if-no-files-found: error

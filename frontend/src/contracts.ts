@@ -231,6 +231,10 @@ export interface DevicesProbeMicrophoneResponse {
   defaultInputName: string | null;
 }
 
+export interface AppVersionResponse {
+  version: string;
+}
+
 export interface ChatStreamStartPayload {
   conversationId: string;
 }

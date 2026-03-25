@@ -30,6 +30,7 @@ import {
   renderWorkspaceToolsActions,
   renderWorkspaceToolsBody
 } from "./workspace-tools/panel";
+import { renderChatMessages } from "./panels/chatPanel";
 
 const terminalManager = new TerminalManager();
 const MAX_CONSOLE_ENTRIES = 600;
@@ -37,6 +38,9 @@ const LLAMA_MODEL_PATH_STORAGE_KEY = "arxell.llama.modelPath";
 const LLAMA_MAX_TOKENS_STORAGE_KEY = "arxell.llama.maxTokens";
 const MIC_PERMISSION_BUBBLE_DISMISSED_KEY = "arxell.micPermissionBubbleDismissed";
 const CHAT_ID_ALPHANUM = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+let chatStreamDomUpdateScheduled = false;
+let chatThinkingDelegationInstalled = false;
+const FALLBACK_APP_VERSION = "dev";
 
 function generateChatConversationId(): string {
   let suffix = "";
@@ -158,6 +162,7 @@ const state: {
   conversations: ConversationSummaryRecord[];
   workspaceTools: WorkspaceToolRecord[];
   displayMode: DisplayMode;
+  appVersion: string;
   chatThinkingEnabled: boolean;
   llamaRuntime: LlamaRuntimeStatusResponse | null;
   llamaRuntimeSelectedEngineId: string;
@@ -168,6 +173,9 @@ const state: {
   llamaRuntimeMaxTokens: number | null;
   llamaRuntimeBusy: boolean;
   llamaRuntimeLogs: string[];
+  llamaRuntimeContextTokens: number | null;
+  llamaRuntimeContextCapacity: number | null;
+  llamaRuntimeTokensPerSecond: number | null;
 } = {
   conversationId: generateChatConversationId(),
   messages: [],
@@ -192,6 +200,7 @@ const state: {
   conversations: [],
   workspaceTools: [],
   displayMode: "dark",
+  appVersion: FALLBACK_APP_VERSION,
   chatThinkingEnabled: false,
   llamaRuntime: null,
   llamaRuntimeSelectedEngineId: "",
@@ -201,7 +210,10 @@ const state: {
   llamaRuntimeGpuLayers: 999,
   llamaRuntimeMaxTokens: loadPersistedLlamaMaxTokens(),
   llamaRuntimeBusy: false,
-  llamaRuntimeLogs: []
+  llamaRuntimeLogs: [],
+  llamaRuntimeContextTokens: null,
+  llamaRuntimeContextCapacity: null,
+  llamaRuntimeTokensPerSecond: null
 };
 
 let clientRef: ChatIpcClient | null = null;
@@ -618,10 +630,10 @@ function render(): void {
 
   app.innerHTML = `
     <main class="app-frame" style="--chat-pane-percent: ${state.chatPanePercent}; --portrait-workspace-percent: ${state.portraitWorkspacePercent};">
-      ${renderGlobalTopbar(state.displayMode, state.layoutOrientation)}
+      ${renderGlobalTopbar(state.displayMode, state.layoutOrientation, state.appVersion)}
       ${renderMicPermissionBubble()}
       ${appBodyHtml}
-      ${renderGlobalBottombar(state.runtimeMode)}
+      ${renderGlobalBottombar(currentBottomStatus())}
     </main>
   `;
 }
@@ -843,6 +855,81 @@ function formatRuntimeEventLine(event: AppEvent): string {
     return `${new Date(event.timestampMs).toLocaleTimeString()} [stderr] ${lineText}`;
   }
   return `${new Date(event.timestampMs).toLocaleTimeString()} ${event.action} ${event.stage} ${payloadText}`;
+}
+
+function extractRuntimeProcessLine(event: AppEvent): string | null {
+  if (
+    event.action !== "llama.runtime.process.stderr" &&
+    event.action !== "llama.runtime.process.stdout"
+  ) {
+    return null;
+  }
+  if (!event.payload || typeof event.payload !== "object") return null;
+  const payloadObj = event.payload as Record<string, unknown>;
+  return typeof payloadObj.line === "string" ? payloadObj.line : null;
+}
+
+function updateRuntimeMetricsFromLine(line: string): void {
+  const ctxMatch = line.match(/n_ctx_slot\s*=\s*(\d+)/i);
+  if (ctxMatch) {
+    state.llamaRuntimeContextCapacity = Number.parseInt(ctxMatch[1], 10);
+  }
+
+  const tokensMatch = line.match(/n_tokens\s*=\s*(\d+)/i);
+  if (tokensMatch) {
+    state.llamaRuntimeContextTokens = Number.parseInt(tokensMatch[1], 10);
+  }
+
+  const tpsMatch = line.match(/([0-9]+(?:\.[0-9]+)?)\s+tokens per second/i);
+  if (tpsMatch) {
+    state.llamaRuntimeTokensPerSecond = Number.parseFloat(tpsMatch[1]);
+  }
+}
+
+function modelNameFromPath(path: string): string {
+  const trimmed = path.trim();
+  if (!trimmed) return "none";
+  const normalized = trimmed.replace(/\\/g, "/");
+  const tail = normalized.split("/").filter(Boolean).at(-1) ?? normalized;
+  return tail || "none";
+}
+
+function formatPercent(value: number): string {
+  if (!Number.isFinite(value)) return "0.0";
+  if (value >= 100) return "100";
+  return value.toFixed(1);
+}
+
+function currentBottomStatus() {
+  const activeEngineId = state.llamaRuntime?.activeEngineId ?? null;
+  const activeEngine =
+    (activeEngineId
+      ? state.llamaRuntime?.engines.find((engine) => engine.engineId === activeEngineId)
+      : undefined) ??
+    (state.llamaRuntimeSelectedEngineId
+      ? state.llamaRuntime?.engines.find((engine) => engine.engineId === state.llamaRuntimeSelectedEngineId)
+      : undefined);
+  const engine = activeEngine?.backend?.trim() || "offline";
+
+  const contextTokens = state.llamaRuntimeContextTokens;
+  const contextCapacity = state.llamaRuntimeContextCapacity;
+  const contextText =
+    contextTokens && contextCapacity && contextCapacity > 0
+      ? `${contextTokens}/${contextCapacity} (${formatPercent((contextTokens / contextCapacity) * 100)}%)`
+      : "n/a";
+
+  const speedText =
+    typeof state.llamaRuntimeTokensPerSecond === "number"
+      ? `${state.llamaRuntimeTokensPerSecond >= 100 ? state.llamaRuntimeTokensPerSecond.toFixed(0) : state.llamaRuntimeTokensPerSecond.toFixed(1)} tok/s`
+      : "n/a";
+
+  return {
+    runtimeMode: state.runtimeMode,
+    engine,
+    model: modelNameFromPath(state.llamaRuntimeModelPath),
+    contextText,
+    speedText
+  };
 }
 
 async function refreshConversations(): Promise<void> {
@@ -1333,6 +1420,69 @@ function renderAndBind(sendMessage: (text: string) => Promise<void>): void {
   });
 }
 
+function currentPrimaryPanelRenderState() {
+  return {
+    conversationId: state.conversationId,
+    messages: state.messages,
+    chatReasoningByCorrelation: state.chatReasoningByCorrelation,
+    chatThinkingPlacementByCorrelation: state.chatThinkingPlacementByCorrelation,
+    chatThinkingExpandedByCorrelation: state.chatThinkingExpandedByCorrelation,
+    chatStreaming: state.chatStreaming,
+    devices: state.devices,
+    conversations: state.conversations,
+    chatThinkingEnabled: state.chatThinkingEnabled,
+    llamaRuntime: state.llamaRuntime,
+    llamaRuntimeSelectedEngineId: state.llamaRuntimeSelectedEngineId,
+    llamaRuntimeModelPath: state.llamaRuntimeModelPath,
+    llamaRuntimePort: state.llamaRuntimePort,
+    llamaRuntimeCtxSize: state.llamaRuntimeCtxSize,
+    llamaRuntimeGpuLayers: state.llamaRuntimeGpuLayers,
+    llamaRuntimeMaxTokens: state.llamaRuntimeMaxTokens,
+    llamaRuntimeBusy: state.llamaRuntimeBusy,
+    llamaRuntimeLogs: state.llamaRuntimeLogs
+  };
+}
+
+function renderChatMessagesOnly(): void {
+  if (state.sidebarTab !== "chat") return;
+  const messagesHost = document.querySelector<HTMLElement>(".messages");
+  if (!messagesHost) return;
+  const isNearBottom =
+    messagesHost.scrollHeight - messagesHost.scrollTop - messagesHost.clientHeight < 36;
+  messagesHost.innerHTML = renderChatMessages(currentPrimaryPanelRenderState());
+  if (isNearBottom || state.chatStreaming) {
+    messagesHost.scrollTop = messagesHost.scrollHeight;
+  }
+}
+
+function scheduleChatStreamDomUpdate(): void {
+  if (chatStreamDomUpdateScheduled) return;
+  chatStreamDomUpdateScheduled = true;
+  requestAnimationFrame(() => {
+    chatStreamDomUpdateScheduled = false;
+    renderChatMessagesOnly();
+  });
+}
+
+function installThinkingToggleDelegation(sendMessage: (text: string) => Promise<void>): void {
+  if (chatThinkingDelegationInstalled) return;
+  chatThinkingDelegationInstalled = true;
+  document.addEventListener("click", (event) => {
+    const target = event.target as HTMLElement | null;
+    const toggle = target?.closest<HTMLButtonElement>("[data-thinking-toggle-corr]");
+    if (!toggle) return;
+    const correlationId = toggle.dataset.thinkingToggleCorr;
+    if (!correlationId) return;
+    const current = state.chatThinkingExpandedByCorrelation[correlationId] === true;
+    state.chatThinkingExpandedByCorrelation[correlationId] = !current;
+    if (state.sidebarTab === "chat") {
+      renderChatMessagesOnly();
+      return;
+    }
+    renderAndBind(sendMessage);
+  });
+}
+
 function scrollConsoleToBottom(): void {
   const panel = document.querySelector<HTMLElement>(".console-panel");
   if (!panel) return;
@@ -1557,6 +1707,14 @@ async function bootstrap(): Promise<void> {
   const { client, runtimeMode } = await createChatIpcClient();
   clientRef = client;
   state.runtimeMode = runtimeMode;
+  try {
+    const version = (await client.getAppVersion()).version.trim();
+    if (version) {
+      state.appVersion = version;
+    }
+  } catch {
+    state.appVersion = FALLBACK_APP_VERSION;
+  }
   terminalManager.setClient(client);
   terminalManager.setDisplayMode(state.displayMode);
 
@@ -1615,6 +1773,10 @@ async function bootstrap(): Promise<void> {
     }
 
     if (event.action.startsWith("llama.runtime")) {
+      const processLine = extractRuntimeProcessLine(event);
+      if (processLine) {
+        updateRuntimeMetricsFromLine(processLine);
+      }
       const runtimeLine = formatRuntimeEventLine(event);
       pushConsoleEntry(
         event.severity === "error" ? "error" : "info",
@@ -1644,12 +1806,16 @@ async function bootstrap(): Promise<void> {
       const chunk = parseStreamChunk(event.payload);
       if (chunk && chunk.conversationId === state.conversationId) {
         updateAssistantDraft(event.correlationId, chunk.delta);
+        scheduleChatStreamDomUpdate();
+        return;
       }
     }
     if (event.action === "chat.stream.reasoning_chunk") {
       const chunk = parseReasoningStreamChunk(event.payload);
       if (chunk && chunk.conversationId === state.conversationId) {
         updateReasoningDraft(event.correlationId, chunk.delta);
+        scheduleChatStreamDomUpdate();
+        return;
       }
     }
 
@@ -1719,6 +1885,7 @@ async function bootstrap(): Promise<void> {
   }
 
   renderAndBind(sendMessage);
+  installThinkingToggleDelegation(sendMessage);
 }
 
 function installConsoleCapture(): void {

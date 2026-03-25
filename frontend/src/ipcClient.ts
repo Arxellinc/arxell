@@ -1,5 +1,6 @@
 import type {
   AppEvent,
+  AppVersionResponse,
   ChatCancelRequest,
   ChatCancelResponse,
   ChatDeleteConversationRequest,
@@ -36,6 +37,7 @@ import type {
 } from "./contracts";
 
 export interface ChatIpcClient {
+  getAppVersion(): Promise<AppVersionResponse>;
   sendMessage(request: ChatSendRequest): Promise<ChatSendResponse>;
   cancelMessage(request: ChatCancelRequest): Promise<ChatCancelResponse>;
   getMessages(request: ChatGetMessagesRequest): Promise<ChatGetMessagesResponse>;
@@ -106,6 +108,10 @@ class TauriChatIpcClient implements ChatIpcClient {
     return () => {
       this.listeners = this.listeners.filter((l) => l !== listener);
     };
+  }
+
+  getAppVersion(): Promise<AppVersionResponse> {
+    return this.invokeFn<AppVersionResponse>("cmd_app_version");
   }
 
   sendMessage(request: ChatSendRequest): Promise<ChatSendResponse> {
@@ -212,6 +218,10 @@ export class MockChatIpcClient implements ChatIpcClient {
       }
     ]
   ]);
+
+  async getAppVersion(): Promise<AppVersionResponse> {
+    return { version: "dev" };
+  }
 
   onEvent(listener: (event: AppEvent) => void): () => void {
     this.listeners.push(listener);

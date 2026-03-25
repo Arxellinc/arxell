@@ -16,6 +16,7 @@ use app_foundation::contracts::{
     TerminalInputResponse, TerminalOpenSessionRequest, TerminalOpenSessionResponse,
     TerminalResizeRequest, TerminalResizeResponse, WorkspaceToolSetEnabledRequest,
     WorkspaceToolSetEnabledResponse, WorkspaceToolsListRequest, WorkspaceToolsListResponse,
+    AppVersionResponse,
 };
 #[cfg(feature = "tauri-runtime")]
 use app_foundation::ipc::tauri_bridge::{attach_event_forwarder, TauriBridgeState};
@@ -113,6 +114,7 @@ fn main() {
             cmd_workspace_tools_list,
             cmd_workspace_tool_set_enabled,
             cmd_devices_probe_microphone,
+            cmd_app_version,
             cmd_llama_runtime_status,
             cmd_llama_runtime_install_engine,
             cmd_llama_runtime_start,
@@ -242,6 +244,14 @@ async fn cmd_devices_probe_microphone(
     tokio::task::spawn_blocking(move || service.probe_microphone(request))
         .await
         .map_err(|e| format!("devices probe task failed: {e}"))?
+}
+
+#[cfg(feature = "tauri-runtime")]
+#[tauri::command]
+async fn cmd_app_version() -> Result<AppVersionResponse, String> {
+    Ok(AppVersionResponse {
+        version: env!("CARGO_PKG_VERSION").to_string(),
+    })
 }
 
 #[cfg(feature = "tauri-runtime")]

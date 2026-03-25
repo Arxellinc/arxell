@@ -14,6 +14,18 @@ export function renderChatActions(state: PrimaryPanelRenderState): string {
 }
 
 export function renderChatBody(state: PrimaryPanelRenderState): string {
+  return `
+    <div class="messages">${renderChatMessages(state)}</div>
+    <form class="composer" id="composer">
+      <textarea id="msg" rows="3" placeholder="Send a message"></textarea>
+      <button type="button" class="send-icon-btn" id="chatSubmitBtn" aria-label="${state.chatStreaming ? "Stop response" : "Send message"}" title="${state.chatStreaming ? "Stop response" : "Send message"}">
+        <span class="send-icon-glyph ${state.chatStreaming ? "is-stop" : "is-play"}" aria-hidden="true">${state.chatStreaming ? "◼" : "▶"}</span>
+      </button>
+    </form>
+  `;
+}
+
+export function renderChatMessages(state: PrimaryPanelRenderState): string {
   const messagesHtml = state.messages
     .map(
       (m) => {
@@ -48,20 +60,11 @@ export function renderChatBody(state: PrimaryPanelRenderState): string {
     )
     .join("");
 
-  return `
-    <div class="messages">${messagesHtml || '<div class="message assistant is-placeholder"><div class="message-text">Ready.</div></div>'}</div>
-    <form class="composer" id="composer">
-      <textarea id="msg" rows="3" placeholder="Send a message"></textarea>
-      <button type="button" class="send-icon-btn" id="chatSubmitBtn" aria-label="${state.chatStreaming ? "Stop response" : "Send message"}" title="${state.chatStreaming ? "Stop response" : "Send message"}">
-        ${state.chatStreaming ? "◼" : "▶"}
-      </button>
-    </form>
-  `;
+  return messagesHtml || '<div class="message assistant is-placeholder"><div class="message-text">Ready.</div></div>';
 }
 
 export function bindChatPanel(
   onSendMessage: (text: string) => Promise<void>,
-  onToggleThinkingPanel: (correlationId: string) => Promise<void>,
   onStopCurrentResponse: () => Promise<void>,
   chatStreaming: boolean
 ): void {
@@ -69,16 +72,28 @@ export function bindChatPanel(
   const input = document.querySelector<HTMLTextAreaElement>("#msg");
   if (!form || !input) return;
 
+  const refocusInput = () => {
+    requestAnimationFrame(() => {
+      const nextInput = document.querySelector<HTMLTextAreaElement>("#msg");
+      if (!nextInput) return;
+      nextInput.focus();
+      const caret = nextInput.value.length;
+      nextInput.setSelectionRange(caret, caret);
+    });
+  };
+
   const submitCurrentInput = async () => {
     const text = input.value.trim();
     if (!text) return;
     input.value = "";
     await onSendMessage(text);
+    refocusInput();
   };
   form.onsubmit = async (ev) => {
     ev.preventDefault();
     if (chatStreaming) {
       await onStopCurrentResponse();
+      refocusInput();
       return;
     }
     await submitCurrentInput();
@@ -89,6 +104,7 @@ export function bindChatPanel(
     ev.preventDefault();
     if (chatStreaming) {
       await onStopCurrentResponse();
+      refocusInput();
       return;
     }
     await submitCurrentInput();
@@ -99,18 +115,11 @@ export function bindChatPanel(
     submitBtn.onclick = async () => {
       if (chatStreaming) {
         await onStopCurrentResponse();
+        refocusInput();
         return;
       }
       await submitCurrentInput();
     };
   }
 
-  const thinkingToggles = document.querySelectorAll<HTMLButtonElement>("[data-thinking-toggle-corr]");
-  thinkingToggles.forEach((button) => {
-    button.onclick = async () => {
-      const correlationId = button.dataset.thinkingToggleCorr;
-      if (!correlationId) return;
-      await onToggleThinkingPanel(correlationId);
-    };
-  });
 }
