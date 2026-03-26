@@ -24,8 +24,8 @@ if [[ -f "src-tauri/Cargo.toml" ]]; then
   if [[ "${ARX_SMOKE_SKIP_TAURI_BUILD:-0}" == "1" ]]; then
     echo "[package-install-smoke] skipping tauri build smoke (ARX_SMOKE_SKIP_TAURI_BUILD=1)"
   elif [[ -f "package.json" ]]; then
-    echo "[package-install-smoke] tauri build smoke (--debug --no-bundle)"
-    npm run tauri build -- --debug --no-bundle
+    echo "[package-install-smoke] tauri build smoke (--debug --no-bundle --no-default-features)"
+    npm run tauri build -- --debug --no-bundle --no-default-features
   fi
 fi
 
