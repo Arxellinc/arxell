@@ -198,8 +198,11 @@ jobs:
           workspaces: src-tauri
           save-if: false
 
+      - name: Clean cargo cache
+        run: cargo clean --manifest-path src-tauri/Cargo.toml
+
       - name: Cargo check smoke
-        run: cargo check --manifest-path src-tauri/Cargo.toml --no-default-features
+        run: cargo check --manifest-path src-tauri/Cargo.toml --no-default-features --locked
 
       - name: Platform smoke script hook
         shell: bash
