@@ -278,11 +278,18 @@ impl KokoroDaemon {
         })
     }
 
-    /// Kill the daemon process if running.
+    /// Kill the daemon process and wait for it to fully exit.
+    /// On Windows, kill() alone isn't sufficient - we must also wait() to ensure
+    /// the process is fully terminated and resources are released.
     pub fn kill(&mut self) {
         if let Some(mut child) = self.child.take() {
+            // On Windows, kill() sends TerminateProcess but doesn't wait for the
+            // process to actually exit. This can leave zombie processes and leak
+            // resources (especially GPU memory from ONNX runtime).
             let _ = child.kill();
-            log::info!("[kokoro-daemon] Daemon killed");
+            // Wait for process to fully terminate
+            let _ = child.wait();
+            log::info!("[kokoro-daemon] Daemon killed and waited");
         }
     }
 }

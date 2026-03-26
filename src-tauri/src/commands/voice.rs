@@ -80,7 +80,18 @@ fn default_python_bin() -> String {
     }
     #[cfg(not(target_os = "windows"))]
     {
-        "python3".to_string()
+        // Try python3 first, but also try python as fallback
+        // Some Linux systems only have 'python' symlinked
+        if std::process::Command::new("python3")
+            .arg("--version")
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false)
+        {
+            "python3".to_string()
+        } else {
+            "python".to_string()
+        }
     }
 }
 

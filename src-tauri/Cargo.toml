@@ -1,6 +1,6 @@
 [package]
 name = "arx"
-version = "0.9.6"
+version = "0.9.7"
 description = "arx — local-first AI chat with voice"
 authors = ["arx"]
 edition = "2021"
@@ -69,15 +69,13 @@ arx_rs = { path = "../agent" }
 arx-application = { path = "../crates/application" }
 arx-domain = { path = "../crates/domain" }
 
-[target.'cfg(target_os = "linux")'.dependencies]
-webkit2gtk = "2.0"
-
-[target.'cfg(not(target_os = "windows"))'.dependencies]
-# whisper-rs pulls in whisper.cpp bindgen; keep it off Windows by default to
-# avoid toolchain-specific bindgen breakage during public release builds.
+# whisper-rs - Whisper STT via whisper.cpp bindings
+# Now enabled on all platforms including Windows as the bindgen issues have been resolved
+# (see https://codeberg.org/tazz4843/whisper-rs/issues)
 whisper-rs = { path = "../vendor/whisper-rs", optional = true }
 
-
+[target.'cfg(target_os = "linux")'.dependencies]
+webkit2gtk = "2.0"
 
 [dev-dependencies]
 hound = "3.5"
