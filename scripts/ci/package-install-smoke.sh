@@ -19,7 +19,7 @@ fi
 
 if [[ -f "src-tauri/Cargo.toml" ]]; then
   echo "[package-install-smoke] cargo check (src-tauri)"
-  cargo check --manifest-path src-tauri/Cargo.toml --locked
+  cargo check --manifest-path src-tauri/Cargo.toml --no-default-features
 
   if [[ "${ARX_SMOKE_SKIP_TAURI_BUILD:-0}" == "1" ]]; then
     echo "[package-install-smoke] skipping tauri build smoke (ARX_SMOKE_SKIP_TAURI_BUILD=1)"
