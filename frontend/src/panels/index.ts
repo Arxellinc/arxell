@@ -62,8 +62,8 @@ export function getPanelDefinition(
     return {
       title: "TTS",
       icon: APP_ICON.sidebar.tts,
-      renderBody: renderTtsBody,
-      renderActions: renderTtsActions
+      renderBody: () => renderTtsBody(state),
+      renderActions: () => renderTtsActions(state)
     };
   }
 
@@ -71,8 +71,8 @@ export function getPanelDefinition(
     return {
       title: "STT",
       icon: APP_ICON.sidebar.stt,
-      renderBody: renderSttBody,
-      renderActions: renderSttActions
+      renderBody: () => renderSttBody(state),
+      renderActions: () => renderSttActions(state)
     };
   }
 
@@ -131,6 +131,12 @@ export function attachPrimaryPanelInteractions(
         await bindings.onToggleChatThinking();
       };
     }
+    const voiceModeToggleBtn = document.querySelector<HTMLButtonElement>("#chatVoiceModeToggleBtn");
+    if (voiceModeToggleBtn) {
+      voiceModeToggleBtn.onclick = async () => {
+        await bindings.onToggleVoiceMode();
+      };
+    }
     return;
   }
 
@@ -162,6 +168,129 @@ export function attachPrimaryPanelInteractions(
       requestSpeakerBtn.onclick = async () => {
         await bindings.onRequestSpeakerAccess();
       };
+    }
+    return;
+  }
+
+  if (tab === "tts") {
+    const toggleBtn = document.querySelector<HTMLButtonElement>("#ttsToggleBtn");
+    if (toggleBtn) {
+      toggleBtn.onclick = async () => {
+        await bindings.onToggleTtsEnabled();
+      };
+    }
+    const checkBtn = document.querySelector<HTMLButtonElement>("#ttsCheckBtn");
+    if (checkBtn) {
+      checkBtn.onclick = async () => {
+        await bindings.onTtsCheckEngine();
+      };
+    }
+    const testBtn = document.querySelector<HTMLButtonElement>("#ttsTestBtn");
+    if (testBtn) {
+      testBtn.onclick = async () => {
+        await bindings.onTtsTestSpeak();
+      };
+    }
+    const voiceSelect = document.querySelector<HTMLSelectElement>("#ttsVoiceSelect");
+    if (voiceSelect) {
+      voiceSelect.onchange = async () => {
+        await bindings.onTtsSetVoice(voiceSelect.value);
+      };
+    }
+    const languageSelect = document.querySelector<HTMLSelectElement>("#ttsLanguageSelect");
+    if (languageSelect) {
+      languageSelect.onchange = async () => {
+        await bindings.onTtsSetLanguage(languageSelect.value);
+      };
+    }
+    const chunkSizeInput = document.querySelector<HTMLInputElement>("#ttsChunkMaxCharsInput");
+    const chunkPauseInput = document.querySelector<HTMLInputElement>("#ttsChunkPauseMsInput");
+    const speedInput = document.querySelector<HTMLInputElement>("#ttsSpeedInput");
+    const commitChunking = async () => {
+      const maxChars = Number.parseInt(chunkSizeInput?.value ?? "", 10);
+      const pauseMs = Number.parseInt(chunkPauseInput?.value ?? "", 10);
+      await bindings.onTtsSetChunking({
+        maxChars: Number.isFinite(maxChars) ? maxChars : 320,
+        pauseMs: Number.isFinite(pauseMs) ? pauseMs : 90
+      });
+    };
+    if (speedInput) {
+      speedInput.onchange = async () => {
+        const speed = Number.parseFloat(speedInput.value);
+        await bindings.onTtsSetSpeed(Number.isFinite(speed) ? speed : 1.0);
+      };
+    }
+    if (chunkSizeInput) {
+      chunkSizeInput.onchange = commitChunking;
+    }
+    if (chunkPauseInput) {
+      chunkPauseInput.onchange = commitChunking;
+    }
+    return;
+  }
+
+  if (tab === "stt") {
+    const toggleBtn = document.querySelector<HTMLButtonElement>("#sttToggleBtn");
+    if (toggleBtn) {
+      toggleBtn.onclick = async () => {
+        await bindings.onSttToggle();
+      };
+    }
+    const refreshBtn = document.querySelector<HTMLButtonElement>("#sttRefreshBtn");
+    if (refreshBtn) {
+      refreshBtn.onclick = async () => {
+        await bindings.onSttRefresh();
+      };
+    }
+    const autoSubmitSelect = document.querySelector<HTMLSelectElement>("#sttAutoSubmitSelect");
+    if (autoSubmitSelect) {
+      autoSubmitSelect.onchange = async () => {
+        await bindings.onSttSetAutoSubmit(autoSubmitSelect.value === "1");
+      };
+    }
+    const vadThresholdInput = document.querySelector<HTMLInputElement>("#sttVadThresholdInput");
+    const minSilenceInput = document.querySelector<HTMLInputElement>("#sttMinSilenceInput");
+    const commitVad = async () => {
+      const threshold = Number.parseFloat(vadThresholdInput?.value ?? "");
+      const minSilenceMs = Number.parseInt(minSilenceInput?.value ?? "", 10);
+      await bindings.onSttSetVad({
+        threshold: Number.isFinite(threshold) ? threshold : 0.35,
+        minSilenceMs: Number.isFinite(minSilenceMs) ? minSilenceMs : 900
+      });
+    };
+    if (vadThresholdInput) {
+      vadThresholdInput.onchange = commitVad;
+    }
+    if (minSilenceInput) {
+      minSilenceInput.onchange = commitVad;
+    }
+    const modelSelect = document.querySelector<HTMLSelectElement>("#sttModelSelect");
+    if (modelSelect) {
+      modelSelect.onchange = async () => {
+        await bindings.onSttSetModelPath(modelSelect.value);
+      };
+    }
+    const applyModelBtn = document.querySelector<HTMLButtonElement>("#sttApplyModelBtn");
+    if (applyModelBtn) {
+      applyModelBtn.onclick = async () => {
+        const selected = modelSelect?.value ?? "";
+        await bindings.onSttSetModelPath(selected);
+      };
+    }
+    const downloadModelBtn = document.querySelector<HTMLButtonElement>("#sttDownloadModelBtn");
+    if (downloadModelBtn) {
+      downloadModelBtn.onclick = async () => {
+        const urlInput = document.querySelector<HTMLInputElement>("#sttModelUrlInput");
+        const fileInput = document.querySelector<HTMLInputElement>("#sttModelFileNameInput");
+        await bindings.onSttDownloadModel({
+          url: urlInput?.value ?? "",
+          fileName: fileInput?.value ?? undefined
+        });
+      };
+    }
+    const sttConsole = document.querySelector<HTMLElement>("#sttConsole");
+    if (sttConsole) {
+      sttConsole.scrollTop = sttConsole.scrollHeight;
     }
     return;
   }

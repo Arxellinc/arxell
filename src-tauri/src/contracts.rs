@@ -487,8 +487,161 @@ pub struct DevicesProbeMicrophoneResponse {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct SttStatusRequest {
+    pub correlation_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SttStatusResponse {
+    pub correlation_id: String,
+    pub engine: String,
+    pub ready: bool,
+    pub running: bool,
+    pub state: String,
+    pub model_path: String,
+    pub auto_submit: bool,
+    pub vad_threshold: f32,
+    pub min_silence_ms: u32,
+    pub last_transcript: Option<String>,
+    pub reason: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SttStartRequest {
+    pub correlation_id: String,
+    pub auto_submit: Option<bool>,
+    pub vad_threshold: Option<f32>,
+    pub min_silence_ms: Option<u32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SttStartResponse {
+    pub correlation_id: String,
+    pub started: bool,
+    pub state: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SttStopRequest {
+    pub correlation_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SttStopResponse {
+    pub correlation_id: String,
+    pub stopped: bool,
+    pub state: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SttModelRecord {
+    pub id: String,
+    pub name: String,
+    pub path: String,
+    pub size_mb: u64,
+    pub is_active: bool,
+    pub is_bundled: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SttListModelsRequest {
+    pub correlation_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SttListModelsResponse {
+    pub correlation_id: String,
+    pub models: Vec<SttModelRecord>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SttSetModelRequest {
+    pub correlation_id: String,
+    pub model_path: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SttSetModelResponse {
+    pub correlation_id: String,
+    pub model_path: String,
+    pub applied: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SttDownloadModelRequest {
+    pub correlation_id: String,
+    pub url: String,
+    pub file_name: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SttDownloadModelResponse {
+    pub correlation_id: String,
+    pub model: SttModelRecord,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct AppVersionResponse {
     pub version: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TtsSpeakRequest {
+    pub correlation_id: String,
+    pub text: String,
+    pub voice: Option<String>,
+    pub language: Option<String>,
+    pub speed: Option<f32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TtsSpeakResponse {
+    pub correlation_id: String,
+    pub engine: String,
+    pub audio_bytes: Vec<u8>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TtsEngineStatusRequest {
+    pub correlation_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TtsEngineStatusResponse {
+    pub correlation_id: String,
+    pub engine: String,
+    pub ready: bool,
+    pub reason: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TtsListVoicesRequest {
+    pub correlation_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TtsListVoicesResponse {
+    pub correlation_id: String,
+    pub voices: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -29,6 +29,24 @@ import type {
   ModelManagerListInstalledResponse,
   ModelManagerSearchHfRequest,
   ModelManagerSearchHfResponse,
+  SttStartRequest,
+  SttStartResponse,
+  SttDownloadModelRequest,
+  SttDownloadModelResponse,
+  SttListModelsRequest,
+  SttListModelsResponse,
+  SttSetModelRequest,
+  SttSetModelResponse,
+  SttStatusRequest,
+  SttStatusResponse,
+  SttStopRequest,
+  SttStopResponse,
+  TtsEngineStatusRequest,
+  TtsEngineStatusResponse,
+  TtsListVoicesRequest,
+  TtsListVoicesResponse,
+  TtsSpeakRequest,
+  TtsSpeakResponse,
   ChatSendRequest,
   ChatSendResponse,
   TerminalCloseSessionRequest,
@@ -88,6 +106,15 @@ export interface ChatIpcClient {
   probeMicrophoneDevice(
     request: DevicesProbeMicrophoneRequest
   ): Promise<DevicesProbeMicrophoneResponse>;
+  sttStatus(request: SttStatusRequest): Promise<SttStatusResponse>;
+  sttStart(request: SttStartRequest): Promise<SttStartResponse>;
+  sttStop(request: SttStopRequest): Promise<SttStopResponse>;
+  sttListModels(request: SttListModelsRequest): Promise<SttListModelsResponse>;
+  sttSetModel(request: SttSetModelRequest): Promise<SttSetModelResponse>;
+  sttDownloadModel(request: SttDownloadModelRequest): Promise<SttDownloadModelResponse>;
+  ttsCheckEngine(request: TtsEngineStatusRequest): Promise<TtsEngineStatusResponse>;
+  ttsSpeak(request: TtsSpeakRequest): Promise<TtsSpeakResponse>;
+  ttsListVoices(request: TtsListVoicesRequest): Promise<TtsListVoicesResponse>;
   onEvent(listener: (event: AppEvent) => void): () => void;
 }
 
@@ -264,6 +291,42 @@ class TauriChatIpcClient implements ChatIpcClient {
     return this.invokeFn<DevicesProbeMicrophoneResponse>("cmd_devices_probe_microphone", {
       request
     });
+  }
+
+  sttStatus(request: SttStatusRequest): Promise<SttStatusResponse> {
+    return this.invokeFn<SttStatusResponse>("cmd_stt_status", { request });
+  }
+
+  sttStart(request: SttStartRequest): Promise<SttStartResponse> {
+    return this.invokeFn<SttStartResponse>("cmd_stt_start", { request });
+  }
+
+  sttStop(request: SttStopRequest): Promise<SttStopResponse> {
+    return this.invokeFn<SttStopResponse>("cmd_stt_stop", { request });
+  }
+
+  sttListModels(request: SttListModelsRequest): Promise<SttListModelsResponse> {
+    return this.invokeFn<SttListModelsResponse>("cmd_stt_list_models", { request });
+  }
+
+  sttSetModel(request: SttSetModelRequest): Promise<SttSetModelResponse> {
+    return this.invokeFn<SttSetModelResponse>("cmd_stt_set_model", { request });
+  }
+
+  sttDownloadModel(request: SttDownloadModelRequest): Promise<SttDownloadModelResponse> {
+    return this.invokeFn<SttDownloadModelResponse>("cmd_stt_download_model", { request });
+  }
+
+  ttsCheckEngine(request: TtsEngineStatusRequest): Promise<TtsEngineStatusResponse> {
+    return this.invokeFn<TtsEngineStatusResponse>("cmd_tts_check_engine", { request });
+  }
+
+  ttsSpeak(request: TtsSpeakRequest): Promise<TtsSpeakResponse> {
+    return this.invokeFn<TtsSpeakResponse>("cmd_tts_speak", { request });
+  }
+
+  ttsListVoices(request: TtsListVoicesRequest): Promise<TtsListVoicesResponse> {
+    return this.invokeFn<TtsListVoicesResponse>("cmd_tts_list_voices", { request });
   }
 }
 
@@ -680,12 +743,115 @@ export class MockChatIpcClient implements ChatIpcClient {
       };
     }
 
-      return {
-        correlationId: request.correlationId,
-        status: "enabled",
-        message: "Mock microphone probe succeeded",
+    return {
+      correlationId: request.correlationId,
+      status: "enabled",
+      message: "Mock microphone probe succeeded",
       inputDeviceCount: audioInputs.length,
       defaultInputName: audioInputs[0]?.label || null
+    };
+  }
+
+  async sttStatus(request: SttStatusRequest): Promise<SttStatusResponse> {
+    return {
+      correlationId: request.correlationId,
+      engine: "whisper.cpp",
+      ready: false,
+      running: false,
+      state: "idle",
+      modelPath: "",
+      autoSubmit: true,
+      vadThreshold: 0.35,
+      minSilenceMs: 900,
+      reason: "tauri_runtime_required"
+    };
+  }
+
+  async sttStart(request: SttStartRequest): Promise<SttStartResponse> {
+    this.emit({
+      timestampMs: Date.now(),
+      correlationId: request.correlationId,
+      subsystem: "runtime",
+      action: "stt.capture.start",
+      stage: "start",
+      severity: "info",
+      payload: { mock: true }
+    });
+    return {
+      correlationId: request.correlationId,
+      started: true,
+      state: "listening"
+    };
+  }
+
+  async sttStop(request: SttStopRequest): Promise<SttStopResponse> {
+    this.emit({
+      timestampMs: Date.now(),
+      correlationId: request.correlationId,
+      subsystem: "runtime",
+      action: "stt.capture.complete",
+      stage: "complete",
+      severity: "info",
+      payload: { stopped: true, mock: true }
+    });
+    return {
+      correlationId: request.correlationId,
+      stopped: true,
+      state: "idle"
+    };
+  }
+
+  async sttListModels(request: SttListModelsRequest): Promise<SttListModelsResponse> {
+    return {
+      correlationId: request.correlationId,
+      models: []
+    };
+  }
+
+  async sttSetModel(request: SttSetModelRequest): Promise<SttSetModelResponse> {
+    return {
+      correlationId: request.correlationId,
+      modelPath: request.modelPath,
+      applied: true
+    };
+  }
+
+  async sttDownloadModel(request: SttDownloadModelRequest): Promise<SttDownloadModelResponse> {
+    const fileName = request.fileName?.trim() || "ggml-base-q8_0.bin";
+    return {
+      correlationId: request.correlationId,
+      model: {
+        id: fileName,
+        name: fileName,
+        path: `/tmp/whisper/${fileName}`,
+        sizeMb: 0,
+        isActive: true,
+        isBundled: false
+      }
+    };
+  }
+
+  async ttsCheckEngine(request: TtsEngineStatusRequest): Promise<TtsEngineStatusResponse> {
+    return {
+      correlationId: request.correlationId,
+      engine: "mock",
+      ready: false,
+      reason: "tauri_runtime_required"
+    };
+  }
+
+  async ttsSpeak(request: TtsSpeakRequest): Promise<TtsSpeakResponse> {
+    return {
+      correlationId: request.correlationId,
+      engine: "mock",
+      audioBytes: []
+    };
+  }
+
+  async ttsListVoices(request: TtsListVoicesRequest): Promise<TtsListVoicesResponse> {
+    return {
+      correlationId: request.correlationId,
+      voices: ["af_heart"]
     };
   }
 

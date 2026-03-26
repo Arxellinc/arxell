@@ -1,11 +1,11 @@
 [package]
 name = "app-foundation"
-version = "0.1.4"
+version = "0.1.5"
 edition = "2021"
 
 [features]
 default = []
-tauri-runtime = ["dep:tauri"]
+tauri-runtime = ["dep:tauri", "dep:whisper-rs", "dep:tract-onnx"]
 
 [dependencies]
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync", "time"] }
@@ -21,6 +21,8 @@ zip = { version = "2", default-features = false, features = ["deflate"] }
 tar = "0.4"
 flate2 = "1"
 cpal = "0.15"
+whisper-rs = { path = "../../copy/vendor/whisper-rs", optional = true }
+tract-onnx = { version = "0.21", optional = true }
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }

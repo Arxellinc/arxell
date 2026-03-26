@@ -6,6 +6,7 @@ import { escapeHtml } from "./utils";
 export function renderChatActions(state: PrimaryPanelRenderState): string {
   return `
     <div class="chat-actions">
+      <button type="button" class="topbar-icon-btn chat-thinking-btn ${state.voiceModeEnabled ? "is-active" : ""}" id="chatVoiceModeToggleBtn" aria-label="Toggle voice mode" data-title="${state.voiceModeEnabled ? "Disable Voice Mode" : "Enable Voice Mode"}" title="${state.voiceModeEnabled ? "Disable Voice Mode" : "Enable Voice Mode"}" ${state.voiceModeBusy ? "disabled" : ""}>${iconHtml(APP_ICON.sidebar.stt, { size: 16, tone: "dark" })}</button>
       <button type="button" class="topbar-icon-btn" id="chatNewBtn" aria-label="New chat" data-title="New Chat" title="New Chat">${iconHtml(APP_ICON.action.chatNew, { size: 16, tone: "dark" })}</button>
       <button type="button" class="topbar-icon-btn" id="chatClearBtn" aria-label="Clear chat" data-title="Clear Chat" title="Clear Chat">${iconHtml(APP_ICON.action.chatClear, { size: 16, tone: "dark" })}</button>
       <button type="button" class="topbar-icon-btn chat-thinking-btn ${state.chatThinkingEnabled ? "is-active" : ""}" id="chatThinkingToggleBtn" aria-label="Toggle thinking mode" data-title="${state.chatThinkingEnabled ? "Disable Thinking" : "Enable Thinking"}" title="${state.chatThinkingEnabled ? "Disable Thinking" : "Enable Thinking"}">${iconHtml(APP_ICON.action.chatThinking, { size: 16, tone: "dark" })}</button>

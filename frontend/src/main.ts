@@ -8,6 +8,8 @@ import type {
   LlamaRuntimeStatusResponse,
   ModelManagerHfCandidate,
   ModelManagerInstalledModel,
+  SttStatusResponse,
+  TtsEngineStatusResponse,
   WorkspaceToolRecord
 } from "./contracts";
 import { iconHtml } from "./icons";
@@ -35,15 +37,86 @@ import {
 import { renderChatMessages } from "./panels/chatPanel";
 import { APP_BUILD_VERSION, normalizeVersionLabel } from "./version";
 
+// Local sleep function (previously imported from ipcClient)
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 const terminalManager = new TerminalManager();
 const MAX_CONSOLE_ENTRIES = 600;
 const LLAMA_MODEL_PATH_STORAGE_KEY = "arxell.llama.modelPath";
 const LLAMA_MAX_TOKENS_STORAGE_KEY = "arxell.llama.maxTokens";
+const TTS_ENABLED_STORAGE_KEY = "arxell.tts.enabled";
+const TTS_VOICE_STORAGE_KEY = "arxell.tts.voice";
+const TTS_LANGUAGE_STORAGE_KEY = "arxell.tts.language";
+const TTS_SPEED_STORAGE_KEY = "arxell.tts.speed";
+const TTS_CHUNK_MAX_CHARS_STORAGE_KEY = "arxell.tts.chunkMaxChars";
+const TTS_CHUNK_PAUSE_MS_STORAGE_KEY = "arxell.tts.chunkPauseMs";
+const STT_AUTO_SUBMIT_STORAGE_KEY = "arxell.stt.autoSubmit";
+const STT_VAD_THRESHOLD_STORAGE_KEY = "arxell.stt.vadThreshold";
+const STT_MIN_SILENCE_MS_STORAGE_KEY = "arxell.stt.minSilenceMs";
+const VOICE_MODE_ENABLED_STORAGE_KEY = "arxell.voiceMode.enabled";
 const MIC_PERMISSION_BUBBLE_DISMISSED_KEY = "arxell.micPermissionBubbleDismissed";
 const CHAT_ID_ALPHANUM = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
 let chatStreamDomUpdateScheduled = false;
 let chatThinkingDelegationInstalled = false;
 const FALLBACK_APP_VERSION = normalizeVersionLabel(APP_BUILD_VERSION);
+
+// Render batching to reduce flickering
+let renderBatchPending = false;
+let renderBatchScheduledFrame: number | null = null;
+let sendMessageRef: ((text: string) => Promise<void>) | null = null;
+const RENDER_BATCH_THRESHOLD_MS = 16; // ~60fps
+
+// Track last rendered state to avoid unnecessary re-renders
+let lastRenderedStateSnapshot = "";
+function getStateSnapshot(): string {
+  // Create a lightweight snapshot of key state that affects rendering
+  return JSON.stringify({
+    sidebarTab: state.sidebarTab,
+    workspaceTab: state.workspaceTab,
+    layoutOrientation: state.layoutOrientation,
+    displayMode: state.displayMode,
+    conversationId: state.conversationId,
+    messagesCount: state.messages.length,
+    chatStreaming: state.chatStreaming,
+    activeChatCorrelationId: state.activeChatCorrelationId,
+    llamaRuntimeState: state.llamaRuntime?.state,
+    ttsEnabled: state.ttsEnabled,
+    sttRunning: state.sttRunning,
+    devices: state.devices,
+    voiceModeEnabled: state.voiceModeEnabled,
+    chatThinkingEnabled: state.chatThinkingEnabled,
+    consoleEntriesCount: state.consoleEntries.length,
+    conversationsCount: state.conversations.length
+  });
+}
+
+function scheduleBatchedRender(): void {
+  if (!sendMessageRef) return;
+  
+  // Skip render if state hasn't changed since last render
+  const currentSnapshot = getStateSnapshot();
+  if (currentSnapshot === lastRenderedStateSnapshot && !renderBatchPending) {
+    return;
+  }
+  
+  if (renderBatchPending) return;
+  renderBatchPending = true;
+  
+  if (renderBatchScheduledFrame !== null) {
+    cancelAnimationFrame(renderBatchScheduledFrame);
+  }
+  
+  renderBatchScheduledFrame = requestAnimationFrame(() => {
+    renderBatchScheduledFrame = null;
+    renderBatchPending = false;
+    if (sendMessageRef) {
+      renderAndBind(sendMessageRef);
+      lastRenderedStateSnapshot = getStateSnapshot();
+    }
+  });
+}
 
 function generateChatConversationId(): string {
   let suffix = "";
@@ -85,6 +158,198 @@ function loadPersistedLlamaMaxTokens(): number | null {
     return clamped;
   } catch {
     return null;
+  }
+}
+
+function loadPersistedTtsEnabled(): boolean {
+  try {
+    const raw = window.localStorage.getItem(TTS_ENABLED_STORAGE_KEY);
+    if (raw === null) return true;
+    return raw !== "0";
+  } catch {
+    return true;
+  }
+}
+
+function persistTtsEnabled(enabled: boolean): void {
+  try {
+    window.localStorage.setItem(TTS_ENABLED_STORAGE_KEY, enabled ? "1" : "0");
+  } catch {
+    // Ignore local storage failures.
+  }
+}
+
+function loadPersistedTtsVoice(): string {
+  try {
+    const raw = window.localStorage.getItem(TTS_VOICE_STORAGE_KEY);
+    return raw?.trim() || "af_heart";
+  } catch {
+    return "af_heart";
+  }
+}
+
+function persistTtsVoice(voice: string): void {
+  try {
+    const normalized = voice.trim() || "af_heart";
+    window.localStorage.setItem(TTS_VOICE_STORAGE_KEY, normalized);
+  } catch {
+    // Ignore local storage failures.
+  }
+}
+
+function loadPersistedTtsLanguage(): string {
+  try {
+    const raw = window.localStorage.getItem(TTS_LANGUAGE_STORAGE_KEY);
+    return raw?.trim() || "en-us";
+  } catch {
+    return "en-us";
+  }
+}
+
+function persistTtsLanguage(language: string): void {
+  try {
+    const normalized = language.trim() || "en-us";
+    window.localStorage.setItem(TTS_LANGUAGE_STORAGE_KEY, normalized);
+  } catch {
+    // Ignore local storage failures.
+  }
+}
+
+function loadPersistedTtsSpeed(): number {
+  try {
+    const raw = window.localStorage.getItem(TTS_SPEED_STORAGE_KEY);
+    const parsed = Number.parseFloat(raw ?? "");
+    if (!Number.isFinite(parsed)) return 1.0;
+    return Math.max(0.7, Math.min(1.4, parsed));
+  } catch {
+    return 1.0;
+  }
+}
+
+function persistTtsSpeed(speed: number): void {
+  try {
+    const clamped = Math.max(0.7, Math.min(1.4, speed));
+    window.localStorage.setItem(TTS_SPEED_STORAGE_KEY, clamped.toFixed(2));
+  } catch {
+    // Ignore local storage failures.
+  }
+}
+
+function loadPersistedTtsChunkMaxChars(): number {
+  try {
+    const raw = window.localStorage.getItem(TTS_CHUNK_MAX_CHARS_STORAGE_KEY);
+    const parsed = Number.parseInt(raw ?? "", 10);
+    if (!Number.isFinite(parsed)) return 320;
+    return Math.max(80, Math.min(2000, parsed));
+  } catch {
+    return 320;
+  }
+}
+
+function persistTtsChunkMaxChars(maxChars: number): void {
+  try {
+    const clamped = Math.max(80, Math.min(2000, Math.trunc(maxChars)));
+    window.localStorage.setItem(TTS_CHUNK_MAX_CHARS_STORAGE_KEY, String(clamped));
+  } catch {
+    // Ignore local storage failures.
+  }
+}
+
+function loadPersistedTtsChunkPauseMs(): number {
+  try {
+    const raw = window.localStorage.getItem(TTS_CHUNK_PAUSE_MS_STORAGE_KEY);
+    const parsed = Number.parseInt(raw ?? "", 10);
+    if (!Number.isFinite(parsed)) return 90;
+    return Math.max(0, Math.min(2000, parsed));
+  } catch {
+    return 90;
+  }
+}
+
+function persistTtsChunkPauseMs(pauseMs: number): void {
+  try {
+    const clamped = Math.max(0, Math.min(2000, Math.trunc(pauseMs)));
+    window.localStorage.setItem(TTS_CHUNK_PAUSE_MS_STORAGE_KEY, String(clamped));
+  } catch {
+    // Ignore local storage failures.
+  }
+}
+
+function loadPersistedSttAutoSubmit(): boolean {
+  try {
+    const raw = window.localStorage.getItem(STT_AUTO_SUBMIT_STORAGE_KEY);
+    if (raw === null) return true;
+    return raw !== "0";
+  } catch {
+    return true;
+  }
+}
+
+function persistSttAutoSubmit(enabled: boolean): void {
+  try {
+    window.localStorage.setItem(STT_AUTO_SUBMIT_STORAGE_KEY, enabled ? "1" : "0");
+  } catch {
+    // Ignore local storage failures.
+  }
+}
+
+function loadPersistedSttVadThreshold(): number {
+  try {
+    const raw = window.localStorage.getItem(STT_VAD_THRESHOLD_STORAGE_KEY);
+    const parsed = Number.parseFloat(raw ?? "");
+    if (!Number.isFinite(parsed)) return 0.35;
+    return Math.max(0.05, Math.min(0.95, parsed));
+  } catch {
+    return 0.35;
+  }
+}
+
+function persistSttVadThreshold(value: number): void {
+  try {
+    const clamped = Math.max(0.05, Math.min(0.95, value));
+    window.localStorage.setItem(STT_VAD_THRESHOLD_STORAGE_KEY, clamped.toFixed(3));
+  } catch {
+    // Ignore local storage failures.
+  }
+}
+
+function loadPersistedSttMinSilenceMs(): number {
+  try {
+    const raw = window.localStorage.getItem(STT_MIN_SILENCE_MS_STORAGE_KEY);
+    const parsed = Number.parseInt(raw ?? "", 10);
+    if (!Number.isFinite(parsed)) return 900;
+    return Math.max(250, Math.min(5000, parsed));
+  } catch {
+    return 900;
+  }
+}
+
+function persistSttMinSilenceMs(value: number): void {
+  try {
+    const clamped = Math.max(250, Math.min(5000, Math.trunc(value)));
+    window.localStorage.setItem(STT_MIN_SILENCE_MS_STORAGE_KEY, String(clamped));
+  } catch {
+    // Ignore local storage failures.
+  }
+}
+
+function loadPersistedVoiceModeEnabled(): boolean {
+  try {
+    return window.localStorage.getItem(VOICE_MODE_ENABLED_STORAGE_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function persistVoiceModeEnabled(enabled: boolean): void {
+  try {
+    if (enabled) {
+      window.localStorage.setItem(VOICE_MODE_ENABLED_STORAGE_KEY, "1");
+    } else {
+      window.localStorage.removeItem(VOICE_MODE_ENABLED_STORAGE_KEY);
+    }
+  } catch {
+    // Ignore local storage failures.
   }
 }
 
@@ -167,6 +432,8 @@ const state: {
   displayMode: DisplayMode;
   appVersion: string;
   chatThinkingEnabled: boolean;
+  voiceModeEnabled: boolean;
+  voiceModeBusy: boolean;
   llamaRuntime: LlamaRuntimeStatusResponse | null;
   llamaRuntimeSelectedEngineId: string;
   llamaRuntimeModelPath: string;
@@ -208,6 +475,38 @@ const state: {
     selectedAssetFileName: string;
   }>;
   modelManagerUnslothUdLoading: boolean;
+  ttsEnabled: boolean;
+  ttsBusy: boolean;
+  ttsLastError: string | null;
+  ttsEngineStatus: TtsEngineStatusResponse | null;
+  ttsVoices: string[];
+  ttsSelectedVoice: string;
+  ttsLanguage: string;
+  ttsSpeed: number;
+  ttsChunkMaxChars: number;
+  ttsChunkPauseMs: number;
+  sttReady: boolean;
+  sttRunning: boolean;
+  sttState: string;
+  sttEngine: string;
+  sttModelPath: string;
+  sttLastTranscript: string;
+  sttLastError: string | null;
+  sttAutoSubmit: boolean;
+  sttVadThreshold: number;
+  sttMinSilenceMs: number;
+  sttModels: Array<{
+    id: string;
+    name: string;
+    path: string;
+    sizeMb: number;
+    isActive: boolean;
+    isBundled: boolean;
+  }>;
+  sttSelectedModelPath: string;
+  sttDownloadBusy: boolean;
+  sttDownloadMessage: string | null;
+  sttConsoleLines: string[];
 } = {
   conversationId: generateChatConversationId(),
   messages: [],
@@ -234,6 +533,8 @@ const state: {
   displayMode: "dark",
   appVersion: FALLBACK_APP_VERSION,
   chatThinkingEnabled: false,
+  voiceModeEnabled: loadPersistedVoiceModeEnabled(),
+  voiceModeBusy: false,
   llamaRuntime: null,
   llamaRuntimeSelectedEngineId: "",
   llamaRuntimeModelPath: loadPersistedLlamaModelPath(),
@@ -264,7 +565,32 @@ const state: {
   modelManagerBusy: false,
   modelManagerMessage: null,
   modelManagerUnslothUdCatalog: [],
-  modelManagerUnslothUdLoading: false
+  modelManagerUnslothUdLoading: false,
+  ttsEnabled: loadPersistedTtsEnabled(),
+  ttsBusy: false,
+  ttsLastError: null,
+  ttsEngineStatus: null,
+  ttsVoices: ["af_heart"],
+  ttsSelectedVoice: loadPersistedTtsVoice(),
+  ttsLanguage: loadPersistedTtsLanguage(),
+  ttsSpeed: loadPersistedTtsSpeed(),
+  ttsChunkMaxChars: loadPersistedTtsChunkMaxChars(),
+  ttsChunkPauseMs: loadPersistedTtsChunkPauseMs(),
+  sttReady: false,
+  sttRunning: false,
+  sttState: "idle",
+  sttEngine: "whisper.cpp",
+  sttModelPath: "",
+  sttLastTranscript: "",
+  sttLastError: null,
+  sttAutoSubmit: loadPersistedSttAutoSubmit(),
+  sttVadThreshold: loadPersistedSttVadThreshold(),
+  sttMinSilenceMs: loadPersistedSttMinSilenceMs(),
+  sttModels: [],
+  sttSelectedModelPath: "",
+  sttDownloadBusy: false,
+  sttDownloadMessage: null,
+  sttConsoleLines: []
 };
 
 let clientRef: ChatIpcClient | null = null;
@@ -545,6 +871,338 @@ async function requestSpeakerAccess(): Promise<void> {
   await refreshDevicesState();
 }
 
+let activeTtsAudio: HTMLAudioElement | null = null;
+let ttsPlaybackGeneration = 0;
+
+function stopActiveTtsPlayback(): void {
+  ttsPlaybackGeneration += 1;
+  if (activeTtsAudio) {
+    try {
+      activeTtsAudio.pause();
+      activeTtsAudio.currentTime = 0;
+    } catch {
+      // ignore
+    }
+    activeTtsAudio = null;
+  }
+  state.ttsBusy = false;
+}
+
+function normalizeTtsText(text: string): string {
+  return text
+    .replace(/```[\s\S]*?```/g, "")
+    .replace(/`[^`]+`/g, "")
+    .replace(/<[^>]+>/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function splitTextForTts(text: string, maxChars: number): string[] {
+  const normalized = text.trim();
+  if (!normalized) return [];
+  if (normalized.length <= maxChars) return [normalized];
+
+  const chunks: string[] = [];
+  let buffer = "";
+  const segments = normalized.split(/(?<=[.!?])\s+/);
+
+  for (const segment of segments) {
+    const candidate = buffer ? `${buffer} ${segment}` : segment;
+    if (candidate.length <= maxChars) {
+      buffer = candidate;
+      continue;
+    }
+
+    if (buffer) {
+      chunks.push(buffer.trim());
+      buffer = "";
+    }
+
+    if (segment.length <= maxChars) {
+      buffer = segment;
+      continue;
+    }
+
+    const words = segment.split(/\s+/);
+    let hard = "";
+    for (const word of words) {
+      const next = hard ? `${hard} ${word}` : word;
+      if (next.length <= maxChars) {
+        hard = next;
+      } else {
+        if (hard) {
+          chunks.push(hard.trim());
+        }
+        hard = word;
+      }
+    }
+    if (hard) {
+      buffer = hard;
+    }
+  }
+
+  if (buffer.trim()) {
+    chunks.push(buffer.trim());
+  }
+
+  return chunks.filter(Boolean);
+}
+
+async function playTtsAudioBytes(audioBytes: number[], generation: number): Promise<void> {
+  if (!audioBytes.length) return;
+  if (generation !== ttsPlaybackGeneration) return;
+  if (activeTtsAudio) {
+    try {
+      activeTtsAudio.pause();
+      activeTtsAudio.currentTime = 0;
+    } catch {
+      // ignore
+    }
+    activeTtsAudio = null;
+  }
+
+  const blob = new Blob([new Uint8Array(audioBytes)], { type: "audio/wav" });
+  const objectUrl = URL.createObjectURL(blob);
+  const audio = new Audio(objectUrl);
+  audio.preload = "auto";
+  activeTtsAudio = audio;
+
+  const withSink = audio as HTMLAudioElement & {
+    setSinkId?: (sinkId: string) => Promise<void>;
+  };
+  if (typeof withSink.setSinkId === "function") {
+    try {
+      await withSink.setSinkId("default");
+    } catch {
+      // Fall back to browser-selected default device.
+    }
+  }
+
+  await new Promise<void>((resolve) => {
+    let done = false;
+    const cleanup = () => {
+      if (done) return;
+      done = true;
+      URL.revokeObjectURL(objectUrl);
+      if (activeTtsAudio === audio) {
+        activeTtsAudio = null;
+      }
+      resolve();
+    };
+
+    audio.onended = cleanup;
+    audio.onerror = cleanup;
+    audio.onpause = cleanup;
+    void audio.play().catch(() => {
+      cleanup();
+    });
+  });
+}
+
+async function refreshTtsEngineStatus(): Promise<void> {
+  if (!clientRef) {
+    state.ttsLastError = "TTS IPC client is not ready yet.";
+    return;
+  }
+  state.ttsBusy = true;
+  state.ttsLastError = "Checking engine status...";
+  try {
+    const status = await clientRef.ttsCheckEngine({ correlationId: nextCorrelationId() });
+    state.ttsEngineStatus = status;
+    if (status.ready) {
+      state.ttsLastError = null;
+      pushConsoleEntry("info", "app", "TTS check: Kokoro engine is ready.");
+    } else if (status.reason) {
+      state.ttsLastError = status.reason;
+      pushConsoleEntry("warn", "app", `TTS check: ${status.reason}`);
+    }
+  } catch (error) {
+    state.ttsEngineStatus = null;
+    state.ttsLastError = String(error);
+    pushConsoleEntry("error", "app", `TTS check failed: ${String(error)}`);
+  } finally {
+    state.ttsBusy = false;
+  }
+}
+
+async function refreshTtsVoices(): Promise<void> {
+  if (!clientRef) return;
+  try {
+    const response = await clientRef.ttsListVoices({ correlationId: nextCorrelationId() });
+    const voices = response.voices.length ? response.voices : ["af_heart"];
+    state.ttsVoices = voices;
+    if (!voices.includes(state.ttsSelectedVoice)) {
+      state.ttsSelectedVoice = voices[0] ?? "af_heart";
+      persistTtsVoice(state.ttsSelectedVoice);
+    }
+  } catch (error) {
+    state.ttsLastError = String(error);
+    state.ttsVoices = ["af_heart"];
+  }
+}
+
+function applySttStatus(status: SttStatusResponse): void {
+  state.sttEngine = status.engine || "whisper.cpp";
+  state.sttReady = status.ready;
+  state.sttRunning = status.running;
+  state.sttState = status.state || (status.running ? "listening" : "idle");
+  state.sttModelPath = status.modelPath || "";
+  state.sttSelectedModelPath = status.modelPath || state.sttSelectedModelPath;
+  state.sttLastTranscript = status.lastTranscript?.trim() || state.sttLastTranscript;
+  state.sttLastError = status.reason?.trim() || null;
+  state.sttAutoSubmit = status.autoSubmit;
+  state.sttVadThreshold = Math.max(0.05, Math.min(0.95, status.vadThreshold));
+  state.sttMinSilenceMs = Math.max(250, Math.min(5000, Math.trunc(status.minSilenceMs)));
+}
+
+async function refreshSttStatus(): Promise<void> {
+  if (!clientRef) return;
+  try {
+    const status = await clientRef.sttStatus({ correlationId: nextCorrelationId() });
+    applySttStatus(status);
+  } catch (error) {
+    state.sttReady = false;
+    state.sttLastError = String(error);
+    pushConsoleEntry("warn", "app", `STT status check failed: ${String(error)}`);
+  }
+}
+
+async function refreshSttModels(): Promise<void> {
+  if (!clientRef) return;
+  try {
+    const response = await clientRef.sttListModels({ correlationId: nextCorrelationId() });
+    state.sttModels = response.models;
+    const active = response.models.find((m) => m.isActive);
+    if (active) {
+      state.sttSelectedModelPath = active.path;
+    } else if (!response.models.some((m) => m.path === state.sttSelectedModelPath)) {
+      state.sttSelectedModelPath = response.models[0]?.path ?? state.sttModelPath;
+    }
+  } catch (error) {
+    state.sttDownloadMessage = `Model list failed: ${String(error)}`;
+  }
+}
+
+async function enableVoiceMode(): Promise<void> {
+  if (!clientRef) return;
+  state.voiceModeBusy = true;
+  try {
+    if (!state.ttsEnabled) {
+      state.ttsEnabled = true;
+      persistTtsEnabled(true);
+    }
+    // Lower-latency defaults while voice mode is active.
+    if (state.ttsChunkMaxChars > 260) {
+      state.ttsChunkMaxChars = 220;
+      persistTtsChunkMaxChars(state.ttsChunkMaxChars);
+    }
+    if (state.ttsChunkPauseMs > 60) {
+      state.ttsChunkPauseMs = 40;
+      persistTtsChunkPauseMs(state.ttsChunkPauseMs);
+    }
+
+    await refreshTtsEngineStatus();
+    await refreshTtsVoices();
+    if (!state.ttsEngineStatus?.ready) {
+      throw new Error(state.ttsEngineStatus?.reason || "TTS engine is not ready");
+    }
+
+    if (state.devices.microphonePermission !== "enabled") {
+      await requestMicrophoneAccess();
+    }
+
+    if (!state.sttRunning) {
+      const response = await clientRef.sttStart({
+        correlationId: nextCorrelationId(),
+        autoSubmit: state.sttAutoSubmit,
+        vadThreshold: state.sttVadThreshold,
+        minSilenceMs: state.sttMinSilenceMs
+      });
+      state.sttRunning = response.started || response.state === "listening";
+      state.sttState = response.state;
+      if (!state.sttRunning) {
+        throw new Error("STT did not enter listening state");
+      }
+    }
+    await refreshSttStatus();
+    await refreshSttModels();
+    state.voiceModeEnabled = true;
+    persistVoiceModeEnabled(true);
+  } catch (error) {
+    state.voiceModeEnabled = false;
+    persistVoiceModeEnabled(false);
+    pushConsoleEntry("error", "browser", `Voice mode activation failed: ${String(error)}`);
+  } finally {
+    state.voiceModeBusy = false;
+  }
+}
+
+async function disableVoiceMode(): Promise<void> {
+  if (!clientRef) return;
+  state.voiceModeBusy = true;
+  try {
+    stopActiveTtsPlayback();
+    if (state.sttRunning) {
+      await clientRef.sttStop({ correlationId: nextCorrelationId() });
+      state.sttRunning = false;
+      state.sttState = "idle";
+    }
+    state.ttsEnabled = false;
+    persistTtsEnabled(false);
+    await refreshSttStatus();
+    state.voiceModeEnabled = false;
+    persistVoiceModeEnabled(false);
+  } catch (error) {
+    pushConsoleEntry("error", "browser", `Voice mode deactivation failed: ${String(error)}`);
+  } finally {
+    state.voiceModeBusy = false;
+  }
+}
+
+async function speakAssistantText(text: string): Promise<void> {
+  if (!clientRef || !state.ttsEnabled) return;
+  const normalized = normalizeTtsText(text);
+  if (!normalized) return;
+
+  const generation = ++ttsPlaybackGeneration;
+  state.ttsBusy = true;
+  try {
+    const chunks = splitTextForTts(normalized, state.ttsChunkMaxChars);
+    for (let i = 0; i < chunks.length; i += 1) {
+      if (generation !== ttsPlaybackGeneration || !state.ttsEnabled) {
+        break;
+      }
+      const chunk = chunks[i] ?? "";
+      const response = await clientRef.ttsSpeak({
+        correlationId: nextCorrelationId(),
+        text: chunk,
+        voice: state.ttsSelectedVoice,
+        language: state.ttsLanguage,
+        speed: state.ttsSpeed
+      });
+      if (!response.audioBytes.length) {
+        throw new Error("TTS returned no audio");
+      }
+      if (generation !== ttsPlaybackGeneration || !state.ttsEnabled) {
+        break;
+      }
+      await playTtsAudioBytes(response.audioBytes, generation);
+      if (i < chunks.length - 1 && state.ttsChunkPauseMs > 0) {
+        if (generation !== ttsPlaybackGeneration || !state.ttsEnabled) {
+          break;
+        }
+        await sleep(state.ttsChunkPauseMs);
+      }
+    }
+    state.ttsLastError = null;
+  } catch (error) {
+    state.ttsLastError = String(error);
+    pushConsoleEntry("warn", "app", `TTS playback failed: ${String(error)}`);
+  } finally {
+    state.ttsBusy = false;
+  }
+}
+
 function shouldShowMicPermissionBubble(): boolean {
   if (state.devices.microphonePermission === "enabled") return false;
   if (state.devices.microphonePermission === "no_device") return false;
@@ -574,6 +1232,11 @@ function render(): void {
       state.llamaRuntime.activeEngineId &&
       state.llamaRuntime.endpoint &&
       state.llamaRuntime.pid
+  );
+  const ttsReady = Boolean(
+    state.ttsEnabled &&
+      state.ttsEngineStatus?.ready &&
+      state.ttsVoices.length > 0
   );
 
   const consoleHtml = `
@@ -616,6 +1279,33 @@ function render(): void {
     devices: state.devices,
     conversations: state.conversations,
     chatThinkingEnabled: state.chatThinkingEnabled,
+    voiceModeEnabled: state.voiceModeEnabled,
+    voiceModeBusy: state.voiceModeBusy,
+    ttsEnabled: state.ttsEnabled,
+    ttsBusy: state.ttsBusy,
+    ttsLastError: state.ttsLastError,
+    ttsEngineStatus: state.ttsEngineStatus,
+    ttsVoices: state.ttsVoices,
+    ttsSelectedVoice: state.ttsSelectedVoice,
+    ttsLanguage: state.ttsLanguage,
+    ttsSpeed: state.ttsSpeed,
+    ttsChunkMaxChars: state.ttsChunkMaxChars,
+    ttsChunkPauseMs: state.ttsChunkPauseMs,
+    sttReady: state.sttReady,
+    sttRunning: state.sttRunning,
+    sttState: state.sttState,
+    sttEngine: state.sttEngine,
+    sttModelPath: state.sttModelPath,
+    sttLastTranscript: state.sttLastTranscript,
+    sttLastError: state.sttLastError,
+    sttAutoSubmit: state.sttAutoSubmit,
+    sttVadThreshold: state.sttVadThreshold,
+    sttMinSilenceMs: state.sttMinSilenceMs,
+    sttModels: state.sttModels,
+    sttSelectedModelPath: state.sttSelectedModelPath,
+    sttDownloadBusy: state.sttDownloadBusy,
+    sttDownloadMessage: state.sttDownloadMessage,
+    sttConsoleLines: state.sttConsoleLines,
     llamaRuntime: state.llamaRuntime,
     llamaRuntimeSelectedEngineId: state.llamaRuntimeSelectedEngineId,
     llamaRuntimeModelPath: state.llamaRuntimeModelPath,
@@ -676,7 +1366,7 @@ function render(): void {
             <div class="pane-divider-line"></div>
           </div>
           <section class="portrait-main-row">
-            ${renderSidebarRail(state.sidebarTab, llamaRuntimeOnline)}
+            ${renderSidebarRail(state.sidebarTab, llamaRuntimeOnline, ttsReady)}
             <section class="main-column">
               <div class="portrait-primary-wrap">
                 ${primaryPaneHtml}
@@ -687,7 +1377,7 @@ function render(): void {
       `
       : `
         <section class="app-body">
-          ${renderSidebarRail(state.sidebarTab, llamaRuntimeOnline)}
+          ${renderSidebarRail(state.sidebarTab, llamaRuntimeOnline, ttsReady)}
           <section class="main-column">
           <div class="split-layout" id="splitLayout">
             ${primaryPaneHtml}
@@ -874,6 +1564,25 @@ function parseReasoningStreamChunk(
   };
 }
 
+function parseSttTranscriptFinal(
+  payload: AppEvent["payload"]
+): { text: string; autoSubmit: boolean } | null {
+  if (!payload || typeof payload !== "object") return null;
+  const value = payload as Record<string, unknown>;
+  if (typeof value.text !== "string") return null;
+  return {
+    text: value.text,
+    autoSubmit: value.autoSubmit !== false
+  };
+}
+
+function parseSttTranscriptPartial(payload: AppEvent["payload"]): { text: string } | null {
+  if (!payload || typeof payload !== "object") return null;
+  const value = payload as Record<string, unknown>;
+  if (typeof value.text !== "string") return null;
+  return { text: value.text };
+}
+
 function parseTerminalOutput(payload: AppEvent["payload"]): { sessionId: string; data: string } | null {
   if (!payload || typeof payload !== "object") return null;
   const value = payload as Record<string, unknown>;
@@ -900,6 +1609,11 @@ function isNoisyRuntimeStatusEvent(event: AppEvent): boolean {
     event.action === "llama.runtime.status" &&
     event.stage === "complete"
   );
+}
+
+function isNoisySttEvent(event: AppEvent): boolean {
+  if (!event.action.startsWith("stt.")) return false;
+  return event.action === "stt.vad.progress" || event.action === "stt.capture.progress";
 }
 
 function isNoisyChatStreamEvent(event: AppEvent): boolean {
@@ -1308,7 +2022,40 @@ async function autoStartLlamaRuntimeIfConfigured(): Promise<void> {
 }
 
 function renderAndBind(sendMessage: (text: string) => Promise<void>): void {
-  render();
+  // Preserve chat scroll position across full DOM renders
+  const messagesHost = document.querySelector<HTMLElement>(".messages");
+  const wasInChatTab = state.sidebarTab === "chat";
+  let savedScrollTop = 0;
+  let savedScrollHeight = 0;
+  let isNearBottom = false;
+  
+  if (wasInChatTab && messagesHost) {
+    savedScrollTop = messagesHost.scrollTop;
+    savedScrollHeight = messagesHost.scrollHeight;
+    isNearBottom = savedScrollHeight - savedScrollTop - messagesHost.clientHeight < 36;
+  }
+  
+  try {
+    render();
+  } catch (error) {
+    pushConsoleEntry("error", "browser", `Render failed: ${String(error)}`);
+    throw error;
+  }
+  
+  // Restore chat scroll position after DOM replacement
+  if (wasInChatTab && messagesHost) {
+    const newMessagesHost = document.querySelector<HTMLElement>(".messages");
+    if (newMessagesHost) {
+      if (isNearBottom || state.chatStreaming) {
+        // Auto-stick to bottom when near bottom or streaming
+        newMessagesHost.scrollTop = newMessagesHost.scrollHeight;
+      } else if (savedScrollHeight > 0) {
+        // Preserve manual scroll position
+        newMessagesHost.scrollTop = savedScrollTop;
+      }
+    }
+  }
+  
   scrollConsoleToBottom();
   attachDividerResize();
   attachTopbarInteractions(sendMessage);
@@ -1317,6 +2064,7 @@ function renderAndBind(sendMessage: (text: string) => Promise<void>): void {
   attachPrimaryPanelInteractions(state.sidebarTab, state, {
     onSendMessage: sendMessage,
     onStopCurrentResponse: async () => {
+      stopActiveTtsPlayback();
       if (!clientRef || !state.activeChatCorrelationId) return;
       const targetCorrelationId = state.activeChatCorrelationId;
       await clientRef.cancelMessage({
@@ -1328,7 +2076,7 @@ function renderAndBind(sendMessage: (text: string) => Promise<void>): void {
     onToggleThinkingPanel: async (correlationId: string) => {
       const current = state.chatThinkingExpandedByCorrelation[correlationId] === true;
       state.chatThinkingExpandedByCorrelation[correlationId] = !current;
-      renderAndBind(sendMessage);
+      scheduleBatchedRender();
     },
     onCreateConversation: async () => {
       const id = generateChatConversationId();
@@ -1336,7 +2084,7 @@ function renderAndBind(sendMessage: (text: string) => Promise<void>): void {
       resetCurrentConversationUiState();
       state.sidebarTab = "chat";
       await refreshConversations();
-      renderAndBind(sendMessage);
+      scheduleBatchedRender();
     },
     onClearChat: async () => {
       const currentId = state.conversationId;
@@ -1353,7 +2101,7 @@ function renderAndBind(sendMessage: (text: string) => Promise<void>): void {
       state.conversationId = generateChatConversationId();
       resetCurrentConversationUiState();
       await refreshConversations();
-      renderAndBind(sendMessage);
+      scheduleBatchedRender();
     },
     onToggleChatThinking: async () => {
       state.chatThinkingEnabled = !state.chatThinkingEnabled;
@@ -1362,25 +2110,192 @@ function renderAndBind(sendMessage: (text: string) => Promise<void>): void {
         "browser",
         `Thinking mode ${state.chatThinkingEnabled ? "enabled" : "disabled"}`
       );
-      renderAndBind(sendMessage);
+      scheduleBatchedRender();
+    },
+    onToggleVoiceMode: async () => {
+      if (state.voiceModeBusy) return;
+      if (state.voiceModeEnabled) {
+        await disableVoiceMode();
+      } else {
+        await enableVoiceMode();
+      }
+      scheduleBatchedRender();
     },
     onDevicesRefresh: async () => {
       await refreshDevicesState();
-      renderAndBind(sendMessage);
+      scheduleBatchedRender();
     },
     onRequestMicrophoneAccess: async () => {
       await requestMicrophoneAccess();
-      renderAndBind(sendMessage);
+      scheduleBatchedRender();
     },
     onRequestSpeakerAccess: async () => {
       await requestSpeakerAccess();
-      renderAndBind(sendMessage);
+      scheduleBatchedRender();
+    },
+    onToggleTtsEnabled: async () => {
+      state.ttsEnabled = !state.ttsEnabled;
+      persistTtsEnabled(state.ttsEnabled);
+      if (!state.ttsEnabled) {
+        stopActiveTtsPlayback();
+      }
+      if (!state.ttsEnabled && state.voiceModeEnabled) {
+        state.voiceModeEnabled = false;
+        persistVoiceModeEnabled(false);
+      }
+      scheduleBatchedRender();
+    },
+    onTtsCheckEngine: async () => {
+      await refreshTtsEngineStatus();
+      scheduleBatchedRender();
+    },
+    onTtsTestSpeak: async () => {
+      await speakAssistantText("This is a Kokoro TTS system test.");
+      scheduleBatchedRender();
+    },
+    onTtsSetVoice: async (voice: string) => {
+      state.ttsSelectedVoice = (voice || "af_heart").trim() || "af_heart";
+      persistTtsVoice(state.ttsSelectedVoice);
+      scheduleBatchedRender();
+    },
+    onTtsSetLanguage: async (language: string) => {
+      state.ttsLanguage = (language || "en-us").trim() || "en-us";
+      persistTtsLanguage(state.ttsLanguage);
+      scheduleBatchedRender();
+    },
+    onTtsSetSpeed: async (speed: number) => {
+      state.ttsSpeed = Math.max(0.7, Math.min(1.4, speed));
+      persistTtsSpeed(state.ttsSpeed);
+      scheduleBatchedRender();
+    },
+    onTtsSetChunking: async ({ maxChars, pauseMs }: { maxChars: number; pauseMs: number }) => {
+      state.ttsChunkMaxChars = Math.max(80, Math.min(2000, Math.trunc(maxChars)));
+      state.ttsChunkPauseMs = Math.max(0, Math.min(2000, Math.trunc(pauseMs)));
+      persistTtsChunkMaxChars(state.ttsChunkMaxChars);
+      persistTtsChunkPauseMs(state.ttsChunkPauseMs);
+      scheduleBatchedRender();
+    },
+    onSttRefresh: async () => {
+      await refreshSttStatus();
+      await refreshSttModels();
+      scheduleBatchedRender();
+    },
+    onSttToggle: async () => {
+      if (!clientRef) return;
+      try {
+        if (state.sttRunning) {
+          await clientRef.sttStop({ correlationId: nextCorrelationId() });
+          state.sttRunning = false;
+          state.sttState = "idle";
+          if (state.voiceModeEnabled) {
+            state.voiceModeEnabled = false;
+            persistVoiceModeEnabled(false);
+          }
+        } else {
+          if (state.devices.microphonePermission !== "enabled") {
+            await requestMicrophoneAccess();
+          }
+          const response = await clientRef.sttStart({
+            correlationId: nextCorrelationId(),
+            autoSubmit: state.sttAutoSubmit,
+            vadThreshold: state.sttVadThreshold,
+            minSilenceMs: state.sttMinSilenceMs
+          });
+          state.sttRunning = response.started || response.state === "listening";
+          state.sttState = response.state;
+          if (state.sttRunning && state.ttsEnabled) {
+            state.voiceModeEnabled = true;
+            persistVoiceModeEnabled(true);
+          }
+        }
+        await refreshSttStatus();
+        await refreshSttModels();
+      } catch (error) {
+        state.sttLastError = String(error);
+        pushConsoleEntry("error", "browser", `STT toggle failed: ${String(error)}`);
+      }
+      scheduleBatchedRender();
+    },
+    onSttSetAutoSubmit: async (enabled: boolean) => {
+      state.sttAutoSubmit = enabled;
+      persistSttAutoSubmit(enabled);
+      if (state.sttRunning && clientRef) {
+        await clientRef.sttStop({ correlationId: nextCorrelationId() });
+        await clientRef.sttStart({
+          correlationId: nextCorrelationId(),
+          autoSubmit: state.sttAutoSubmit,
+          vadThreshold: state.sttVadThreshold,
+          minSilenceMs: state.sttMinSilenceMs
+        });
+      }
+      await refreshSttStatus();
+      await refreshSttModels();
+      scheduleBatchedRender();
+    },
+    onSttSetVad: async ({ threshold, minSilenceMs }: { threshold: number; minSilenceMs: number }) => {
+      state.sttVadThreshold = Math.max(0.05, Math.min(0.95, threshold));
+      state.sttMinSilenceMs = Math.max(250, Math.min(5000, Math.trunc(minSilenceMs)));
+      persistSttVadThreshold(state.sttVadThreshold);
+      persistSttMinSilenceMs(state.sttMinSilenceMs);
+      if (state.sttRunning && clientRef) {
+        await clientRef.sttStop({ correlationId: nextCorrelationId() });
+        await clientRef.sttStart({
+          correlationId: nextCorrelationId(),
+          autoSubmit: state.sttAutoSubmit,
+          vadThreshold: state.sttVadThreshold,
+          minSilenceMs: state.sttMinSilenceMs
+        });
+      }
+      await refreshSttStatus();
+      await refreshSttModels();
+      scheduleBatchedRender();
+    },
+    onSttSetModelPath: async (modelPath: string) => {
+      if (!clientRef) return;
+      const normalized = modelPath.trim();
+      if (!normalized) return;
+      try {
+        await clientRef.sttSetModel({
+          correlationId: nextCorrelationId(),
+          modelPath: normalized
+        });
+        state.sttSelectedModelPath = normalized;
+        await refreshSttStatus();
+        await refreshSttModels();
+      } catch (error) {
+        state.sttDownloadMessage = `Failed to apply model: ${String(error)}`;
+      }
+      scheduleBatchedRender();
+    },
+    onSttDownloadModel: async ({ url, fileName }: { url: string; fileName?: string }) => {
+      if (!clientRef) return;
+      const normalizedUrl = url.trim();
+      if (!normalizedUrl) return;
+      state.sttDownloadBusy = true;
+      state.sttDownloadMessage = "Downloading model...";
+      scheduleBatchedRender();
+      try {
+        const response = await clientRef.sttDownloadModel({
+          correlationId: nextCorrelationId(),
+          url: normalizedUrl,
+          fileName: fileName?.trim() || ""
+        });
+        state.sttSelectedModelPath = response.model.path;
+        state.sttDownloadMessage = `Downloaded ${response.model.name}`;
+        await refreshSttStatus();
+        await refreshSttModels();
+      } catch (error) {
+        state.sttDownloadMessage = `Download failed: ${String(error)}`;
+      } finally {
+        state.sttDownloadBusy = false;
+      }
+      scheduleBatchedRender();
     },
     onSelectConversation: async (conversationId: string) => {
       await loadConversation(conversationId);
       state.sidebarTab = "chat";
       await refreshConversations();
-      renderAndBind(sendMessage);
+      scheduleBatchedRender();
     },
     onExportConversation: async (conversationId: string) => {
       if (!clientRef) return;
@@ -1417,7 +2332,7 @@ function renderAndBind(sendMessage: (text: string) => Promise<void>): void {
           `Failed exporting conversation ${conversationId}: ${String(error)}`
         );
       }
-      renderAndBind(sendMessage);
+      scheduleBatchedRender();
     },
     onDeleteConversation: async (conversationId: string) => {
       if (!clientRef) return;
@@ -1434,7 +2349,7 @@ function renderAndBind(sendMessage: (text: string) => Promise<void>): void {
         resetCurrentConversationUiState();
       }
       await refreshConversations();
-      renderAndBind(sendMessage);
+      scheduleBatchedRender();
     },
     onLlamaRuntimeRefresh: async () => {
       state.llamaRuntimeBusy = true;
@@ -1443,7 +2358,7 @@ function renderAndBind(sendMessage: (text: string) => Promise<void>): void {
       } finally {
         state.llamaRuntimeBusy = false;
       }
-      renderAndBind(sendMessage);
+      scheduleBatchedRender();
     },
     onLlamaRuntimeInstall: async (engineId: string) => {
       if (!clientRef) return;
@@ -1465,23 +2380,23 @@ function renderAndBind(sendMessage: (text: string) => Promise<void>): void {
       } finally {
         state.llamaRuntimeBusy = false;
       }
-      renderAndBind(sendMessage);
+      scheduleBatchedRender();
     },
     onLlamaRuntimeBrowseModelPath: async () => {
       const selectedPath = await browseModelPath();
       if (!selectedPath) return;
       state.llamaRuntimeModelPath = selectedPath;
       persistLlamaModelPath(selectedPath);
-      renderAndBind(sendMessage);
+      scheduleBatchedRender();
     },
     onLlamaRuntimeSetMaxTokens: async (maxTokens: number | null) => {
       state.llamaRuntimeMaxTokens = maxTokens === null ? null : Math.max(128, Math.min(4096, maxTokens));
       persistLlamaMaxTokens(state.llamaRuntimeMaxTokens);
-      renderAndBind(sendMessage);
+      scheduleBatchedRender();
     },
     onLlamaRuntimeClearLogs: async () => {
       state.llamaRuntimeLogs = [];
-      renderAndBind(sendMessage);
+      scheduleBatchedRender();
     },
     onLlamaRuntimeStart: async ({
       engineId,
@@ -1602,7 +2517,7 @@ function renderAndBind(sendMessage: (text: string) => Promise<void>): void {
       } finally {
         state.llamaRuntimeBusy = false;
       }
-      renderAndBind(sendMessage);
+      scheduleBatchedRender();
     },
     onLlamaRuntimeStop: async () => {
       if (!clientRef) return;
@@ -1616,7 +2531,7 @@ function renderAndBind(sendMessage: (text: string) => Promise<void>): void {
       } finally {
         state.llamaRuntimeBusy = false;
       }
-      renderAndBind(sendMessage);
+      scheduleBatchedRender();
     },
     onModelManagerRefreshInstalled: async () => {
       state.modelManagerBusy = true;
@@ -1629,11 +2544,11 @@ function renderAndBind(sendMessage: (text: string) => Promise<void>): void {
       } finally {
         state.modelManagerBusy = false;
       }
-      renderAndBind(sendMessage);
+      scheduleBatchedRender();
     },
     onModelManagerSetQuery: async (query: string) => {
       state.modelManagerQuery = query.trim();
-      renderAndBind(sendMessage);
+      scheduleBatchedRender();
     },
     onModelManagerSetCollection: async (collection: string) => {
       state.modelManagerCollection = collection.trim() || "unsloth_ud";
@@ -1642,7 +2557,7 @@ function renderAndBind(sendMessage: (text: string) => Promise<void>): void {
         await refreshModelManagerUnslothUdCatalog();
         state.modelManagerMessage = `Loaded ${state.modelManagerUnslothUdCatalog.length} UD model(s).`;
       }
-      renderAndBind(sendMessage);
+      scheduleBatchedRender();
     },
     onModelManagerSearchHf: async () => {
       if (!clientRef) return;
@@ -1659,7 +2574,7 @@ function renderAndBind(sendMessage: (text: string) => Promise<void>): void {
       const effectiveQuery = `${prefix} ${query}`.trim();
       if (!effectiveQuery) {
         state.modelManagerMessage = "Enter a Hugging Face search query.";
-        renderAndBind(sendMessage);
+        scheduleBatchedRender();
         return;
       }
       state.modelManagerBusy = true;
@@ -1677,7 +2592,7 @@ function renderAndBind(sendMessage: (text: string) => Promise<void>): void {
       } finally {
         state.modelManagerBusy = false;
       }
-      renderAndBind(sendMessage);
+      scheduleBatchedRender();
     },
     onModelManagerDownloadHf: async ({ repoId, fileName }) => {
       if (!clientRef) return;
@@ -1696,19 +2611,19 @@ function renderAndBind(sendMessage: (text: string) => Promise<void>): void {
       } finally {
         state.modelManagerBusy = false;
       }
-      renderAndBind(sendMessage);
+      scheduleBatchedRender();
     },
     onModelManagerSetUdQuant: async ({ repoId, fileName }) => {
       state.modelManagerUnslothUdCatalog = state.modelManagerUnslothUdCatalog.map((row) =>
         row.repoId === repoId ? { ...row, selectedAssetFileName: fileName } : row
       );
-      renderAndBind(sendMessage);
+      scheduleBatchedRender();
     },
     onModelManagerUseAsLlamaPath: async (modelPath: string) => {
       state.llamaRuntimeModelPath = modelPath;
       persistLlamaModelPath(modelPath);
       state.modelManagerMessage = `Selected model for llama.cpp: ${modelPath}`;
-      renderAndBind(sendMessage);
+      scheduleBatchedRender();
     },
     onModelManagerEjectActive: async () => {
       if (!clientRef) return;
@@ -1729,7 +2644,7 @@ function renderAndBind(sendMessage: (text: string) => Promise<void>): void {
       } finally {
         state.modelManagerBusy = false;
       }
-      renderAndBind(sendMessage);
+      scheduleBatchedRender();
     },
     onModelManagerDeleteInstalled: async (modelId: string) => {
       if (!clientRef) return;
@@ -1747,7 +2662,7 @@ function renderAndBind(sendMessage: (text: string) => Promise<void>): void {
       } finally {
         state.modelManagerBusy = false;
       }
-      renderAndBind(sendMessage);
+      scheduleBatchedRender();
     }
   });
 }
@@ -1763,6 +2678,33 @@ function currentPrimaryPanelRenderState() {
     devices: state.devices,
     conversations: state.conversations,
     chatThinkingEnabled: state.chatThinkingEnabled,
+    voiceModeEnabled: state.voiceModeEnabled,
+    voiceModeBusy: state.voiceModeBusy,
+    ttsEnabled: state.ttsEnabled,
+    ttsBusy: state.ttsBusy,
+    ttsLastError: state.ttsLastError,
+    ttsEngineStatus: state.ttsEngineStatus,
+    ttsVoices: state.ttsVoices,
+    ttsSelectedVoice: state.ttsSelectedVoice,
+    ttsLanguage: state.ttsLanguage,
+    ttsSpeed: state.ttsSpeed,
+    ttsChunkMaxChars: state.ttsChunkMaxChars,
+    ttsChunkPauseMs: state.ttsChunkPauseMs,
+    sttReady: state.sttReady,
+    sttRunning: state.sttRunning,
+    sttState: state.sttState,
+    sttEngine: state.sttEngine,
+    sttModelPath: state.sttModelPath,
+    sttLastTranscript: state.sttLastTranscript,
+    sttLastError: state.sttLastError,
+    sttAutoSubmit: state.sttAutoSubmit,
+    sttVadThreshold: state.sttVadThreshold,
+    sttMinSilenceMs: state.sttMinSilenceMs,
+    sttModels: state.sttModels,
+    sttSelectedModelPath: state.sttSelectedModelPath,
+    sttDownloadBusy: state.sttDownloadBusy,
+    sttDownloadMessage: state.sttDownloadMessage,
+    sttConsoleLines: state.sttConsoleLines,
     llamaRuntime: state.llamaRuntime,
     llamaRuntimeSelectedEngineId: state.llamaRuntimeSelectedEngineId,
     llamaRuntimeModelPath: state.llamaRuntimeModelPath,
@@ -1830,7 +2772,7 @@ function installThinkingToggleDelegation(sendMessage: (text: string) => Promise<
       renderChatMessagesOnly();
       return;
     }
-    renderAndBind(sendMessage);
+    scheduleBatchedRender();
   });
 }
 
@@ -1846,7 +2788,7 @@ function attachTopbarInteractions(sendMessage: (text: string) => Promise<void>):
     toggle.onclick = () => {
       state.displayMode = state.displayMode === "dark" ? "light" : "dark";
       terminalManager.setDisplayMode(state.displayMode);
-      renderAndBind(sendMessage);
+      scheduleBatchedRender();
     };
   }
   const layoutToggle = document.querySelector<HTMLButtonElement>("#layoutOrientationToggle");
@@ -1854,7 +2796,7 @@ function attachTopbarInteractions(sendMessage: (text: string) => Promise<void>):
     layoutToggle.onclick = () => {
       state.layoutOrientation =
         state.layoutOrientation === "landscape" ? "portrait" : "landscape";
-      renderAndBind(sendMessage);
+      scheduleBatchedRender();
     };
   }
 
@@ -1864,7 +2806,7 @@ function attachTopbarInteractions(sendMessage: (text: string) => Promise<void>):
       state.micPermissionBubbleDismissed = false;
       persistMicBubbleDismissed(false);
       await requestMicrophoneAccess();
-      renderAndBind(sendMessage);
+      scheduleBatchedRender();
     };
   }
 
@@ -1873,7 +2815,7 @@ function attachTopbarInteractions(sendMessage: (text: string) => Promise<void>):
     micDismissBtn.onclick = () => {
       state.micPermissionBubbleDismissed = true;
       persistMicBubbleDismissed(true);
-      renderAndBind(sendMessage);
+      scheduleBatchedRender();
     };
   }
 }
@@ -1885,11 +2827,24 @@ function attachSidebarInteractions(sendMessage: (text: string) => Promise<void>)
     tab.onclick = async () => {
       const nextTab = tab.dataset.sidebarTab as SidebarTab | undefined;
       if (!nextTab) return;
+      pushConsoleEntry("debug", "browser", `Sidebar click -> ${nextTab}`);
       state.sidebarTab = nextTab;
+      if (nextTab === "stt") {
+        try {
+          await refreshSttStatus();
+          await refreshSttModels();
+        } catch (error) {
+          pushConsoleEntry("warn", "browser", `STT tab pre-refresh failed: ${String(error)}`);
+        }
+      }
       if (nextTab === "llama_cpp") {
         await refreshLlamaRuntime();
       }
-      renderAndBind(sendMessage);
+      try {
+        scheduleBatchedRender();
+      } catch (error) {
+        pushConsoleEntry("error", "browser", `Tab render failed for ${nextTab}: ${String(error)}`);
+      }
     };
   });
 }
@@ -1903,7 +2858,7 @@ function attachWorkspaceInteractions(sendMessage: (text: string) => Promise<void
     if (tab === "tools") {
       await refreshTools();
     }
-    renderAndBind(sendMessage);
+    scheduleBatchedRender();
   });
 
   const tabButtons = document.querySelectorAll<HTMLButtonElement>("[data-terminal-session-id]");
@@ -1912,7 +2867,7 @@ function attachWorkspaceInteractions(sendMessage: (text: string) => Promise<void
       const sessionId = button.dataset.terminalSessionId;
       if (!sessionId) return;
       state.activeTerminalSessionId = sessionId;
-      renderAndBind(sendMessage);
+      scheduleBatchedRender();
     };
   });
 
@@ -1926,7 +2881,7 @@ function attachWorkspaceInteractions(sendMessage: (text: string) => Promise<void
       await terminalManager.closeSession(sessionId);
       const remaining = terminalManager.listSessions();
       state.activeTerminalSessionId = remaining[0]?.sessionId ?? null;
-      renderAndBind(sendMessage);
+      scheduleBatchedRender();
     };
   });
 
@@ -1943,7 +2898,7 @@ function attachWorkspaceInteractions(sendMessage: (text: string) => Promise<void
           shell ? { shell } : undefined
         );
         state.activeTerminalSessionId = session.sessionId;
-        renderAndBind(sendMessage);
+        scheduleBatchedRender();
         return;
       }
       if (!state.activeTerminalSessionId) return;
@@ -1963,7 +2918,7 @@ function attachWorkspaceInteractions(sendMessage: (text: string) => Promise<void
       const text = buildConsoleCopyText();
       if (!text) {
         pushConsoleEntry("info", "browser", "Console is empty; nothing copied.");
-        renderAndBind(sendMessage);
+        scheduleBatchedRender();
         return;
       }
       try {
@@ -1986,7 +2941,7 @@ function attachWorkspaceInteractions(sendMessage: (text: string) => Promise<void
           pushConsoleEntry("info", "browser", `Copied ${state.consoleEntries.length} console lines.`);
         }
       }
-      renderAndBind(sendMessage);
+      scheduleBatchedRender();
     };
   }
 
@@ -1996,7 +2951,7 @@ function attachWorkspaceInteractions(sendMessage: (text: string) => Promise<void
       const text = buildConsoleCopyText();
       if (!text) {
         pushConsoleEntry("info", "browser", "Console is empty; nothing to save.");
-        renderAndBind(sendMessage);
+        scheduleBatchedRender();
         return;
       }
       const blob = new Blob([text], { type: "text/plain;charset=utf-8" });
@@ -2009,7 +2964,7 @@ function attachWorkspaceInteractions(sendMessage: (text: string) => Promise<void
       document.body.removeChild(anchor);
       URL.revokeObjectURL(url);
       pushConsoleEntry("info", "browser", `Saved ${state.consoleEntries.length} console lines as .txt.`);
-      renderAndBind(sendMessage);
+      scheduleBatchedRender();
     };
   }
 
@@ -2017,7 +2972,7 @@ function attachWorkspaceInteractions(sendMessage: (text: string) => Promise<void
     bindWorkspaceToolsPanel(
       async () => {
         await refreshTools();
-        renderAndBind(sendMessage);
+        scheduleBatchedRender();
       },
       async (toolId, enabled) => {
         if (!clientRef) return;
@@ -2027,7 +2982,7 @@ function attachWorkspaceInteractions(sendMessage: (text: string) => Promise<void
           correlationId: nextCorrelationId()
         });
         await refreshTools();
-        renderAndBind(sendMessage);
+        scheduleBatchedRender();
       }
     );
   }
@@ -2072,10 +3027,17 @@ async function bootstrap(): Promise<void> {
   await refreshConversations();
   await refreshTools();
   await refreshDevicesState();
+  await refreshTtsEngineStatus();
+  await refreshTtsVoices();
+  await refreshSttStatus();
+  await refreshSttModels();
   await refreshLlamaRuntime();
   await refreshModelManagerInstalled();
   if (state.modelManagerCollection === "unsloth_ud") {
     await refreshModelManagerUnslothUdCatalog();
+  }
+  if (state.voiceModeEnabled) {
+    await enableVoiceMode();
   }
   await autoStartLlamaRuntimeIfConfigured();
   await loadConversation(state.conversationId);
@@ -2085,7 +3047,7 @@ async function bootstrap(): Promise<void> {
   });
   if (navigator.mediaDevices?.addEventListener) {
     navigator.mediaDevices.addEventListener("devicechange", () => {
-      void refreshDevicesState().then(() => renderAndBind(sendMessage));
+      void refreshDevicesState().then(() => scheduleBatchedRender());
     });
   }
 
@@ -2093,6 +3055,7 @@ async function bootstrap(): Promise<void> {
     if (
       !event.action.startsWith("llama.runtime") &&
       !isNoisyRuntimeStatusEvent(event) &&
+      !isNoisySttEvent(event) &&
       !isNoisyChatStreamEvent(event)
     ) {
       const payloadText =
@@ -2118,7 +3081,8 @@ async function bootstrap(): Promise<void> {
       const exiting = parseTerminalExit(event.payload);
       if (exiting) {
         terminalManager.markExited(exiting.sessionId);
-        renderAndBind(sendMessage);
+        // Use batched render instead of direct render
+        scheduleBatchedRender();
       }
       return;
     }
@@ -2151,7 +3115,8 @@ async function bootstrap(): Promise<void> {
         (event.stage === "complete" || event.stage === "error") &&
         event.action !== "llama.runtime.status"
       ) {
-        void refreshLlamaRuntime().then(() => renderAndBind(sendMessage));
+        // Use batched render for runtime status changes
+        void refreshLlamaRuntime().then(() => scheduleBatchedRender());
       }
     }
 
@@ -2164,6 +3129,40 @@ async function bootstrap(): Promise<void> {
       }
       if (event.stage === "error") {
         state.modelManagerMessage = `Model manager error: ${safePayloadPreview(event.payload)}`;
+      }
+    }
+
+    if (event.action.startsWith("stt.")) {
+      if (!isNoisySttEvent(event)) {
+        const line = `[${event.stage}] ${event.action} ${safePayloadPreview(event.payload)}`;
+        state.sttConsoleLines.push(line);
+        if (state.sttConsoleLines.length > 200) {
+          state.sttConsoleLines.splice(0, state.sttConsoleLines.length - 200);
+        }
+      }
+      if (event.action === "stt.capture.start" && event.stage === "start") {
+        state.sttRunning = true;
+        state.sttState = "listening";
+        if (state.ttsEnabled) {
+          state.voiceModeEnabled = true;
+          persistVoiceModeEnabled(true);
+        }
+      } else if (
+        event.action === "stt.capture.complete" &&
+        (event.stage === "complete" || event.stage === "error")
+      ) {
+        state.sttRunning = false;
+        state.sttState = "idle";
+        if (state.voiceModeEnabled) {
+          state.voiceModeEnabled = false;
+          persistVoiceModeEnabled(false);
+        }
+      } else if (event.action === "stt.capture.error" || event.action === "stt.transcribe.error") {
+        state.sttLastError = safePayloadPreview(event.payload);
+      } else if (event.action === "stt.transcribe.start") {
+        state.sttState = "transcribing";
+      } else if (event.action === "stt.transcribe.complete") {
+        state.sttState = "listening";
       }
     }
 
@@ -2186,7 +3185,37 @@ async function bootstrap(): Promise<void> {
       }
     }
 
-    renderAndBind(sendMessage);
+    if (event.action === "stt.transcript.final") {
+      const transcript = parseSttTranscriptFinal(event.payload);
+      if (transcript) {
+        const normalized = normalizeChatText(transcript.text);
+        state.sttLastTranscript = normalized;
+        if (normalized && transcript.autoSubmit) {
+          const input = document.querySelector<HTMLTextAreaElement>("#msg");
+          if (input) {
+            input.value = normalized;
+          }
+          if (!state.chatStreaming) {
+            void sendMessage(normalized);
+            return;
+          }
+        }
+      }
+    } else if (event.action === "stt.transcript.partial") {
+      const partial = parseSttTranscriptPartial(event.payload);
+      if (partial) {
+        const normalized = normalizeChatText(partial.text);
+        if (normalized && !state.chatStreaming) {
+          const input = document.querySelector<HTMLTextAreaElement>("#msg");
+          if (input) {
+            input.value = normalized;
+          }
+        }
+      }
+    }
+
+    // Use batched render instead of direct render to reduce flickering
+    scheduleBatchedRender();
   });
 
   async function sendMessage(text: string): Promise<void> {
@@ -2197,7 +3226,7 @@ async function bootstrap(): Promise<void> {
     state.messages.push({ role: "user", text: normalizedUserText });
     state.chatStreaming = true;
     state.activeChatCorrelationId = correlationId;
-    renderAndBind(sendMessage);
+    scheduleBatchedRender();
 
     try {
       const requestPayload = {
@@ -2238,6 +3267,10 @@ async function bootstrap(): Promise<void> {
         }
       }
 
+      if (state.ttsEnabled) {
+        await speakAssistantText(response.assistantMessage);
+      }
+
       await refreshConversations();
     } catch (error) {
       state.events.push({
@@ -2254,11 +3287,13 @@ async function bootstrap(): Promise<void> {
         state.activeChatCorrelationId = null;
       }
       state.chatStreaming = false;
-      renderAndBind(sendMessage);
+      scheduleBatchedRender();
     }
   }
 
-  renderAndBind(sendMessage);
+  scheduleBatchedRender();
+  // Store reference for batched renders
+  sendMessageRef = sendMessage;
   installThinkingToggleDelegation(sendMessage);
 }
 

@@ -388,6 +388,60 @@ body {
   cursor: default;
 }
 
+.tts-voice-select {
+  background: var(--surface-strong);
+  color: var(--ink);
+  min-width: 140px;
+  padding-right: 1.4rem;
+}
+
+.tts-voice-select option {
+  background: var(--panel);
+  color: var(--ink);
+}
+
+.tts-setting-input {
+  background: var(--surface-strong);
+  color: var(--ink);
+  width: 112px;
+}
+
+.stt-console-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.stt-console {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 10px;
+  background: rgba(12, 16, 28, 0.78);
+  min-height: 140px;
+  max-height: 240px;
+  overflow: auto;
+  font-family: "IBM Plex Mono", "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.stt-console-line {
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--muted);
+}
+
+.stt-console-placeholder {
+  opacity: 0.7;
+}
+
+#sttModelUrlInput,
+#sttModelFileNameInput,
+#sttModelSelect {
+  width: 100%;
+}
+
 .sidebar-child-item {
   border: 1px solid var(--line);
   background: var(--surface-strong);
@@ -402,6 +456,14 @@ body {
   border-radius: 8px;
   background: var(--surface-strong);
   overflow: hidden;
+}
+
+.config-section-title {
+  margin: 0.85rem 0 0.4rem;
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: var(--ink);
+  letter-spacing: 0.01em;
 }
 
 .config-row {
@@ -985,7 +1047,7 @@ body {
 }
 
 .console-lines {
-  font: 12px/1.35 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font: 11px/1.35 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   display: grid;
   min-height: 100%;
   align-content: start;
@@ -1010,7 +1072,7 @@ body {
 }
 
 .console-empty {
-  font: 12px/1.35 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font: 11px/1.35 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   color: #8aa0a2;
   padding: 0.5rem;
 }

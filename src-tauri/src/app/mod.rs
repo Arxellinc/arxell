@@ -2,7 +2,11 @@ pub mod chat_service;
 pub mod model_manager_service;
 pub mod permission_service;
 pub mod runtime_service;
+#[cfg(feature = "tauri-runtime")]
+pub mod stt_service;
 pub mod terminal_service;
+#[cfg(feature = "tauri-runtime")]
+pub mod tts_service;
 
 use crate::ipc::IpcLayer;
 use crate::memory::InMemoryMemoryManager;
@@ -17,6 +21,10 @@ pub struct AppContext {
     pub runtime: Arc<runtime_service::LlamaRuntimeService>,
     pub permissions: Arc<permission_service::PermissionService>,
     pub model_manager: Arc<model_manager_service::ModelManagerService>,
+    #[cfg(feature = "tauri-runtime")]
+    pub stt: Arc<stt_service::SttService>,
+    #[cfg(feature = "tauri-runtime")]
+    pub tts: Arc<tts_service::TtsService>,
 }
 
 impl AppContext {
@@ -38,6 +46,10 @@ impl AppContext {
         let runtime = Arc::new(runtime_service::LlamaRuntimeService::new(hub.clone()));
         let permissions = Arc::new(permission_service::PermissionService::new(hub.clone()));
         let model_manager = Arc::new(model_manager_service::ModelManagerService::new(hub.clone()));
+        #[cfg(feature = "tauri-runtime")]
+        let stt = Arc::new(stt_service::SttService::new(hub.clone()));
+        #[cfg(feature = "tauri-runtime")]
+        let tts = Arc::new(tts_service::TtsService::new(hub.clone()));
 
         let ipc = IpcLayer::new(hub, service, terminal);
         Self {
@@ -46,6 +58,10 @@ impl AppContext {
             runtime,
             permissions,
             model_manager,
+            #[cfg(feature = "tauri-runtime")]
+            stt,
+            #[cfg(feature = "tauri-runtime")]
+            tts,
         }
     }
 }
@@ -67,6 +83,8 @@ impl AppContext {
             runtime: Arc::clone(&self.runtime),
             permissions: Arc::clone(&self.permissions),
             model_manager: Arc::clone(&self.model_manager),
+            stt: Arc::clone(&self.stt),
+            tts: Arc::clone(&self.tts),
         }
     }
 }

@@ -321,8 +321,123 @@ export interface DevicesProbeMicrophoneResponse {
   defaultInputName: string | null;
 }
 
+export interface SttStatusRequest {
+  correlationId: string;
+}
+
+export interface SttStatusResponse {
+  correlationId: string;
+  engine: string;
+  ready: boolean;
+  running: boolean;
+  state: string;
+  modelPath: string;
+  autoSubmit: boolean;
+  vadThreshold: number;
+  minSilenceMs: number;
+  lastTranscript?: string;
+  reason?: string;
+}
+
+export interface SttStartRequest {
+  correlationId: string;
+  autoSubmit?: boolean;
+  vadThreshold?: number;
+  minSilenceMs?: number;
+}
+
+export interface SttStartResponse {
+  correlationId: string;
+  started: boolean;
+  state: string;
+}
+
+export interface SttStopRequest {
+  correlationId: string;
+}
+
+export interface SttStopResponse {
+  correlationId: string;
+  stopped: boolean;
+  state: string;
+}
+
+export interface SttModelRecord {
+  id: string;
+  name: string;
+  path: string;
+  sizeMb: number;
+  isActive: boolean;
+  isBundled: boolean;
+}
+
+export interface SttListModelsRequest {
+  correlationId: string;
+}
+
+export interface SttListModelsResponse {
+  correlationId: string;
+  models: SttModelRecord[];
+}
+
+export interface SttSetModelRequest {
+  correlationId: string;
+  modelPath: string;
+}
+
+export interface SttSetModelResponse {
+  correlationId: string;
+  modelPath: string;
+  applied: boolean;
+}
+
+export interface SttDownloadModelRequest {
+  correlationId: string;
+  url: string;
+  fileName?: string;
+}
+
+export interface SttDownloadModelResponse {
+  correlationId: string;
+  model: SttModelRecord;
+}
+
 export interface AppVersionResponse {
   version: string;
+}
+
+export interface TtsSpeakRequest {
+  correlationId: string;
+  text: string;
+  voice?: string;
+  language?: string;
+  speed?: number;
+}
+
+export interface TtsSpeakResponse {
+  correlationId: string;
+  engine: string;
+  audioBytes: number[];
+}
+
+export interface TtsEngineStatusRequest {
+  correlationId: string;
+}
+
+export interface TtsEngineStatusResponse {
+  correlationId: string;
+  engine: string;
+  ready: boolean;
+  reason?: string;
+}
+
+export interface TtsListVoicesRequest {
+  correlationId: string;
+}
+
+export interface TtsListVoicesResponse {
+  correlationId: string;
+  voices: string[];
 }
 
 export interface ChatStreamStartPayload {

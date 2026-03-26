@@ -2,7 +2,9 @@ import type {
   ConversationSummaryRecord,
   LlamaRuntimeStatusResponse,
   ModelManagerHfCandidate,
-  ModelManagerInstalledModel
+  ModelManagerInstalledModel,
+  SttModelRecord,
+  TtsEngineStatusResponse
 } from "../contracts";
 import type { IconName } from "../icons";
 
@@ -45,6 +47,33 @@ export interface PrimaryPanelRenderState {
   devices: DevicesState;
   conversations: ConversationSummaryRecord[];
   chatThinkingEnabled: boolean;
+  voiceModeEnabled: boolean;
+  voiceModeBusy: boolean;
+  ttsEnabled: boolean;
+  ttsBusy: boolean;
+  ttsLastError: string | null;
+  ttsEngineStatus: TtsEngineStatusResponse | null;
+  ttsVoices: string[];
+  ttsSelectedVoice: string;
+  ttsLanguage: string;
+  ttsSpeed: number;
+  ttsChunkMaxChars: number;
+  ttsChunkPauseMs: number;
+  sttReady: boolean;
+  sttRunning: boolean;
+  sttState: string;
+  sttEngine: string;
+  sttModelPath: string;
+  sttLastTranscript: string;
+  sttLastError: string | null;
+  sttAutoSubmit: boolean;
+  sttVadThreshold: number;
+  sttMinSilenceMs: number;
+  sttModels: SttModelRecord[];
+  sttSelectedModelPath: string;
+  sttDownloadBusy: boolean;
+  sttDownloadMessage: string | null;
+  sttConsoleLines: string[];
   llamaRuntime: LlamaRuntimeStatusResponse | null;
   llamaRuntimeSelectedEngineId: string;
   llamaRuntimeModelPath: string;
@@ -99,9 +128,23 @@ export interface PrimaryPanelBindings {
   onCreateConversation: () => Promise<void>;
   onClearChat: () => Promise<void>;
   onToggleChatThinking: () => Promise<void>;
+  onToggleVoiceMode: () => Promise<void>;
   onDevicesRefresh: () => Promise<void>;
   onRequestMicrophoneAccess: () => Promise<void>;
   onRequestSpeakerAccess: () => Promise<void>;
+  onToggleTtsEnabled: () => Promise<void>;
+  onTtsCheckEngine: () => Promise<void>;
+  onTtsTestSpeak: () => Promise<void>;
+  onTtsSetVoice: (voice: string) => Promise<void>;
+  onTtsSetLanguage: (language: string) => Promise<void>;
+  onTtsSetSpeed: (speed: number) => Promise<void>;
+  onTtsSetChunking: (args: { maxChars: number; pauseMs: number }) => Promise<void>;
+  onSttRefresh: () => Promise<void>;
+  onSttToggle: () => Promise<void>;
+  onSttSetAutoSubmit: (enabled: boolean) => Promise<void>;
+  onSttSetVad: (args: { threshold: number; minSilenceMs: number }) => Promise<void>;
+  onSttSetModelPath: (modelPath: string) => Promise<void>;
+  onSttDownloadModel: (args: { url: string; fileName?: string }) => Promise<void>;
   onSelectConversation: (conversationId: string) => Promise<void>;
   onExportConversation: (conversationId: string) => Promise<void>;
   onDeleteConversation: (conversationId: string) => Promise<void>;

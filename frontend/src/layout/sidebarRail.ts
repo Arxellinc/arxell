@@ -2,7 +2,11 @@ import { iconHtml } from "../icons";
 import { APP_ICON } from "../icons/map";
 import type { SidebarTab } from "../panels/types";
 
-export function renderSidebarRail(tab: SidebarTab, llamaRuntimeOnline: boolean): string {
+export function renderSidebarRail(
+  tab: SidebarTab,
+  llamaRuntimeOnline: boolean,
+  ttsReady: boolean
+): string {
   return `
     <aside class="left-sidebar" id="leftSidebar">
       <nav class="sidebar-nav" aria-label="Primary">
@@ -20,6 +24,7 @@ export function renderSidebarRail(tab: SidebarTab, llamaRuntimeOnline: boolean):
         </button>
         <button type="button" class="sidebar-icon-btn ${tab === "tts" ? "is-active" : ""}" data-sidebar-tab="tts" data-title="TTS" aria-label="TTS">
           ${iconHtml(APP_ICON.sidebar.tts, { size: 24, tone: "dark", label: "TTS" })}
+          ${ttsReady ? '<span class="sidebar-status-dot" aria-hidden="true"></span>' : ""}
         </button>
         <button type="button" class="sidebar-icon-btn ${tab === "stt" ? "is-active" : ""}" data-sidebar-tab="stt" data-title="STT" aria-label="STT">
           ${iconHtml(APP_ICON.sidebar.stt, { size: 24, tone: "dark", label: "STT" })}

@@ -58,6 +58,11 @@ jobs:
           cache: npm
           cache-dependency-path: frontend/package-lock.json
 
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
       - name: Verify version consistency
         run: node scripts/version-sync.mjs --check
 
@@ -89,6 +94,15 @@ jobs:
       - name: Build frontend
         working-directory: frontend
         run: npm run build
+
+      - name: Prepare Kokoro runtime and quantized model
+        run: python scripts/prepare_kokoro_runtime.py --runtime-out src-tauri/resources/kokoro-runtime --model-out src-tauri/resources/voice/model_quantized.onnx --python-series 3.11
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          KOKORO_QUANT_MODEL_URL: https://huggingface.co/onnx-community/Kokoro-82M-v1.0-ONNX/resolve/main/onnx/model_quantized.onnx?download=true
+
+      - name: Verify Kokoro runtime archive present for target
+        run: python scripts/verify_kokoro_runtime_archive.py
 
       - name: Prepare bundled llama.cpp runtimes
         shell: bash

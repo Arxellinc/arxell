@@ -18,6 +18,11 @@ use app_foundation::contracts::{
     ModelManagerDownloadHfResponse, ModelManagerListCatalogCsvRequest,
     ModelManagerListCatalogCsvResponse, ModelManagerListInstalledRequest,
     ModelManagerListInstalledResponse, ModelManagerSearchHfRequest, ModelManagerSearchHfResponse,
+    SttDownloadModelRequest, SttDownloadModelResponse, SttListModelsRequest,
+    SttListModelsResponse, SttSetModelRequest, SttSetModelResponse, SttStartRequest,
+    SttStartResponse, SttStatusRequest, SttStatusResponse, SttStopRequest, SttStopResponse,
+    TtsEngineStatusRequest, TtsEngineStatusResponse, TtsListVoicesRequest, TtsListVoicesResponse,
+    TtsSpeakRequest, TtsSpeakResponse,
     TerminalCloseSessionRequest, TerminalCloseSessionResponse, TerminalInputRequest,
     TerminalInputResponse, TerminalOpenSessionRequest, TerminalOpenSessionResponse,
     TerminalResizeRequest, TerminalResizeResponse, WorkspaceToolSetEnabledRequest,
@@ -77,6 +82,8 @@ fn main() {
         runtime: std::sync::Arc::clone(&app_context.runtime),
         permissions: std::sync::Arc::clone(&app_context.permissions),
         model_manager: std::sync::Arc::clone(&app_context.model_manager),
+        stt: std::sync::Arc::clone(&app_context.stt),
+        tts: std::sync::Arc::clone(&app_context.tts),
     };
 
     tauri::Builder::default()
@@ -129,7 +136,16 @@ fn main() {
             cmd_model_manager_search_hf,
             cmd_model_manager_download_hf,
             cmd_model_manager_delete_installed,
-            cmd_model_manager_list_catalog_csv
+            cmd_model_manager_list_catalog_csv,
+            cmd_stt_status,
+            cmd_stt_start,
+            cmd_stt_stop,
+            cmd_stt_list_models,
+            cmd_stt_set_model,
+            cmd_stt_download_model,
+            cmd_tts_check_engine,
+            cmd_tts_speak,
+            cmd_tts_list_voices
         ])
         .run(tauri::generate_context!())
         .expect("failed to run tauri app");
@@ -465,6 +481,136 @@ async fn cmd_model_manager_list_catalog_csv(
         list_name: request.list_name,
         rows,
     })
+}
+
+#[cfg(feature = "tauri-runtime")]
+#[tauri::command]
+async fn cmd_tts_check_engine(
+    app: tauri::AppHandle,
+    state: State<'_, TauriBridgeState>,
+    request: TtsEngineStatusRequest,
+) -> Result<TtsEngineStatusResponse, String> {
+    Ok(state
+        .tts
+        .check_engine_status(&app, request.correlation_id.as_str()))
+}
+
+#[cfg(feature = "tauri-runtime")]
+#[tauri::command]
+async fn cmd_tts_speak(
+    app: tauri::AppHandle,
+    state: State<'_, TauriBridgeState>,
+    request: TtsSpeakRequest,
+) -> Result<TtsSpeakResponse, String> {
+    let service = std::sync::Arc::clone(&state.tts);
+    tokio::task::spawn_blocking(move || {
+        service.speak(
+            &app,
+            request.correlation_id.as_str(),
+            request.text.as_str(),
+            request.voice.as_deref(),
+            request.language.as_deref(),
+            request.speed,
+        )
+    })
+    .await
+    .map_err(|e| format!("tts speak task failed: {e}"))?
+}
+
+#[cfg(feature = "tauri-runtime")]
+#[tauri::command]
+async fn cmd_tts_list_voices(
+    app: tauri::AppHandle,
+    state: State<'_, TauriBridgeState>,
+    request: TtsListVoicesRequest,
+) -> Result<TtsListVoicesResponse, String> {
+    let service = std::sync::Arc::clone(&state.tts);
+    let correlation_id = request.correlation_id.clone();
+    let voices = tokio::task::spawn_blocking(move || {
+        service.list_voices(&app, correlation_id.as_str())
+    })
+    .await
+    .map_err(|e| format!("tts list voices task failed: {e}"))??;
+    Ok(TtsListVoicesResponse {
+        correlation_id: request.correlation_id,
+        voices,
+    })
+}
+
+#[cfg(feature = "tauri-runtime")]
+#[tauri::command]
+async fn cmd_stt_status(
+    app: tauri::AppHandle,
+    state: State<'_, TauriBridgeState>,
+    request: SttStatusRequest,
+) -> Result<SttStatusResponse, String> {
+    let service = std::sync::Arc::clone(&state.stt);
+    tokio::task::spawn_blocking(move || service.status(&app, request))
+        .await
+        .map_err(|e| format!("stt status task failed: {e}"))?
+}
+
+#[cfg(feature = "tauri-runtime")]
+#[tauri::command]
+async fn cmd_stt_start(
+    app: tauri::AppHandle,
+    state: State<'_, TauriBridgeState>,
+    request: SttStartRequest,
+) -> Result<SttStartResponse, String> {
+    let service = std::sync::Arc::clone(&state.stt);
+    tokio::task::spawn_blocking(move || service.start_listening(&app, request))
+        .await
+        .map_err(|e| format!("stt start task failed: {e}"))?
+}
+
+#[cfg(feature = "tauri-runtime")]
+#[tauri::command]
+async fn cmd_stt_stop(
+    state: State<'_, TauriBridgeState>,
+    request: SttStopRequest,
+) -> Result<SttStopResponse, String> {
+    let service = std::sync::Arc::clone(&state.stt);
+    tokio::task::spawn_blocking(move || service.stop_listening(request))
+        .await
+        .map_err(|e| format!("stt stop task failed: {e}"))?
+}
+
+#[cfg(feature = "tauri-runtime")]
+#[tauri::command]
+async fn cmd_stt_list_models(
+    app: tauri::AppHandle,
+    state: State<'_, TauriBridgeState>,
+    request: SttListModelsRequest,
+) -> Result<SttListModelsResponse, String> {
+    let service = std::sync::Arc::clone(&state.stt);
+    tokio::task::spawn_blocking(move || service.list_models(&app, request))
+        .await
+        .map_err(|e| format!("stt list models task failed: {e}"))?
+}
+
+#[cfg(feature = "tauri-runtime")]
+#[tauri::command]
+async fn cmd_stt_set_model(
+    state: State<'_, TauriBridgeState>,
+    request: SttSetModelRequest,
+) -> Result<SttSetModelResponse, String> {
+    let service = std::sync::Arc::clone(&state.stt);
+    tokio::task::spawn_blocking(move || service.set_model(request))
+        .await
+        .map_err(|e| format!("stt set model task failed: {e}"))?
+}
+
+#[cfg(feature = "tauri-runtime")]
+#[tauri::command]
+async fn cmd_stt_download_model(
+    app: tauri::AppHandle,
+    state: State<'_, TauriBridgeState>,
+    request: SttDownloadModelRequest,
+) -> Result<SttDownloadModelResponse, String> {
+    let service = std::sync::Arc::clone(&state.stt);
+    tokio::task::spawn_blocking(move || service.download_model(&app, request))
+        .await
+        .map_err(|e| format!("stt download model task failed: {e}"))?
 }
 
 #[cfg(feature = "tauri-runtime")]

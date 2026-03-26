@@ -28,8 +28,17 @@
     "active": false,
     "targets": "all",
     "resources": [
+      "resources/voice/*",
+      "resources/voice/**/*",
+      "resources/scripts/voice/*",
+      "resources/scripts/voice/**/*",
+      "resources/kokoro-runtime/*",
+      "resources/kokoro-runtime/**/*",
       "resources/llama-runtime/*",
-      "resources/llama-runtime/**/*"
+      "resources/llama-runtime/**/*",
+      "resources/whisper/*",
+      "resources/whisper/**/*",
+      "resources/silero_vad.onnx"
     ]
   }
 }
