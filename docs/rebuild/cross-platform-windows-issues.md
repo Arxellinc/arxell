@@ -27,6 +27,27 @@ whisper-rs = { path = "../vendor/whisper-rs", optional = true }
 
 **Verification:** On Windows, the app will now use whisper-rs for local STT when `stt_engine` is set to `"whisper_rs"` (the default).
 
+### 2. Vulkan Backend for Windows (FIXED 2026-03-26)
+
+**File:** `.github/workflows/release-tauri.yml`
+
+**Previous Issue:** The Windows release was built with `--no-default-features --features custom-protocol` which disabled all inference backends. Without any GPU backend (vulkan/cuda/metal/rocm), the app could not load local GGUF models.
+
+**Fix Applied:** Added Vulkan and whisper-rs-stt features to the Windows build:
+```yaml
+- platform: "windows-latest"
+  args: "-- --no-default-features --features custom-protocol,vulkan,whisper-rs-stt"
+```
+
+**Why Vulkan:**
+- Works on most modern Intel integrated graphics (Gen 8+)
+- Works on AMD GPUs (RX 400 series and newer)
+- Works on NVIDIA GPUs (GTX 900 series and newer)
+- Does not require proprietary drivers (unlike CUDA)
+- Works on laptops with integrated graphics
+
+**Verification:** After rebuilding and installing, the welcome modal should allow downloading and using local GGUF models.
+
 ### 2. Visual Studio Build Tools Required
 
 **File:** Referenced in `src-tauri/Cargo.toml` (various dependencies)
