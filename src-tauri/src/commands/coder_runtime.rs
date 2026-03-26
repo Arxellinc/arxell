@@ -1294,6 +1294,14 @@ async fn spawn_responses_proxy(
     cmd.stderr(std::process::Stdio::null());
     cmd.kill_on_drop(true);
 
+    // Hide command window on Windows
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+
     let mut child = cmd.spawn().ok()?;
     let stdout = child.stdout.take()?;
 

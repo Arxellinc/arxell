@@ -1622,64 +1622,80 @@ fn query_windows_gpu_usage() -> Vec<GpuUsage> {
 }
 
 /// Run one Windows GPU probe and write the result into the shared cache.
-/// Executes a single PowerShell process that gathers both controller info and
-/// GPU-engine utilization in one shot, avoiding double process-spawn overhead.
-/// The `Get-Counter` call samples for ~1 s, which is acceptable here because
-/// this function only runs on the dedicated probe thread, never on the 1 s loop.
+/// Uses faster CLI alternatives (wmic/typeperf) instead of PowerShell to avoid
+/// command window popups and reduce overhead.
+/// Executes in one shot, avoiding double process-spawn overhead.
 #[cfg(target_os = "windows")]
 fn windows_gpu_probe_once() {
-    // One PowerShell invocation fetches controller names/VRAM and utilization.
-    // @() forces an array even when there is only one adapter, keeping the JSON
-    // shape consistent for the parser below.
-    let combined_script = r#"
-      $controllers = @(Get-CimInstance Win32_VideoController | Select-Object Name,AdapterRAM)
-      $samples = (Get-Counter '\GPU Engine(*)\Utilization Percentage' -ErrorAction SilentlyContinue).CounterSamples
-      $util = if ($samples) { ($samples | Measure-Object -Property CookedValue -Sum).Sum } else { 0 }
-      if ($null -eq $util) { $util = 0 }
-      [PSCustomObject]@{ controllers = $controllers; util = [double]$util } | ConvertTo-Json -Compress -Depth 3
-    "#;
+    // wmic is much faster than PowerShell for getting GPU info
+    let gpu_info = run_windows_command_hidden(
+        "wmic",
+        &["path", "Win32_VideoController", "get", "Name,AdapterRAM", "/format:csv"],
+    );
 
-    let output = match run_windows_command_hidden(
-        "powershell",
-        &["-NoProfile", "-NonInteractive", "-Command", combined_script],
-    ) {
-        Some(o) if o.status.success() => o,
-        _ => return,
-    };
-
-    let txt = String::from_utf8_lossy(&output.stdout);
-    let value = match serde_json::from_str::<serde_json::Value>(&txt) {
-        Ok(v) => v,
-        Err(_) => return,
-    };
-
-    let util = value.get("util").and_then(|v| v.as_f64()).map(|v| v as f32);
+    // typeperf is faster than Get-Counter for GPU utilization
+    // -si 1 means 1 second sample interval, -sc 1 means 1 sample
+    // Using raw string to avoid escape issues with backslashes
+    let counter_path = r#"\GPU Engine(*)\Utilization Percentage"#;
+    let util_output = run_windows_command_hidden(
+        "typeperf",
+        &[&format!("\"{}\"", counter_path), "-si", "1", "-sc", "1", "-y"],
+    );
 
     let mut out: Vec<GpuUsage> = Vec::new();
-    if let Some(controllers) = value.get("controllers").and_then(|v| v.as_array()) {
-        for (idx, item) in controllers.iter().enumerate() {
-            let adapter_ram = item.get("AdapterRAM").and_then(|v| v.as_u64());
-            out.push(GpuUsage {
-                id: format!("windows:gpu{}", idx),
-                // Assign the total utilization to the first adapter; multi-GPU
-                // splits are not available from the aggregate counter path.
-                utilization_percent: if idx == 0 { util } else { None },
-                memory_total_mb: adapter_ram.map(|b| b / (1024 * 1024)),
-                memory_used_mb: None,
-            });
+
+    // Parse wmic output (CSV format with header "Node,Name,AdapterRAM")
+    if let Some(output) = gpu_info {
+        if output.status.success() {
+            let txt = String::from_utf8_lossy(&output.stdout);
+            for line in txt.lines().skip(1) {  // Skip header
+                let parts: Vec<&str> = line.split(',').collect();
+                if parts.len() >= 3 {
+                    let name = parts[1].trim();
+                    let ram = parts[2].trim().parse::<u64>().ok();
+                    if !name.is_empty() {
+                        out.push(GpuUsage {
+                            id: format!("windows:gpu{}", out.len()),
+                            utilization_percent: None,  // Will be set from typeperf
+                            memory_total_mb: ram.map(|b| b / (1024 * 1024)),
+                            memory_used_mb: None,
+                        });
+                    }
+                }
+            }
         }
     }
 
-    // Ensure at least one entry when no controller info was returned.
-    if out.is_empty() {
-        if let Some(u) = util {
-            out.push(GpuUsage {
-                id: "windows:gpu0".to_string(),
-                utilization_percent: Some(u),
-                memory_total_mb: None,
-                memory_used_mb: None,
-            });
+    // Parse typeperf output for utilization
+    // Output format: timestamp,value1,value2,...
+    // The GPU Engine counters return multiple values (one per engine)
+    if let Some(output) = util_output {
+        if output.status.success() {
+            let txt = String::from_utf8_lossy(&output.stdout);
+            if let Some(last_line) = txt.lines().last() {
+                let values: Vec<&str> = last_line.split(',').collect();
+                // Skip timestamp (first column), sum up all GPU engine values
+                let total_util: f32 = values.iter()
+                    .skip(1)
+                    .filter_map(|v| v.trim().parse::<f32>().ok())
+                    .sum();
+                
+                // Apply to first GPU (or all if we can't distinguish)
+                if let Some(gpu) = out.first_mut() {
+                    gpu.utilization_percent = Some(total_util);
+                }
+            }
         }
+    }
+
+    // Ensure at least one entry if we got nothing
+    if out.is_empty() {
+        out.push(GpuUsage {
+            id: "windows:gpu0".to_string(),
+            utilization_percent: None,
+            memory_total_mb: None,
+            memory_used_mb: None,
+        });
     }
 
     if let Ok(mut cache) = WINDOWS_GPU_USAGE_CACHE.lock() {
