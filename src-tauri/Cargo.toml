@@ -21,7 +21,7 @@ zip = { version = "2", default-features = false, features = ["deflate"] }
 tar = "0.4"
 flate2 = "1"
 cpal = "0.15"
-whisper-rs = { path = "../../copy/vendor/whisper-rs", optional = true }
+whisper-rs = { path = "vendor/whisper-rs", optional = true }
 tract-onnx = { version = "0.21", optional = true }
 
 [build-dependencies]
