@@ -21,7 +21,7 @@ jobs:
           - platform: "windows-latest"
             env:
               WHISPER_DONT_GENERATE_BINDINGS: "1"
-            args: "-- --no-default-features --features custom-protocol,vulkan,whisper-rs-stt"
+            args: "-- --no-default-features --features custom-protocol,whisper-rs-stt"
 
     runs-on: ${{ matrix.platform }}
     steps:
@@ -88,14 +88,6 @@ jobs:
           choco install llvm -y
           echo "C:\Program Files\LLVM\bin" >> $env:GITHUB_PATH
           echo "LIBCLANG_PATH=C:\Program Files\LLVM\lib" >> $env:GITHUB_ENV
-
-      - name: Install Windows deps for Vulkan SDK
-        if: matrix.platform == 'windows-latest'
-        run: |
-          $vulkanInstaller = "$env:TEMP\vulkansdk.msi"
-          Invoke-WebRequest -Uri "https://sdk.lunarg.com/sdk/download/1.3.280.0/windows/VulkanSDK-1.3.280.0-Installer.msi" -OutFile $vulkanInstaller
-          Start-Process msiexec.exe -ArgumentList "/i $vulkanInstaller /quiet /norestart" -Wait
-          echo "VULKAN_SDK=C:\VulkanSDK\1.3.280.0" >> $env:GITHUB_ENV
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
