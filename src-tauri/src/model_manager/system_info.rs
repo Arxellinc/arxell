@@ -1630,7 +1630,13 @@ fn windows_gpu_probe_once() {
     // wmic is much faster than PowerShell for getting GPU info
     let gpu_info = run_windows_command_hidden(
         "wmic",
-        &["path", "Win32_VideoController", "get", "Name,AdapterRAM", "/format:csv"],
+        &[
+            "path",
+            "Win32_VideoController",
+            "get",
+            "Name,AdapterRAM",
+            "/format:csv",
+        ],
     );
 
     // typeperf is faster than Get-Counter for GPU utilization
@@ -1639,7 +1645,14 @@ fn windows_gpu_probe_once() {
     let counter_path = r#"\GPU Engine(*)\Utilization Percentage"#;
     let util_output = run_windows_command_hidden(
         "typeperf",
-        &[&format!("\"{}\"", counter_path), "-si", "1", "-sc", "1", "-y"],
+        &[
+            &format!("\"{}\"", counter_path),
+            "-si",
+            "1",
+            "-sc",
+            "1",
+            "-y",
+        ],
     );
 
     let mut out: Vec<GpuUsage> = Vec::new();
@@ -1648,7 +1661,8 @@ fn windows_gpu_probe_once() {
     if let Some(output) = gpu_info {
         if output.status.success() {
             let txt = String::from_utf8_lossy(&output.stdout);
-            for line in txt.lines().skip(1) {  // Skip header
+            for line in txt.lines().skip(1) {
+                // Skip header
                 let parts: Vec<&str> = line.split(',').collect();
                 if parts.len() >= 3 {
                     let name = parts[1].trim();
@@ -1656,7 +1670,7 @@ fn windows_gpu_probe_once() {
                     if !name.is_empty() {
                         out.push(GpuUsage {
                             id: format!("windows:gpu{}", out.len()),
-                            utilization_percent: None,  // Will be set from typeperf
+                            utilization_percent: None, // Will be set from typeperf
                             memory_total_mb: ram.map(|b| b / (1024 * 1024)),
                             memory_used_mb: None,
                         });
@@ -1675,11 +1689,12 @@ fn windows_gpu_probe_once() {
             if let Some(last_line) = txt.lines().last() {
                 let values: Vec<&str> = last_line.split(',').collect();
                 // Skip timestamp (first column), sum up all GPU engine values
-                let total_util: f32 = values.iter()
+                let total_util: f32 = values
+                    .iter()
                     .skip(1)
                     .filter_map(|v| v.trim().parse::<f32>().ok())
                     .sum();
-                
+
                 // Apply to first GPU (or all if we can't distinguish)
                 if let Some(gpu) = out.first_mut() {
                     gpu.utilization_percent = Some(total_util);
