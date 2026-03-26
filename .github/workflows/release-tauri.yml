@@ -19,6 +19,8 @@ jobs:
           - platform: "macos-latest"
             args: "-- --no-default-features --features custom-protocol"
           - platform: "windows-latest"
+            env:
+              WHISPER_DONT_GENERATE_BINDINGS: "1"
             args: "-- --no-default-features --features custom-protocol,vulkan,whisper-rs-stt"
 
     runs-on: ${{ matrix.platform }}
