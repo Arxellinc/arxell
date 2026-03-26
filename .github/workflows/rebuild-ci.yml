@@ -23,6 +23,8 @@ on:
       - "apps/**"
       - "package.json"
       - "package-lock.json"
+      - "tsconfig.json"
+      - "scripts/**"
 
 concurrency:
   group: rebuild-ci-${{ github.ref }}
