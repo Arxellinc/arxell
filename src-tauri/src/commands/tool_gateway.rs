@@ -1,4 +1,6 @@
-use arx_application::{EventPublisher as AppEventPublisher, InMemoryToolRegistry, ToolRunInput, ToolRunner};
+use arx_application::{
+    EventPublisher as AppEventPublisher, InMemoryToolRegistry, ToolRunInput, ToolRunner,
+};
 use arx_domain::{
     tool::ToolContext, AppEvent, CorrelationId, DomainError, RunId, Tool, ToolDescriptor,
     ToolInput, ToolOutput,
@@ -1957,7 +1959,10 @@ mod tests {
             )
             .unwrap();
         let value: serde_json::Value = serde_json::from_str(&output.payload_json).unwrap();
-        assert_eq!(value.get("content").and_then(|v| v.as_str()), Some("hello-tier1"));
+        assert_eq!(
+            value.get("content").and_then(|v| v.as_str()),
+            Some("hello-tier1")
+        );
 
         let _ = fs::remove_dir_all(root);
     }

@@ -76,11 +76,7 @@ pub struct AgentExecutionUpdate {
 }
 
 pub trait AgentLoopExecutor: Send + Sync {
-    fn step(
-        &self,
-        prompt: &str,
-        step_index: usize,
-    ) -> Result<AgentExecutionUpdate, DomainError>;
+    fn step(&self, prompt: &str, step_index: usize) -> Result<AgentExecutionUpdate, DomainError>;
 }
 
 pub struct BoundedAgentResult {
@@ -95,7 +91,10 @@ pub struct RunBoundedAgentUseCase<'a> {
 impl<'a> RunBoundedAgentUseCase<'a> {
     pub fn execute(&self, input: BoundedAgentInput) -> Result<BoundedAgentResult, DomainError> {
         if input.settings.max_steps == 0 {
-            return Err(DomainError::validation("max_steps", "must be greater than zero"));
+            return Err(DomainError::validation(
+                "max_steps",
+                "must be greater than zero",
+            ));
         }
         if input.settings.max_duration_ms == 0 {
             return Err(DomainError::validation(

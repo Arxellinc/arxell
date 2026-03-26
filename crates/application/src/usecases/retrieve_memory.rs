@@ -22,7 +22,10 @@ impl<'a> RetrieveMemoryUseCase<'a> {
             return Err(DomainError::validation("query", "must not be empty"));
         }
         if input.limit == 0 {
-            return Err(DomainError::validation("limit", "must be greater than zero"));
+            return Err(DomainError::validation(
+                "limit",
+                "must be greater than zero",
+            ));
         }
         let items = self
             .retriever
