@@ -211,7 +211,14 @@ jobs:
         run: cargo clean --manifest-path src-tauri/Cargo.toml
 
       - name: Cargo check smoke
+        if: matrix.os != 'windows-latest'
         run: cargo check --manifest-path src-tauri/Cargo.toml --no-default-features --locked
+
+      - name: Cargo check smoke (Windows - no whisper-rs)
+        if: matrix.os == 'windows-latest'
+        run: cargo check --manifest-path src-tauri/Cargo.toml --no-default-features --locked
+        env:
+          WHISPER_DONT_GENERATE_BINDINGS: "1"
 
       - name: Platform smoke script hook
         shell: bash
