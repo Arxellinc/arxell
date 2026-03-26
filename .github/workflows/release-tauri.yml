@@ -82,6 +82,13 @@ jobs:
           echo "BINDGEN_EXTRA_CLANG_ARGS=-I$LLVM_PREFIX/include" >> "$GITHUB_ENV"
           echo "$LLVM_PREFIX/bin" >> "$GITHUB_PATH"
 
+      - name: Install Windows deps for bindgen (libclang)
+        if: matrix.platform == 'windows-latest'
+        run: |
+          choco install llvm -y
+          echo "C:\Program Files\LLVM\bin" >> $env:GITHUB_PATH
+          echo "LIBCLANG_PATH=C:\Program Files\LLVM\lib" >> $env:GITHUB_ENV
+
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
 
