@@ -157,6 +157,35 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Install Linux deps for Tauri
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libgtk-3-dev \
+            libsoup-3.0-dev \
+            libwebkit2gtk-4.1-dev \
+            libjavascriptcoregtk-4.1-dev \
+            libasound2-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            pkg-config \
+            build-essential \
+            curl \
+            wget \
+            file \
+            libssl-dev \
+            libglib2.0-dev
+
+      - name: Install macOS deps for bindgen (libclang)
+        if: matrix.os == 'macos-latest'
+        run: |
+          brew install llvm
+          LLVM_PREFIX="$(brew --prefix llvm)"
+          echo "LIBCLANG_PATH=$LLVM_PREFIX/lib" >> "$GITHUB_ENV"
+          echo "BINDGEN_EXTRA_CLANG_ARGS=-I$LLVM_PREFIX/include" >> "$GITHUB_ENV"
+          echo "$LLVM_PREFIX/bin" >> "$GITHUB_PATH"
+
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
 
