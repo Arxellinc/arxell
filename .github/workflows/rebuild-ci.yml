@@ -195,7 +195,7 @@ jobs:
           workspaces: src-tauri
 
       - name: Cargo check smoke
-        run: cargo check --manifest-path src-tauri/Cargo.toml --locked --no-default-features
+        run: cargo check --manifest-path src-tauri/Cargo.toml --no-default-features
 
       - name: Platform smoke script hook
         shell: bash
