@@ -243,7 +243,17 @@ jobs:
             curl \
             wget \
             file \
-            libssl-dev
+            libssl-dev \
+            libglib2.0-dev
+
+      - name: Install macOS deps for bindgen (libclang)
+        if: matrix.os == 'macos-latest'
+        run: |
+          brew install llvm
+          LLVM_PREFIX="$(brew --prefix llvm)"
+          echo "LIBCLANG_PATH=$LLVM_PREFIX/lib" >> "$GITHUB_ENV"
+          echo "BINDGEN_EXTRA_CLANG_ARGS=-I$LLVM_PREFIX/include" >> "$GITHUB_ENV"
+          echo "$LLVM_PREFIX/bin" >> "$GITHUB_PATH"
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
