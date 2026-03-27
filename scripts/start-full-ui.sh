@@ -9,8 +9,8 @@ kill_stale_instances() {
   local patterns=(
     "target/debug/app-foundation"
     "cargo run --features tauri-runtime"
-    "$HOME/.local/share/com.refactor.ai/llama-runtime/.*/llama-server"
-    "$HOME/.local/share/com.refactor.ai/llama-runtime/.*/llama-server.exe"
+    "$HOME/.local/share/com.arxell.lite/llama-runtime/.*/llama-server"
+    "$HOME/.local/share/com.arxell.lite/llama-runtime/.*/llama-server.exe"
     "$ROOT_DIR/.*/vite"
     "$ROOT_DIR/frontend.*vite"
     "$ROOT_DIR/frontend.*npm run dev"
@@ -22,6 +22,22 @@ kill_stale_instances() {
       pkill -f "$pattern" || true
     fi
   done
+}
+
+wait_for_frontend() {
+  local max_tries=40
+  local try=1
+  while (( try <= max_tries )); do
+    if curl -sSf "http://127.0.0.1:5173" >/dev/null 2>&1; then
+      echo "[start] frontend is ready at http://127.0.0.1:5173"
+      return 0
+    fi
+    sleep 0.25
+    ((try++))
+  done
+
+  echo "[start] frontend did not become ready on http://127.0.0.1:5173" >&2
+  return 1
 }
 
 cleanup() {
@@ -37,9 +53,11 @@ trap cleanup EXIT INT TERM
 
 kill_stale_instances
 
-echo "[start] frontend: npm run dev"
-(cd "$FRONTEND_DIR" && npm run dev) &
+echo "[start] frontend: npm run dev -- --host 127.0.0.1 --port 5173 --strictPort"
+(cd "$FRONTEND_DIR" && npm run dev -- --host 127.0.0.1 --port 5173 --strictPort) &
 FRONTEND_PID=$!
+
+wait_for_frontend
 
 echo "[start] tauri: cargo run --features tauri-runtime"
 cd "$TAURI_DIR"

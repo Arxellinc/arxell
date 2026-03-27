@@ -24,6 +24,7 @@ import trash2 from "./trash-2.svg?raw";
 import volume2 from "./volume-2.svg?raw";
 import wrench from "./wrench.svg?raw";
 import cpu from "./cpu.svg?raw";
+import audioLines from "./audio-lines.svg?raw";
 
 const ICON_SVGS = {
   bot,
@@ -51,7 +52,8 @@ const ICON_SVGS = {
   "trash-2": trash2,
   "volume-2": volume2,
   cpu,
-  wrench
+  wrench,
+  audioLines
 } as const;
 
 export type IconName = keyof typeof ICON_SVGS;

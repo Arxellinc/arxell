@@ -1,18 +1,18 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Refactor AI",
-  "version": "0.1.4",
-  "identifier": "com.refactor.ai",
+  "productName": "Arxell Lite",
+  "version": "0.1.5",
+  "identifier": "com.arxell.lite",
   "build": {
     "frontendDist": "../frontend/dist",
-    "devUrl": "http://localhost:5173",
-    "beforeDevCommand": "npm run dev",
-    "beforeBuildCommand": "npm run build"
+    "devUrl": "http://127.0.0.1:5173",
+    "beforeDevCommand": "npm --prefix ../frontend run dev -- --host 127.0.0.1 --port 5173 --strictPort",
+    "beforeBuildCommand": "npm --prefix ../frontend run build"
   },
   "app": {
     "windows": [
       {
-        "title": "Refactor AI",
+        "title": "Arxell Lite",
         "width": 1280,
         "height": 860,
         "minWidth": 960,
@@ -21,7 +21,7 @@
       }
     ],
     "security": {
-      "csp": null
+      "csp": "default-src 'self'; media-src 'self' mediastream:; connect-src ipc: http://127.0.0.1"
     }
   },
   "bundle": {
@@ -29,7 +29,11 @@
     "targets": "all",
     "resources": [
       "resources/llama-runtime/*",
-      "resources/llama-runtime/**/*"
+      "resources/llama-runtime/**/*",
+      "resources/whisper-server/*",
+      "resources/whisper-server/**/*",
+      "resources/whisper/*",
+      "resources/whisper/**/*"
     ]
   }
 }

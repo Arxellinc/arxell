@@ -152,6 +152,14 @@ export function renderLlamaCppBody(state: PrimaryPanelRenderState): string {
           </div>
         </div>
         <h3>Settings</h3>
+        <div class="llama-settings-actions">
+          <button type="button" class="tool-action-btn" id="llamaClearLogsBtn" title="Clear runtime logs">
+            Clear Logs
+          </button>
+          <button type="button" class="tool-action-btn is-primary" id="llamaStartBottomBtn" title="Start local llama.cpp server">
+            Start Server
+          </button>
+        </div>
         <div class="config-row">
           <span class="config-key">Model Path</span>
           <select
@@ -337,15 +345,6 @@ export function renderLlamaCppBody(state: PrimaryPanelRenderState): string {
           />
           <span class="config-meta">blank = unlimited</span>
         </label>
-      </div>
-
-      <div class="llama-bottom-actions">
-        <button type="button" class="tool-action-btn" id="llamaClearLogsBtn" title="Clear runtime logs">
-          Clear Logs
-        </button>
-        <button type="button" class="tool-action-btn is-primary" id="llamaStartBottomBtn" title="Start local llama.cpp server">
-          Start Server
-        </button>
       </div>
 
       <div class="config-key">Console</div>

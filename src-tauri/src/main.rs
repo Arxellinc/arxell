@@ -26,6 +26,8 @@ use app_foundation::contracts::{
 #[cfg(feature = "tauri-runtime")]
 use app_foundation::ipc::tauri_bridge::{attach_event_forwarder, TauriBridgeState};
 #[cfg(feature = "tauri-runtime")]
+use app_foundation::stt::{STTState};
+#[cfg(feature = "tauri-runtime")]
 use serde::{Deserialize, Serialize};
 #[cfg(feature = "tauri-runtime")]
 use std::path::PathBuf;
@@ -86,6 +88,23 @@ fn main() {
             if let Some(window) = app.get_webview_window("main") {
                 restore_window_state(&window);
             }
+            // Linux WebKit permission handler for microphone access
+            #[cfg(target_os = "linux")]
+            {
+                use log::info;
+                use webkit2gtk::{WebViewExt, PermissionRequestExt};
+                if let Some(main) = app.get_webview_window("main") {
+                    let _ = main.with_webview(|webview| {
+                        // Connect permission request handler to auto-grant all media permissions
+                        webview.inner().connect_permission_request(move |_wv, request| {
+                            info!("[webkit] granting permission for request");
+                            // Grant all permission requests (this is a development-only setting)
+                            request.allow();
+                            true
+                        });
+                    });
+                }
+            }
             Ok(())
         })
         .on_window_event(|window, event| {
@@ -107,6 +126,7 @@ fn main() {
             }
         })
         .manage(state)
+        .manage(STTState::new())
         .invoke_handler(tauri::generate_handler![
             cmd_chat_send_message,
             cmd_chat_cancel_message,
@@ -129,10 +149,127 @@ fn main() {
             cmd_model_manager_search_hf,
             cmd_model_manager_download_hf,
             cmd_model_manager_delete_installed,
-            cmd_model_manager_list_catalog_csv
+            cmd_model_manager_list_catalog_csv,
+            start_stt,
+            stop_stt,
+            stt_status,
+            transcribe_chunk
         ])
         .run(tauri::generate_context!())
         .expect("failed to run tauri app");
+}
+
+#[cfg(feature = "tauri-runtime")]
+#[tauri::command]
+async fn start_stt(app: tauri::AppHandle, state: tauri::State<'_, STTState>) -> Result<(), String> {
+    use log::info;
+    use tauri::Emitter;
+    
+    info!("Starting STT service");
+    let supervisor = state.supervisor.lock().await;
+    supervisor.start(&app).await
+}
+
+#[cfg(feature = "tauri-runtime")]
+#[tauri::command]
+async fn stop_stt(state: tauri::State<'_, STTState>) -> Result<(), String> {
+    use log::info;
+    
+    info!("Stopping STT service");
+    let supervisor = state.supervisor.lock().await;
+    supervisor.stop().await
+}
+
+#[cfg(feature = "tauri-runtime")]
+#[tauri::command]
+async fn stt_status(state: tauri::State<'_, STTState>) -> Result<app_foundation::stt::events::STTStatusPayload, String> {
+    use app_foundation::stt::supervisor::SupervisorStatus;
+    
+    let supervisor = state.supervisor.lock().await;
+    let status = supervisor.status().await;
+
+    match status {
+        SupervisorStatus::Starting => Ok(app_foundation::stt::events::STTStatusPayload {
+            status: "starting".to_string(),
+            message: None,
+        }),
+        SupervisorStatus::Running => Ok(app_foundation::stt::events::STTStatusPayload {
+            status: "running".to_string(),
+            message: None,
+        }),
+        SupervisorStatus::Stopped => Ok(app_foundation::stt::events::STTStatusPayload {
+            status: "stopped".to_string(),
+            message: None,
+        }),
+        SupervisorStatus::Error(msg) => Ok(app_foundation::stt::events::STTStatusPayload {
+            status: "error".to_string(),
+            message: Some(msg),
+        }),
+    }
+}
+
+#[cfg(feature = "tauri-runtime")]
+#[tauri::command]
+async fn transcribe_chunk(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, STTState>,
+    pcm_samples: Vec<f32>,
+    utterance_id: String,
+) -> Result<(), String> {
+    use log::{error, info};
+    use tauri::Emitter;
+    
+    let supervisor = state.supervisor.lock().await;
+
+    // Get endpoint
+    let endpoint = match supervisor.endpoint().await {
+        Some(e) => e,
+        None => {
+            let err = "STT service not running".to_string();
+            let _ = app.emit("pipeline://error", app_foundation::stt::events::PipelineErrorPayload {
+                source: "stt".to_string(),
+                message: err.clone(),
+                details: None,
+            });
+            return Err(err);
+        }
+    };
+
+    // Extract port from endpoint
+    let port = endpoint
+        .strip_prefix("http://127.0.0.1:")
+        .and_then(|s| s.parse::<u16>().ok())
+        .ok_or_else(|| "Invalid endpoint".to_string())?;
+
+    // Create client and run inference
+    let client = app_foundation::stt::client::WhisperClient::new(port);
+    match client.transcribe(&pcm_samples).await {
+        Ok(transcript) => {
+            info!("Transcription complete: {} chars", transcript.len());
+            
+            // Emit transcript event
+            let _ = app.emit("stt://transcript", app_foundation::stt::events::TranscriptPayload {
+                text: transcript,
+                is_final: true,
+                utterance_id,
+            });
+            
+            Ok(())
+        }
+        Err(e) => {
+            error!("Transcription failed: {}", e);
+            
+            // Emit error event but don't restart - transient errors don't need restart
+            let _ = app.emit("pipeline://error", app_foundation::stt::events::PipelineErrorPayload {
+                source: "stt".to_string(),
+                message: format!("Transcription failed: {}", e),
+                details: None,
+            });
+            
+            // Return error to frontend so it can be handled
+            Err(e)
+        }
+    }
 }
 
 #[cfg(feature = "tauri-runtime")]
@@ -507,7 +644,7 @@ fn window_state_path(handle: &tauri::AppHandle) -> PathBuf {
     let base = handle
         .path()
         .app_data_dir()
-        .unwrap_or_else(|_| std::env::temp_dir().join("refactor-ai-foundation"));
+        .unwrap_or_else(|_| std::env::temp_dir().join("arxell-lite"));
     base.join("window-state.json")
 }
 

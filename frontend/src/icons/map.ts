@@ -10,6 +10,7 @@ export const APP_ICON = {
     devices: "monitor",
     tts: "volume-2",
     stt: "mic",
+    sttSpeaking: "audioLines",
     llamaCpp: "cpu",
     modelManager: "package-search",
     terminal: "square-terminal",
@@ -45,6 +46,7 @@ export const APP_ICON = {
     devices: IconName;
     tts: IconName;
     stt: IconName;
+    sttSpeaking: IconName;
     llamaCpp: IconName;
     modelManager: IconName;
     terminal: IconName;

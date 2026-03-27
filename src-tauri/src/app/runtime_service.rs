@@ -66,7 +66,20 @@ impl LlamaRuntimeService {
         self.reconcile_process_state(correlation_id);
         let engines = detect_engines(app_data_dir);
         let (state, active_engine_id, endpoint, pid) = {
-            let state = self.state.lock().expect("llama runtime lock poisoned");
+            let state = match self.state.try_lock() {
+                Ok(guard) => guard,
+                Err(_) => {
+                    // Lock poisoned - return default idle state
+                    return LlamaRuntimeStatusResponse {
+                        correlation_id: correlation_id.to_string(),
+                        state: "idle".to_string(),
+                        active_engine_id: None,
+                        endpoint: None,
+                        pid: None,
+                        engines,
+                    };
+                }
+            };
             if let Some(active) = state.active.as_ref() {
                 (
                     "healthy".to_string(),
@@ -302,7 +315,13 @@ impl LlamaRuntimeService {
         );
 
         {
-            let mut state = self.state.lock().expect("llama runtime lock poisoned");
+            let mut state = match self.state.try_lock() {
+                Ok(guard) => guard,
+                Err(_) => {
+                    eprintln!("Warning: llama runtime lock poisoned, resetting status");
+                    return Err("llama runtime lock poisoned".to_string());
+                }
+            };
             state.status = "starting".to_string();
             if let Some(active) = state.active.take() {
                 let _ = terminate_process(active.child);
@@ -322,8 +341,11 @@ impl LlamaRuntimeService {
                 EventSeverity::Error,
                 json!({ "engineId": request.engine_id, "message": message }),
             );
-            let mut state = self.state.lock().expect("llama runtime lock poisoned");
-            state.status = "failed".to_string();
+            if let Ok(mut state) = self.state.try_lock() {
+                state.status = "failed".to_string();
+            } else {
+                eprintln!("Warning: llama runtime lock poisoned when setting failed status");
+            }
             return Err(message);
         }
 
@@ -468,20 +490,22 @@ impl LlamaRuntimeService {
                 EventSeverity::Error,
                 json!({ "engineId": request.engine_id, "message": message }),
             );
-            let mut state = self.state.lock().expect("llama runtime lock poisoned");
-            state.status = "failed".to_string();
+            if let Ok(mut state) = self.state.try_lock() {
+                state.status = "failed".to_string();
+            }
             return Err(message);
         }
 
         {
-            let mut state = self.state.lock().expect("llama runtime lock poisoned");
-            state.status = "healthy".to_string();
-            state.active = Some(ActiveRuntime {
-                engine_id: request.engine_id.clone(),
-                port,
-                _model_path: request.model_path.clone(),
-                child,
-            });
+            if let Ok(mut state) = self.state.try_lock() {
+                state.status = "healthy".to_string();
+                state.active = Some(ActiveRuntime {
+                    engine_id: request.engine_id.clone(),
+                    port,
+                    _model_path: request.model_path.clone(),
+                    child,
+                });
+            }
         }
 
         let endpoint = format!("http://127.0.0.1:{}/v1", port);
@@ -514,13 +538,18 @@ impl LlamaRuntimeService {
             json!({}),
         );
         let active = {
-            let mut state = self.state.lock().expect("llama runtime lock poisoned");
-            state.active.take()
+            match self.state.try_lock() {
+                Ok(mut state) => state.active.take(),
+                Err(_) => {
+                    return Err("llama runtime state lock poisoned".to_string());
+                }
+            }
         };
         if let Some(active) = active {
             terminate_process(active.child)?;
-            let mut state = self.state.lock().expect("llama runtime lock poisoned");
-            state.status = "stopped".to_string();
+            if let Ok(mut state) = self.state.try_lock() {
+                state.status = "stopped".to_string();
+            }
             self.emit(
                 correlation_id,
                 "llama.runtime.stop",
@@ -549,16 +578,19 @@ impl LlamaRuntimeService {
 
     pub fn shutdown(&self, correlation_id: &str) {
         let active = {
-            let mut state = self.state.lock().expect("llama runtime lock poisoned");
-            state.active.take()
+            match self.state.try_lock() {
+                Ok(mut state) => state.active.take(),
+                Err(_) => None, // Lock poisoned - can't get active runtime
+            }
         };
 
         if let Some(active) = active {
             let pid = active.child.id();
             match terminate_process(active.child) {
                 Ok(()) => {
-                    let mut state = self.state.lock().expect("llama runtime lock poisoned");
-                    state.status = "stopped".to_string();
+                    if let Ok(mut state) = self.state.try_lock() {
+                        state.status = "stopped".to_string();
+                    }
                     self.emit(
                         correlation_id,
                         "llama.runtime.shutdown",
@@ -568,8 +600,9 @@ impl LlamaRuntimeService {
                     );
                 }
                 Err(message) => {
-                    let mut state = self.state.lock().expect("llama runtime lock poisoned");
-                    state.status = "failed".to_string();
+                    if let Ok(mut state) = self.state.try_lock() {
+                        state.status = "failed".to_string();
+                    }
                     self.emit(
                         correlation_id,
                         "llama.runtime.shutdown",
@@ -585,7 +618,10 @@ impl LlamaRuntimeService {
     fn reconcile_process_state(&self, correlation_id: &str) {
         let mut exited: Option<(u32, String)> = None;
         {
-            let mut state = self.state.lock().expect("llama runtime lock poisoned");
+            let mut state = match self.state.try_lock() {
+                Ok(guard) => guard,
+                Err(_) => return, // Can't check state if lock is poisoned
+            };
             if let Some(active) = state.active.as_mut() {
                 if let Ok(Some(exit_status)) = active.child.try_wait() {
                     let code = exit_status
@@ -627,6 +663,26 @@ impl LlamaRuntimeService {
             severity,
             payload,
         ));
+    }
+
+    /// Acquires the runtime state lock, handling poison gracefully.
+    /// Returns None if the lock is poisoned (thread panicked while holding it).
+    fn try_lock_state(&self) -> Option<std::sync::MutexGuard<'_, RuntimeState>> {
+        match self.state.lock() {
+            Ok(guard) => Some(guard),
+            Err(_) => {
+                // Lock was poisoned - a previous thread panicked while holding the lock.
+                // Log this condition but don't panic - allow the application to continue.
+                eprintln!("Warning: llama runtime state lock was poisoned; resetting to idle");
+                None
+            }
+        }
+    }
+
+    /// Acquires the runtime state lock with a descriptive error.
+    /// Use this when you need to propagate errors rather than recover silently.
+    fn lock_state(&self) -> Result<std::sync::MutexGuard<'_, RuntimeState>, String> {
+        self.state.lock().map_err(|_| "llama runtime state lock poisoned".to_string())
     }
 }
 
@@ -1009,7 +1065,7 @@ fn download_engine_binary(engine_id: &str) -> Result<PathBuf, String> {
     })?;
 
     let download_root = std::env::temp_dir()
-        .join("refactor-ai-foundation")
+        .join("arxell-lite")
         .join("llama-runtime-downloads")
         .join(engine_id)
         .join(

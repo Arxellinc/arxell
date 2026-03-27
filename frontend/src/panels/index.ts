@@ -71,7 +71,7 @@ export function getPanelDefinition(
     return {
       title: "STT",
       icon: APP_ICON.sidebar.stt,
-      renderBody: renderSttBody,
+      renderBody: () => renderSttBody(state),
       renderActions: renderSttActions
     };
   }
@@ -110,7 +110,9 @@ export function attachPrimaryPanelInteractions(
   if (tab === "chat") {
     bindChatPanel(
       bindings.onSendMessage,
+      bindings.onUpdateChatDraft,
       bindings.onStopCurrentResponse,
+      bindings.onToggleStt,
       state.chatStreaming
     );
     const newBtn = document.querySelector<HTMLButtonElement>("#chatNewBtn");
@@ -129,6 +131,19 @@ export function attachPrimaryPanelInteractions(
     if (thinkingToggleBtn) {
       thinkingToggleBtn.onclick = async () => {
         await bindings.onToggleChatThinking();
+      };
+    }
+    const chatSttBtn = document.querySelector<HTMLButtonElement>("#chatSttBtn");
+    if (chatSttBtn) {
+      chatSttBtn.onclick = async () => {
+        await bindings.onToggleStt();
+      };
+    }
+    const chatTtsBtn = document.querySelector<HTMLButtonElement>("#chatTtsBtn");
+    if (chatTtsBtn) {
+      chatTtsBtn.onclick = async () => {
+        // TTS not yet implemented - show a toast or alert
+        console.log("TTS not yet implemented");
       };
     }
     return;
@@ -173,5 +188,47 @@ export function attachPrimaryPanelInteractions(
 
   if (tab === "model_manager") {
     bindModelManagerPanel(bindings);
+  }
+
+  if (tab === "stt") {
+    const toggleBtn = document.querySelector<HTMLButtonElement>("#sttToggleBtn");
+    if (toggleBtn) {
+      toggleBtn.onclick = async () => {
+        await bindings.onToggleStt();
+      };
+    }
+    const requestMicBtn = document.querySelector<HTMLButtonElement>("#sttRequestMicBtn");
+    if (requestMicBtn) {
+      requestMicBtn.onclick = async () => {
+        await bindings.onRequestMicrophoneAccess();
+        await bindings.onDevicesRefresh();
+        const renderAndBind = (window as any).__renderAndBind;
+        if (renderAndBind) {
+          renderAndBind();
+        }
+      };
+    }
+
+    const vadInputs: Array<{ id: string; key: Parameters<PrimaryPanelBindings["onUpdateSttVadSetting"]>[0] }> = [
+      { id: "sttVadBaseThresholdInput", key: "vadBaseThreshold" },
+      { id: "sttVadStartFramesInput", key: "vadStartFrames" },
+      { id: "sttVadEndFramesInput", key: "vadEndFrames" },
+      { id: "sttVadDynamicMultiplierInput", key: "vadDynamicMultiplier" },
+      { id: "sttVadNoiseAdaptationAlphaInput", key: "vadNoiseAdaptationAlpha" },
+      { id: "sttVadPreSpeechMsInput", key: "vadPreSpeechMs" },
+      { id: "sttVadMinUtteranceMsInput", key: "vadMinUtteranceMs" },
+      { id: "sttVadMaxUtteranceSInput", key: "vadMaxUtteranceS" },
+      { id: "sttVadForceFlushSInput", key: "vadForceFlushS" }
+    ];
+
+    for (const input of vadInputs) {
+      const el = document.querySelector<HTMLInputElement>("#" + input.id);
+      if (!el) continue;
+      el.onchange = async () => {
+        const parsed = Number.parseFloat(el.value);
+        if (!Number.isFinite(parsed)) return;
+        await bindings.onUpdateSttVadSetting(input.key, parsed);
+      };
+    }
   }
 }

@@ -35,6 +35,31 @@ export interface UiMessage {
   correlationId?: string;
 }
 
+export interface SttState {
+  status: "idle" | "starting" | "running" | "error";
+  message: string | null;
+  isListening: boolean;
+  isSpeaking: boolean;
+  lastTranscript: string | null;
+  microphonePermission: "not_enabled" | "enabled" | "no_device";
+  vadBaseThreshold: number;
+  vadStartFrames: number;
+  vadEndFrames: number;
+  vadDynamicMultiplier: number;
+  vadNoiseAdaptationAlpha: number;
+  vadPreSpeechMs: number;
+  vadMinUtteranceMs: number;
+  vadMaxUtteranceS: number;
+  vadForceFlushS: number;
+}
+
+export interface ConsoleEntry {
+  timestampMs: number;
+  level: "log" | "info" | "warn" | "error" | "debug";
+  source: "browser" | "app";
+  message: string;
+}
+
 export interface PrimaryPanelRenderState {
   conversationId: string;
   messages: UiMessage[];
@@ -42,6 +67,7 @@ export interface PrimaryPanelRenderState {
   chatThinkingPlacementByCorrelation: Record<string, "before" | "after">;
   chatThinkingExpandedByCorrelation: Record<string, boolean>;
   chatStreaming: boolean;
+  chatDraft: string;
   devices: DevicesState;
   conversations: ConversationSummaryRecord[];
   chatThinkingEnabled: boolean;
@@ -83,6 +109,8 @@ export interface PrimaryPanelRenderState {
     selectedAssetFileName: string;
   }>;
   modelManagerUnslothUdLoading: boolean;
+  stt: SttState;
+  consoleEntries: ConsoleEntry[];
 }
 
 export interface PrimaryPanelDefinition {
@@ -94,6 +122,7 @@ export interface PrimaryPanelDefinition {
 
 export interface PrimaryPanelBindings {
   onSendMessage: (text: string) => Promise<void>;
+  onUpdateChatDraft: (text: string) => void;
   onStopCurrentResponse: () => Promise<void>;
   onToggleThinkingPanel: (correlationId: string) => Promise<void>;
   onCreateConversation: () => Promise<void>;
@@ -138,4 +167,15 @@ export interface PrimaryPanelBindings {
   onModelManagerUseAsLlamaPath: (modelPath: string) => Promise<void>;
   onModelManagerEjectActive: () => Promise<void>;
   onModelManagerDeleteInstalled: (modelId: string) => Promise<void>;
+  onToggleStt: () => Promise<void>;
+  onUpdateSttVadSetting: (key: keyof Pick<SttState,
+    "vadBaseThreshold" |
+    "vadStartFrames" |
+    "vadEndFrames" |
+    "vadDynamicMultiplier" |
+    "vadNoiseAdaptationAlpha" |
+    "vadPreSpeechMs" |
+    "vadMinUtteranceMs" |
+    "vadMaxUtteranceS" |
+    "vadForceFlushS">, value: number) => Promise<void>;
 }

@@ -12,6 +12,7 @@ import type {
 } from "./contracts";
 import { iconHtml } from "./icons";
 import type { IconName } from "./icons";
+import { APP_ICON } from "./icons/map";
 import type { ChatIpcClient } from "./ipcClient";
 import { createChatIpcClient } from "./ipcClient";
 import {
@@ -145,6 +146,7 @@ const state: {
   chatFirstAssistantChunkMsByCorrelation: Record<string, number>;
   chatFirstReasoningChunkMsByCorrelation: Record<string, number>;
   chatStreaming: boolean;
+  chatDraft: string;
   activeChatCorrelationId: string | null;
   devices: DevicesState;
   micPermissionBubbleDismissed: boolean;
@@ -208,6 +210,23 @@ const state: {
     selectedAssetFileName: string;
   }>;
   modelManagerUnslothUdLoading: boolean;
+  stt: {
+    status: "idle" | "starting" | "running" | "error";
+    message: string | null;
+    isListening: boolean;
+    isSpeaking: boolean;
+    lastTranscript: string | null;
+    microphonePermission: "not_enabled" | "enabled" | "no_device";
+    vadBaseThreshold: number;
+    vadStartFrames: number;
+    vadEndFrames: number;
+    vadDynamicMultiplier: number;
+    vadNoiseAdaptationAlpha: number;
+    vadPreSpeechMs: number;
+    vadMinUtteranceMs: number;
+    vadMaxUtteranceS: number;
+    vadForceFlushS: number;
+  };
 } = {
   conversationId: generateChatConversationId(),
   messages: [],
@@ -217,6 +236,7 @@ const state: {
   chatFirstAssistantChunkMsByCorrelation: {},
   chatFirstReasoningChunkMsByCorrelation: {},
   chatStreaming: false,
+  chatDraft: "",
   activeChatCorrelationId: null,
   devices: defaultDevicesState(),
   micPermissionBubbleDismissed: loadMicBubbleDismissed(),
@@ -264,7 +284,24 @@ const state: {
   modelManagerBusy: false,
   modelManagerMessage: null,
   modelManagerUnslothUdCatalog: [],
-  modelManagerUnslothUdLoading: false
+  modelManagerUnslothUdLoading: false,
+  stt: {
+    status: "idle",
+    message: null,
+    isListening: false,
+    isSpeaking: false,
+    lastTranscript: null,
+    microphonePermission: "not_enabled",
+    vadBaseThreshold: 0.005,
+    vadStartFrames: 2,
+    vadEndFrames: 8,
+    vadDynamicMultiplier: 2.4,
+    vadNoiseAdaptationAlpha: 0.03,
+    vadPreSpeechMs: 200,
+    vadMinUtteranceMs: 200,
+    vadMaxUtteranceS: 30,
+    vadForceFlushS: 3
+  }
 };
 
 let clientRef: ChatIpcClient | null = null;
@@ -323,8 +360,7 @@ function defaultAudioDeviceLabel(
 
 async function refreshDevicesState(): Promise<void> {
   const next = defaultDevicesState();
-  next.microphonePermission =
-    state.runtimeMode === "tauri" ? "not_enabled" : await detectMicrophonePermission();
+  next.microphonePermission = await detectMicrophonePermission();
   next.speakerPermission = await detectSpeakerPermission();
   next.lastUpdatedLabel = formatLastUpdated(Date.now());
   next.mouseDetected =
@@ -415,6 +451,30 @@ async function refreshDevicesState(): Promise<void> {
 }
 
 async function requestMicrophoneAccess(): Promise<void> {
+  // Always try to get browser permission first to trigger the prompt
+  if (navigator.mediaDevices?.getUserMedia) {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      // Success - we have permission
+      stream.getTracks().forEach((track) => track.stop());
+      state.devices.microphonePermission = "enabled";
+      state.micPermissionBubbleDismissed = true;
+      persistMicBubbleDismissed(true);
+      pushConsoleEntry("info", "browser", "Microphone access enabled via browser prompt.");
+      await refreshDevicesState();
+      return;
+    } catch (error) {
+      const details = await buildMicrophoneAccessErrorDetails(error);
+      pushConsoleEntry("warn", "browser", `Microphone access denied: ${details}`);
+      state.devices.microphonePermission = "not_enabled";
+      state.micPermissionBubbleDismissed = false;
+      persistMicBubbleDismissed(false);
+      await refreshDevicesState();
+      return;
+    }
+  }
+
+  // Fallback: try native probe if in tauri mode
   if (state.runtimeMode === "tauri" && clientRef) {
     try {
       const probe = await clientRef.probeMicrophoneDevice({
@@ -613,6 +673,7 @@ function render(): void {
     chatThinkingPlacementByCorrelation: state.chatThinkingPlacementByCorrelation,
     chatThinkingExpandedByCorrelation: state.chatThinkingExpandedByCorrelation,
     chatStreaming: state.chatStreaming,
+    chatDraft: state.chatDraft,
     devices: state.devices,
     conversations: state.conversations,
     chatThinkingEnabled: state.chatThinkingEnabled,
@@ -643,7 +704,9 @@ function render(): void {
     modelManagerBusy: state.modelManagerBusy,
     modelManagerMessage: state.modelManagerMessage,
     modelManagerUnslothUdCatalog: state.modelManagerUnslothUdCatalog,
-    modelManagerUnslothUdLoading: state.modelManagerUnslothUdLoading
+    modelManagerUnslothUdLoading: state.modelManagerUnslothUdLoading,
+    stt: state.stt,
+    consoleEntries: state.consoleEntries
   });
 
   const primaryPaneHtml = `
@@ -676,7 +739,7 @@ function render(): void {
             <div class="pane-divider-line"></div>
           </div>
           <section class="portrait-main-row">
-            ${renderSidebarRail(state.sidebarTab, llamaRuntimeOnline)}
+            ${renderSidebarRail(state.sidebarTab, llamaRuntimeOnline, state.stt.status === "running")}
             <section class="main-column">
               <div class="portrait-primary-wrap">
                 ${primaryPaneHtml}
@@ -687,7 +750,7 @@ function render(): void {
       `
       : `
         <section class="app-body">
-          ${renderSidebarRail(state.sidebarTab, llamaRuntimeOnline)}
+          ${renderSidebarRail(state.sidebarTab, llamaRuntimeOnline, state.stt.status === "running")}
           <section class="main-column">
           <div class="split-layout" id="splitLayout">
             ${primaryPaneHtml}
@@ -1316,6 +1379,9 @@ function renderAndBind(sendMessage: (text: string) => Promise<void>): void {
   attachWorkspaceInteractions(sendMessage);
   attachPrimaryPanelInteractions(state.sidebarTab, state, {
     onSendMessage: sendMessage,
+    onUpdateChatDraft: (text: string) => {
+      state.chatDraft = text;
+    },
     onStopCurrentResponse: async () => {
       if (!clientRef || !state.activeChatCorrelationId) return;
       const targetCorrelationId = state.activeChatCorrelationId;
@@ -1370,6 +1436,8 @@ function renderAndBind(sendMessage: (text: string) => Promise<void>): void {
     },
     onRequestMicrophoneAccess: async () => {
       await requestMicrophoneAccess();
+      // Sync microphone permission to STT state for UI display
+      state.stt.microphonePermission = state.devices.microphonePermission;
       renderAndBind(sendMessage);
     },
     onRequestSpeakerAccess: async () => {
@@ -1748,8 +1816,438 @@ function renderAndBind(sendMessage: (text: string) => Promise<void>): void {
         state.modelManagerBusy = false;
       }
       renderAndBind(sendMessage);
+    },
+    onToggleStt: async () => {
+      if (!clientRef) return;
+      try {
+        const { invoke } = await import("@tauri-apps/api/core");
+        if (state.stt.status === "idle" || state.stt.status === "error") {
+          // First check and request microphone permission if needed
+          await refreshDevicesState();
+          const micPermission = state.devices.microphonePermission;
+          // Sync to STT state for UI display
+          state.stt.microphonePermission = micPermission;
+          if (micPermission !== "enabled") {
+            // Request microphone access - this will show permission prompt
+            await requestMicrophoneAccess();
+            // Check again after requesting
+            await refreshDevicesState();
+            const micPermissionAfter = state.devices.microphonePermission;
+            // Sync to STT state for UI display
+            state.stt.microphonePermission = micPermissionAfter;
+            if (micPermissionAfter !== "enabled") {
+              state.stt.status = "error";
+              state.stt.message = "Microphone access denied";
+              renderAndBind(sendMessage);
+              return;
+            }
+          }
+          // Start STT only after permission is confirmed
+          state.stt.status = "starting";
+          state.stt.message = "Starting whisper server...";
+          state.stt.isListening = false;
+          renderAndBind(sendMessage);
+          await invoke("start_stt");
+          state.stt.status = "running";
+          state.stt.message = "Server started";
+          await setupSttTranscriptListener(sendMessage);
+          await startSttAudioCapture(invoke);
+        } else if (state.stt.status === "running" || state.stt.status === "starting") {
+          stopSttAudioCapture();
+          await sttTranscriptionQueue.catch(() => undefined);
+          await invoke("stop_stt");
+          await teardownSttTranscriptListener();
+          state.stt.status = "idle";
+          state.stt.message = null;
+          state.stt.isListening = false;
+        }
+        renderAndBind(sendMessage);
+      } catch (error) {
+        stopSttAudioCapture();
+        await teardownSttTranscriptListener();
+        state.stt.status = "error";
+        state.stt.message = String(error);
+        state.stt.isListening = false;
+        renderAndBind(sendMessage);
+      }
+    },
+    onUpdateSttVadSetting: async (key, value) => {
+      let normalized = value;
+      if (key === "vadBaseThreshold") normalized = clampSttSetting(value, 0, 0.2, 0.005);
+      if (key === "vadStartFrames") normalized = Math.round(clampSttSetting(value, 1, 100, 2));
+      if (key === "vadEndFrames") normalized = Math.round(clampSttSetting(value, 1, 200, 8));
+      if (key === "vadDynamicMultiplier") normalized = clampSttSetting(value, 1, 10, 2.4);
+      if (key === "vadNoiseAdaptationAlpha") normalized = clampSttSetting(value, 0, 1, 0.03);
+      if (key === "vadPreSpeechMs") normalized = Math.round(clampSttSetting(value, 0, 2000, 200));
+      if (key === "vadMinUtteranceMs") normalized = Math.round(clampSttSetting(value, 0, 5000, 200));
+      if (key === "vadMaxUtteranceS") normalized = Math.round(clampSttSetting(value, 1, 120, 30));
+      if (key === "vadForceFlushS") normalized = clampSttSetting(value, 0.25, 30, 3);
+      state.stt[key] = normalized;
+      renderAndBind(sendMessage);
     }
   });
+}
+
+// Global state for STT audio capture
+let sttAudioContext: AudioContext | null = null;
+let sttMediaStream: MediaStream | null = null;
+let sttScriptProcessor: ScriptProcessorNode | null = null;
+let sttSilentGainNode: GainNode | null = null;
+let sttLastWasSpeaking = false;
+let sttTranscriptUnlisten: (() => void) | null = null;
+let sttPipelineErrorUnlisten: (() => void) | null = null;
+let sttTranscriptionQueue: Promise<void> = Promise.resolve();
+let sttFlushPendingUtterance: (() => void) | null = null;
+
+function updateChatVoiceInputIcons(): void {
+  const iconName = state.stt.isSpeaking ? APP_ICON.sidebar.sttSpeaking : APP_ICON.sidebar.stt;
+  const iconMarkup = iconHtml(iconName, { size: 16, tone: "dark" });
+
+  const chatMicGlyph = document.querySelector<HTMLSpanElement>("#chatMicBtn .mic-icon-glyph");
+  if (chatMicGlyph) {
+    chatMicGlyph.innerHTML = iconMarkup;
+  }
+
+  const chatSttBtn = document.querySelector<HTMLButtonElement>("#chatSttBtn");
+  if (chatSttBtn && state.stt.status !== "idle" && state.stt.status !== "error") {
+    chatSttBtn.innerHTML = iconMarkup;
+  }
+}
+
+function appendFloat32(
+  a: Float32Array<ArrayBufferLike>,
+  b: Float32Array<ArrayBufferLike>
+): Float32Array<ArrayBufferLike> {
+  if (a.length === 0) return b;
+  if (b.length === 0) return a;
+  const out = new Float32Array(a.length + b.length);
+  out.set(a);
+  out.set(b, a.length);
+  return out;
+}
+
+function clampSttSetting(value: number, min: number, max: number, fallback: number): number {
+  if (!Number.isFinite(value)) return fallback;
+  if (value < min) return min;
+  if (value > max) return max;
+  return value;
+}
+
+function enqueueSttTranscription(
+  invokeFn: typeof import("@tauri-apps/api/core").invoke,
+  pcmSamples: Float32Array<ArrayBufferLike>,
+  utteranceId: string
+): void {
+  const samples = Array.from(pcmSamples);
+  pushConsoleEntry("info", "browser", "STT queue: enqueue utterance " + utteranceId.slice(0, 8) + " (" + samples.length + " samples)");
+  sttTranscriptionQueue = sttTranscriptionQueue
+    .then(async () => {
+      pushConsoleEntry("debug", "browser", "STT queue: transcribing utterance " + utteranceId.slice(0, 8));
+      await invokeFn("transcribe_chunk", {
+        pcmSamples: samples,
+        utteranceId
+      });
+      pushConsoleEntry("info", "browser", "STT queue: transcribe request sent for " + utteranceId.slice(0, 8));
+    })
+    .catch((error) => {
+      console.error("Transcription error:", error);
+      pushConsoleEntry("error", "browser", "STT queue: transcribe failed for " + utteranceId.slice(0, 8) + ": " + String(error));
+    });
+}
+
+async function setupSttTranscriptListener(onTranscript: (text: string) => Promise<void>): Promise<void> {
+  if (sttTranscriptUnlisten) {
+    pushConsoleEntry("debug", "browser", "STT listener: transcript listener already installed");
+    return;
+  }
+  const { listen } = await import("@tauri-apps/api/event");
+  sttTranscriptUnlisten = await listen<{ text: string }>("stt://transcript", (event) => {
+    const transcript = event.payload.text?.trim();
+    if (!transcript) {
+      pushConsoleEntry("debug", "browser", "STT event: received empty transcript payload");
+      return;
+    }
+    pushConsoleEntry("info", "browser", "STT event: transcript received (" + transcript.length + " chars)");
+    state.stt.lastTranscript = transcript;
+    state.chatDraft = transcript;
+    const input = document.querySelector<HTMLTextAreaElement>("#msg");
+    if (input) {
+      input.value = transcript;
+      input.focus();
+    }
+    if (!state.chatStreaming) {
+      void onTranscript(transcript).catch((error) => {
+        pushConsoleEntry("error", "browser", "STT send failed: " + String(error));
+      });
+    }
+  });
+  pushConsoleEntry("info", "browser", "STT listener: transcript listener installed");
+}
+
+async function teardownSttTranscriptListener(): Promise<void> {
+  if (!sttTranscriptUnlisten) return;
+  sttTranscriptUnlisten();
+  sttTranscriptUnlisten = null;
+  pushConsoleEntry("info", "browser", "STT listener: transcript listener removed");
+}
+
+async function startSttAudioCapture(invokeFn: typeof import("@tauri-apps/api/core").invoke): Promise<void> {
+  try {
+    stopSttAudioCapture();
+    sttTranscriptionQueue = Promise.resolve();
+    pushConsoleEntry("info", "browser", "STT capture: requesting microphone stream");
+
+    sttMediaStream = await navigator.mediaDevices.getUserMedia({
+      audio: {
+        channelCount: 1,
+        echoCancellation: false,
+        noiseSuppression: false,
+        autoGainControl: false,
+      }
+    });
+
+    const trackSettings = sttMediaStream.getAudioTracks()[0]?.getSettings?.();
+    pushConsoleEntry("info", "browser", "STT capture: microphone stream granted " + (trackSettings ? JSON.stringify(trackSettings) : "(no track settings)"));
+
+    sttAudioContext = new AudioContext({ sampleRate: 48000 });
+    const source = sttAudioContext.createMediaStreamSource(sttMediaStream);
+    sttScriptProcessor = sttAudioContext.createScriptProcessor(4096, 1, 1);
+
+    if (sttAudioContext.state === "suspended") {
+      await sttAudioContext.resume();
+    }
+    pushConsoleEntry("info", "browser", "STT capture: AudioContext state=" + sttAudioContext.state);
+
+    sttSilentGainNode = sttAudioContext.createGain();
+    sttSilentGainNode.gain.value = 0;
+
+    const resample = (audioData: Float32Array, inputRate: number, outputRate: number): Float32Array => {
+      if (inputRate === outputRate) return audioData;
+      const ratio = inputRate / outputRate;
+      const outputLength = Math.round(audioData.length / ratio);
+      const output = new Float32Array(outputLength);
+      for (let i = 0; i < outputLength; i++) {
+        const inputIndex = i * ratio;
+        const lowerIndex = Math.floor(inputIndex);
+        const upperIndex = Math.min(lowerIndex + 1, audioData.length - 1);
+        const fraction = inputIndex - lowerIndex;
+        const lower = audioData[lowerIndex] ?? 0;
+        const upper = audioData[upperIndex] ?? 0;
+        output[i] = lower * (1 - fraction) + upper * fraction;
+      }
+      return output;
+    };
+
+    const computeEnergy = (samples: Float32Array): number => {
+      if (samples.length === 0) return 0;
+      let sum = 0;
+      for (let i = 0; i < samples.length; i++) {
+        const sample = samples[i] ?? 0;
+        sum += sample * sample;
+      }
+      return Math.sqrt(sum / samples.length);
+    };
+
+    const inputSampleRate = sttAudioContext.sampleRate;
+    const outputSampleRate = 16000;
+    const readVadThreshold = (): number =>
+      clampSttSetting(state.stt.vadBaseThreshold, 0, 0.2, 0.005);
+    const readVadStartFrames = (): number =>
+      Math.round(clampSttSetting(state.stt.vadStartFrames, 1, 100, 2));
+    const readVadEndFrames = (): number =>
+      Math.round(clampSttSetting(state.stt.vadEndFrames, 1, 200, 8));
+    const readVadDynamicMultiplier = (): number =>
+      clampSttSetting(state.stt.vadDynamicMultiplier, 1, 10, 2.4);
+    const readVadNoiseAdaptationAlpha = (): number =>
+      clampSttSetting(state.stt.vadNoiseAdaptationAlpha, 0, 1, 0.03);
+    const readPreSpeechSamples = (): number =>
+      Math.round(clampSttSetting(state.stt.vadPreSpeechMs, 0, 2000, 200) * 16);
+    const readMinUtteranceSamples = (): number =>
+      Math.round(clampSttSetting(state.stt.vadMinUtteranceMs, 0, 5000, 200) * 16);
+    const readMaxUtteranceSamples = (): number =>
+      Math.round(clampSttSetting(state.stt.vadMaxUtteranceS, 1, 120, 30) * 16_000);
+    const readForceFlushSamples = (): number =>
+      Math.round(clampSttSetting(state.stt.vadForceFlushS, 0.25, 30, 3) * 16_000);
+
+    let speechStartFrames = 0;
+    let speechEndFrames = 0;
+    let isSpeaking = false;
+    let noiseFloor = 0.001;
+    let preSpeechBuffer: Float32Array<ArrayBufferLike> = new Float32Array(0);
+    let utteranceBuffer: Float32Array<ArrayBufferLike> = new Float32Array(0);
+    let utteranceId: string | null = null;
+    let audioFramesSeen = 0;
+    let vadLogFrames = 0;
+    let peakEnergy = 0;
+    let lastVadLogMs = 0;
+
+    sttLastWasSpeaking = false;
+    state.stt.isSpeaking = false;
+    updateChatVoiceInputIcons();
+
+    const flushUtterance = () => {
+      const minUtteranceSamples = readMinUtteranceSamples();
+      if (!utteranceId || utteranceBuffer.length < minUtteranceSamples) {
+        if (utteranceId) {
+          pushConsoleEntry("debug", "browser", "STT utterance: dropped short utterance " + utteranceId.slice(0, 8) + " (" + utteranceBuffer.length + " samples)");
+        }
+        utteranceBuffer = new Float32Array(0);
+        utteranceId = null;
+        return;
+      }
+      const samples = utteranceBuffer;
+      const currentUtteranceId = utteranceId;
+      pushConsoleEntry("info", "browser", "STT utterance: flush " + currentUtteranceId.slice(0, 8) + " (" + samples.length + " samples)");
+      utteranceBuffer = new Float32Array(0);
+      utteranceId = null;
+      enqueueSttTranscription(invokeFn, samples, currentUtteranceId);
+    };
+
+    sttFlushPendingUtterance = flushUtterance;
+
+    window.setTimeout(() => {
+      if (state.stt.isListening && audioFramesSeen === 0) {
+        state.stt.status = "error";
+        state.stt.message = "No audio frames from microphone (check PipeWire/portal permissions)";
+        pushConsoleEntry("error", "browser", "STT capture failed: microphone stream produced zero audio frames.");
+        render();
+      } else if (state.stt.isListening) {
+        pushConsoleEntry("info", "browser", "STT capture: audio frames flowing (" + audioFramesSeen + " frames in first 3s)");
+      }
+    }, 3000);
+
+    sttScriptProcessor.onaudioprocess = (event) => {
+      audioFramesSeen += 1;
+      vadLogFrames += 1;
+      const inputData = event.inputBuffer.getChannelData(0);
+      const resampledData = resample(inputData, inputSampleRate, outputSampleRate);
+      const energy = computeEnergy(resampledData);
+      peakEnergy = Math.max(peakEnergy, energy);
+
+      if (!isSpeaking) {
+        const noiseAdaptationAlpha = readVadNoiseAdaptationAlpha();
+        noiseFloor = noiseFloor * (1 - noiseAdaptationAlpha) + energy * noiseAdaptationAlpha;
+      }
+      const dynamicThreshold = Math.max(readVadThreshold(), noiseFloor * readVadDynamicMultiplier());
+      const aboveThreshold = energy > dynamicThreshold;
+
+      const now = Date.now();
+      if (now - lastVadLogMs >= 1000) {
+        pushConsoleEntry(
+          "debug",
+          "browser",
+          "STT VAD: frames=" + vadLogFrames +
+            " rms=" + energy.toFixed(5) +
+            " peak=" + peakEnergy.toFixed(5) +
+            " floor=" + noiseFloor.toFixed(5) +
+            " threshold=" + dynamicThreshold.toFixed(5) +
+            " speaking=" + String(isSpeaking) +
+            " above=" + String(aboveThreshold)
+        );
+        lastVadLogMs = now;
+        vadLogFrames = 0;
+        peakEnergy = 0;
+      }
+
+      if (aboveThreshold) {
+        speechStartFrames += 1;
+        speechEndFrames = 0;
+      } else {
+        speechEndFrames += 1;
+        speechStartFrames = 0;
+      }
+
+      if (!isSpeaking) {
+        const preSpeechSamples = readPreSpeechSamples();
+        preSpeechBuffer = appendFloat32(preSpeechBuffer, resampledData);
+        if (preSpeechBuffer.length > preSpeechSamples) {
+          preSpeechBuffer = preSpeechBuffer.slice(preSpeechBuffer.length - preSpeechSamples);
+        }
+      }
+
+      if (!isSpeaking && speechStartFrames >= readVadStartFrames()) {
+        isSpeaking = true;
+        utteranceId = crypto.randomUUID();
+        pushConsoleEntry("info", "browser", "STT VAD: speech start (utterance=" + utteranceId.slice(0, 8) + ")");
+        utteranceBuffer = appendFloat32(preSpeechBuffer, resampledData);
+        preSpeechBuffer = new Float32Array(0);
+      } else if (isSpeaking) {
+        utteranceBuffer = appendFloat32(utteranceBuffer, resampledData);
+      }
+
+      if (isSpeaking && utteranceBuffer.length >= readForceFlushSamples()) {
+        pushConsoleEntry("info", "browser", "STT VAD: force flush chunk buffered=" + utteranceBuffer.length + " samples");
+        flushUtterance();
+        utteranceId = crypto.randomUUID();
+        utteranceBuffer = new Float32Array(0);
+      }
+
+      const vadEndFrames = readVadEndFrames();
+      const maxUtteranceSamples = readMaxUtteranceSamples();
+      if (isSpeaking && (speechEndFrames >= vadEndFrames || utteranceBuffer.length >= maxUtteranceSamples)) {
+        const endReason = speechEndFrames >= vadEndFrames ? "silence" : "max_length";
+        pushConsoleEntry("info", "browser", "STT VAD: speech end reason=" + endReason + " buffered=" + utteranceBuffer.length + " samples");
+        isSpeaking = false;
+        flushUtterance();
+      }
+
+      if (isSpeaking !== sttLastWasSpeaking) {
+        sttLastWasSpeaking = isSpeaking;
+        state.stt.isSpeaking = isSpeaking;
+        pushConsoleEntry("info", "browser", "STT indicator: " + (isSpeaking ? "speaking" : "silence"));
+        updateChatVoiceInputIcons();
+      }
+    };
+
+    source.connect(sttScriptProcessor);
+    if (sttSilentGainNode) {
+      sttScriptProcessor.connect(sttSilentGainNode);
+      sttSilentGainNode.connect(sttAudioContext.destination);
+    }
+
+    pushConsoleEntry("info", "browser", "STT capture ready (sampleRate=" + inputSampleRate + "Hz)");
+    pushConsoleEntry(
+      "info",
+      "browser",
+      "STT VAD config: baseThreshold=" + readVadThreshold() +
+        ", startFrames=" + readVadStartFrames() +
+        ", endFrames=" + readVadEndFrames()
+    );
+    state.stt.isListening = true;
+  } catch (error) {
+    console.error("Failed to start audio capture:", error);
+    state.stt.status = "error";
+    state.stt.message = "Microphone access denied";
+    pushConsoleEntry("error", "browser", "STT capture start failed: " + String(error));
+  }
+}
+
+function stopSttAudioCapture(): void {
+  sttFlushPendingUtterance?.();
+  sttFlushPendingUtterance = null;
+
+  if (sttScriptProcessor) {
+    sttScriptProcessor.disconnect();
+    sttScriptProcessor.onaudioprocess = null;
+    sttScriptProcessor = null;
+  }
+  if (sttSilentGainNode) {
+    sttSilentGainNode.disconnect();
+    sttSilentGainNode = null;
+  }
+  if (sttAudioContext) {
+    sttAudioContext.close();
+    sttAudioContext = null;
+  }
+  if (sttMediaStream) {
+    sttMediaStream.getTracks().forEach(track => track.stop());
+    sttMediaStream = null;
+  }
+  sttLastWasSpeaking = false;
+  state.stt.isListening = false;
+  state.stt.isSpeaking = false;
+  pushConsoleEntry("info", "browser", "STT capture: stopped and state reset");
+  updateChatVoiceInputIcons();
 }
 
 function currentPrimaryPanelRenderState() {
@@ -1760,6 +2258,7 @@ function currentPrimaryPanelRenderState() {
     chatThinkingPlacementByCorrelation: state.chatThinkingPlacementByCorrelation,
     chatThinkingExpandedByCorrelation: state.chatThinkingExpandedByCorrelation,
     chatStreaming: state.chatStreaming,
+    chatDraft: state.chatDraft,
     devices: state.devices,
     conversations: state.conversations,
     chatThinkingEnabled: state.chatThinkingEnabled,
@@ -1790,7 +2289,9 @@ function currentPrimaryPanelRenderState() {
     modelManagerBusy: state.modelManagerBusy,
     modelManagerMessage: state.modelManagerMessage,
     modelManagerUnslothUdCatalog: state.modelManagerUnslothUdCatalog,
-    modelManagerUnslothUdLoading: state.modelManagerUnslothUdLoading
+    modelManagerUnslothUdLoading: state.modelManagerUnslothUdLoading,
+    stt: state.stt,
+    consoleEntries: state.consoleEntries
   };
 }
 
@@ -2088,6 +2589,39 @@ async function bootstrap(): Promise<void> {
       void refreshDevicesState().then(() => renderAndBind(sendMessage));
     });
   }
+  if (runtimeMode === "tauri" && !sttPipelineErrorUnlisten) {
+    const { listen } = await import("@tauri-apps/api/event");
+    sttPipelineErrorUnlisten = await listen<{
+      source?: string;
+      message?: string;
+      details?: string | null;
+    }>("pipeline://error", (event) => {
+      const source = event.payload.source?.trim() || "unknown";
+      const message = event.payload.message?.trim() || "Pipeline error";
+      const details = typeof event.payload.details === "string" ? event.payload.details.trim() : "";
+      const detailsText = details ? ` details=${details}` : "";
+      pushConsoleEntry("error", "app", `[${source}] pipeline.error ${message}${detailsText}`);
+      const syntheticEvent: AppEvent = {
+        timestampMs: Date.now(),
+        correlationId: nextCorrelationId(),
+        subsystem: "service",
+        action: "pipeline.error",
+        stage: "error",
+        severity: "error",
+        payload: {
+          source,
+          message,
+          details: details || null
+        }
+      };
+      state.events.push(syntheticEvent);
+      if (source === "stt") {
+        state.stt.status = "error";
+        state.stt.message = message;
+      }
+      renderAndBind(sendMessage);
+    });
+  }
 
   client.onEvent((event) => {
     if (
@@ -2195,6 +2729,7 @@ async function bootstrap(): Promise<void> {
     const correlationId = nextCorrelationId();
     const normalizedUserText = normalizeChatText(text);
     state.messages.push({ role: "user", text: normalizedUserText });
+    state.chatDraft = "";
     state.chatStreaming = true;
     state.activeChatCorrelationId = correlationId;
     renderAndBind(sendMessage);

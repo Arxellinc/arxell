@@ -2,7 +2,7 @@ import { iconHtml } from "../icons";
 import { APP_ICON } from "../icons/map";
 import type { SidebarTab } from "../panels/types";
 
-export function renderSidebarRail(tab: SidebarTab, llamaRuntimeOnline: boolean): string {
+export function renderSidebarRail(tab: SidebarTab, llamaRuntimeOnline: boolean, sttRunning: boolean): string {
   return `
     <aside class="left-sidebar" id="leftSidebar">
       <nav class="sidebar-nav" aria-label="Primary">
@@ -23,6 +23,7 @@ export function renderSidebarRail(tab: SidebarTab, llamaRuntimeOnline: boolean):
         </button>
         <button type="button" class="sidebar-icon-btn ${tab === "stt" ? "is-active" : ""}" data-sidebar-tab="stt" data-title="STT" aria-label="STT">
           ${iconHtml(APP_ICON.sidebar.stt, { size: 24, tone: "dark", label: "STT" })}
+          ${sttRunning ? '<span class="sidebar-status-dot" aria-hidden="true"></span>' : ""}
         </button>
         <button type="button" class="sidebar-icon-btn ${tab === "llama_cpp" ? "is-active" : ""}" data-sidebar-tab="llama_cpp" data-title="llama.cpp" aria-label="llama.cpp">
           ${iconHtml(APP_ICON.sidebar.llamaCpp, { size: 24, tone: "dark", label: "llama.cpp" })}

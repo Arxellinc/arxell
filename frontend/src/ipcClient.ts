@@ -684,9 +684,9 @@ export class MockChatIpcClient implements ChatIpcClient {
         correlationId: request.correlationId,
         status: "enabled",
         message: "Mock microphone probe succeeded",
-      inputDeviceCount: audioInputs.length,
-      defaultInputName: audioInputs[0]?.label || null
-    };
+        inputDeviceCount: audioInputs.length,
+        defaultInputName: audioInputs[0]?.label || null
+      };
   }
 
   private emit(event: AppEvent): void {

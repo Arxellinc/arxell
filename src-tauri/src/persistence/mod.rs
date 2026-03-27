@@ -84,7 +84,7 @@ impl SqliteConversationRepository {
             return PathBuf::from(raw);
         }
         std::env::temp_dir()
-            .join("refactor-ai-foundation")
+            .join("arxell-lite")
             .join("conversations.sqlite3")
     }
 
@@ -386,7 +386,7 @@ impl FileConversationRepository {
             return PathBuf::from(raw);
         }
         std::env::temp_dir()
-            .join("refactor-ai-foundation")
+            .join("arxell-lite")
             .join("conversations.jsonl")
     }
 

@@ -263,6 +263,190 @@ jobs:
           print("[llama-runtime] manifest written")
           PY
 
+      - name: Prepare bundled whisper runtimes
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          import os
+          import pathlib
+          import shutil
+          import stat
+          import tarfile
+          import urllib.request
+          import zipfile
+
+          def request_json(url: str) -> dict:
+            req = urllib.request.Request(url)
+            req.add_header("Accept", "application/vnd.github+json")
+            req.add_header("User-Agent", "arxell-lite-ci")
+            token = os.environ.get("GITHUB_TOKEN", "").strip()
+            if token:
+              req.add_header("Authorization", f"Bearer {token}")
+            with urllib.request.urlopen(req, timeout=60) as resp:
+              return json.loads(resp.read().decode("utf-8"))
+
+          def safe_extract_tar(archive_path: pathlib.Path, dest: pathlib.Path) -> None:
+            with tarfile.open(archive_path, "r:*") as tf:
+              for member in tf.getmembers():
+                target = (dest / member.name).resolve()
+                if not str(target).startswith(str(dest.resolve())):
+                  raise RuntimeError(f"unsafe tar member path: {member.name}")
+              tf.extractall(dest)
+
+          def download_file(url: str, dest: pathlib.Path) -> bool:
+            try:
+              req = urllib.request.Request(url, headers={"User-Agent": "arxell-lite-ci"})
+              with urllib.request.urlopen(req, timeout=120) as resp, open(dest, "wb") as out:
+                shutil.copyfileobj(resp, out)
+              return True
+            except Exception as e:
+              print(f"Download failed: {e}")
+              return False
+
+          runner_os = os.environ.get("RUNNER_OS", "")
+          os_key = {
+            "Linux": "linux",
+            "Windows": "windows",
+            "macOS": "macos",
+          }.get(runner_os, "")
+          if not os_key:
+            raise RuntimeError(f"unsupported RUNNER_OS={runner_os}")
+
+          repo_root = pathlib.Path(".").resolve()
+          resources_root = repo_root / "src-tauri" / "resources"
+          whisper_server_dir = resources_root / "whisper-server"
+          whisper_models_dir = resources_root / "whisper"
+          temp_root = repo_root / ".tmp-whisper-runtime"
+          shutil.rmtree(temp_root, ignore_errors=True)
+          temp_root.mkdir(parents=True, exist_ok=True)
+          whisper_server_dir.mkdir(parents=True, exist_ok=True)
+          whisper_models_dir.mkdir(parents=True, exist_ok=True)
+
+          # === Download Whisper Model ===
+          # Download quantized model from HuggingFace
+          print("[whisper-runtime] Downloading model files...")
+          model_files = [
+            ("ggml-base.en-q8_0.bin", "https://huggingface.co/datasets/ggerganov/whisper.cpp/resolve/main/ggml-base.en-q8_0.bin"),
+            ("ggml-tiny.en-q8_0.bin", "https://huggingface.co/datasets/ggerganov/whisper.cpp/resolve/main/ggml-tiny.en-q8_0.bin"),
+          ]
+
+          for model_name, model_url in model_files:
+            model_path = whisper_models_dir / model_name
+            if model_path.exists():
+              print(f"[whisper-runtime] Model already exists: {model_name}")
+            else:
+              print(f"[whisper-runtime] Downloading {model_name}...")
+              if download_file(model_url, model_path):
+                print(f"[whisper-runtime] Downloaded: {model_name}")
+              else:
+                print(f"[whisper-runtime] Warning: Failed to download {model_name}")
+
+          # === Download Whisper Server Binary ===
+          # Fetch whisper.cpp releases
+          release = request_json("https://api.github.com/repos/ggerganov/whisper.cpp/releases/latest")
+          assets = release.get("assets", [])
+          tag = release.get("tag_name", "unknown")
+
+          print(f"[whisper-runtime] Fetched release {tag} with {len(assets)} assets")
+
+          # Map OS to binary patterns
+          binary_patterns = {
+            "linux": ["whisper-server-linux-x86_64"],
+            "windows": ["whisper-server-windows-x86_64.exe"],
+            "macos": ["whisper-server-macos-arm64", "whisper-server-macos-aarch64", "whisper-server-macos-x86_64"],
+          }
+
+          found_binary = None
+          for asset in assets:
+            name = asset.get("name", "").lower()
+            # Skip source code archives
+            if "source" in name:
+              continue
+            for pattern in binary_patterns.get(os_key, []):
+              # Look for server binary in archive name
+              if pattern in name and (name.endswith(".zip") or name.endswith(".tar.gz") or name.endswith(".tar.xz")):
+                found_binary = asset
+                break
+            if found_binary:
+                break
+
+          # Alternative: look for any server binary
+          if not found_binary:
+            for asset in assets:
+              name = asset.get("name", "").lower()
+              if "whisper-server" in name and not "source" in name and (name.endswith(".zip") or name.endswith(".tar.gz") or name.endswith(".tar.xz")):
+                found_binary = asset
+                break
+
+          if not found_binary:
+            print("[whisper-runtime] No pre-built server binary found in release")
+            print("[whisper-runtime] Note: whisper.cpp may require building from source")
+            # Create a manifest noting that binary wasn't found
+            manifest = {
+              "releaseTag": tag,
+              "runnerOs": runner_os,
+              "status": "binary_not_found",
+              "note": "Pre-built whisper-server binary not found. Build from source: git clone https://github.com/ggerganov/whisper.cpp && cd whisper.cpp && make server",
+            }
+            (whisper_server_dir / "manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+            print("[whisper-runtime] manifest written (binary not found)")
+          else:
+            name = found_binary["name"]
+            url = found_binary["browser_download_url"]
+            print(f"[whisper-runtime] Downloading: {name}")
+
+            archive_path = temp_root / name
+            req = urllib.request.Request(url, headers={"User-Agent": "arxell-lite-ci"})
+            with urllib.request.urlopen(req, timeout=120) as resp, open(archive_path, "wb") as out:
+              shutil.copyfileobj(resp, out)
+
+            extract_dir = temp_root / "extract"
+            extract_dir.mkdir(parents=True, exist_ok=True)
+
+            # Determine extension and extract
+            if name.endswith(".zip"):
+              with zipfile.ZipFile(archive_path) as zf:
+                zf.extractall(extract_dir)
+            else:
+              safe_extract_tar(archive_path, extract_dir)
+
+            # Find the binary
+            binary_map = {
+              "linux": "whisper-server-linux-x86_64",
+              "macos": "whisper-server-macos-aarch64",
+              "windows": "whisper-server-windows-x86_64.exe",
+            }
+            target_binary = binary_map.get(os_key, "whisper-server")
+
+            for path in extract_dir.rglob("whisper-server*"):
+              if path.is_file():
+                binary_dest = whisper_server_dir / target_binary
+                shutil.copy2(path, binary_dest)
+                if os_key != "windows":
+                  binary_dest.chmod(binary_dest.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+                print(f"[whisper-runtime] Prepared: {binary_dest}")
+                manifest = {
+                  "releaseTag": tag,
+                  "runnerOs": runner_os,
+                  "status": "ready",
+                  "binaryPath": str(binary_dest.relative_to(repo_root)),
+                }
+                (whisper_server_dir / "manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+                print("[whisper-runtime] manifest written")
+                break
+
+          # List final files
+          print("[whisper-runtime] Final resources:")
+          for p in whisper_server_dir.iterdir():
+            print(f"  {p.name}")
+          for p in whisper_models_dir.iterdir():
+            print(f"  {p.name}")
+          PY
+
       - name: Build desktop binary
         run: cargo build --release --manifest-path src-tauri/Cargo.toml --features tauri-runtime
 
@@ -279,3 +463,10 @@ jobs:
           name: ${{ matrix.platform.name }}-v${{ steps.app_version.outputs.version }}-llama-runtime-manifest
           path: src-tauri/resources/llama-runtime/manifest.json
           if-no-files-found: error
+
+      - name: Upload bundled whisper manifest
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.platform.name }}-v${{ steps.app_version.outputs.version }}-whisper-runtime-manifest
+          path: src-tauri/resources/whisper-server/manifest.json
+          if-no-files-found: warn
