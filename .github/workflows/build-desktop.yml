@@ -49,7 +49,7 @@ jobs:
             echo "Python executable not found on runner" >&2
             exit 1
           fi
-          version="$("$PY" -c 'import pathlib,re,sys; t=pathlib.Path("src-tauri/Cargo.toml").read_text(encoding="utf-8"); m=re.search(r"(?m)^\\s*version\\s*=\\s*\"([^\"]+)\"\\s*$", t); print(m.group(1) if m else (sys.stderr.write("Could not find package version in src-tauri/Cargo.toml\\n") or sys.exit(1)))')"
+          version="$("$PY" -c 'import pathlib,re,sys; text=pathlib.Path("src-tauri/Cargo.toml").read_text(encoding="utf-8"); section=re.search(r"(?ms)^\\[package\\]\\s*(.*?)(?=^\\[|\\Z)", text); m=re.search(r"(?m)^\\s*version\\s*=\\s*\"([^\"]+)\"\\s*$", section.group(1) if section else ""); print(m.group(1) if m else (sys.stderr.write("Could not find [package].version in src-tauri/Cargo.toml\\n") or sys.exit(1)))')"
           echo "version=${version}" >> "${GITHUB_OUTPUT}"
           echo "App version: ${version}"
 

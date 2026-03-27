@@ -14,11 +14,33 @@ const frontendPkgPath = path.join(root, "frontend", "package.json");
 const frontendLockPath = path.join(root, "frontend", "package-lock.json");
 
 const cargoToml = fs.readFileSync(cargoTomlPath, "utf8");
-const cargoVersionMatch = cargoToml.match(/^version\s*=\s*"([^"]+)"\s*$/m);
-if (!cargoVersionMatch) {
-  throw new Error("Could not find package version in src-tauri/Cargo.toml");
+
+function readCargoPackageVersion(tomlText) {
+  let inPackageSection = false;
+  for (const rawLine of tomlText.split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (line === "[package]") {
+      inPackageSection = true;
+      continue;
+    }
+    if (line.startsWith("[") && line.endsWith("]")) {
+      if (inPackageSection) {
+        break;
+      }
+      continue;
+    }
+    if (!inPackageSection) {
+      continue;
+    }
+    const match = line.match(/^version\s*=\s*"([^"]+)"\s*$/);
+    if (match) {
+      return match[1];
+    }
+  }
+  throw new Error("Could not find [package].version in src-tauri/Cargo.toml");
 }
-const version = cargoVersionMatch[1];
+
+const version = readCargoPackageVersion(cargoToml);
 
 function readJson(filePath) {
   return JSON.parse(fs.readFileSync(filePath, "utf8"));
