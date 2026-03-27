@@ -92,10 +92,16 @@ jobs:
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Setup Vulkan SDK
-        uses: Khrushkin/action-setup-vulkan@v1
-        with:
-          version: 1.3.275.0
+      - name: Setup Vulkan SDK for Windows
+        if: matrix.platform == 'windows-latest'
+        run: |
+          # Download and install Vulkan SDK from LunarG
+          $vulkanZip = "$env:TEMP\vulkan-sdk.zip"
+          [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+          Invoke-WebRequest -Uri "https://vulkan.lunarg.com/sdk/download/1.3.275.0/windows/VulkanSDK-1.3.275.0-windows.zip" -OutFile $vulkanZip
+          Expand-Archive -Path $vulkanZip -DestinationPath "C:\VulkanSDK" -Force
+          echo "VULKAN_SDK=C:\VulkanSDK\1.3.275.0" >> $env:GITHUB_ENV
+          echo "C:\VulkanSDK\1.3.275.0\Bin" >> $env:GITHUB_PATH
 
       - name: Rust cache
         uses: swatinem/rust-cache@v2

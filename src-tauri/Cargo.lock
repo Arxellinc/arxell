@@ -189,7 +189,7 @@ dependencies = [
 
 [[package]]
 name = "arx"
-version = "0.9.21"
+version = "0.9.22"
 dependencies = [
  "anyhow",
  "arx-application",
