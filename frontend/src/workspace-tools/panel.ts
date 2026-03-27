@@ -3,21 +3,38 @@ import { iconHtml } from "../icons";
 import { APP_ICON } from "../icons/map";
 import type { IconName } from "../icons";
 import { escapeHtml } from "../panels/utils";
+import { getToolManifest } from "../tools/registry";
 
 export function renderWorkspaceToolsActions(): string {
-  return `<button type="button" class="topbar-icon-btn" id="refreshWorkspaceToolsBtn" aria-label="Refresh tools">↻</button>`;
+  return [
+    '<button type="button" class="topbar-icon-btn" id="refreshWorkspaceToolsBtn" aria-label="Refresh tools">↻</button>',
+    '<button type="button" class="topbar-icon-btn" id="exportWorkspaceToolsBtn" aria-label="Export tools">⇩</button>',
+    '<button type="button" class="topbar-icon-btn" id="importWorkspaceToolsBtn" aria-label="Import tools">⇧</button>'
+  ].join("");
 }
 
 export function renderWorkspaceToolsBody(tools: WorkspaceToolRecord[]): string {
   const rows =
     tools
       .map((tool) => {
-        const icon = toolIcon(tool.toolId);
+        const manifest = getToolManifest(tool.toolId);
+        const icon = toolIcon(tool.toolId, manifest?.icon);
         const status = tool.enabled ? tool.status : "disabled";
+        const description = tool.description || manifest?.description || "";
+        const category = tool.category || manifest?.category || "workspace";
+        const scopeLabel = tool.core ? "core" : "optional";
         return `<div class="tool-row">
           <div class="tool-cell tool-cell-main">
             <span class="tool-row-icon">${iconHtml(icon, { size: 16, tone: "dark" })}</span>
-            <div class="tool-title">${escapeHtml(tool.title)}</div>
+            <div class="tool-main-copy">
+              <div class="tool-title">${escapeHtml(tool.title)}</div>
+              <div class="tool-description">${escapeHtml(description)}</div>
+              <div class="tool-meta-row">
+                <span class="tool-meta-pill">${escapeHtml(category)}</span>
+                <span class="tool-meta-pill">${escapeHtml(scopeLabel)}</span>
+                <span class="tool-meta-pill">${escapeHtml(tool.version)}</span>
+              </div>
+            </div>
           </div>
           <div class="tool-cell tool-cell-status">
             <span class="tool-status ${escapeHtml(status)}">${escapeHtml(status)}</span>
@@ -35,12 +52,26 @@ export function renderWorkspaceToolsBody(tools: WorkspaceToolRecord[]): string {
 
 export function bindWorkspaceToolsPanel(
   onRefreshTools: () => Promise<void>,
-  onSetToolEnabled: (toolId: string, enabled: boolean) => Promise<void>
+  onSetToolEnabled: (toolId: string, enabled: boolean) => Promise<void>,
+  onExportTools: () => Promise<void>,
+  onImportTools: () => Promise<void>
 ): void {
   const refreshBtn = document.querySelector<HTMLButtonElement>("#refreshWorkspaceToolsBtn");
   if (refreshBtn) {
     refreshBtn.onclick = async () => {
       await onRefreshTools();
+    };
+  }
+  const exportBtn = document.querySelector<HTMLButtonElement>("#exportWorkspaceToolsBtn");
+  if (exportBtn) {
+    exportBtn.onclick = async () => {
+      await onExportTools();
+    };
+  }
+  const importBtn = document.querySelector<HTMLButtonElement>("#importWorkspaceToolsBtn");
+  if (importBtn) {
+    importBtn.onclick = async () => {
+      await onImportTools();
     };
   }
 
@@ -55,7 +86,8 @@ export function bindWorkspaceToolsPanel(
   });
 }
 
-function toolIcon(toolId: string): IconName {
+function toolIcon(toolId: string, manifestIcon?: IconName): IconName {
+  if (manifestIcon) return manifestIcon;
   if (toolId === "terminal") return APP_ICON.sidebar.terminal;
   return APP_ICON.action.toolsPanel;
 }

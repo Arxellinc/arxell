@@ -2529,6 +2529,63 @@ function attachWorkspaceInteractions(sendMessage: (text: string) => Promise<void
         });
         await refreshTools();
         renderAndBind(sendMessage);
+      },
+      async () => {
+        if (!clientRef) return;
+        const exported = await clientRef.exportWorkspaceTools({
+          correlationId: nextCorrelationId()
+        });
+        const blob = new Blob([exported.payloadJson], {
+          type: "application/json;charset=utf-8"
+        });
+        const url = URL.createObjectURL(blob);
+        const anchor = document.createElement("a");
+        anchor.href = url;
+        anchor.download = exported.fileName;
+        document.body.appendChild(anchor);
+        anchor.click();
+        document.body.removeChild(anchor);
+        URL.revokeObjectURL(url);
+        pushConsoleEntry("info", "browser", `Exported tool registry to ${exported.fileName}.`);
+        renderAndBind(sendMessage);
+      },
+      async () => {
+        const client = clientRef;
+        if (!client) return;
+        const input = document.createElement("input");
+        const cleanup = () => {
+          if (input.parentElement) {
+            document.body.removeChild(input);
+          }
+        };
+        input.type = "file";
+        input.accept = "application/json,.json";
+        input.style.display = "none";
+        document.body.appendChild(input);
+        window.setTimeout(cleanup, 60_000);
+        input.onchange = () => {
+          void (async () => {
+            try {
+              const file = input.files?.[0];
+              if (!file) return;
+              const payloadJson = await file.text();
+              await client.importWorkspaceTools({
+                correlationId: nextCorrelationId(),
+                payloadJson
+              });
+              await refreshTools();
+              pushConsoleEntry("info", "browser", `Imported tool registry from ${file.name}.`);
+            } catch (error) {
+              const message =
+                error instanceof Error ? error.message : "Unknown import failure";
+              pushConsoleEntry("error", "browser", `Failed importing tool registry: ${message}`);
+            } finally {
+              renderAndBind(sendMessage);
+              cleanup();
+            }
+          })();
+        };
+        input.click();
       }
     );
   }

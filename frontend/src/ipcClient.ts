@@ -43,9 +43,14 @@ import type {
   WorkspaceToolsListRequest,
   WorkspaceToolsListResponse,
   WorkspaceToolSetEnabledRequest,
-  WorkspaceToolSetEnabledResponse
+  WorkspaceToolSetEnabledResponse,
+  WorkspaceToolsExportRequest,
+  WorkspaceToolsExportResponse,
+  WorkspaceToolsImportRequest,
+  WorkspaceToolsImportResponse
 } from "./contracts";
 import { APP_BUILD_VERSION } from "./version";
+import { getAllToolManifests } from "./tools/registry";
 
 export interface ChatIpcClient {
   getAppVersion(): Promise<AppVersionResponse>;
@@ -66,6 +71,8 @@ export interface ChatIpcClient {
   setWorkspaceToolEnabled(
     request: WorkspaceToolSetEnabledRequest
   ): Promise<WorkspaceToolSetEnabledResponse>;
+  exportWorkspaceTools(request: WorkspaceToolsExportRequest): Promise<WorkspaceToolsExportResponse>;
+  importWorkspaceTools(request: WorkspaceToolsImportRequest): Promise<WorkspaceToolsImportResponse>;
   getLlamaRuntimeStatus(request: LlamaRuntimeStatusRequest): Promise<LlamaRuntimeStatusResponse>;
   installLlamaRuntimeEngine(
     request: LlamaRuntimeInstallRequest
@@ -198,6 +205,18 @@ class TauriChatIpcClient implements ChatIpcClient {
     });
   }
 
+  exportWorkspaceTools(
+    request: WorkspaceToolsExportRequest
+  ): Promise<WorkspaceToolsExportResponse> {
+    return this.invokeFn<WorkspaceToolsExportResponse>("cmd_workspace_tools_export", { request });
+  }
+
+  importWorkspaceTools(
+    request: WorkspaceToolsImportRequest
+  ): Promise<WorkspaceToolsImportResponse> {
+    return this.invokeFn<WorkspaceToolsImportResponse>("cmd_workspace_tools_import", { request });
+  }
+
   getLlamaRuntimeStatus(
     request: LlamaRuntimeStatusRequest
   ): Promise<LlamaRuntimeStatusResponse> {
@@ -269,17 +288,23 @@ class TauriChatIpcClient implements ChatIpcClient {
 
 export class MockChatIpcClient implements ChatIpcClient {
   private listeners: Array<(event: AppEvent) => void> = [];
-  private readonly tools = new Map<string, WorkspaceToolRecord>([
-    [
-      "terminal",
+  private readonly tools = new Map<string, WorkspaceToolRecord>(
+    getAllToolManifests().map((manifest) => [
+      manifest.id,
       {
-        toolId: "terminal",
-        title: "Terminal",
-        enabled: true,
-        status: "ready"
+        toolId: manifest.id,
+        title: manifest.title,
+        description: manifest.description,
+        category: manifest.category,
+        core: manifest.core,
+        optional: !manifest.core,
+        version: manifest.version,
+        source: manifest.source,
+        enabled: manifest.defaultEnabled,
+        status: manifest.defaultEnabled ? "ready" : "disabled"
       }
-    ]
-  ]);
+    ])
+  );
 
   async getAppVersion(): Promise<AppVersionResponse> {
     return { version: APP_BUILD_VERSION };
@@ -496,6 +521,40 @@ export class MockChatIpcClient implements ChatIpcClient {
       toolId: request.toolId,
       enabled: request.enabled,
       correlationId: request.correlationId
+    };
+  }
+
+  async exportWorkspaceTools(
+    request: WorkspaceToolsExportRequest
+  ): Promise<WorkspaceToolsExportResponse> {
+    const enabled: Record<string, boolean> = {};
+    for (const [toolId, tool] of this.tools.entries()) {
+      enabled[toolId] = tool.enabled;
+    }
+    return {
+      correlationId: request.correlationId,
+      fileName: "arxell-tools-registry.json",
+      payloadJson: `${JSON.stringify({ version: 1, enabled }, null, 2)}\n`
+    };
+  }
+
+  async importWorkspaceTools(
+    request: WorkspaceToolsImportRequest
+  ): Promise<WorkspaceToolsImportResponse> {
+    const parsed = JSON.parse(request.payloadJson) as {
+      enabled?: Record<string, boolean>;
+    };
+    const enabled = parsed.enabled ?? {};
+    for (const [toolId, tool] of this.tools.entries()) {
+      const value = enabled[toolId];
+      if (typeof value === "boolean") {
+        tool.enabled = value;
+        tool.status = value ? "ready" : "disabled";
+      }
+    }
+    return {
+      correlationId: request.correlationId,
+      tools: [...this.tools.values()]
     };
   }
 

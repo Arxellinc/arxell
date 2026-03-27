@@ -21,7 +21,9 @@ use app_foundation::contracts::{
     TerminalCloseSessionRequest, TerminalCloseSessionResponse, TerminalInputRequest,
     TerminalInputResponse, TerminalOpenSessionRequest, TerminalOpenSessionResponse,
     TerminalResizeRequest, TerminalResizeResponse, WorkspaceToolSetEnabledRequest,
-    WorkspaceToolSetEnabledResponse, WorkspaceToolsListRequest, WorkspaceToolsListResponse,
+    WorkspaceToolSetEnabledResponse, WorkspaceToolsExportRequest, WorkspaceToolsExportResponse,
+    WorkspaceToolsImportRequest, WorkspaceToolsImportResponse, WorkspaceToolsListRequest,
+    WorkspaceToolsListResponse,
 };
 #[cfg(feature = "tauri-runtime")]
 use app_foundation::ipc::tauri_bridge::{attach_event_forwarder, TauriBridgeState};
@@ -139,6 +141,8 @@ fn main() {
             cmd_terminal_close_session,
             cmd_workspace_tools_list,
             cmd_workspace_tool_set_enabled,
+            cmd_workspace_tools_export,
+            cmd_workspace_tools_import,
             cmd_devices_probe_microphone,
             cmd_app_version,
             cmd_llama_runtime_status,
@@ -379,6 +383,35 @@ async fn cmd_workspace_tool_set_enabled(
         correlation_id: request.correlation_id,
         tool_id: request.tool_id,
         enabled: request.enabled,
+    })
+}
+
+#[cfg(feature = "tauri-runtime")]
+#[tauri::command]
+async fn cmd_workspace_tools_export(
+    state: State<'_, TauriBridgeState>,
+    request: WorkspaceToolsExportRequest,
+) -> Result<WorkspaceToolsExportResponse, String> {
+    let payload_json = state.workspace_tools.export_snapshot_json()?;
+    Ok(WorkspaceToolsExportResponse {
+        correlation_id: request.correlation_id,
+        file_name: "arxell-tools-registry.json".to_string(),
+        payload_json,
+    })
+}
+
+#[cfg(feature = "tauri-runtime")]
+#[tauri::command]
+async fn cmd_workspace_tools_import(
+    state: State<'_, TauriBridgeState>,
+    request: WorkspaceToolsImportRequest,
+) -> Result<WorkspaceToolsImportResponse, String> {
+    let tools = state
+        .workspace_tools
+        .import_snapshot_json(request.payload_json.as_str())?;
+    Ok(WorkspaceToolsImportResponse {
+        correlation_id: request.correlation_id,
+        tools,
     })
 }
 

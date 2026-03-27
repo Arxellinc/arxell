@@ -232,6 +232,12 @@ pub struct ToolInvokeResponse {
 pub struct WorkspaceToolRecord {
     pub tool_id: String,
     pub title: String,
+    pub description: String,
+    pub category: String,
+    pub core: bool,
+    pub optional: bool,
+    pub version: String,
+    pub source: String,
     pub enabled: bool,
     pub status: String,
 }
@@ -263,6 +269,34 @@ pub struct WorkspaceToolSetEnabledResponse {
     pub correlation_id: String,
     pub tool_id: String,
     pub enabled: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceToolsExportRequest {
+    pub correlation_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceToolsExportResponse {
+    pub correlation_id: String,
+    pub file_name: String,
+    pub payload_json: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceToolsImportRequest {
+    pub correlation_id: String,
+    pub payload_json: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceToolsImportResponse {
+    pub correlation_id: String,
+    pub tools: Vec<WorkspaceToolRecord>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

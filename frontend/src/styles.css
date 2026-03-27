@@ -293,12 +293,11 @@ body {
 
 .tool-row {
   display: grid;
-  grid-template-columns: minmax(220px, 1fr) 130px 190px;
-  align-items: center;
+  grid-template-columns: minmax(320px, 1fr) 110px 190px;
+  align-items: start;
   gap: 0.6rem;
   padding: 0.45rem 0.55rem;
   border-bottom: 1px solid var(--line);
-  white-space: nowrap;
 }
 
 .tool-row:last-child {
@@ -311,9 +310,15 @@ body {
 }
 
 .tool-cell-main {
-  display: inline-flex;
-  align-items: center;
+  display: flex;
+  align-items: flex-start;
   gap: 0.45rem;
+}
+
+.tool-main-copy {
+  min-width: 0;
+  display: grid;
+  gap: 0.2rem;
 }
 
 .tool-row-icon {
@@ -328,9 +333,31 @@ body {
   font-size: 0.8rem;
   color: var(--ink);
   font-weight: 600;
-  white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.tool-description {
+  font-size: 0.72rem;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tool-meta-row {
+  display: inline-flex;
+  gap: 0.3rem;
+  flex-wrap: wrap;
+}
+
+.tool-meta-pill {
+  font-size: 0.62rem;
+  color: var(--muted);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 0.05rem 0.35rem;
+  background: var(--surface-soft);
 }
 
 .tool-cell-status {

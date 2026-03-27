@@ -126,6 +126,12 @@ export interface TerminalCloseSessionResponse {
 export interface WorkspaceToolRecord {
   toolId: string;
   title: string;
+  description: string;
+  category: string;
+  core: boolean;
+  optional: boolean;
+  version: string;
+  source: string;
   enabled: boolean;
   status: string;
 }
@@ -149,6 +155,26 @@ export interface WorkspaceToolSetEnabledResponse {
   correlationId: string;
   toolId: string;
   enabled: boolean;
+}
+
+export interface WorkspaceToolsExportRequest {
+  correlationId: string;
+}
+
+export interface WorkspaceToolsExportResponse {
+  correlationId: string;
+  fileName: string;
+  payloadJson: string;
+}
+
+export interface WorkspaceToolsImportRequest {
+  correlationId: string;
+  payloadJson: string;
+}
+
+export interface WorkspaceToolsImportResponse {
+  correlationId: string;
+  tools: WorkspaceToolRecord[];
 }
 
 export interface LlamaRuntimeStatusRequest {
