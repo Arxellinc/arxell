@@ -4,10 +4,12 @@ on:
   push:
     branches:
       - main
+    tags:
+      - "v*.*.*"
   pull_request:
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   build:
@@ -50,6 +52,18 @@ jobs:
           version="$("$PY" -c 'import pathlib,re,sys; t=pathlib.Path("src-tauri/Cargo.toml").read_text(encoding="utf-8"); m=re.search(r"(?m)^\\s*version\\s*=\\s*\"([^\"]+)\"\\s*$", t); print(m.group(1) if m else (sys.stderr.write("Could not find package version in src-tauri/Cargo.toml\\n") or sys.exit(1)))')"
           echo "version=${version}" >> "${GITHUB_OUTPUT}"
           echo "App version: ${version}"
+
+      - name: Validate release tag matches app version
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: bash
+        run: |
+          set -euo pipefail
+          expected="v${{ steps.app_version.outputs.version }}"
+          actual="${GITHUB_REF_NAME}"
+          if [[ "${actual}" != "${expected}" ]]; then
+            echo "Tag/version mismatch: tag=${actual}, expected=${expected}" >&2
+            exit 1
+          fi
 
       - name: Setup Node
         uses: actions/setup-node@v4
@@ -470,3 +484,92 @@ jobs:
           name: ${{ matrix.platform.name }}-v${{ steps.app_version.outputs.version }}-whisper-runtime-manifest
           path: src-tauri/resources/whisper-server/manifest.json
           if-no-files-found: warn
+
+      - name: Package release bundle
+        id: package_release
+        shell: bash
+        env:
+          PLATFORM_NAME: ${{ matrix.platform.name }}
+          APP_VERSION: ${{ steps.app_version.outputs.version }}
+          BINARY_PATH: ${{ matrix.platform.artifact_path }}
+          BINARY_NAME: ${{ matrix.platform.artifact_name }}
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import hashlib
+          import os
+          import pathlib
+          import shutil
+
+          platform_name = os.environ["PLATFORM_NAME"]
+          app_version = os.environ["APP_VERSION"]
+          binary_path = pathlib.Path(os.environ["BINARY_PATH"])
+          binary_name = os.environ["BINARY_NAME"]
+          github_output = pathlib.Path(os.environ["GITHUB_OUTPUT"])
+
+          if not binary_path.is_file():
+              raise RuntimeError(f"binary missing: {binary_path}")
+
+          out_root = pathlib.Path("release-assets")
+          out_root.mkdir(parents=True, exist_ok=True)
+          bundle_dir = out_root / f"{platform_name}-v{app_version}"
+          if bundle_dir.exists():
+              shutil.rmtree(bundle_dir)
+          bundle_dir.mkdir(parents=True, exist_ok=True)
+
+          shutil.copy2(binary_path, bundle_dir / binary_name)
+
+          llama_manifest = pathlib.Path("src-tauri/resources/llama-runtime/manifest.json")
+          if llama_manifest.is_file():
+              shutil.copy2(llama_manifest, bundle_dir / "llama-runtime-manifest.json")
+
+          whisper_manifest = pathlib.Path("src-tauri/resources/whisper-server/manifest.json")
+          if whisper_manifest.is_file():
+              shutil.copy2(whisper_manifest, bundle_dir / "whisper-runtime-manifest.json")
+
+          archive_base = out_root / f"{platform_name}-v{app_version}"
+          archive_zip = pathlib.Path(
+              shutil.make_archive(str(archive_base), "zip", root_dir=bundle_dir.parent, base_dir=bundle_dir.name)
+          )
+
+          digest = hashlib.sha256(archive_zip.read_bytes()).hexdigest()
+          checksum_file = archive_zip.with_suffix(".zip.sha256")
+          checksum_file.write_text(f"{digest}  {archive_zip.name}\n", encoding="utf-8")
+
+          with github_output.open("a", encoding="utf-8") as f:
+              f.write(f"zip={archive_zip.as_posix()}\n")
+              f.write(f"sha256={checksum_file.as_posix()}\n")
+          PY
+
+      - name: Upload release bundle artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.platform.name }}-v${{ steps.app_version.outputs.version }}-release-assets
+          path: |
+            ${{ steps.package_release.outputs.zip }}
+            ${{ steps.package_release.outputs.sha256 }}
+          if-no-files-found: error
+
+  publish-release:
+    name: Publish Release Assets
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download release bundle artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: "*-release-assets"
+          merge-multiple: true
+          path: release-assets
+
+      - name: Publish GitHub Release assets
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            release-assets/*.zip
+            release-assets/*.sha256
+          fail_on_unmatched_files: true
+          generate_release_notes: true
