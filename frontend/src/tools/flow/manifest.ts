@@ -9,5 +9,5 @@ export const flowToolManifest: ToolManifest = {
   core: false,
   defaultEnabled: false,
   source: "builtin",
-  icon: "wrench"
+  icon: "bot"
 };

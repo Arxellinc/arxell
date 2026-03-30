@@ -1,4 +1,5 @@
 import { APP_ICON } from "../icons/map";
+import { bindApisPanel, renderApisActions, renderApisBody } from "./apisPanel";
 import { bindChatPanel, renderChatActions, renderChatBody } from "./chatPanel";
 import { renderDevicesActions, renderDevicesBody } from "./devicesPanel";
 import { bindHistoryPanel, renderHistoryActions, renderHistoryBody } from "./historyPanel";
@@ -55,6 +56,15 @@ export function getPanelDefinition(
       icon: APP_ICON.sidebar.devices,
       renderBody: () => renderDevicesBody(state),
       renderActions: renderDevicesActions
+    };
+  }
+
+  if (tab === "apis") {
+    return {
+      title: "APIs",
+      icon: APP_ICON.sidebar.apis,
+      renderBody: () => renderApisBody(state),
+      renderActions: renderApisActions
     };
   }
 
@@ -178,6 +188,11 @@ export function attachPrimaryPanelInteractions(
         await bindings.onRequestSpeakerAccess();
       };
     }
+    return;
+  }
+
+  if (tab === "apis") {
+    bindApisPanel(bindings);
     return;
   }
 

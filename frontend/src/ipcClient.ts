@@ -1,4 +1,17 @@
 import type {
+  ApiConnectionCreateRequest,
+  ApiConnectionCreateResponse,
+  ApiConnectionDeleteRequest,
+  ApiConnectionDeleteResponse,
+  ApiConnectionGetSecretRequest,
+  ApiConnectionGetSecretResponse,
+  ApiConnectionRecord,
+  ApiConnectionReverifyRequest,
+  ApiConnectionReverifyResponse,
+  ApiConnectionUpdateRequest,
+  ApiConnectionUpdateResponse,
+  ApiConnectionsListRequest,
+  ApiConnectionsListResponse,
   AppEvent,
   AppVersionResponse,
   ChatCancelRequest,
@@ -29,6 +42,8 @@ import type {
   ModelManagerListInstalledResponse,
   ModelManagerSearchHfRequest,
   ModelManagerSearchHfResponse,
+  WebSearchRequest,
+  WebSearchResponse,
   ChatSendRequest,
   ChatSendResponse,
   TerminalCloseSessionRequest,
@@ -71,8 +86,17 @@ export interface ChatIpcClient {
   setWorkspaceToolEnabled(
     request: WorkspaceToolSetEnabledRequest
   ): Promise<WorkspaceToolSetEnabledResponse>;
-  exportWorkspaceTools(request: WorkspaceToolsExportRequest): Promise<WorkspaceToolsExportResponse>;
-  importWorkspaceTools(request: WorkspaceToolsImportRequest): Promise<WorkspaceToolsImportResponse>;
+  listApiConnections(request: ApiConnectionsListRequest): Promise<ApiConnectionsListResponse>;
+  createApiConnection(request: ApiConnectionCreateRequest): Promise<ApiConnectionCreateResponse>;
+  updateApiConnection(request: ApiConnectionUpdateRequest): Promise<ApiConnectionUpdateResponse>;
+  reverifyApiConnection(
+    request: ApiConnectionReverifyRequest
+  ): Promise<ApiConnectionReverifyResponse>;
+  deleteApiConnection(request: ApiConnectionDeleteRequest): Promise<ApiConnectionDeleteResponse>;
+  getApiConnectionSecret(
+    request: ApiConnectionGetSecretRequest
+  ): Promise<ApiConnectionGetSecretResponse>;
+  webSearch(request: WebSearchRequest): Promise<WebSearchResponse>;
   getLlamaRuntimeStatus(request: LlamaRuntimeStatusRequest): Promise<LlamaRuntimeStatusResponse>;
   installLlamaRuntimeEngine(
     request: LlamaRuntimeInstallRequest
@@ -217,6 +241,40 @@ class TauriChatIpcClient implements ChatIpcClient {
     return this.invokeFn<WorkspaceToolsImportResponse>("cmd_workspace_tools_import", { request });
   }
 
+  listApiConnections(request: ApiConnectionsListRequest): Promise<ApiConnectionsListResponse> {
+    return this.invokeFn<ApiConnectionsListResponse>("cmd_api_connections_list", { request });
+  }
+
+  createApiConnection(request: ApiConnectionCreateRequest): Promise<ApiConnectionCreateResponse> {
+    return this.invokeFn<ApiConnectionCreateResponse>("cmd_api_connection_create", { request });
+  }
+
+  updateApiConnection(request: ApiConnectionUpdateRequest): Promise<ApiConnectionUpdateResponse> {
+    return this.invokeFn<ApiConnectionUpdateResponse>("cmd_api_connection_update", { request });
+  }
+
+  reverifyApiConnection(
+    request: ApiConnectionReverifyRequest
+  ): Promise<ApiConnectionReverifyResponse> {
+    return this.invokeFn<ApiConnectionReverifyResponse>("cmd_api_connection_reverify", { request });
+  }
+
+  deleteApiConnection(request: ApiConnectionDeleteRequest): Promise<ApiConnectionDeleteResponse> {
+    return this.invokeFn<ApiConnectionDeleteResponse>("cmd_api_connection_delete", { request });
+  }
+
+  getApiConnectionSecret(
+    request: ApiConnectionGetSecretRequest
+  ): Promise<ApiConnectionGetSecretResponse> {
+    return this.invokeFn<ApiConnectionGetSecretResponse>("cmd_api_connection_get_secret", {
+      request
+    });
+  }
+
+  webSearch(request: WebSearchRequest): Promise<WebSearchResponse> {
+    return this.invokeFn<WebSearchResponse>("cmd_web_search", { request });
+  }
+
   getLlamaRuntimeStatus(
     request: LlamaRuntimeStatusRequest
   ): Promise<LlamaRuntimeStatusResponse> {
@@ -305,6 +363,8 @@ export class MockChatIpcClient implements ChatIpcClient {
       }
     ])
   );
+  private readonly apiConnections = new Map<string, ApiConnectionRecord>();
+  private readonly apiConnectionSecrets = new Map<string, string>();
 
   async getAppVersion(): Promise<AppVersionResponse> {
     return { version: APP_BUILD_VERSION };
@@ -555,6 +615,147 @@ export class MockChatIpcClient implements ChatIpcClient {
     return {
       correlationId: request.correlationId,
       tools: [...this.tools.values()]
+    };
+  }
+
+  async listApiConnections(
+    request: ApiConnectionsListRequest
+  ): Promise<ApiConnectionsListResponse> {
+    return {
+      correlationId: request.correlationId,
+      connections: [...this.apiConnections.values()].sort((a, b) => b.createdMs - a.createdMs)
+    };
+  }
+
+  async createApiConnection(
+    request: ApiConnectionCreateRequest
+  ): Promise<ApiConnectionCreateResponse> {
+    const now = Date.now();
+    const prefix = request.apiKey.trim().slice(0, 7);
+    const isVerified = /^https?:\/\//.test(request.apiUrl.trim());
+    const connection: ApiConnectionRecord = {
+      id: `api-${now}-${Math.floor(Math.random() * 1000)}`,
+      apiType: request.apiType,
+      apiUrl: request.apiUrl.trim(),
+      name: request.name?.trim() || null,
+      apiKeyPrefix: prefix,
+      apiKeyMasked: prefix ? `${prefix}…` : "(none)",
+      modelName: request.modelName?.trim() || null,
+      costPerMonthUsd:
+        typeof request.costPerMonthUsd === "number" ? request.costPerMonthUsd : null,
+      status: isVerified ? "verified" : "warning",
+      statusMessage: isVerified
+        ? "Mock verification succeeded"
+        : "Mock verification failed: invalid URL",
+      lastCheckedMs: now,
+      createdMs: now,
+      apiStandardPath: request.apiStandardPath?.trim() || null
+    };
+    this.apiConnections.set(connection.id, connection);
+    this.apiConnectionSecrets.set(connection.id, request.apiKey);
+    return {
+      correlationId: request.correlationId,
+      connection
+    };
+  }
+
+  async updateApiConnection(
+    request: ApiConnectionUpdateRequest
+  ): Promise<ApiConnectionUpdateResponse> {
+    const current = this.apiConnections.get(request.id);
+    if (!current) {
+      throw new Error(`API connection not found: ${request.id}`);
+    }
+    const updated: ApiConnectionRecord = {
+      ...current,
+      ...(request.apiType && { apiType: request.apiType }),
+      ...(request.apiUrl && { apiUrl: request.apiUrl }),
+      ...(request.name !== undefined && { name: request.name || null }),
+      ...(request.apiKey && { apiKeyPrefix: request.apiKey.slice(0, 7), apiKeyMasked: `${request.apiKey.slice(0, 7)}…` }),
+      ...(request.modelName !== undefined && { modelName: request.modelName || null }),
+      ...(request.costPerMonthUsd !== undefined && { costPerMonthUsd: request.costPerMonthUsd }),
+      ...(request.apiStandardPath !== undefined && { apiStandardPath: request.apiStandardPath || null }),
+      lastCheckedMs: Date.now()
+    };
+    this.apiConnections.set(updated.id, updated);
+    if (request.apiKey) {
+      this.apiConnectionSecrets.set(updated.id, request.apiKey);
+    }
+    return {
+      correlationId: request.correlationId,
+      connection: updated
+    };
+  }
+
+  async reverifyApiConnection(
+    request: ApiConnectionReverifyRequest
+  ): Promise<ApiConnectionReverifyResponse> {
+    const current = this.apiConnections.get(request.id);
+    if (!current) {
+      throw new Error(`API connection not found: ${request.id}`);
+    }
+    const isVerified = /^https?:\/\//.test(current.apiUrl.trim());
+    const updated: ApiConnectionRecord = {
+      ...current,
+      status: isVerified ? "verified" : "warning",
+      statusMessage: isVerified
+        ? "Mock verification succeeded"
+        : "Mock verification failed: invalid URL",
+      lastCheckedMs: Date.now()
+    };
+    this.apiConnections.set(updated.id, updated);
+    return {
+      correlationId: request.correlationId,
+      connection: updated
+    };
+  }
+
+  async deleteApiConnection(
+    request: ApiConnectionDeleteRequest
+  ): Promise<ApiConnectionDeleteResponse> {
+    const deleted = this.apiConnections.delete(request.id);
+    this.apiConnectionSecrets.delete(request.id);
+    return {
+      correlationId: request.correlationId,
+      id: request.id,
+      deleted
+    };
+  }
+
+  async getApiConnectionSecret(
+    request: ApiConnectionGetSecretRequest
+  ): Promise<ApiConnectionGetSecretResponse> {
+    const secret = this.apiConnectionSecrets.get(request.id);
+    if (!secret) {
+      throw new Error(`API connection secret not found: ${request.id}`);
+    }
+    return {
+      correlationId: request.correlationId,
+      id: request.id,
+      apiKey: secret
+    };
+  }
+
+  async webSearch(request: WebSearchRequest): Promise<WebSearchResponse> {
+    const query = request.query.trim();
+    if (!query) {
+      throw new Error("query is required");
+    }
+    return {
+      correlationId: request.correlationId,
+      result: {
+        query,
+        mode: request.mode ?? "search",
+        page: request.page ?? 1,
+        num: request.num ?? 8,
+        organic: [
+          {
+            title: "Mock search result",
+            link: "https://example.com",
+            snippet: `Mocked result for '${query}'`
+          }
+        ]
+      }
     };
   }
 

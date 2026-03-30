@@ -1,8 +1,10 @@
 #![cfg(feature = "tauri-runtime")]
 
+use crate::api_registry::ApiRegistryService;
 use crate::app::model_manager_service::ModelManagerService;
 use crate::app::permission_service::PermissionService;
 use crate::app::runtime_service::LlamaRuntimeService;
+use crate::app::web_search_service::WebSearchService;
 use crate::contracts::AppEvent;
 use crate::ipc::chat::ChatCommandHandler;
 use crate::ipc::terminal::TerminalCommandHandler;
@@ -16,6 +18,8 @@ pub struct TauriBridgeState {
     pub terminal: Arc<TerminalCommandHandler>,
     pub hub: EventHub,
     pub workspace_tools: Arc<WorkspaceToolsService>,
+    pub api_registry: Arc<ApiRegistryService>,
+    pub web_search: Arc<WebSearchService>,
     pub runtime: Arc<LlamaRuntimeService>,
     pub permissions: Arc<PermissionService>,
     pub model_manager: Arc<ModelManagerService>,

@@ -2,6 +2,6 @@ export { renderGlobalBottombar } from "./bottombar";
 export { renderSidebarRail } from "./sidebarRail";
 export { renderGlobalTopbar } from "./topbar";
 export type { DisplayMode, LayoutOrientation } from "./topbar";
-export { attachWorkspacePaneInteractions } from "./workspacePane";
-export type { WorkspaceTab } from "./workspacePane";
+export type { WorkspacePrimaryTab, WorkspaceTab, WorkspaceToolTabId } from "./workspaceTabs";
+export { isWorkspaceTab, toWorkspaceToolTabId } from "./workspaceTabs";
 export { renderWorkspacePane } from "./workspacePane";

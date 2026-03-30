@@ -300,6 +300,171 @@ pub struct WorkspaceToolsImportResponse {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ApiConnectionType {
+    Llm,
+    Search,
+    Stt,
+    Tts,
+    Image,
+    Other,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ApiConnectionStatus {
+    Verified,
+    Warning,
+    Pending,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ApiConnectionRecord {
+    pub id: String,
+    pub api_type: ApiConnectionType,
+    pub api_url: String,
+    pub name: Option<String>,
+    pub api_key_prefix: String,
+    pub api_key_masked: String,
+    pub model_name: Option<String>,
+    pub cost_per_month_usd: Option<f64>,
+    pub status: ApiConnectionStatus,
+    pub status_message: String,
+    pub last_checked_ms: Option<i64>,
+    pub created_ms: i64,
+    pub api_standard_path: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ApiConnectionAgentRecord {
+    pub id: String,
+    pub api_type: ApiConnectionType,
+    pub api_url: String,
+    pub name: Option<String>,
+    pub api_key: String,
+    pub model_name: Option<String>,
+    pub cost_per_month_usd: Option<f64>,
+    pub api_standard_path: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ApiConnectionsListRequest {
+    pub correlation_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ApiConnectionsListResponse {
+    pub correlation_id: String,
+    pub connections: Vec<ApiConnectionRecord>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ApiConnectionGetSecretRequest {
+    pub correlation_id: String,
+    pub id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ApiConnectionGetSecretResponse {
+    pub correlation_id: String,
+    pub id: String,
+    pub api_key: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WebSearchRequest {
+    pub correlation_id: String,
+    pub query: String,
+    pub mode: Option<String>,
+    pub num: Option<u32>,
+    pub page: Option<u32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WebSearchResponse {
+    pub correlation_id: String,
+    pub result: Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ApiConnectionCreateRequest {
+    pub correlation_id: String,
+    pub api_type: ApiConnectionType,
+    pub api_url: String,
+    pub name: Option<String>,
+    pub api_key: String,
+    pub model_name: Option<String>,
+    pub cost_per_month_usd: Option<f64>,
+    pub api_standard_path: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ApiConnectionCreateResponse {
+    pub correlation_id: String,
+    pub connection: ApiConnectionRecord,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ApiConnectionReverifyRequest {
+    pub correlation_id: String,
+    pub id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ApiConnectionReverifyResponse {
+    pub correlation_id: String,
+    pub connection: ApiConnectionRecord,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ApiConnectionUpdateRequest {
+    pub correlation_id: String,
+    pub id: String,
+    pub api_type: Option<ApiConnectionType>,
+    pub api_url: Option<String>,
+    pub name: Option<String>,
+    pub api_key: Option<String>,
+    pub model_name: Option<String>,
+    pub cost_per_month_usd: Option<f64>,
+    pub api_standard_path: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ApiConnectionUpdateResponse {
+    pub correlation_id: String,
+    pub connection: ApiConnectionRecord,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ApiConnectionDeleteRequest {
+    pub correlation_id: String,
+    pub id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ApiConnectionDeleteResponse {
+    pub correlation_id: String,
+    pub id: String,
+    pub deleted: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LlamaRuntimeStatusRequest {
     pub correlation_id: String,

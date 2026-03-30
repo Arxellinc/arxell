@@ -20,9 +20,9 @@ use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::Arc;
 #[cfg(feature = "tauri-runtime")]
 use tauri::{AppHandle, Emitter, Manager};
+use tokio::net::TcpStream;
 use tokio::process::Child;
 use tokio::sync::Mutex;
-use tokio::net::TcpStream;
 use tokio::time::Duration;
 
 /// Platform-specific binary names for whisper.cpp server
@@ -101,12 +101,15 @@ impl WhisperSupervisor {
 
         // Mark as starting
         *self.status.lock().await = SupervisorStatus::Starting;
-        
+
         // Emit status event
-        let _ = app.emit("stt://status", STTStatusPayload {
-            status: "starting".to_string(),
-            message: None,
-        });
+        let _ = app.emit(
+            "stt://status",
+            STTStatusPayload {
+                status: "starting".to_string(),
+                message: None,
+            },
+        );
 
         // Find free port
         let port = find_free_port()?;
@@ -117,7 +120,7 @@ impl WhisperSupervisor {
 
         // Resolve model path
         let model_path = resolve_model_path(app)?;
-        
+
         // Store model path for health check logging
         *self.model_path.lock().await = Some(model_path.clone());
 
@@ -139,7 +142,11 @@ impl WhisperSupervisor {
         {
             // Remove quarantine attribute on macOS
             let result = std::process::Command::new("xattr")
-                .args(["-dr", "com.apple.quarantine", &binary_path.to_string_lossy()])
+                .args([
+                    "-dr",
+                    "com.apple.quarantine",
+                    &binary_path.to_string_lossy(),
+                ])
                 .output();
             if let Err(e) = result {
                 warn!("Failed to remove quarantine attribute: {}", e);
@@ -150,17 +157,25 @@ impl WhisperSupervisor {
         let threads = num_cpus::get();
         let threads = (threads / 2).max(2).min(8);
 
-        info!("Starting whisper.cpp server: binary={}, port={}, threads={}", 
-              binary_path.display(), port, threads);
+        info!(
+            "Starting whisper.cpp server: binary={}, port={}, threads={}",
+            binary_path.display(),
+            port,
+            threads
+        );
         info!("Model path: {}", model_path.display());
 
         // Spawn the whisper.cpp server
         let mut child = tokio::process::Command::new(&binary_path)
             .args([
-                "--host", "127.0.0.1",
-                "--port", &port.to_string(),
-                "--model", &model_path.to_string_lossy(),
-                "--threads", &threads.to_string(),
+                "--host",
+                "127.0.0.1",
+                "--port",
+                &port.to_string(),
+                "--model",
+                &model_path.to_string_lossy(),
+                "--threads",
+                &threads.to_string(),
             ])
             .stdout(Stdio::null())
             .stderr(Stdio::piped())
@@ -188,32 +203,41 @@ impl WhisperSupervisor {
             // Clean up failed process
             let _ = self.stop().await;
             *self.status.lock().await = SupervisorStatus::Error(e.clone());
-            
+
             // Emit error event
-            let _ = app.emit("stt://status", STTStatusPayload {
-                status: "error".to_string(),
-                message: Some(e.clone()),
-            });
-            let _ = app.emit("pipeline://error", PipelineErrorPayload {
-                source: "stt".to_string(),
-                message: format!("Failed to start whisper.cpp server: {}", e),
-                details: None,
-            });
-            
+            let _ = app.emit(
+                "stt://status",
+                STTStatusPayload {
+                    status: "error".to_string(),
+                    message: Some(e.clone()),
+                },
+            );
+            let _ = app.emit(
+                "pipeline://error",
+                PipelineErrorPayload {
+                    source: "stt".to_string(),
+                    message: format!("Failed to start whisper.cpp server: {}", e),
+                    details: None,
+                },
+            );
+
             return Err(e);
         }
 
         // Update endpoint
         *self.endpoint.lock().await = Some(endpoint.clone());
-        
+
         // Mark as running
         *self.status.lock().await = SupervisorStatus::Running;
 
         // Emit status event
-        let _ = app.emit("stt://status", STTStatusPayload {
-            status: "running".to_string(),
-            message: None,
-        });
+        let _ = app.emit(
+            "stt://status",
+            STTStatusPayload {
+                status: "running".to_string(),
+                message: None,
+            },
+        );
 
         info!("Whisper.cpp server running at {}", endpoint);
 
@@ -230,7 +254,7 @@ impl WhisperSupervisor {
     /// Stop the whisper.cpp server gracefully.
     pub async fn stop(&self) -> Result<(), String> {
         self.shutdown_requested.store(true, Ordering::SeqCst);
-        
+
         let mut child_guard = self.child.lock().await;
         if let Some(mut child) = child_guard.take() {
             info!("Stopping whisper.cpp server (PID: {:?})", child.id());
@@ -254,10 +278,10 @@ impl WhisperSupervisor {
                     unsafe {
                         libc::kill(pid as i32, libc::SIGTERM);
                     }
-                    
+
                     // Wait 2 seconds for graceful shutdown
                     tokio::time::sleep(Duration::from_secs(2)).await;
-                    
+
                     // If still running, check and SIGKILL
                     // try_wait is not async in tokio
                     if child.try_wait().map(|s| s.is_none()).unwrap_or(false) {
@@ -274,7 +298,7 @@ impl WhisperSupervisor {
 
         *self.endpoint.lock().await = None;
         *self.status.lock().await = SupervisorStatus::Stopped;
-        
+
         info!("Whisper.cpp server stopped");
         Ok(())
     }
@@ -300,7 +324,9 @@ impl WhisperSupervisor {
     fn clone_inner(&self) -> WhisperSupervisorInner {
         WhisperSupervisorInner {
             port: self.port.load(Ordering::SeqCst),
-            shutdown_requested: Arc::new(AtomicBool::new(self.shutdown_requested.load(Ordering::SeqCst))),
+            shutdown_requested: Arc::new(AtomicBool::new(
+                self.shutdown_requested.load(Ordering::SeqCst),
+            )),
         }
     }
 }
@@ -314,20 +340,25 @@ struct WhisperSupervisorInner {
 fn find_free_port() -> Result<u32, String> {
     let listener = std::net::TcpListener::bind("127.0.0.1:0")
         .map_err(|e| format!("Failed to find free port: {}", e))?;
-    let port = listener.local_addr()
+    let port = listener
+        .local_addr()
         .map_err(|e| format!("Failed to get port: {}", e))?;
     Ok(port.port() as u32)
 }
 
 /// Resolve the path to the whisper.cpp binary.
 fn resolve_whisper_binary(app: &AppHandle) -> Result<PathBuf, String> {
-    let resource_dir = app.path()
+    let resource_dir = app
+        .path()
         .resource_dir()
         .map_err(|e| format!("Failed to get resource directory: {}", e))?;
 
     let candidates = [
         resource_dir.join("whisper-server").join(WHISPER_BINARY),
-        resource_dir.join("resources").join("whisper-server").join(WHISPER_BINARY),
+        resource_dir
+            .join("resources")
+            .join("whisper-server")
+            .join(WHISPER_BINARY),
         resource_dir.join(WHISPER_BINARY),
     ];
 
@@ -337,12 +368,16 @@ fn resolve_whisper_binary(app: &AppHandle) -> Result<PathBuf, String> {
         }
     }
 
-    Err(format!("Whisper binary not found. Searched: {:?}", candidates))
+    Err(format!(
+        "Whisper binary not found. Searched: {:?}",
+        candidates
+    ))
 }
 
 /// Resolve the path to the Whisper model file.
 fn resolve_model_path(app: &AppHandle) -> Result<PathBuf, String> {
-    let resource_dir = app.path()
+    let resource_dir = app
+        .path()
         .resource_dir()
         .map_err(|e| format!("Failed to get resource directory: {}", e))?;
 
@@ -353,7 +388,10 @@ fn resolve_model_path(app: &AppHandle) -> Result<PathBuf, String> {
         resource_dir.join("whisper").join("ggml-base.en-q8_0.bin"),
         resource_dir.join("models").join("ggml-base-q8_0.bin"),
         resource_dir.join("models").join("ggml-tiny.en-q8_0.bin"),
-        resource_dir.join("resources").join("whisper").join("ggml-base-q8_0.bin"),
+        resource_dir
+            .join("resources")
+            .join("whisper")
+            .join("ggml-base-q8_0.bin"),
     ];
 
     for path in &candidates {
@@ -382,7 +420,10 @@ async fn wait_for_ready(endpoint: &str, timeout_duration: Duration) -> Result<()
         tokio::time::sleep(Duration::from_millis(200)).await;
     }
 
-    Err(format!("Server did not become ready within {:?}", timeout_duration))
+    Err(format!(
+        "Server did not become ready within {:?}",
+        timeout_duration
+    ))
 }
 
 /// Background health check loop.
@@ -401,13 +442,16 @@ async fn health_check_loop(supervisor: Arc<WhisperSupervisorInner>, app: AppHand
 
         if !healthy {
             warn!("Whisper.cpp health check failed");
-            
+
             // Emit error event; this implementation does not currently restart automatically.
-            let _ = app.emit("pipeline://error", PipelineErrorPayload {
-                source: "stt".to_string(),
-                message: "Whisper.cpp server health check failed".to_string(),
-                details: Some(format!("port={}", port)),
-            });
+            let _ = app.emit(
+                "pipeline://error",
+                PipelineErrorPayload {
+                    source: "stt".to_string(),
+                    message: "Whisper.cpp server health check failed".to_string(),
+                    details: Some(format!("port={}", port)),
+                },
+            );
         }
     }
 }

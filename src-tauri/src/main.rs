@@ -7,9 +7,15 @@ use app_foundation::contracts::ChatSendRequest;
 use app_foundation::app::AppContext;
 #[cfg(feature = "tauri-runtime")]
 use app_foundation::contracts::{
-    AppVersionResponse, ChatCancelRequest, ChatCancelResponse, ChatDeleteConversationRequest,
-    ChatDeleteConversationResponse, ChatGetMessagesRequest, ChatGetMessagesResponse,
-    ChatListConversationsRequest, ChatListConversationsResponse, ChatSendRequest, ChatSendResponse,
+    ApiConnectionCreateRequest, ApiConnectionCreateResponse, ApiConnectionDeleteRequest,
+    ApiConnectionDeleteResponse, ApiConnectionReverifyRequest, ApiConnectionReverifyResponse,
+    ApiConnectionGetSecretRequest, ApiConnectionGetSecretResponse,
+    ApiConnectionUpdateRequest, ApiConnectionUpdateResponse,
+    ApiConnectionsListRequest, ApiConnectionsListResponse, AppVersionResponse, ChatCancelRequest,
+    ChatCancelResponse, ChatDeleteConversationRequest, ChatDeleteConversationResponse,
+    ChatGetMessagesRequest, ChatGetMessagesResponse, ChatListConversationsRequest,
+    ChatListConversationsResponse, ChatSendRequest, ChatSendResponse, WebSearchRequest,
+    WebSearchResponse,
     DevicesProbeMicrophoneRequest, DevicesProbeMicrophoneResponse, LlamaRuntimeInstallRequest,
     LlamaRuntimeInstallResponse, LlamaRuntimeStartRequest, LlamaRuntimeStartResponse,
     LlamaRuntimeStatusRequest, LlamaRuntimeStatusResponse, LlamaRuntimeStopRequest,
@@ -28,7 +34,7 @@ use app_foundation::contracts::{
 #[cfg(feature = "tauri-runtime")]
 use app_foundation::ipc::tauri_bridge::{attach_event_forwarder, TauriBridgeState};
 #[cfg(feature = "tauri-runtime")]
-use app_foundation::stt::{STTState};
+use app_foundation::stt::STTState;
 #[cfg(feature = "tauri-runtime")]
 use serde::{Deserialize, Serialize};
 #[cfg(feature = "tauri-runtime")]
@@ -78,6 +84,8 @@ fn main() {
         terminal: std::sync::Arc::new(app_context.ipc.terminal.clone()),
         hub: hub.clone(),
         workspace_tools: std::sync::Arc::clone(&app_context.workspace_tools),
+        api_registry: std::sync::Arc::clone(&app_context.api_registry),
+        web_search: std::sync::Arc::clone(&app_context.web_search),
         runtime: std::sync::Arc::clone(&app_context.runtime),
         permissions: std::sync::Arc::clone(&app_context.permissions),
         model_manager: std::sync::Arc::clone(&app_context.model_manager),
@@ -94,16 +102,18 @@ fn main() {
             #[cfg(target_os = "linux")]
             {
                 use log::info;
-                use webkit2gtk::{WebViewExt, PermissionRequestExt};
+                use webkit2gtk::{PermissionRequestExt, WebViewExt};
                 if let Some(main) = app.get_webview_window("main") {
                     let _ = main.with_webview(|webview| {
                         // Connect permission request handler to auto-grant all media permissions
-                        webview.inner().connect_permission_request(move |_wv, request| {
-                            info!("[webkit] granting permission for request");
-                            // Grant all permission requests (this is a development-only setting)
-                            request.allow();
-                            true
-                        });
+                        webview
+                            .inner()
+                            .connect_permission_request(move |_wv, request| {
+                                info!("[webkit] granting permission for request");
+                                // Grant all permission requests (this is a development-only setting)
+                                request.allow();
+                                true
+                            });
                     });
                 }
             }
@@ -143,6 +153,13 @@ fn main() {
             cmd_workspace_tool_set_enabled,
             cmd_workspace_tools_export,
             cmd_workspace_tools_import,
+            cmd_api_connections_list,
+            cmd_api_connection_create,
+            cmd_api_connection_update,
+            cmd_api_connection_reverify,
+            cmd_api_connection_delete,
+            cmd_api_connection_get_secret,
+            cmd_web_search,
             cmd_devices_probe_microphone,
             cmd_app_version,
             cmd_llama_runtime_status,
@@ -168,7 +185,7 @@ fn main() {
 async fn start_stt(app: tauri::AppHandle, state: tauri::State<'_, STTState>) -> Result<(), String> {
     use log::info;
     use tauri::Emitter;
-    
+
     info!("Starting STT service");
     let supervisor = state.supervisor.lock().await;
     supervisor.start(&app).await
@@ -178,7 +195,7 @@ async fn start_stt(app: tauri::AppHandle, state: tauri::State<'_, STTState>) -> 
 #[tauri::command]
 async fn stop_stt(state: tauri::State<'_, STTState>) -> Result<(), String> {
     use log::info;
-    
+
     info!("Stopping STT service");
     let supervisor = state.supervisor.lock().await;
     supervisor.stop().await
@@ -186,9 +203,11 @@ async fn stop_stt(state: tauri::State<'_, STTState>) -> Result<(), String> {
 
 #[cfg(feature = "tauri-runtime")]
 #[tauri::command]
-async fn stt_status(state: tauri::State<'_, STTState>) -> Result<app_foundation::stt::events::STTStatusPayload, String> {
+async fn stt_status(
+    state: tauri::State<'_, STTState>,
+) -> Result<app_foundation::stt::events::STTStatusPayload, String> {
     use app_foundation::stt::supervisor::SupervisorStatus;
-    
+
     let supervisor = state.supervisor.lock().await;
     let status = supervisor.status().await;
 
@@ -222,7 +241,7 @@ async fn transcribe_chunk(
 ) -> Result<(), String> {
     use log::{error, info};
     use tauri::Emitter;
-    
+
     let supervisor = state.supervisor.lock().await;
 
     // Get endpoint
@@ -230,11 +249,14 @@ async fn transcribe_chunk(
         Some(e) => e,
         None => {
             let err = "STT service not running".to_string();
-            let _ = app.emit("pipeline://error", app_foundation::stt::events::PipelineErrorPayload {
-                source: "stt".to_string(),
-                message: err.clone(),
-                details: None,
-            });
+            let _ = app.emit(
+                "pipeline://error",
+                app_foundation::stt::events::PipelineErrorPayload {
+                    source: "stt".to_string(),
+                    message: err.clone(),
+                    details: None,
+                },
+            );
             return Err(err);
         }
     };
@@ -250,26 +272,32 @@ async fn transcribe_chunk(
     match client.transcribe(&pcm_samples).await {
         Ok(transcript) => {
             info!("Transcription complete: {} chars", transcript.len());
-            
+
             // Emit transcript event
-            let _ = app.emit("stt://transcript", app_foundation::stt::events::TranscriptPayload {
-                text: transcript,
-                is_final: true,
-                utterance_id,
-            });
-            
+            let _ = app.emit(
+                "stt://transcript",
+                app_foundation::stt::events::TranscriptPayload {
+                    text: transcript,
+                    is_final: true,
+                    utterance_id,
+                },
+            );
+
             Ok(())
         }
         Err(e) => {
             error!("Transcription failed: {}", e);
-            
+
             // Emit error event but don't restart - transient errors don't need restart
-            let _ = app.emit("pipeline://error", app_foundation::stt::events::PipelineErrorPayload {
-                source: "stt".to_string(),
-                message: format!("Transcription failed: {}", e),
-                details: None,
-            });
-            
+            let _ = app.emit(
+                "pipeline://error",
+                app_foundation::stt::events::PipelineErrorPayload {
+                    source: "stt".to_string(),
+                    message: format!("Transcription failed: {}", e),
+                    details: None,
+                },
+            );
+
             // Return error to frontend so it can be handled
             Err(e)
         }
@@ -412,6 +440,130 @@ async fn cmd_workspace_tools_import(
     Ok(WorkspaceToolsImportResponse {
         correlation_id: request.correlation_id,
         tools,
+    })
+}
+
+#[cfg(feature = "tauri-runtime")]
+#[tauri::command]
+async fn cmd_api_connections_list(
+    state: State<'_, TauriBridgeState>,
+    request: ApiConnectionsListRequest,
+) -> Result<ApiConnectionsListResponse, String> {
+    Ok(ApiConnectionsListResponse {
+        correlation_id: request.correlation_id,
+        connections: state.api_registry.list(),
+    })
+}
+
+#[cfg(feature = "tauri-runtime")]
+#[tauri::command]
+async fn cmd_api_connection_create(
+    state: State<'_, TauriBridgeState>,
+    request: ApiConnectionCreateRequest,
+) -> Result<ApiConnectionCreateResponse, String> {
+    let connection = state
+        .api_registry
+        .create_and_verify(app_foundation::api_registry::NewApiConnectionInput {
+            api_type: request.api_type,
+            api_url: request.api_url,
+            name: request.name,
+            api_key: request.api_key,
+            model_name: request.model_name,
+            cost_per_month_usd: request.cost_per_month_usd,
+            api_standard_path: request.api_standard_path,
+        })
+        .await?;
+    Ok(ApiConnectionCreateResponse {
+        correlation_id: request.correlation_id,
+        connection,
+    })
+}
+
+#[cfg(feature = "tauri-runtime")]
+#[tauri::command]
+async fn cmd_api_connection_reverify(
+    state: State<'_, TauriBridgeState>,
+    request: ApiConnectionReverifyRequest,
+) -> Result<ApiConnectionReverifyResponse, String> {
+    let connection = state.api_registry.reverify(request.id.as_str()).await?;
+    Ok(ApiConnectionReverifyResponse {
+        correlation_id: request.correlation_id,
+        connection,
+    })
+}
+
+#[cfg(feature = "tauri-runtime")]
+#[tauri::command]
+async fn cmd_api_connection_update(
+    state: State<'_, TauriBridgeState>,
+    request: ApiConnectionUpdateRequest,
+) -> Result<ApiConnectionUpdateResponse, String> {
+    let connection = state.api_registry.update(
+        request.id.as_str(),
+        app_foundation::api_registry::UpdateApiConnectionInput {
+            api_type: request.api_type,
+            api_url: request.api_url,
+            name: request.name,
+            api_key: request.api_key,
+            model_name: request.model_name,
+            cost_per_month_usd: request.cost_per_month_usd,
+            api_standard_path: request.api_standard_path,
+        },
+    )?;
+    Ok(ApiConnectionUpdateResponse {
+        correlation_id: request.correlation_id,
+        connection,
+    })
+}
+
+#[cfg(feature = "tauri-runtime")]
+#[tauri::command]
+async fn cmd_api_connection_delete(
+    state: State<'_, TauriBridgeState>,
+    request: ApiConnectionDeleteRequest,
+) -> Result<ApiConnectionDeleteResponse, String> {
+    let deleted = state.api_registry.delete(request.id.as_str())?;
+    Ok(ApiConnectionDeleteResponse {
+        correlation_id: request.correlation_id,
+        id: request.id,
+        deleted,
+    })
+}
+
+#[cfg(feature = "tauri-runtime")]
+#[tauri::command]
+async fn cmd_api_connection_get_secret(
+    state: State<'_, TauriBridgeState>,
+    request: ApiConnectionGetSecretRequest,
+) -> Result<ApiConnectionGetSecretResponse, String> {
+    let api_key = state.api_registry.get_secret_api_key(request.id.as_str())?;
+    Ok(ApiConnectionGetSecretResponse {
+        correlation_id: request.correlation_id,
+        id: request.id,
+        api_key,
+    })
+}
+
+#[cfg(feature = "tauri-runtime")]
+#[tauri::command]
+async fn cmd_web_search(
+    state: State<'_, TauriBridgeState>,
+    request: WebSearchRequest,
+) -> Result<WebSearchResponse, String> {
+    let result = state
+        .web_search
+        .search(app_foundation::app::web_search_service::WebSearchRequest {
+            query: request.query,
+            mode: request.mode,
+            num: request.num,
+            page: request.page,
+        })
+        .await?;
+    let result_value = serde_json::to_value(result)
+        .map_err(|e| format!("failed serializing web search response: {e}"))?;
+    Ok(WebSearchResponse {
+        correlation_id: request.correlation_id,
+        result: result_value,
     })
 }
 

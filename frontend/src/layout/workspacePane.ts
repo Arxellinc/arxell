@@ -1,64 +1,131 @@
 import { iconHtml } from "../icons";
+import type { IconName } from "../icons";
 import { APP_ICON } from "../icons/map";
-
-export type WorkspaceTab = "events" | "terminal" | "tools";
+import type { WorkspaceToolRecord } from "../contracts";
+import { getToolManifest, TOOL_ORDER } from "../tools/registry";
+import { WORKSPACE_DATA_ATTR } from "../tools/ui/constants";
+import { resolveWorkspaceView } from "../tools/workspaceViewRegistry";
+import type { WorkspacePrimaryTab, WorkspaceTab } from "./workspaceTabs";
+import { toWorkspaceToolTabId } from "./workspaceTabs";
 
 export function renderWorkspacePane(
   consoleHtml: string,
   consoleActionsHtml: string,
   terminalUiHtml: string,
+  terminalActionsHtml: string,
   toolsUiHtml: string,
   toolsActionsHtml: string,
+  webUiHtml: string,
+  webActionsHtml: string,
+  workspaceTools: WorkspaceToolRecord[],
   activeTab: WorkspaceTab
 ): string {
-  const contentActionsHtml =
-    activeTab === "events"
-      ? consoleActionsHtml
-      : activeTab === "tools"
-        ? toolsActionsHtml
-        : "";
+  const { actionsHtml: contentActionsHtml, bodyHtml: contentBodyHtml } = resolveWorkspaceView(
+    activeTab,
+    {
+      consoleHtml,
+      consoleActionsHtml,
+      terminalUiHtml,
+      terminalActionsHtml,
+      toolsUiHtml,
+      toolsActionsHtml,
+      webUiHtml,
+      webActionsHtml
+    }
+  );
   const workspaceContentClass = contentActionsHtml
     ? "workspace-content"
     : "workspace-content no-actions";
+  
   return `
     <section class="pane workspace-pane">
-      <header class="pane-topbar workspace-pane-topbar">
-        <div class="workspace-topbar-left">
-          <button type="button" class="workspace-tool-btn ${activeTab === "tools" ? "is-active" : ""}" data-workspace-tab="tools" aria-label="Open tool panel">
-            ${iconHtml(APP_ICON.action.toolsPanel, { size: 16, tone: "dark" })}
-            <span>Tool Panel</span>
-          </button>
-        <div class="workspace-topbar-actions" role="tablist" aria-label="Workspace tabs">
-          <button type="button" class="topbar-icon-btn ${activeTab === "events" ? "is-active" : ""}" data-workspace-tab="events" data-title="Console" aria-label="Console">
-            ${iconHtml(APP_ICON.bottom.history, { size: 16, tone: "dark" })}
-          </button>
-          <button type="button" class="topbar-icon-btn ${activeTab === "terminal" ? "is-active" : ""}" data-workspace-tab="terminal" data-title="Terminal" aria-label="Terminal">
-            ${iconHtml(APP_ICON.sidebar.terminal, { size: 16, tone: "dark" })}
-          </button>
-        </div>
-        </div>
-      </header>
+      ${renderWorkspaceTopbar(activeTab, workspaceTools)}
       <div class="${workspaceContentClass}">
         ${contentActionsHtml ? `<div class="workspace-panel-actions">${contentActionsHtml}</div>` : ""}
-        ${
-          activeTab === "events"
-            ? consoleHtml
-            : activeTab === "terminal"
-              ? terminalUiHtml
-              : toolsUiHtml
-        }
+        ${contentBodyHtml}
       </div>
     </section>
   `;
 }
 
-export function attachWorkspacePaneInteractions(onTabSelect: (tab: WorkspaceTab) => void | Promise<void>): void {
-  const tabs = document.querySelectorAll<HTMLButtonElement>("[data-workspace-tab]");
-  tabs.forEach((tab) => {
-    tab.onclick = () => {
-      const nextTab = tab.dataset.workspaceTab as WorkspaceTab | undefined;
-      if (!nextTab) return;
-      onTabSelect(nextTab);
-    };
-  });
+function renderWorkspaceTopbar(activeTab: WorkspaceTab, workspaceTools: WorkspaceToolRecord[]): string {
+  const leftButtons = [
+    {
+      tabId: "terminal",
+      icon: APP_ICON.sidebar.terminal,
+      title: "Terminal"
+    }
+  ] satisfies Array<{ tabId: WorkspacePrimaryTab; icon: IconName; title: string }>;
+  const rightButtons = [
+    {
+      tabId: "events",
+      icon: APP_ICON.bottom.history,
+      title: "Console"
+    },
+    {
+      tabId: "manager-tool",
+      icon: APP_ICON.sidebar.settings,
+      title: "Tool Manager"
+    }
+  ] satisfies Array<{ tabId: WorkspacePrimaryTab; icon: IconName; title: string }>;
+  const toolButtons = renderWorkspaceToolButtons(activeTab, workspaceTools);
+  const leftButtonsHtml = [
+    ...leftButtons.map((button) =>
+      renderWorkspaceTopbarButton(button.tabId, button.icon, button.title, activeTab)
+    ),
+    toolButtons
+  ].join("");
+  const rightButtonsHtml = rightButtons
+    .map((button) => renderWorkspaceTopbarButton(button.tabId, button.icon, button.title, activeTab))
+    .join("");
+  return `<header class="pane-topbar workspace-pane-topbar">
+    <div class="workspace-topbar-left">
+      ${leftButtonsHtml}
+    </div>
+    <div class="workspace-topbar-right">
+      ${rightButtonsHtml}
+    </div>
+  </header>`;
+}
+
+function renderWorkspaceTopbarButton(
+  tabId: WorkspaceTab,
+  icon: IconName,
+  title: string,
+  activeTab: WorkspaceTab
+): string {
+  return `<button type="button" class="topbar-icon-btn ${activeTab === tabId ? "is-active" : ""}" ${WORKSPACE_DATA_ATTR.tab}="${tabId}" data-title="${title}" title="${title}" aria-label="${title}">
+    ${iconHtml(icon, { size: 16, tone: "dark" })}
+  </button>`;
+}
+
+function renderWorkspaceToolButtons(activeTab: WorkspaceTab, workspaceTools: WorkspaceToolRecord[]): string {
+  const seenToolIds = new Set<string>();
+  const toolOrderIndex = new Map<string, number>();
+  TOOL_ORDER.forEach((toolId, index) => toolOrderIndex.set(toolId, index));
+  return workspaceTools
+    .filter((tool) => tool.enabled)
+    .filter((tool) => tool.toolId !== "terminal")
+    .filter((tool) => {
+      if (seenToolIds.has(tool.toolId)) return false;
+      seenToolIds.add(tool.toolId);
+      return true;
+    })
+    .sort((a, b) => {
+      const aIndex = toolOrderIndex.get(a.toolId) ?? Number.MAX_SAFE_INTEGER;
+      const bIndex = toolOrderIndex.get(b.toolId) ?? Number.MAX_SAFE_INTEGER;
+      if (aIndex !== bIndex) return aIndex - bIndex;
+      return a.toolId.localeCompare(b.toolId);
+    })
+    .map((tool) => {
+      const toolId = tool.toolId === "web" ? "webSearch" : tool.toolId;
+      const manifest = getToolManifest(toolId);
+      const tabId = toWorkspaceToolTabId(toolId);
+      const icon = manifest?.icon || "wrench";
+      const title = manifest?.title || tool.title || tool.toolId;
+      return `<button type="button" class="topbar-icon-btn ${activeTab === tabId ? "is-active" : ""}" ${WORKSPACE_DATA_ATTR.tab}="${tabId}" data-title="${title}" title="${title}" aria-label="${title}">
+      ${iconHtml(icon, { size: 16, tone: "dark" })}
+    </button>`;
+    })
+    .join("");
 }

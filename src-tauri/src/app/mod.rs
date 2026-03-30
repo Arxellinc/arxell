@@ -3,7 +3,9 @@ pub mod model_manager_service;
 pub mod permission_service;
 pub mod runtime_service;
 pub mod terminal_service;
+pub mod web_search_service;
 
+use crate::api_registry::ApiRegistryService;
 use crate::ipc::IpcLayer;
 use crate::memory::InMemoryMemoryManager;
 use crate::observability::EventHub;
@@ -14,6 +16,8 @@ use std::sync::Arc;
 pub struct AppContext {
     pub ipc: IpcLayer,
     pub workspace_tools: Arc<WorkspaceToolsService>,
+    pub api_registry: Arc<ApiRegistryService>,
+    pub web_search: Arc<web_search_service::WebSearchService>,
     pub runtime: Arc<runtime_service::LlamaRuntimeService>,
     pub permissions: Arc<permission_service::PermissionService>,
     pub model_manager: Arc<model_manager_service::ModelManagerService>,
@@ -27,14 +31,21 @@ impl AppContext {
             SqliteConversationRepository::new(SqliteConversationRepository::default_path())
                 .expect("failed to initialize conversation repository"),
         );
+        let api_registry = Arc::new(ApiRegistryService::new());
+        let workspace_tools = Arc::new(WorkspaceToolsService::new());
+        let web_search = Arc::new(web_search_service::WebSearchService::new(Arc::clone(
+            &api_registry,
+        )));
 
         let service = Arc::new(chat_service::ChatService::new(
             hub.clone(),
             memory,
             conversation_repo,
+            Arc::clone(&api_registry),
+            Arc::clone(&workspace_tools),
+            Arc::clone(&web_search),
         ));
         let terminal = Arc::new(terminal_service::TerminalService::new(hub.clone()));
-        let workspace_tools = Arc::new(WorkspaceToolsService::new());
         let runtime = Arc::new(runtime_service::LlamaRuntimeService::new(hub.clone()));
         let permissions = Arc::new(permission_service::PermissionService::new(hub.clone()));
         let model_manager = Arc::new(model_manager_service::ModelManagerService::new(hub.clone()));
@@ -43,6 +54,8 @@ impl AppContext {
         Self {
             ipc,
             workspace_tools,
+            api_registry,
+            web_search,
             runtime,
             permissions,
             model_manager,
@@ -64,6 +77,8 @@ impl AppContext {
             terminal: Arc::new(self.ipc.terminal.clone()),
             hub: self.ipc.event_hub(),
             workspace_tools: Arc::clone(&self.workspace_tools),
+            api_registry: Arc::clone(&self.api_registry),
+            web_search: Arc::clone(&self.web_search),
             runtime: Arc::clone(&self.runtime),
             permissions: Arc::clone(&self.permissions),
             model_manager: Arc::clone(&self.model_manager),

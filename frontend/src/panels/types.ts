@@ -1,4 +1,6 @@
 import type {
+  ApiConnectionRecord,
+  ApiConnectionType,
   ConversationSummaryRecord,
   LlamaRuntimeStatusResponse,
   ModelManagerHfCandidate,
@@ -11,6 +13,7 @@ export type SidebarTab =
   | "history"
   | "workspace"
   | "devices"
+  | "apis"
   | "tts"
   | "stt"
   | "llama_cpp"
@@ -60,6 +63,16 @@ export interface ConsoleEntry {
   message: string;
 }
 
+export interface ApiConnectionDraft {
+  apiType: ApiConnectionType;
+  apiUrl: string;
+  name: string;
+  apiKey: string;
+  modelName: string;
+  costPerMonthUsd: string;
+  apiStandardPath: string;
+}
+
 export interface PrimaryPanelRenderState {
   conversationId: string;
   messages: UiMessage[];
@@ -69,6 +82,11 @@ export interface PrimaryPanelRenderState {
   chatStreaming: boolean;
   chatDraft: string;
   devices: DevicesState;
+  apiConnections: ApiConnectionRecord[];
+  apiFormOpen: boolean;
+  apiDraft: ApiConnectionDraft;
+  apiEditingId: string | null;
+  apiMessage: string | null;
   conversations: ConversationSummaryRecord[];
   chatThinkingEnabled: boolean;
   llamaRuntime: LlamaRuntimeStatusResponse | null;
@@ -131,6 +149,13 @@ export interface PrimaryPanelBindings {
   onDevicesRefresh: () => Promise<void>;
   onRequestMicrophoneAccess: () => Promise<void>;
   onRequestSpeakerAccess: () => Promise<void>;
+  onApiConnectionsRefresh: () => Promise<void>;
+  onApiConnectionsSetFormOpen: (open: boolean) => Promise<void>;
+  onApiConnectionDraftChange: (patch: Partial<ApiConnectionDraft>) => Promise<void>;
+  onApiConnectionSave: () => Promise<void>;
+  onApiConnectionEdit: (id: string) => Promise<void>;
+  onApiConnectionReverify: (id: string) => Promise<void>;
+  onApiConnectionDelete: (id: string) => Promise<void>;
   onSelectConversation: (conversationId: string) => Promise<void>;
   onExportConversation: (conversationId: string) => Promise<void>;
   onDeleteConversation: (conversationId: string) => Promise<void>;

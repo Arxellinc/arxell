@@ -9,5 +9,5 @@ export const memoryToolManifest: ToolManifest = {
   core: false,
   defaultEnabled: true,
   source: "builtin",
-  icon: "brain"
+  icon: "database-zap"
 };

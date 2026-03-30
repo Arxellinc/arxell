@@ -1,5 +1,8 @@
+use crate::api_registry::ApiRegistryService;
+use crate::agent_tools::web_search::WebSearchTool;
+use crate::app::web_search_service::WebSearchService;
 use crate::contracts::{
-    ChatCancelResponse, ChatDeleteConversationResponse, ChatGetMessagesRequest,
+    ApiConnectionType, ChatCancelResponse, ChatDeleteConversationResponse, ChatGetMessagesRequest,
     ChatGetMessagesResponse, ChatListConversationsRequest, ChatListConversationsResponse,
     ChatSendRequest, ChatSendResponse, ChatStreamChunkPayload, ChatStreamCompletePayload,
     ChatStreamReasoningChunkPayload, ChatStreamStartPayload, ConversationMessageRecord,
@@ -8,18 +11,75 @@ use crate::contracts::{
 use crate::memory::MemoryManager;
 use crate::observability::EventHub;
 use crate::persistence::ConversationRepository;
+use crate::workspace_tools::WorkspaceToolsService;
+use arx_rs::events::Event as AgentEvent;
+use arx_rs::provider::openai_compatible::OpenAiCompatibleProvider;
+use arx_rs::provider::ProviderConfig;
+use arx_rs::tools::Tool as AgentTool;
+use arx_rs::types::{
+    ContentPart as AgentContentPart, Message as AgentMessage, StopReason as AgentStopReason,
+    UserContent as AgentUserContent,
+};
+use arx_rs::{Agent, AgentConfig, Session};
 use reqwest::StatusCode;
 use serde_json::json;
 use std::collections::HashSet;
 use std::sync::Arc;
 use std::sync::Mutex;
+use tokio::sync::watch;
 use tokio::time::Duration;
 
 pub struct ChatService {
     hub: EventHub,
     memory: Arc<dyn MemoryManager>,
     conversation_repo: Arc<dyn ConversationRepository>,
+    api_registry: Arc<ApiRegistryService>,
+    workspace_tools: Arc<WorkspaceToolsService>,
+    web_search: Arc<WebSearchService>,
     cancelled_correlations: Arc<Mutex<HashSet<String>>>,
+}
+
+struct AgentToolBinding {
+    workspace_tool_id: &'static str,
+    bind: fn(&ChatService, &mut Vec<Box<dyn AgentTool>>),
+}
+
+fn bind_files_tools(_chat: &ChatService, resolved: &mut Vec<Box<dyn AgentTool>>) {
+    resolved.extend(arx_rs::tools::default_tools().into_iter().filter(|tool| {
+        matches!(
+            tool.name(),
+            "read" | "edit" | "write" | "ls" | "mkdir" | "move" | "chmod" | "grep" | "find"
+        )
+    }));
+}
+
+fn bind_terminal_tools(_chat: &ChatService, resolved: &mut Vec<Box<dyn AgentTool>>) {
+    resolved.extend(
+        arx_rs::tools::default_tools()
+            .into_iter()
+            .filter(|tool| matches!(tool.name(), "bash")),
+    );
+}
+
+fn bind_web_tools(chat: &ChatService, resolved: &mut Vec<Box<dyn AgentTool>>) {
+    resolved.push(Box::new(WebSearchTool::new(Arc::clone(&chat.web_search))));
+}
+
+fn agent_tool_bindings() -> &'static [AgentToolBinding] {
+    &[
+        AgentToolBinding {
+            workspace_tool_id: "files",
+            bind: bind_files_tools,
+        },
+        AgentToolBinding {
+            workspace_tool_id: "terminal",
+            bind: bind_terminal_tools,
+        },
+        AgentToolBinding {
+            workspace_tool_id: "webSearch",
+            bind: bind_web_tools,
+        },
+    ]
 }
 
 impl ChatService {
@@ -27,11 +87,17 @@ impl ChatService {
         hub: EventHub,
         memory: Arc<dyn MemoryManager>,
         conversation_repo: Arc<dyn ConversationRepository>,
+        api_registry: Arc<ApiRegistryService>,
+        workspace_tools: Arc<WorkspaceToolsService>,
+        web_search: Arc<WebSearchService>,
     ) -> Self {
         Self {
             hub,
             memory,
             conversation_repo,
+            api_registry,
+            workspace_tools,
+            web_search,
             cancelled_correlations: Arc::new(Mutex::new(HashSet::new())),
         }
     }
@@ -61,9 +127,10 @@ impl ChatService {
         )?;
 
         let llm_response = self
-            .request_local_llama_response(
+            .request_agent_response(
                 &req.conversation_id,
                 &req.correlation_id,
+                &req.user_message,
                 req.thinking_enabled.unwrap_or(false),
                 req.max_tokens,
             )
@@ -187,6 +254,383 @@ impl ChatService {
             correlation_id: correlation_id.to_string(),
             deleted,
         })
+    }
+
+    async fn request_agent_response(
+        &self,
+        conversation_id: &str,
+        correlation_id: &str,
+        user_message: &str,
+        thinking_enabled: bool,
+        requested_max_tokens: Option<u32>,
+    ) -> Result<LocalLlamaResponse, String> {
+        let provider_config =
+            self.resolve_agent_provider_config(thinking_enabled, requested_max_tokens);
+
+        self.hub.emit(self.hub.make_event(
+            correlation_id,
+            Subsystem::Service,
+            "chat.agent.request",
+            EventStage::Start,
+            EventSeverity::Info,
+            json!({
+                "baseUrl": provider_config.base_url,
+                "model": provider_config.model,
+                "maxTokens": provider_config.max_tokens
+            }),
+        ));
+
+        self.hub.emit(self.hub.make_event(
+            correlation_id,
+            Subsystem::Service,
+            "chat.stream.start",
+            EventStage::Start,
+            EventSeverity::Info,
+            serde_json::to_value(ChatStreamStartPayload {
+                conversation_id: conversation_id.to_string(),
+            })
+            .unwrap_or_else(|_| json!({})),
+        ));
+
+        let cwd = resolve_agent_cwd();
+        let mut session = Session::in_memory(
+            cwd.clone(),
+            provider_config.provider.clone(),
+            Some(provider_config.model.clone()),
+            provider_config.thinking_level.clone(),
+        );
+        self.seed_agent_session_history(
+            &mut session,
+            conversation_id,
+            correlation_id,
+            user_message,
+        )?;
+
+        let provider = OpenAiCompatibleProvider::new(provider_config);
+        let agent_tools = self.resolve_enabled_agent_tools();
+        let enabled_tool_names: Vec<String> =
+            agent_tools.iter().map(|tool| tool.name().to_string()).collect();
+        self.hub.emit(self.hub.make_event(
+            correlation_id,
+            Subsystem::Service,
+            "chat.agent.tools.selected",
+            EventStage::Progress,
+            EventSeverity::Info,
+            json!({
+                "count": enabled_tool_names.len(),
+                "tools": enabled_tool_names
+            }),
+        ));
+        let mut agent = Agent::new(
+            Box::new(provider),
+            agent_tools,
+            session,
+            AgentConfig {
+                max_turns: Some(12),
+                context_window: None,
+                max_output_tokens: requested_max_tokens.map(|value| value as i64),
+            },
+            Some(cwd),
+        )
+        .map_err(|e| format!("failed creating agent runtime: {e}"))?;
+
+        let (cancel_tx, cancel_rx) = watch::channel(false);
+        let cancelled_set = Arc::clone(&self.cancelled_correlations);
+        let target_correlation = correlation_id.to_string();
+        let cancel_task = tokio::spawn(async move {
+            loop {
+                let cancelled = cancelled_set
+                    .lock()
+                    .map(|set| set.contains(target_correlation.as_str()))
+                    .unwrap_or(false);
+                if cancelled {
+                    let _ = cancel_tx.send(true);
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(120)).await;
+            }
+        });
+
+        let events = agent
+            .run_collect(user_message.to_string(), None, Some(cancel_rx))
+            .await;
+        cancel_task.abort();
+
+        let mut assistant = String::new();
+        let mut reasoning = String::new();
+        let mut assistant_from_turn_end: Option<String> = None;
+        let mut agent_error: Option<String> = None;
+
+        for event in events {
+            match event {
+                AgentEvent::TextDelta { delta } => {
+                    assistant.push_str(delta.as_str());
+                    self.hub.emit(self.hub.make_event(
+                        correlation_id,
+                        Subsystem::Service,
+                        "chat.stream.chunk",
+                        EventStage::Progress,
+                        EventSeverity::Info,
+                        serde_json::to_value(ChatStreamChunkPayload {
+                            conversation_id: conversation_id.to_string(),
+                            delta,
+                            done: false,
+                        })
+                        .unwrap_or_else(|_| json!({})),
+                    ));
+                }
+                AgentEvent::ThinkingDelta { delta } if thinking_enabled => {
+                    reasoning.push_str(delta.as_str());
+                    self.hub.emit(self.hub.make_event(
+                        correlation_id,
+                        Subsystem::Service,
+                        "chat.stream.reasoning_chunk",
+                        EventStage::Progress,
+                        EventSeverity::Info,
+                        serde_json::to_value(ChatStreamReasoningChunkPayload {
+                            conversation_id: conversation_id.to_string(),
+                            delta,
+                            done: false,
+                        })
+                        .unwrap_or_else(|_| json!({})),
+                    ));
+                }
+                AgentEvent::ToolStart {
+                    tool_call_id,
+                    tool_name,
+                } => {
+                    self.hub.emit(self.hub.make_event(
+                        correlation_id,
+                        Subsystem::Tool,
+                        "chat.agent.tool.start",
+                        EventStage::Start,
+                        EventSeverity::Info,
+                        json!({ "toolCallId": tool_call_id, "toolName": tool_name }),
+                    ));
+                }
+                AgentEvent::ToolEnd {
+                    tool_call_id,
+                    tool_name,
+                    display,
+                    ..
+                } => {
+                    self.hub.emit(self.hub.make_event(
+                        correlation_id,
+                        Subsystem::Tool,
+                        "chat.agent.tool.end",
+                        EventStage::Complete,
+                        EventSeverity::Info,
+                        json!({
+                            "toolCallId": tool_call_id,
+                            "toolName": tool_name,
+                            "display": display
+                        }),
+                    ));
+                }
+                AgentEvent::ToolResult {
+                    tool_call_id,
+                    tool_name,
+                    result,
+                } => {
+                    let success = result.as_ref().map(|value| value.success).unwrap_or(false);
+                    self.hub.emit(self.hub.make_event(
+                        correlation_id,
+                        Subsystem::Tool,
+                        "chat.agent.tool.result",
+                        EventStage::Complete,
+                        if success {
+                            EventSeverity::Info
+                        } else {
+                            EventSeverity::Warn
+                        },
+                        json!({
+                            "toolCallId": tool_call_id,
+                            "toolName": tool_name,
+                            "success": success,
+                            "display": result.and_then(|value| value.display)
+                        }),
+                    ));
+                }
+                AgentEvent::TurnEnd {
+                    assistant_message, ..
+                } => {
+                    if let Some(AgentMessage::Assistant { content, .. }) = assistant_message {
+                        let mut text = String::new();
+                        for part in content {
+                            if let AgentContentPart::Text { text: value } = part {
+                                text.push_str(value.as_str());
+                            }
+                        }
+                        if !text.trim().is_empty() {
+                            assistant_from_turn_end = Some(text);
+                        }
+                    }
+                }
+                AgentEvent::Error { error } => {
+                    agent_error = Some(error);
+                }
+                _ => {}
+            }
+        }
+
+        if assistant.trim().is_empty() {
+            if let Some(fallback_assistant) = assistant_from_turn_end {
+                assistant = fallback_assistant;
+            }
+        }
+
+        let assistant = assistant.trim().to_string();
+        if assistant.is_empty() {
+            let message = agent_error.unwrap_or_else(|| {
+                "agent produced no assistant text and no recoverable fallback".to_string()
+            });
+            return Err(message);
+        }
+
+        self.hub.emit(self.hub.make_event(
+            correlation_id,
+            Subsystem::Service,
+            "chat.stream.complete",
+            EventStage::Complete,
+            EventSeverity::Info,
+            serde_json::to_value(ChatStreamCompletePayload {
+                conversation_id: conversation_id.to_string(),
+                assistant_length: assistant.len(),
+            })
+            .unwrap_or_else(|_| json!({})),
+        ));
+        self.hub.emit(self.hub.make_event(
+            correlation_id,
+            Subsystem::Service,
+            "chat.agent.request",
+            EventStage::Complete,
+            EventSeverity::Info,
+            json!({
+                "assistantLength": assistant.len(),
+                "thinkingLength": reasoning.len()
+            }),
+        ));
+
+        Ok(LocalLlamaResponse {
+            assistant_message: assistant,
+            assistant_thinking: if thinking_enabled && !reasoning.trim().is_empty() {
+                Some(reasoning)
+            } else {
+                None
+            },
+        })
+    }
+
+    fn seed_agent_session_history(
+        &self,
+        session: &mut Session,
+        conversation_id: &str,
+        correlation_id: &str,
+        user_message: &str,
+    ) -> Result<(), String> {
+        let mut history = self
+            .conversation_repo
+            .list_messages(conversation_id)
+            .map_err(|e| format!("failed reading conversation history: {e}"))?;
+
+        if let Some(last) = history.last() {
+            if matches!(last.role, MessageRole::User)
+                && last.correlation_id == correlation_id
+                && last.content == user_message
+            {
+                history.pop();
+            }
+        }
+
+        for message in history {
+            let converted = match message.role {
+                MessageRole::User => AgentMessage::User {
+                    content: AgentUserContent::Text(message.content),
+                },
+                MessageRole::Assistant => AgentMessage::Assistant {
+                    content: vec![AgentContentPart::Text {
+                        text: message.content,
+                    }],
+                    usage: None,
+                    stop_reason: Some(AgentStopReason::Stop),
+                },
+            };
+            let _ = session
+                .append_message(converted)
+                .map_err(|e| format!("failed seeding agent session history: {e}"))?;
+        }
+
+        Ok(())
+    }
+
+    fn resolve_agent_provider_config(
+        &self,
+        thinking_enabled: bool,
+        requested_max_tokens: Option<u32>,
+    ) -> ProviderConfig {
+        let verified_llm = self
+            .api_registry
+            .verified_for_agent()
+            .into_iter()
+            .find(|record| matches!(record.api_type, ApiConnectionType::Llm));
+
+        let env_endpoint =
+            std::env::var("FOUNDATION_LLM_ENDPOINT").unwrap_or_else(|_| "".to_string());
+        let env_model =
+            std::env::var("FOUNDATION_LLM_MODEL").unwrap_or_else(|_| "local-model".to_string());
+        let default_base = if env_endpoint.trim().is_empty() {
+            "http://127.0.0.1:1420/v1/chat/completions".to_string()
+        } else {
+            env_endpoint
+        };
+        let max_tokens = resolve_chat_max_tokens(requested_max_tokens).unwrap_or(8192) as i64;
+
+        match verified_llm {
+            Some(conn) => ProviderConfig {
+                api_key: Some(conn.api_key),
+                base_url: Some(conn.api_url),
+                model: conn.model_name.unwrap_or(env_model),
+                max_tokens,
+                temperature: Some(0.7),
+                thinking_level: if thinking_enabled {
+                    "medium".to_string()
+                } else {
+                    "none".to_string()
+                },
+                provider: Some("openai-compatible".to_string()),
+            },
+            None => ProviderConfig {
+                api_key: std::env::var("OPENAI_API_KEY").ok(),
+                base_url: Some(default_base),
+                model: env_model,
+                max_tokens,
+                temperature: Some(0.7),
+                thinking_level: if thinking_enabled {
+                    "medium".to_string()
+                } else {
+                    "none".to_string()
+                },
+                provider: Some("openai-compatible".to_string()),
+            },
+        }
+    }
+
+    fn resolve_enabled_agent_tools(&self) -> Vec<Box<dyn AgentTool>> {
+        let enabled_ids: HashSet<String> = self
+            .workspace_tools
+            .list()
+            .into_iter()
+            .filter(|tool| tool.enabled)
+            .map(|tool| tool.tool_id)
+            .collect();
+
+        let mut resolved = Vec::<Box<dyn AgentTool>>::new();
+        for binding in agent_tool_bindings() {
+            if enabled_ids.contains(binding.workspace_tool_id) {
+                (binding.bind)(self, &mut resolved);
+            }
+        }
+        resolved
     }
 
     async fn maybe_generate_conversation_title(
@@ -351,6 +795,15 @@ impl ChatService {
                 content: item.content.clone(),
             })
             .collect();
+        if let Some(api_context) = self.build_api_registry_context() {
+            messages.insert(
+                0,
+                OpenAiMessage {
+                    role: "system".to_string(),
+                    content: api_context,
+                },
+            );
+        }
         let model_family = infer_model_family(model.as_str());
         let strategy = if thinking_enabled {
             ThinkingDisableStrategy::None
@@ -992,6 +1445,31 @@ impl ChatService {
         ));
         Ok(())
     }
+
+    fn build_api_registry_context(&self) -> Option<String> {
+        let apis = self.api_registry.verified_for_agent();
+        if apis.is_empty() {
+            return None;
+        }
+        let mut lines = Vec::with_capacity(apis.len() + 2);
+        lines.push("Verified API connections available to tools and orchestration:".to_string());
+        for api in apis {
+            let type_label = match api.api_type {
+                ApiConnectionType::Llm => "LLM",
+                ApiConnectionType::Search => "Search",
+                ApiConnectionType::Stt => "STT",
+                ApiConnectionType::Tts => "TTS",
+                ApiConnectionType::Image => "Image",
+                ApiConnectionType::Other => "Other",
+            };
+            let display_name = api.name.unwrap_or_else(|| "(unnamed)".to_string());
+            lines.push(format!(
+                "- type={type_label}, name={display_name}, url={}, key={}",
+                api.api_url, api.api_key
+            ));
+        }
+        Some(lines.join("\n"))
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -1028,6 +1506,27 @@ fn now_ms() -> i64 {
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_millis() as i64)
         .unwrap_or(0)
+}
+
+fn resolve_agent_cwd() -> String {
+    if let Ok(override_cwd) = std::env::var("ARXELL_AGENT_CWD") {
+        let trimmed = override_cwd.trim();
+        if !trimmed.is_empty() {
+            return trimmed.to_string();
+        }
+    }
+
+    let cwd = std::env::current_dir()
+        .unwrap_or_else(|_| std::path::PathBuf::from("."))
+        .to_string_lossy()
+        .to_string();
+    if cwd.ends_with("/src-tauri") || cwd.ends_with("\\src-tauri") {
+        return std::path::Path::new(cwd.as_str())
+            .parent()
+            .map(|path| path.to_string_lossy().to_string())
+            .unwrap_or(cwd);
+    }
+    cwd
 }
 
 fn truncate_for_error(input: &str) -> String {

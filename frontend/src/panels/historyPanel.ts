@@ -15,7 +15,7 @@ function formatHistoryTimestamp(timestampMs: number): string {
 }
 
 export function renderHistoryActions(): string {
-  return `<button type="button" class="topbar-icon-btn" id="newConversationBtn" aria-label="New conversation">${iconHtml(APP_ICON.action.chatNew, { size: 16, tone: "dark" })}</button>`;
+  return `<button type="button" class="topbar-icon-btn" id="newConversationBtn" data-title="New Conversation" title="New Conversation" aria-label="New conversation">${iconHtml(APP_ICON.action.chatNew, { size: 16, tone: "dark" })}</button>`;
 }
 
 export function renderHistoryBody(state: PrimaryPanelRenderState): string {

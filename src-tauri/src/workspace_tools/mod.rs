@@ -35,8 +35,8 @@ const WORKSPACE_TOOL_MANIFESTS: &[WorkspaceToolManifest] = &[
         default_enabled: true,
     },
     WorkspaceToolManifest {
-        tool_id: "web",
-        title: "Web",
+        tool_id: "webSearch",
+        title: "WebSearch",
         description: "Search and fetch web context for tasks",
         category: "agent",
         core: false,
@@ -49,14 +49,6 @@ const WORKSPACE_TOOL_MANIFESTS: &[WorkspaceToolManifest] = &[
         category: "agent",
         core: false,
         default_enabled: false,
-    },
-    WorkspaceToolManifest {
-        tool_id: "llm",
-        title: "LLM",
-        description: "Model inference and runtime controls",
-        category: "models",
-        core: false,
-        default_enabled: true,
     },
     WorkspaceToolManifest {
         tool_id: "tasks",
@@ -80,38 +72,6 @@ const WORKSPACE_TOOL_MANIFESTS: &[WorkspaceToolManifest] = &[
         description: "Reusable skill packs and directives",
         category: "agent",
         core: false,
-        default_enabled: true,
-    },
-    WorkspaceToolManifest {
-        tool_id: "models",
-        title: "Models",
-        description: "Installed model catalog and downloads",
-        category: "models",
-        core: false,
-        default_enabled: true,
-    },
-    WorkspaceToolManifest {
-        tool_id: "voice",
-        title: "Voice",
-        description: "STT/TTS toolchain and microphone helpers",
-        category: "media",
-        core: false,
-        default_enabled: true,
-    },
-    WorkspaceToolManifest {
-        tool_id: "devices",
-        title: "Devices",
-        description: "Audio and hardware device controls",
-        category: "ops",
-        core: false,
-        default_enabled: true,
-    },
-    WorkspaceToolManifest {
-        tool_id: "settings",
-        title: "Settings",
-        description: "System and tool runtime preferences",
-        category: "ops",
-        core: true,
         default_enabled: true,
     },
 ];
@@ -193,16 +153,15 @@ impl WorkspaceToolsService {
             .map_err(|e| format!("failed serializing tool registry export: {e}"))
     }
 
-    pub fn import_snapshot_json(&self, snapshot_json: &str) -> Result<Vec<WorkspaceToolRecord>, String> {
+    pub fn import_snapshot_json(
+        &self,
+        snapshot_json: &str,
+    ) -> Result<Vec<WorkspaceToolRecord>, String> {
         let parsed = serde_json::from_str::<ToolRegistrySnapshot>(snapshot_json)
             .map_err(|e| format!("invalid tool registry import payload: {e}"))?;
         let mut tools = self.tools.write().expect("workspace tools lock poisoned");
         for (tool_id, tool) in tools.iter_mut() {
-            let enabled = parsed
-                .enabled
-                .get(tool_id)
-                .copied()
-                .unwrap_or(tool.enabled);
+            let enabled = parsed.enabled.get(tool_id).copied().unwrap_or(tool.enabled);
             tool.enabled = enabled;
             tool.status = status_for_enabled(enabled).to_string();
         }

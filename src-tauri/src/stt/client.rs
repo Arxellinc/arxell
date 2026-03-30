@@ -19,7 +19,7 @@ impl WhisperClient {
             .timeout(std::time::Duration::from_secs(15))
             .build()
             .expect("Failed to build HTTP client");
-        
+
         Self { base_url, client }
     }
 
@@ -27,15 +27,18 @@ impl WhisperClient {
     /// Takes raw Float32 samples at 16kHz mono and returns the transcription.
     pub async fn transcribe(&self, pcm_samples: &[f32]) -> Result<String, String> {
         let wav_data = encode_wav(pcm_samples)?;
-        
+
         // Build multipart form manually
-        let form = reqwest::multipart::Form::new()
-            .part("file", reqwest::multipart::Part::bytes(wav_data)
+        let form = reqwest::multipart::Form::new().part(
+            "file",
+            reqwest::multipart::Part::bytes(wav_data)
                 .file_name("audio.wav")
                 .mime_str("audio/wav")
-                .map_err(|e| format!("Failed to set mime type: {}", e))?);
+                .map_err(|e| format!("Failed to set mime type: {}", e))?,
+        );
 
-        let response = self.client
+        let response = self
+            .client
             .post(format!("{}/inference", self.base_url))
             .multipart(form)
             .send()
@@ -115,13 +118,13 @@ mod tests {
             .collect();
 
         let wav = encode_wav(&samples).unwrap();
-        
+
         // Verify WAV header
         assert_eq!(&wav[0..4], b"RIFF");
         assert_eq!(&wav[8..12], b"WAVE");
         assert_eq!(&wav[12..16], b"fmt ");
         assert_eq!(&wav[36..40], b"data");
-        
+
         // Should have 44 byte header + 32000 bytes of data (16000 samples * 2 bytes)
         assert_eq!(wav.len(), 32044);
     }

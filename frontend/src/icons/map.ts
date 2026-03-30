@@ -8,6 +8,7 @@ export const APP_ICON = {
     history: "history",
     workspace: "folder",
     devices: "monitor",
+    apis: "plug",
     tts: "volume-2",
     stt: "mic",
     sttSpeaking: "audioLines",
@@ -44,6 +45,7 @@ export const APP_ICON = {
     history: IconName;
     workspace: IconName;
     devices: IconName;
+    apis: IconName;
     tts: IconName;
     stt: IconName;
     sttSpeaking: IconName;

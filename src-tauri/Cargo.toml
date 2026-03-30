@@ -13,6 +13,7 @@ tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync", "time"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "1"
+async-trait = "0.1"
 tauri-plugin-dialog = "2"
 portable-pty = "0.8.1"
 rusqlite = { version = "0.32", features = ["bundled"] }
@@ -25,6 +26,7 @@ uuid = { version = "1", features = ["v4"] }
 log = "0.4"
 num_cpus = "1"
 libc = "0.2"
+arx_rs = { path = "../agent" }
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }

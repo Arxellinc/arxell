@@ -2,50 +2,40 @@ import type { ToolManifest } from "./types";
 import {
   terminalToolManifest,
   filesToolManifest,
-  webToolManifest,
+  webSearchToolManifest,
   flowToolManifest,
-  llmToolManifest,
   tasksToolManifest,
   memoryToolManifest,
-  skillsToolManifest,
-  modelsToolManifest,
-  voiceToolManifest,
-  devicesToolManifest,
-  settingsToolManifest
+  skillsToolManifest
 } from "./index";
 
 export const TOOL_REGISTRY: Record<string, ToolManifest> = {
   terminal: terminalToolManifest,
   files: filesToolManifest,
-  web: webToolManifest,
+  webSearch: webSearchToolManifest,
   flow: flowToolManifest,
-  llm: llmToolManifest,
   tasks: tasksToolManifest,
   memory: memoryToolManifest,
-  skills: skillsToolManifest,
-  models: modelsToolManifest,
-  voice: voiceToolManifest,
-  devices: devicesToolManifest,
-  settings: settingsToolManifest
+  skills: skillsToolManifest
 };
 
 export const TOOL_ORDER = [
   "terminal",
   "files",
-  "web",
+  "webSearch",
   "flow",
-  "llm",
   "tasks",
   "memory",
-  "skills",
-  "models",
-  "voice",
-  "devices",
-  "settings"
+  "skills"
 ] as const;
 
+function canonicalToolId(toolId: string): string {
+  return toolId === "web" ? "webSearch" : toolId;
+}
+
 export function getToolManifest(toolId: string): ToolManifest | null {
-  return TOOL_REGISTRY[toolId] ?? null;
+  const normalized = canonicalToolId(toolId);
+  return TOOL_REGISTRY[normalized] ?? null;
 }
 
 export function getAllToolManifests(): ToolManifest[] {

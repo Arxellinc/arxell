@@ -1,13 +1,8 @@
 export { terminalToolManifest } from "./terminal/manifest";
 export { filesToolManifest } from "./files/manifest";
-export { webToolManifest } from "./web/manifest";
+export { webSearchToolManifest } from "./webSearch/manifest";
 export { flowToolManifest } from "./flow/manifest";
-export { llmToolManifest } from "./llm/manifest";
 export { tasksToolManifest } from "./tasks/manifest";
 export { memoryToolManifest } from "./memory/manifest";
 export { skillsToolManifest } from "./skills/manifest";
-export { modelsToolManifest } from "./models/manifest";
-export { voiceToolManifest } from "./voice/manifest";
-export { devicesToolManifest } from "./devices/manifest";
-export { settingsToolManifest } from "./settings/manifest";
 export type { ToolManifest, ToolCategory } from "./types";

@@ -1,6 +1,7 @@
 import "./styles.css";
 import "xterm/css/xterm.css";
 import type {
+  ApiConnectionRecord,
   AppEvent,
   ChatStreamChunkPayload,
   ChatStreamReasoningChunkPayload,
@@ -8,6 +9,7 @@ import type {
   LlamaRuntimeStatusResponse,
   ModelManagerHfCandidate,
   ModelManagerInstalledModel,
+  WebSearchResponse,
   WorkspaceToolRecord
 } from "./contracts";
 import { iconHtml } from "./icons";
@@ -16,35 +18,67 @@ import { APP_ICON } from "./icons/map";
 import type { ChatIpcClient } from "./ipcClient";
 import { createChatIpcClient } from "./ipcClient";
 import {
-  attachWorkspacePaneInteractions,
+  isWorkspaceTab,
   renderGlobalBottombar,
   renderGlobalTopbar,
   renderSidebarRail,
   renderWorkspacePane
 } from "./layout";
 import { attachPrimaryPanelInteractions, getPanelDefinition } from "./panels";
-import type { DevicesState, SidebarTab, UiMessage } from "./panels/types";
+import type { ApiConnectionDraft, DevicesState, SidebarTab, UiMessage } from "./panels/types";
 import type { DisplayMode, LayoutOrientation, WorkspaceTab } from "./layout";
 import { escapeHtml } from "./panels/utils";
-import { TerminalManager } from "./terminal/manager";
-import { renderTerminalWorkspace } from "./terminal/view";
+import { TerminalManager, renderTerminalToolbar, renderTerminalWorkspace } from "./tools/terminal/index";
+import type { TerminalShellProfile } from "./tools/terminal/types";
 import {
-  bindWorkspaceToolsPanel,
-  renderWorkspaceToolsActions,
-  renderWorkspaceToolsBody
-} from "./workspace-tools/panel";
+  MANAGER_DATA_ATTR,
+  MANAGER_UI_ID,
+  TERMINAL_DATA_ATTR,
+  TERMINAL_UI_ID,
+  WEB_DATA_ATTR,
+  WEB_UI_ID,
+  WORKSPACE_DATA_ATTR
+} from "./tools/ui/constants";
+import { renderWorkspaceToolsActions, renderWorkspaceToolsBody } from "./tools/manager/index";
+import { renderWebToolActions, renderWebToolBody } from "./tools/webSearch/index";
 import { renderChatMessages } from "./panels/chatPanel";
 import { APP_BUILD_VERSION, normalizeVersionLabel } from "./version";
+import {
+  closeTerminalSessionAndPickNext,
+  createTerminalSessionForProfile,
+  ensureTerminalSessionForProfile
+} from "./workspace/controller";
 
 const terminalManager = new TerminalManager();
 const MAX_CONSOLE_ENTRIES = 600;
 const LLAMA_MODEL_PATH_STORAGE_KEY = "arxell.llama.modelPath";
 const LLAMA_MAX_TOKENS_STORAGE_KEY = "arxell.llama.maxTokens";
 const MIC_PERMISSION_BUBBLE_DISMISSED_KEY = "arxell.micPermissionBubbleDismissed";
+const WEB_SEARCH_HISTORY_STORAGE_KEY = "arxell.webSearch.history.v1";
 const CHAT_ID_ALPHANUM = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
 let chatStreamDomUpdateScheduled = false;
 let chatThinkingDelegationInstalled = false;
 const FALLBACK_APP_VERSION = normalizeVersionLabel(APP_BUILD_VERSION);
+
+interface WebTabState {
+  id: string;
+  title: string;
+  query: string;
+  mode: string;
+  viewMode: "markdown" | "json";
+  num: number;
+  busy: boolean;
+  message: string | null;
+  result: Record<string, unknown> | null;
+}
+
+interface WebSearchHistoryItem {
+  id: string;
+  query: string;
+  mode: string;
+  num: number;
+  timestampMs: number;
+}
 
 function generateChatConversationId(): string {
   let suffix = "";
@@ -110,6 +144,52 @@ function loadMicBubbleDismissed(): boolean {
   }
 }
 
+function loadPersistedWebSearchHistory(): WebSearchHistoryItem[] {
+  try {
+    const raw = window.localStorage.getItem(WEB_SEARCH_HISTORY_STORAGE_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .map((item) => normalizeWebHistoryItem(item))
+      .filter((item): item is WebSearchHistoryItem => item !== null)
+      .slice(0, 200);
+  } catch {
+    return [];
+  }
+}
+
+function persistWebSearchHistory(entries: WebSearchHistoryItem[]): void {
+  try {
+    window.localStorage.setItem(WEB_SEARCH_HISTORY_STORAGE_KEY, JSON.stringify(entries.slice(0, 200)));
+  } catch {
+    // Ignore local storage failures.
+  }
+}
+
+function normalizeWebHistoryItem(value: unknown): WebSearchHistoryItem | null {
+  if (!value || typeof value !== "object") return null;
+  const item = value as {
+    id?: unknown;
+    query?: unknown;
+    mode?: unknown;
+    num?: unknown;
+    timestampMs?: unknown;
+  };
+  const query = typeof item.query === "string" ? item.query.trim() : "";
+  if (!query) return null;
+  const mode = typeof item.mode === "string" && item.mode.trim() ? item.mode.trim() : "search";
+  const numRaw = typeof item.num === "number" ? item.num : 10;
+  const num = Number.isFinite(numRaw) ? Math.max(1, Math.min(20, Math.trunc(numRaw))) : 10;
+  const tsRaw = typeof item.timestampMs === "number" ? item.timestampMs : Date.now();
+  const timestampMs = Number.isFinite(tsRaw) ? tsRaw : Date.now();
+  const id =
+    typeof item.id === "string" && item.id.trim()
+      ? item.id.trim()
+      : `webh-${timestampMs}-${Math.floor(Math.random() * 1000)}`;
+  return { id, query, mode, num, timestampMs };
+}
+
 function persistMicBubbleDismissed(dismissed: boolean): void {
   try {
     if (dismissed) {
@@ -137,6 +217,32 @@ function defaultDevicesState(): DevicesState {
   };
 }
 
+function defaultApiConnectionDraft(): ApiConnectionDraft {
+  return {
+    apiType: "llm",
+    apiUrl: "",
+    name: "",
+    apiKey: "",
+    modelName: "",
+    costPerMonthUsd: "",
+    apiStandardPath: ""
+  };
+}
+
+function createWebTab(index: number): WebTabState {
+  return {
+    id: `web-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+    title: `Search ${index}`,
+    query: "",
+    mode: "search",
+    viewMode: "markdown",
+    num: 10,
+    busy: false,
+    message: null,
+    result: null
+  };
+}
+
 const state: {
   conversationId: string;
   messages: UiMessage[];
@@ -149,6 +255,11 @@ const state: {
   chatDraft: string;
   activeChatCorrelationId: string | null;
   devices: DevicesState;
+  apiConnections: ApiConnectionRecord[];
+  apiFormOpen: boolean;
+  apiDraft: ApiConnectionDraft;
+  apiEditingId: string | null;
+  apiMessage: string | null;
   micPermissionBubbleDismissed: boolean;
   events: AppEvent[];
   consoleEntries: Array<{
@@ -164,8 +275,20 @@ const state: {
   workspaceTab: WorkspaceTab;
   layoutOrientation: LayoutOrientation;
   activeTerminalSessionId: string | null;
+  terminalShellProfile: TerminalShellProfile;
   conversations: ConversationSummaryRecord[];
   workspaceTools: WorkspaceToolRecord[];
+  webTabs: WebTabState[];
+  activeWebTabId: string;
+  nextWebTabIndex: number;
+  webHistoryOpen: boolean;
+  webHistoryClearConfirmOpen: boolean;
+  webHistory: WebSearchHistoryItem[];
+  webSetupModalOpen: boolean;
+  webSetupAccount: string;
+  webSetupApiKey: string;
+  webSetupMessage: string | null;
+  webSetupBusy: boolean;
   displayMode: DisplayMode;
   appVersion: string;
   chatThinkingEnabled: boolean;
@@ -239,6 +362,11 @@ const state: {
   chatDraft: "",
   activeChatCorrelationId: null,
   devices: defaultDevicesState(),
+  apiConnections: [],
+  apiFormOpen: false,
+  apiDraft: defaultApiConnectionDraft(),
+  apiEditingId: null,
+  apiMessage: null,
   micPermissionBubbleDismissed: loadMicBubbleDismissed(),
   events: [],
   consoleEntries: [],
@@ -249,8 +377,20 @@ const state: {
   workspaceTab: "events",
   layoutOrientation: "landscape",
   activeTerminalSessionId: null,
+  terminalShellProfile: "default",
   conversations: [],
   workspaceTools: [],
+  webTabs: [createWebTab(1)],
+  activeWebTabId: "",
+  nextWebTabIndex: 2,
+  webHistoryOpen: false,
+  webHistoryClearConfirmOpen: false,
+  webHistory: loadPersistedWebSearchHistory(),
+  webSetupModalOpen: false,
+  webSetupAccount: "Serper",
+  webSetupApiKey: "",
+  webSetupMessage: null,
+  webSetupBusy: false,
   displayMode: "dark",
   appVersion: FALLBACK_APP_VERSION,
   chatThinkingEnabled: false,
@@ -303,6 +443,7 @@ const state: {
     vadForceFlushS: 3
   }
 };
+state.activeWebTabId = state.webTabs[0]?.id ?? "";
 
 let clientRef: ChatIpcClient | null = null;
 let consoleCaptureInstalled = false;
@@ -663,8 +804,43 @@ function render(): void {
     terminalManager.listSessions(),
     state.activeTerminalSessionId
   );
+  const terminalActionsHtml = renderTerminalToolbar(
+    terminalManager.listSessions(),
+    state.activeTerminalSessionId,
+    state.terminalShellProfile
+  );
   const toolsUiHtml = renderWorkspaceToolsBody(state.workspaceTools);
   const toolsActionsHtml = renderWorkspaceToolsActions();
+  const activeWebTab = getActiveWebTab();
+  const webUiHtml = renderWebToolBody({
+    tabId: activeWebTab?.id ?? "",
+    title: activeWebTab?.title ?? "Search",
+    query: activeWebTab?.query ?? "",
+    mode: activeWebTab?.mode ?? "search",
+    viewMode: activeWebTab?.viewMode ?? "markdown",
+    num: activeWebTab?.num ?? 10,
+    busy: activeWebTab?.busy ?? false,
+    message: activeWebTab?.message ?? null,
+    result: activeWebTab?.result ?? null,
+    historyOpen: state.webHistoryOpen,
+    historyClearConfirmOpen: state.webHistoryClearConfirmOpen,
+    historyItems: state.webHistory,
+    setupModalOpen: state.webSetupModalOpen,
+    setupAccount: state.webSetupAccount,
+    setupApiKey: state.webSetupApiKey,
+    setupMessage: state.webSetupMessage,
+    setupBusy: state.webSetupBusy
+  });
+  const webActionsHtml = renderWebToolActions(
+    state.webTabs.map((tab) => ({
+      id: tab.id,
+      label: tab.title,
+      active: tab.id === state.activeWebTabId
+    })),
+    activeWebTab?.viewMode ?? "markdown",
+    state.webHistoryOpen,
+    activeWebTab?.busy ?? false
+  );
 
   const panel = getPanelDefinition(state.sidebarTab, {
     conversationId: state.conversationId,
@@ -675,6 +851,11 @@ function render(): void {
     chatStreaming: state.chatStreaming,
     chatDraft: state.chatDraft,
     devices: state.devices,
+    apiConnections: state.apiConnections,
+    apiFormOpen: state.apiFormOpen,
+    apiDraft: state.apiDraft,
+    apiEditingId: state.apiEditingId,
+    apiMessage: state.apiMessage,
     conversations: state.conversations,
     chatThinkingEnabled: state.chatThinkingEnabled,
     llamaRuntime: state.llamaRuntime,
@@ -723,8 +904,12 @@ function render(): void {
     consoleHtml,
     consoleActionsHtml,
     terminalUiHtml,
+    terminalActionsHtml,
     toolsUiHtml,
     toolsActionsHtml,
+    webUiHtml,
+    webActionsHtml,
+    state.workspaceTools,
     state.workspaceTab
   );
 
@@ -992,6 +1177,50 @@ function formatRuntimeEventLine(event: AppEvent): string {
   return `${new Date(event.timestampMs).toLocaleTimeString()} ${event.action} ${event.stage} ${payloadText}`;
 }
 
+function payloadAsRecord(payload: AppEvent["payload"]): Record<string, unknown> | null {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+    return null;
+  }
+  return payload as Record<string, unknown>;
+}
+
+function formatAgentEventLine(event: AppEvent): string | null {
+  const payload = payloadAsRecord(event.payload);
+  if (event.action === "chat.agent.request") {
+    const model = typeof payload?.model === "string" ? payload.model : "unknown";
+    const maxTokens =
+      typeof payload?.maxTokens === "number" ? String(payload.maxTokens) : "n/a";
+    const baseUrl = typeof payload?.baseUrl === "string" ? payload.baseUrl : "n/a";
+    return `${event.action} ${event.stage} model=${model} maxTokens=${maxTokens} baseUrl=${baseUrl}`;
+  }
+  if (event.action === "chat.agent.tool.start") {
+    const tool = typeof payload?.toolName === "string" ? payload.toolName : "unknown";
+    const callId =
+      typeof payload?.toolCallId === "string" ? payload.toolCallId : "unknown";
+    return `tool.start ${tool} call=${callId}`;
+  }
+  if (event.action === "chat.agent.tool.end") {
+    const tool = typeof payload?.toolName === "string" ? payload.toolName : "unknown";
+    const display =
+      typeof payload?.display === "string" ? payload.display : "";
+    return display ? `tool.end ${tool} ${display}` : `tool.end ${tool}`;
+  }
+  if (event.action === "chat.agent.tool.result") {
+    const tool = typeof payload?.toolName === "string" ? payload.toolName : "unknown";
+    const success = payload?.success === true;
+    const display =
+      typeof payload?.display === "string" ? payload.display : "";
+    const status = success ? "ok" : "error";
+    return display ? `tool.result ${tool} ${status} ${display}` : `tool.result ${tool} ${status}`;
+  }
+  if (event.action === "chat.agent.fallback") {
+    const message =
+      typeof payload?.message === "string" ? payload.message : safePayloadPreview(event.payload);
+    return `${event.action} ${event.stage} ${message}`;
+  }
+  return null;
+}
+
 function extractRuntimeProcessLine(event: AppEvent): string | null {
   if (
     event.action !== "llama.runtime.process.stderr" &&
@@ -1111,6 +1340,173 @@ async function refreshTools(): Promise<void> {
   if (!clientRef) return;
   const response = await clientRef.listWorkspaceTools({ correlationId: nextCorrelationId() });
   state.workspaceTools = response.tools;
+}
+
+async function refreshApiConnections(): Promise<void> {
+  if (!clientRef) return;
+  const response = await clientRef.listApiConnections({ correlationId: nextCorrelationId() });
+  state.apiConnections = response.connections;
+}
+
+function getActiveWebTab(): WebTabState | null {
+  if (!state.webTabs.length) return null;
+  const found = state.webTabs.find((tab) => tab.id === state.activeWebTabId);
+  return found ?? state.webTabs[0] ?? null;
+}
+
+function withActiveWebTab(mutator: (tab: WebTabState) => void): void {
+  const active = getActiveWebTab();
+  if (!active) return;
+  mutator(active);
+}
+
+function ensureWebTabs(): void {
+  if (state.webTabs.length) return;
+  const tab = createWebTab(state.nextWebTabIndex++);
+  state.webTabs = [tab];
+  state.activeWebTabId = tab.id;
+}
+
+function createAndActivateWebTab(): void {
+  const tab = createWebTab(state.nextWebTabIndex++);
+  state.webTabs = [...state.webTabs, tab];
+  state.activeWebTabId = tab.id;
+}
+
+async function runWebSearch(): Promise<void> {
+  const client = clientRef;
+  const activeTab = getActiveWebTab();
+  if (!client || !activeTab || activeTab.busy) return;
+  await refreshApiConnections();
+  if (!hasVerifiedSearchConnection()) {
+    state.webSetupModalOpen = true;
+    state.webSetupMessage = "Add and verify a Serper Search API connection to continue.";
+    return;
+  }
+  const query = activeTab.query.trim();
+  if (!query) {
+    activeTab.message = "Enter a query.";
+    return;
+  }
+
+  activeTab.busy = true;
+  activeTab.message = null;
+  try {
+    const response = await client.webSearch({
+      correlationId: nextCorrelationId(),
+      query,
+      mode: activeTab.mode,
+      num: activeTab.num
+    });
+    activeTab.result = response.result;
+    const resultCount = getWebResultCount(response);
+    activeTab.message =
+      resultCount !== null
+        ? `Fetched ${resultCount} result${resultCount === 1 ? "" : "s"}.`
+        : "Search completed.";
+    recordWebSearchHistory(query, activeTab.mode, activeTab.num);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Web search failed.";
+    activeTab.message = message;
+    if (isMissingSearchApiError(message)) {
+      state.webSetupModalOpen = true;
+      state.webSetupMessage = "Search API is missing or not verified. Configure Serper to continue.";
+    }
+  } finally {
+    activeTab.busy = false;
+  }
+}
+
+function recordWebSearchHistory(query: string, mode: string, num: number): void {
+  const normalizedQuery = query.trim();
+  if (!normalizedQuery) return;
+  const entry: WebSearchHistoryItem = {
+    id: `webh-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+    query: normalizedQuery,
+    mode: mode.trim() || "search",
+    num: Math.max(1, Math.min(20, Math.trunc(num))),
+    timestampMs: Date.now()
+  };
+  const deduped = state.webHistory.filter(
+    (item) =>
+      !(
+        item.query.toLowerCase() === entry.query.toLowerCase() &&
+        item.mode === entry.mode &&
+        item.num === entry.num
+      )
+  );
+  state.webHistory = [entry, ...deduped].slice(0, 200);
+  persistWebSearchHistory(state.webHistory);
+}
+
+function hasVerifiedSearchConnection(): boolean {
+  return state.apiConnections.some(
+    (connection) => connection.apiType === "search" && connection.status === "verified"
+  );
+}
+
+function isMissingSearchApiError(message: string): boolean {
+  const value = message.toLowerCase();
+  return value.includes("no verified search api configured") || value.includes("search api key");
+}
+
+async function saveWebSearchSetup(): Promise<void> {
+  const client = clientRef;
+  if (!client || state.webSetupBusy) return;
+  const account = state.webSetupAccount.trim();
+  const apiKey = state.webSetupApiKey.trim();
+  if (!account || !apiKey) {
+    state.webSetupMessage = "Account name and API key are required.";
+    return;
+  }
+
+  state.webSetupBusy = true;
+  state.webSetupMessage = "Saving and verifying Serper connection...";
+  try {
+    const created = await client.createApiConnection({
+      correlationId: nextCorrelationId(),
+      apiType: "search",
+      apiUrl: "https://google.serper.dev",
+      name: account,
+      apiKey
+    });
+    await refreshApiConnections();
+    if (created.connection.status === "verified") {
+      state.webSetupMessage = "Serper connection verified.";
+      state.webSetupModalOpen = false;
+      state.webSetupApiKey = "";
+      withActiveWebTab((tab) => {
+        tab.message = "Search API configured. You can run searches now.";
+      });
+      return;
+    }
+    state.webSetupMessage = created.connection.statusMessage;
+  } catch (error) {
+    state.webSetupMessage =
+      error instanceof Error ? error.message : "Failed saving Serper connection.";
+  } finally {
+    state.webSetupBusy = false;
+  }
+}
+
+function getWebResultCount(response: WebSearchResponse): number | null {
+  const raw = response.result as {
+    items?: unknown;
+    organic?: unknown;
+    news?: unknown;
+    images?: unknown;
+    videos?: unknown;
+    shopping?: unknown;
+    places?: unknown;
+  };
+  if (Array.isArray(raw.items)) return raw.items.length;
+  if (Array.isArray(raw.organic)) return raw.organic.length;
+  if (Array.isArray(raw.news)) return raw.news.length;
+  if (Array.isArray(raw.images)) return raw.images.length;
+  if (Array.isArray(raw.videos)) return raw.videos.length;
+  if (Array.isArray(raw.shopping)) return raw.shopping.length;
+  if (Array.isArray(raw.places)) return raw.places.length;
+  return null;
 }
 
 async function refreshModelManagerInstalled(): Promise<void> {
@@ -1442,6 +1838,159 @@ function renderAndBind(sendMessage: (text: string) => Promise<void>): void {
     },
     onRequestSpeakerAccess: async () => {
       await requestSpeakerAccess();
+      renderAndBind(sendMessage);
+    },
+    onApiConnectionsRefresh: async () => {
+      await refreshApiConnections();
+      renderAndBind(sendMessage);
+    },
+    onApiConnectionsSetFormOpen: async (open: boolean) => {
+      state.apiFormOpen = open;
+      if (!open) {
+        state.apiDraft = defaultApiConnectionDraft();
+      }
+      renderAndBind(sendMessage);
+    },
+    onApiConnectionDraftChange: async (patch) => {
+      state.apiDraft = {
+        ...state.apiDraft,
+        ...patch
+      };
+    },
+    onApiConnectionEdit: async (id: string) => {
+      if (!clientRef) return;
+      const connection = state.apiConnections.find((record) => record.id === id);
+      if (!connection) return;
+      let fullApiKey = "";
+      try {
+        const secret = await clientRef.getApiConnectionSecret({
+          correlationId: nextCorrelationId(),
+          id
+        });
+        fullApiKey = secret.apiKey;
+      } catch (error) {
+        state.apiMessage = `Failed loading API key for edit: ${String(error)}`;
+      }
+      state.apiEditingId = id;
+      state.apiDraft = {
+        apiType: connection.apiType,
+        apiUrl: connection.apiUrl,
+        name: connection.name ?? "",
+        apiKey: fullApiKey,
+        modelName: connection.modelName ?? "",
+        costPerMonthUsd: typeof connection.costPerMonthUsd === "number"
+          ? String(connection.costPerMonthUsd)
+          : "",
+        apiStandardPath: connection.apiStandardPath ?? ""
+      };
+      state.apiFormOpen = true;
+      renderAndBind(sendMessage);
+    },
+    onApiConnectionSave: async () => {
+      if (!clientRef) return;
+      const apiUrl = state.apiDraft.apiUrl.trim();
+      const apiKey = state.apiDraft.apiKey.trim();
+      if (!apiUrl || (!state.apiEditingId && !apiKey)) {
+        state.apiMessage = !apiUrl ? "API URL is required." : "API key is required.";
+        renderAndBind(sendMessage);
+        return;
+      }
+      const costRaw = state.apiDraft.costPerMonthUsd.trim();
+      let costPerMonthUsd: number | undefined;
+      if (costRaw) {
+        const parsed = Number.parseFloat(costRaw);
+        if (!Number.isFinite(parsed) || parsed < 0) {
+          state.apiMessage = "Cost must be a non-negative number.";
+          renderAndBind(sendMessage);
+          return;
+        }
+        costPerMonthUsd = Number.parseFloat(parsed.toFixed(2));
+      }
+      try {
+        if (state.apiEditingId) {
+          const includeApiKey =
+            Boolean(apiKey) &&
+            !(apiKey.includes("*") && /\*{2,}/.test(apiKey));
+          // Update existing connection
+          const updated = await clientRef.updateApiConnection({
+            correlationId: nextCorrelationId(),
+            id: state.apiEditingId,
+            apiType: state.apiDraft.apiType,
+            apiUrl,
+            ...(state.apiDraft.name.trim() ? { name: state.apiDraft.name.trim() } : {}),
+            ...(includeApiKey ? { apiKey } : {}),
+            ...(state.apiDraft.modelName.trim() ? { modelName: state.apiDraft.modelName.trim() } : {}),
+            ...(typeof costPerMonthUsd === "number" ? { costPerMonthUsd } : {}),
+            ...(state.apiDraft.apiStandardPath.trim() ? { apiStandardPath: state.apiDraft.apiStandardPath.trim() } : {})
+          });
+          const verified = await clientRef.reverifyApiConnection({
+            correlationId: nextCorrelationId(),
+            id: updated.connection.id
+          });
+          state.apiConnections = state.apiConnections.map((record) =>
+            record.id === state.apiEditingId ? verified.connection : record
+          );
+          state.apiFormOpen = false;
+          state.apiEditingId = null;
+          state.apiDraft = defaultApiConnectionDraft();
+          state.apiMessage = verified.connection.statusMessage;
+        } else {
+          // Create new connection
+          const created = await clientRef.createApiConnection({
+            correlationId: nextCorrelationId(),
+            apiType: state.apiDraft.apiType,
+            apiUrl,
+            apiKey,
+            ...(state.apiDraft.name.trim() ? { name: state.apiDraft.name.trim() } : {}),
+            ...(state.apiDraft.modelName.trim() ? { modelName: state.apiDraft.modelName.trim() } : {}),
+            ...(typeof costPerMonthUsd === "number" ? { costPerMonthUsd } : {}),
+            ...(state.apiDraft.apiStandardPath.trim() ? { apiStandardPath: state.apiDraft.apiStandardPath.trim() } : {})
+          });
+          state.apiConnections = [created.connection, ...state.apiConnections];
+          state.apiFormOpen = false;
+          state.apiEditingId = null;
+          state.apiDraft = defaultApiConnectionDraft();
+          state.apiMessage = created.connection.statusMessage;
+        }
+      } catch (error) {
+        state.apiMessage = `Failed saving API: ${String(error)}`;
+      }
+      renderAndBind(sendMessage);
+    },
+    onApiConnectionReverify: async (id: string) => {
+      if (!clientRef) return;
+      try {
+        const verified = await clientRef.reverifyApiConnection({
+          correlationId: nextCorrelationId(),
+          id
+        });
+        state.apiConnections = state.apiConnections.map((record) =>
+          record.id === id ? verified.connection : record
+        );
+        state.apiMessage = verified.connection.statusMessage;
+      } catch (error) {
+        state.apiMessage = `Failed re-verifying API: ${String(error)}`;
+      }
+      renderAndBind(sendMessage);
+    },
+    onApiConnectionDelete: async (id: string) => {
+      if (!clientRef) return;
+      const confirmed = window.confirm("Remove this API connection?");
+      if (!confirmed) return;
+      try {
+        const response = await clientRef.deleteApiConnection({
+          correlationId: nextCorrelationId(),
+          id
+        });
+        if (response.deleted) {
+          state.apiConnections = state.apiConnections.filter((record) => record.id !== id);
+          state.apiMessage = "API connection removed.";
+        } else {
+          state.apiMessage = "API connection was not found.";
+        }
+      } catch (error) {
+        state.apiMessage = `Failed deleting API: ${String(error)}`;
+      }
       renderAndBind(sendMessage);
     },
     onSelectConversation: async (conversationId: string) => {
@@ -2260,6 +2809,11 @@ function currentPrimaryPanelRenderState() {
     chatStreaming: state.chatStreaming,
     chatDraft: state.chatDraft,
     devices: state.devices,
+    apiConnections: state.apiConnections,
+    apiFormOpen: state.apiFormOpen,
+    apiDraft: state.apiDraft,
+    apiEditingId: state.apiEditingId,
+    apiMessage: state.apiMessage,
     conversations: state.conversations,
     chatThinkingEnabled: state.chatThinkingEnabled,
     llamaRuntime: state.llamaRuntime,
@@ -2390,66 +2944,374 @@ function attachSidebarInteractions(sendMessage: (text: string) => Promise<void>)
       if (nextTab === "llama_cpp") {
         await refreshLlamaRuntime();
       }
+      if (nextTab === "apis") {
+        await refreshApiConnections();
+      }
       renderAndBind(sendMessage);
     };
   });
 }
 
 function attachWorkspaceInteractions(sendMessage: (text: string) => Promise<void>): void {
-  attachWorkspacePaneInteractions(async (tab) => {
-    state.workspaceTab = tab;
-    if (tab === "terminal") {
-      await ensureTerminalSession();
-    }
-    if (tab === "tools") {
-      await refreshTools();
-    }
-    renderAndBind(sendMessage);
-  });
+  const workspacePane = document.querySelector<HTMLElement>(".workspace-pane");
+  const shellPopover = document.querySelector<HTMLElement>(`#${TERMINAL_UI_ID.shellPopover}`);
+  if (workspacePane) {
+    workspacePane.onclick = async (event) => {
+      const target = (event.target as HTMLElement | null)?.closest<HTMLElement>(
+        `[${WORKSPACE_DATA_ATTR.tab}], [${TERMINAL_DATA_ATTR.closeSessionId}], [${TERMINAL_DATA_ATTR.sessionId}], [${TERMINAL_DATA_ATTR.action}], #${TERMINAL_UI_ID.shellButton}, [${TERMINAL_DATA_ATTR.shellProfile}], #${MANAGER_UI_ID.refreshToolsButton}, #${MANAGER_UI_ID.exportToolsButton}, #${MANAGER_UI_ID.importToolsButton}, [${WEB_DATA_ATTR.action}], [${WEB_DATA_ATTR.tabId}]`
+      );
+      if (!target) return;
 
-  const tabButtons = document.querySelectorAll<HTMLButtonElement>("[data-terminal-session-id]");
-  tabButtons.forEach((button) => {
-    button.onclick = () => {
-      const sessionId = button.dataset.terminalSessionId;
-      if (!sessionId) return;
-      state.activeTerminalSessionId = sessionId;
-      renderAndBind(sendMessage);
-    };
-  });
-
-  const closeButtons = document.querySelectorAll<HTMLElement>("[data-terminal-close-session-id]");
-  closeButtons.forEach((button) => {
-    button.onclick = async (event) => {
-      event.preventDefault();
-      event.stopPropagation();
-      const sessionId = button.dataset.terminalCloseSessionId;
-      if (!sessionId) return;
-      await terminalManager.closeSession(sessionId);
-      const remaining = terminalManager.listSessions();
-      state.activeTerminalSessionId = remaining[0]?.sessionId ?? null;
-      renderAndBind(sendMessage);
-    };
-  });
-
-  const actionButtons = document.querySelectorAll<HTMLButtonElement>("[data-terminal-action]");
-  const shellSelect = document.querySelector<HTMLSelectElement>("#terminalShellSelect");
-  actionButtons.forEach((button) => {
-    button.onclick = async () => {
-      const action = button.dataset.terminalAction;
-      if (!action) return;
-      if (action === "new") {
-        const shellProfile = shellSelect?.value ?? "default";
-        const shell = shellProfileToCommand(shellProfile);
-        const session = await terminalManager.createSession(
-          shell ? { shell } : undefined
-        );
-        state.activeTerminalSessionId = session.sessionId;
+      const nextWorkspaceTab = target.getAttribute(WORKSPACE_DATA_ATTR.tab);
+      if (nextWorkspaceTab && isWorkspaceTab(nextWorkspaceTab)) {
+        const workspaceTab: WorkspaceTab = nextWorkspaceTab;
+        state.workspaceTab = workspaceTab;
+        if (workspaceTab === "terminal") {
+          await ensureTerminalSession();
+        }
+        if (workspaceTab === "manager-tool") {
+          await refreshTools();
+        }
+        if (workspaceTab === "webSearch-tool" || workspaceTab === "web-tool") {
+          state.workspaceTab = "webSearch-tool";
+          ensureWebTabs();
+          await refreshApiConnections();
+          if (!hasVerifiedSearchConnection()) {
+            state.webSetupModalOpen = true;
+            state.webSetupMessage = "Set up Serper Search API to enable this tool.";
+          }
+        }
         renderAndBind(sendMessage);
         return;
       }
-      if (!state.activeTerminalSessionId) return;
+
+      if (target.id === MANAGER_UI_ID.refreshToolsButton) {
+        await refreshTools();
+        renderAndBind(sendMessage);
+        return;
+      }
+
+      if (target.id === MANAGER_UI_ID.exportToolsButton) {
+        if (!clientRef) return;
+        const exported = await clientRef.exportWorkspaceTools({
+          correlationId: nextCorrelationId()
+        });
+        const blob = new Blob([exported.payloadJson], {
+          type: "application/json;charset=utf-8"
+        });
+        const url = URL.createObjectURL(blob);
+        const anchor = document.createElement("a");
+        anchor.href = url;
+        anchor.download = exported.fileName;
+        document.body.appendChild(anchor);
+        anchor.click();
+        document.body.removeChild(anchor);
+        URL.revokeObjectURL(url);
+        pushConsoleEntry("info", "browser", `Exported tool registry to ${exported.fileName}.`);
+        renderAndBind(sendMessage);
+        return;
+      }
+
+      if (target.id === MANAGER_UI_ID.importToolsButton) {
+        const client = clientRef;
+        if (!client) return;
+        const input = document.createElement("input");
+        const cleanup = () => {
+          if (input.parentElement) {
+            document.body.removeChild(input);
+          }
+        };
+        input.type = "file";
+        input.accept = "application/json,.json";
+        input.style.display = "none";
+        document.body.appendChild(input);
+        window.setTimeout(cleanup, 60_000);
+        input.onchange = () => {
+          void (async () => {
+            try {
+              const file = input.files?.[0];
+              if (!file) return;
+              const payloadJson = await file.text();
+              await client.importWorkspaceTools({
+                correlationId: nextCorrelationId(),
+                payloadJson
+              });
+              await refreshTools();
+              pushConsoleEntry("info", "browser", `Imported tool registry from ${file.name}.`);
+            } catch (error) {
+              const message =
+                error instanceof Error ? error.message : "Unknown import failure";
+              pushConsoleEntry("error", "browser", `Failed importing tool registry: ${message}`);
+            } finally {
+              renderAndBind(sendMessage);
+              cleanup();
+            }
+          })();
+        };
+        input.click();
+        return;
+      }
+
+      const webAction = target.getAttribute(WEB_DATA_ATTR.action);
+      const webTabId = target.getAttribute(WEB_DATA_ATTR.tabId);
+      if (webTabId && !webAction) {
+        state.activeWebTabId = webTabId;
+        renderAndBind(sendMessage);
+        return;
+      }
+      if (webAction === "run") {
+        await runWebSearch();
+        renderAndBind(sendMessage);
+        return;
+      }
+      if (webAction === "new-tab") {
+        createAndActivateWebTab();
+        renderAndBind(sendMessage);
+        return;
+      }
+      if (webAction === "toggle-history") {
+        state.webHistoryOpen = !state.webHistoryOpen;
+        if (!state.webHistoryOpen) {
+          state.webHistoryClearConfirmOpen = false;
+        }
+        renderAndBind(sendMessage);
+        return;
+      }
+      if (webAction === "clear-history") {
+        state.webHistoryClearConfirmOpen = true;
+        renderAndBind(sendMessage);
+        return;
+      }
+      if (webAction === "clear-history-cancel") {
+        state.webHistoryClearConfirmOpen = false;
+        renderAndBind(sendMessage);
+        return;
+      }
+      if (webAction === "clear-history-confirm") {
+        state.webHistory = [];
+        state.webHistoryClearConfirmOpen = false;
+        persistWebSearchHistory(state.webHistory);
+        renderAndBind(sendMessage);
+        return;
+      }
+      if (webAction === "run-history-item") {
+        const historyId = target.getAttribute(WEB_DATA_ATTR.historyId);
+        if (!historyId) return;
+        const item = state.webHistory.find((entry) => entry.id === historyId);
+        if (!item) return;
+        withActiveWebTab((tab) => {
+          tab.query = item.query;
+          tab.mode = item.mode;
+          tab.num = item.num;
+        });
+        await runWebSearch();
+        renderAndBind(sendMessage);
+        return;
+      }
+      if (webAction === "toggle-view-mode") {
+        withActiveWebTab((tab) => {
+          tab.viewMode = tab.viewMode === "markdown" ? "json" : "markdown";
+        });
+        renderAndBind(sendMessage);
+        return;
+      }
+      if (webAction === "close-tab") {
+        if (!webTabId) return;
+        const remaining = state.webTabs.filter((tab) => tab.id !== webTabId);
+        if (!remaining.length) {
+          state.workspaceTab = "terminal";
+          await ensureTerminalSession();
+        } else {
+          state.webTabs = remaining;
+          if (state.activeWebTabId === webTabId) {
+            state.activeWebTabId = remaining[remaining.length - 1]?.id ?? remaining[0]?.id ?? "";
+          }
+        }
+        renderAndBind(sendMessage);
+        return;
+      }
+      if (webAction === "setup-cancel") {
+        state.webSetupModalOpen = false;
+        state.webSetupMessage = null;
+        state.webSetupApiKey = "";
+        renderAndBind(sendMessage);
+        return;
+      }
+      if (webAction === "setup-open-apis") {
+        state.webSetupModalOpen = false;
+        state.sidebarTab = "apis";
+        state.apiFormOpen = true;
+        state.apiDraft = {
+          apiType: "search",
+          apiUrl: "https://google.serper.dev",
+          name: state.webSetupAccount.trim(),
+          apiKey: state.webSetupApiKey,
+          modelName: "",
+          costPerMonthUsd: "",
+          apiStandardPath: ""
+        };
+        renderAndBind(sendMessage);
+        return;
+      }
+
+      const closeSessionId = target.getAttribute(TERMINAL_DATA_ATTR.closeSessionId);
+      if (closeSessionId) {
+        event.preventDefault();
+        event.stopPropagation();
+        state.activeTerminalSessionId = await closeTerminalSessionAndPickNext(
+          terminalManager,
+          closeSessionId
+        );
+        renderAndBind(sendMessage);
+        return;
+      }
+
+      const shellProfile = target.getAttribute(TERMINAL_DATA_ATTR.shellProfile) as
+        | TerminalShellProfile
+        | null;
+      if (shellProfile) {
+        state.terminalShellProfile = shellProfile;
+        if (shellPopover) shellPopover.hidden = true;
+        renderAndBind(sendMessage);
+        return;
+      }
+
+      if (target.id === TERMINAL_UI_ID.shellButton) {
+        event.preventDefault();
+        event.stopPropagation();
+        if (!shellPopover) return;
+        const nextHidden = !shellPopover.hidden;
+        shellPopover.hidden = nextHidden;
+        if (!nextHidden) return;
+        const closePopover = () => {
+          shellPopover.hidden = true;
+        };
+        document.addEventListener("click", closePopover, { once: true });
+        return;
+      }
+
+      const action = target.getAttribute(TERMINAL_DATA_ATTR.action);
+      if (action === "new") {
+        state.activeTerminalSessionId = await createTerminalSessionForProfile(
+          terminalManager,
+          state.terminalShellProfile
+        );
+        renderAndBind(sendMessage);
+        return;
+      }
+
+      const sessionId = target.getAttribute(TERMINAL_DATA_ATTR.sessionId);
+      if (sessionId) {
+        state.activeTerminalSessionId = sessionId;
+        renderAndBind(sendMessage);
+      }
     };
-  });
+    workspacePane.onchange = async (event) => {
+      const toggle = (event.target as HTMLElement | null)?.closest<HTMLInputElement>(
+        `[${MANAGER_DATA_ATTR.toggleToolId}]`
+      );
+      if (toggle) {
+        if (!clientRef) return;
+        const toolId = toggle.getAttribute(MANAGER_DATA_ATTR.toggleToolId);
+        if (!toolId) return;
+        await clientRef.setWorkspaceToolEnabled({
+          toolId,
+          enabled: toggle.checked,
+          correlationId: nextCorrelationId()
+        });
+        await refreshTools();
+      }
+
+      const modeSelect = document.querySelector<HTMLSelectElement>(`#${WEB_UI_ID.modeSelect}`);
+      if (modeSelect) {
+        withActiveWebTab((tab) => {
+          tab.mode = modeSelect.value || "search";
+        });
+      }
+
+      const numInput = document.querySelector<HTMLInputElement>(`#${WEB_UI_ID.numInput}`);
+      if (numInput) {
+        const parsed = Number.parseInt(numInput.value, 10);
+        withActiveWebTab((tab) => {
+          tab.num = Number.isFinite(parsed) ? Math.max(1, Math.min(20, parsed)) : 10;
+        });
+      }
+
+      renderAndBind(sendMessage);
+    };
+
+    workspacePane.onsubmit = async (event) => {
+      const form = (event.target as HTMLElement | null)?.closest<HTMLFormElement>(
+        `#${WEB_UI_ID.searchForm}`
+      );
+      if (form) {
+        event.preventDefault();
+        const queryInput = form.querySelector<HTMLInputElement>(`#${WEB_UI_ID.queryInput}`);
+        withActiveWebTab((tab) => {
+          tab.query = queryInput?.value ?? "";
+        });
+        await runWebSearch();
+        renderAndBind(sendMessage);
+        return;
+      }
+
+      const setupForm = (event.target as HTMLElement | null)?.closest<HTMLFormElement>(
+        `#${WEB_UI_ID.setupForm}`
+      );
+      if (!setupForm) return;
+      event.preventDefault();
+      const accountInput = setupForm.querySelector<HTMLInputElement>(`#${WEB_UI_ID.setupAccountInput}`);
+      const keyInput = setupForm.querySelector<HTMLInputElement>(`#${WEB_UI_ID.setupApiKeyInput}`);
+      state.webSetupAccount = accountInput?.value ?? "";
+      state.webSetupApiKey = keyInput?.value ?? "";
+      await saveWebSearchSetup();
+      renderAndBind(sendMessage);
+    };
+
+    workspacePane.oninput = (event) => {
+      const queryInput = (event.target as HTMLElement | null)?.closest<HTMLInputElement>(
+        `#${WEB_UI_ID.queryInput}`
+      );
+      if (queryInput) {
+        withActiveWebTab((tab) => {
+          tab.query = queryInput.value;
+        });
+      }
+      const accountInput = (event.target as HTMLElement | null)?.closest<HTMLInputElement>(
+        `#${WEB_UI_ID.setupAccountInput}`
+      );
+      if (accountInput) {
+        state.webSetupAccount = accountInput.value;
+        state.webSetupMessage = null;
+      }
+      const keyInput = (event.target as HTMLElement | null)?.closest<HTMLInputElement>(
+        `#${WEB_UI_ID.setupApiKeyInput}`
+      );
+      if (keyInput) {
+        state.webSetupApiKey = keyInput.value;
+        state.webSetupMessage = null;
+      }
+    };
+
+    workspacePane.onkeydown = async (event) => {
+      if (event.key !== "Enter") return;
+      const queryInput = (event.target as HTMLElement | null)?.closest<HTMLInputElement>(
+        `#${WEB_UI_ID.queryInput}`
+      );
+      if (!queryInput) return;
+      event.preventDefault();
+      withActiveWebTab((tab) => {
+        tab.query = queryInput.value;
+      });
+      await runWebSearch();
+      renderAndBind(sendMessage);
+    };
+  }
+  if (shellPopover) {
+    shellPopover.onclick = (event) => {
+      event.stopPropagation();
+    };
+  }
 
   if (state.workspaceTab === "terminal") {
     const host = document.querySelector<HTMLElement>("#terminalHost");
@@ -2514,101 +3376,14 @@ function attachWorkspaceInteractions(sendMessage: (text: string) => Promise<void
     };
   }
 
-  if (state.workspaceTab === "tools") {
-    bindWorkspaceToolsPanel(
-      async () => {
-        await refreshTools();
-        renderAndBind(sendMessage);
-      },
-      async (toolId, enabled) => {
-        if (!clientRef) return;
-        await clientRef.setWorkspaceToolEnabled({
-          toolId,
-          enabled,
-          correlationId: nextCorrelationId()
-        });
-        await refreshTools();
-        renderAndBind(sendMessage);
-      },
-      async () => {
-        if (!clientRef) return;
-        const exported = await clientRef.exportWorkspaceTools({
-          correlationId: nextCorrelationId()
-        });
-        const blob = new Blob([exported.payloadJson], {
-          type: "application/json;charset=utf-8"
-        });
-        const url = URL.createObjectURL(blob);
-        const anchor = document.createElement("a");
-        anchor.href = url;
-        anchor.download = exported.fileName;
-        document.body.appendChild(anchor);
-        anchor.click();
-        document.body.removeChild(anchor);
-        URL.revokeObjectURL(url);
-        pushConsoleEntry("info", "browser", `Exported tool registry to ${exported.fileName}.`);
-        renderAndBind(sendMessage);
-      },
-      async () => {
-        const client = clientRef;
-        if (!client) return;
-        const input = document.createElement("input");
-        const cleanup = () => {
-          if (input.parentElement) {
-            document.body.removeChild(input);
-          }
-        };
-        input.type = "file";
-        input.accept = "application/json,.json";
-        input.style.display = "none";
-        document.body.appendChild(input);
-        window.setTimeout(cleanup, 60_000);
-        input.onchange = () => {
-          void (async () => {
-            try {
-              const file = input.files?.[0];
-              if (!file) return;
-              const payloadJson = await file.text();
-              await client.importWorkspaceTools({
-                correlationId: nextCorrelationId(),
-                payloadJson
-              });
-              await refreshTools();
-              pushConsoleEntry("info", "browser", `Imported tool registry from ${file.name}.`);
-            } catch (error) {
-              const message =
-                error instanceof Error ? error.message : "Unknown import failure";
-              pushConsoleEntry("error", "browser", `Failed importing tool registry: ${message}`);
-            } finally {
-              renderAndBind(sendMessage);
-              cleanup();
-            }
-          })();
-        };
-        input.click();
-      }
-    );
-  }
 }
 
 async function ensureTerminalSession(): Promise<void> {
-  if (state.activeTerminalSessionId) return;
-  const sessions = terminalManager.listSessions();
-  const first = sessions.at(0);
-  if (first) {
-    state.activeTerminalSessionId = first.sessionId;
-    return;
-  }
-  const shell = shellProfileToCommand("default");
-  const session = await terminalManager.createSession(shell ? { shell } : undefined);
-  state.activeTerminalSessionId = session.sessionId;
-}
-
-function shellProfileToCommand(profile: string): string | undefined {
-  if (profile === "bash") return "bash";
-  if (profile === "zsh") return "zsh";
-  if (profile === "powershell") return "powershell.exe";
-  return undefined;
+  state.activeTerminalSessionId = await ensureTerminalSessionForProfile(
+    terminalManager,
+    state.activeTerminalSessionId,
+    state.terminalShellProfile
+  );
 }
 
 async function bootstrap(): Promise<void> {
@@ -2629,6 +3404,7 @@ async function bootstrap(): Promise<void> {
 
   await refreshConversations();
   await refreshTools();
+  await refreshApiConnections();
   await refreshDevicesState();
   await refreshLlamaRuntime();
   await refreshModelManagerInstalled();
@@ -2681,7 +3457,14 @@ async function bootstrap(): Promise<void> {
   }
 
   client.onEvent((event) => {
-    if (
+    const agentEventLine = formatAgentEventLine(event);
+    if (agentEventLine) {
+      pushConsoleEntry(
+        event.severity === "error" ? "error" : "info",
+        "app",
+        `[agent] ${agentEventLine} corr=${event.correlationId}`
+      );
+    } else if (
       !event.action.startsWith("llama.runtime") &&
       !isNoisyRuntimeStatusEvent(event) &&
       !isNoisyChatStreamEvent(event)

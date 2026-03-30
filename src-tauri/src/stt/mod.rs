@@ -58,7 +58,7 @@ pub async fn start_stt(
 ) -> Result<(), String> {
     use log::info;
     use tauri::Emitter;
-    
+
     info!("Starting STT service");
     let supervisor = state.supervisor.lock().await;
     supervisor.start(&app).await
@@ -67,11 +67,9 @@ pub async fn start_stt(
 /// Stop the STT service (whisper.cpp server)
 #[cfg(feature = "tauri-runtime")]
 #[tauri::command]
-pub async fn stop_stt(
-    state: tauri::State<'_, STTState>,
-) -> Result<(), String> {
+pub async fn stop_stt(state: tauri::State<'_, STTState>) -> Result<(), String> {
     use log::info;
-    
+
     info!("Stopping STT service");
     let supervisor = state.supervisor.lock().await;
     supervisor.stop().await
@@ -88,9 +86,13 @@ pub async fn transcribe_chunk(
 ) -> Result<(), String> {
     use log::{error, info};
     use tauri::Emitter;
-    
-    info!("Received transcription request: {} samples, utterance_id: {}", pcm_samples.len(), utterance_id);
-    
+
+    info!(
+        "Received transcription request: {} samples, utterance_id: {}",
+        pcm_samples.len(),
+        utterance_id
+    );
+
     let supervisor = state.supervisor.lock().await;
 
     // Get endpoint
@@ -98,14 +100,17 @@ pub async fn transcribe_chunk(
         Some(e) => {
             info!("STT endpoint: {}", e);
             e
-        },
+        }
         None => {
             let err = "STT service not running".to_string();
-            let _ = app.emit("pipeline://error", events::PipelineErrorPayload {
-                source: "stt".to_string(),
-                message: err.clone(),
-                details: None,
-            });
+            let _ = app.emit(
+                "pipeline://error",
+                events::PipelineErrorPayload {
+                    source: "stt".to_string(),
+                    message: err.clone(),
+                    details: None,
+                },
+            );
             return Err(err);
         }
     };
@@ -116,33 +121,43 @@ pub async fn transcribe_chunk(
         .and_then(|s| s.parse::<u16>().ok())
         .ok_or_else(|| "Invalid endpoint".to_string())?;
 
-    info!("Calling whisper server at port {} with {} samples", port, pcm_samples.len());
+    info!(
+        "Calling whisper server at port {} with {} samples",
+        port,
+        pcm_samples.len()
+    );
 
     // Create client and run inference
     let client = client::WhisperClient::new(port);
     match client.transcribe(&pcm_samples).await {
         Ok(transcript) => {
             info!("Transcription complete: {} chars", transcript.len());
-            
+
             // Emit transcript event
-            let _ = app.emit("stt://transcript", events::TranscriptPayload {
-                text: transcript,
-                is_final: true,
-                utterance_id,
-            });
-            
+            let _ = app.emit(
+                "stt://transcript",
+                events::TranscriptPayload {
+                    text: transcript,
+                    is_final: true,
+                    utterance_id,
+                },
+            );
+
             Ok(())
         }
         Err(e) => {
             error!("Transcription failed: {}", e);
-            
+
             // Emit error event but don't restart - transient errors don't need restart
-            let _ = app.emit("pipeline://error", events::PipelineErrorPayload {
-                source: "stt".to_string(),
-                message: format!("Transcription failed: {}", e),
-                details: None,
-            });
-            
+            let _ = app.emit(
+                "pipeline://error",
+                events::PipelineErrorPayload {
+                    source: "stt".to_string(),
+                    message: format!("Transcription failed: {}", e),
+                    details: None,
+                },
+            );
+
             // Return Ok since error was emitted via event
             Ok(())
         }
@@ -188,10 +203,7 @@ pub fn generate_utterance_id() -> String {
 /// Update VAD status
 #[cfg(feature = "tauri-runtime")]
 #[tauri::command]
-pub async fn update_vad_status(
-    app: tauri::AppHandle,
-    is_speaking: bool,
-) -> Result<(), String> {
+pub async fn update_vad_status(app: tauri::AppHandle, is_speaking: bool) -> Result<(), String> {
     use tauri::Emitter;
     let _ = app.emit("stt://vad", events::VADPayload { is_speaking });
     Ok(())

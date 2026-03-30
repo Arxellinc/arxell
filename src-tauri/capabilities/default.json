@@ -3,5 +3,10 @@
   "identifier": "default",
   "description": "Default capability set for foundation app",
   "windows": ["main"],
-  "permissions": ["core:default", "dialog:allow-open"]
+  "permissions": [
+    "core:default",
+    "core:path:default",
+    "core:event:default",
+    "dialog:allow-open"
+  ]
 }

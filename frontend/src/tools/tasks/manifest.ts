@@ -9,5 +9,5 @@ export const tasksToolManifest: ToolManifest = {
   core: false,
   defaultEnabled: true,
   source: "builtin",
-  icon: "history"
+  icon: "square-check-big"
 };

@@ -9,5 +9,5 @@ export const skillsToolManifest: ToolManifest = {
   core: false,
   defaultEnabled: true,
   source: "builtin",
-  icon: "bot"
+  icon: "file-badge"
 };

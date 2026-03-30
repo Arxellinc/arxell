@@ -1,3 +1,5 @@
+pub mod agent_tools;
+pub mod api_registry;
 pub mod app;
 pub mod contracts;
 pub mod ipc;

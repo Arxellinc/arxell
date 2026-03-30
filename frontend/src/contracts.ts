@@ -163,7 +163,6 @@ export interface WorkspaceToolsExportRequest {
 
 export interface WorkspaceToolsExportResponse {
   correlationId: string;
-  fileName: string;
   payloadJson: string;
 }
 
@@ -175,6 +174,112 @@ export interface WorkspaceToolsImportRequest {
 export interface WorkspaceToolsImportResponse {
   correlationId: string;
   tools: WorkspaceToolRecord[];
+}
+
+export type ApiConnectionType = "llm" | "search" | "stt" | "tts" | "image" | "other";
+export type ApiConnectionStatus = "verified" | "warning" | "pending";
+
+export interface ApiConnectionRecord {
+  id: string;
+  apiType: ApiConnectionType;
+  apiUrl: string;
+  name: string | null;
+  apiKeyPrefix: string;
+  apiKeyMasked: string;
+  modelName: string | null;
+  costPerMonthUsd: number | null;
+  status: ApiConnectionStatus;
+  statusMessage: string;
+  lastCheckedMs: number | null;
+  createdMs: number;
+  apiStandardPath: string | null;
+}
+
+export interface ApiConnectionsListRequest {
+  correlationId: string;
+}
+
+export interface ApiConnectionsListResponse {
+  correlationId: string;
+  connections: ApiConnectionRecord[];
+}
+
+export interface ApiConnectionGetSecretRequest {
+  correlationId: string;
+  id: string;
+}
+
+export interface ApiConnectionGetSecretResponse {
+  correlationId: string;
+  id: string;
+  apiKey: string;
+}
+
+export interface WebSearchRequest {
+  correlationId: string;
+  query: string;
+  mode?: string;
+  num?: number;
+  page?: number;
+}
+
+export interface WebSearchResponse {
+  correlationId: string;
+  result: Record<string, unknown>;
+}
+
+export interface ApiConnectionCreateRequest {
+  correlationId: string;
+  apiType: ApiConnectionType;
+  apiUrl: string;
+  name?: string;
+  apiKey: string;
+  modelName?: string;
+  costPerMonthUsd?: number;
+  apiStandardPath?: string;
+}
+
+export interface ApiConnectionCreateResponse {
+  correlationId: string;
+  connection: ApiConnectionRecord;
+}
+
+export interface ApiConnectionUpdateRequest {
+  correlationId: string;
+  id: string;
+  apiType?: ApiConnectionType;
+  apiUrl?: string;
+  name?: string;
+  apiKey?: string;
+  modelName?: string;
+  costPerMonthUsd?: number;
+  apiStandardPath?: string;
+}
+
+export interface ApiConnectionUpdateResponse {
+  correlationId: string;
+  connection: ApiConnectionRecord;
+}
+
+export interface ApiConnectionReverifyRequest {
+  correlationId: string;
+  id: string;
+}
+
+export interface ApiConnectionReverifyResponse {
+  correlationId: string;
+  connection: ApiConnectionRecord;
+}
+
+export interface ApiConnectionDeleteRequest {
+  correlationId: string;
+  id: string;
+}
+
+export interface ApiConnectionDeleteResponse {
+  correlationId: string;
+  id: string;
+  deleted: boolean;
 }
 
 export interface LlamaRuntimeStatusRequest {

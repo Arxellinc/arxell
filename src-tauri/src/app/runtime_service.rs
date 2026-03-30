@@ -682,7 +682,9 @@ impl LlamaRuntimeService {
     /// Acquires the runtime state lock with a descriptive error.
     /// Use this when you need to propagate errors rather than recover silently.
     fn lock_state(&self) -> Result<std::sync::MutexGuard<'_, RuntimeState>, String> {
-        self.state.lock().map_err(|_| "llama runtime state lock poisoned".to_string())
+        self.state
+            .lock()
+            .map_err(|_| "llama runtime state lock poisoned".to_string())
     }
 }
 

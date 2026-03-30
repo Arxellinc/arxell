@@ -11,11 +11,13 @@ export function renderGlobalTopbar(
 ): string {
   const orientationLabel =
     layoutOrientation === "portrait" ? "Switch to landscape layout" : "Switch to portrait layout";
+  const displayModeLabel =
+    displayMode === "dark" ? "Switch to light mode" : "Switch to dark mode";
   return `
     <header class="global-topbar">
       <div class="runtime-title">${iconHtml(APP_ICON.brand, { size: 16, tone: "dark" })}<span>Arxell Lite ${appVersion}</span></div>
       <div class="topbar-right">
-        <button type="button" class="topbar-icon-btn display-mode-btn" id="displayModeToggle" aria-label="Toggle display mode">
+        <button type="button" class="topbar-icon-btn display-mode-btn" id="displayModeToggle" data-title="${displayModeLabel}" title="${displayModeLabel}" aria-label="${displayModeLabel}">
           ${iconHtml(
             displayMode === "dark" ? APP_ICON.action.displayModeLight : APP_ICON.action.displayModeDark,
             { size: 16, tone: "dark" }

@@ -1,0 +1,315 @@
+.web-tool-panel {
+  min-height: 0;
+  display: grid;
+  grid-template-rows: auto auto 1fr;
+  gap: 0.5rem;
+  padding: 0.6rem;
+  position: relative;
+}
+
+.web-tool-panel.has-history {
+  padding-right: 19rem;
+}
+
+.web-tool-form {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) 120px 90px max-content;
+  gap: 0.45rem;
+  align-items: center;
+}
+
+.web-tool-input {
+  width: 100%;
+  height: 28px;
+  border: 1px solid var(--line);
+  background: var(--surface-soft);
+  color: var(--ink);
+  font: inherit;
+  font-size: 0.76rem;
+  padding: 0 0.45rem;
+}
+
+.web-tool-field {
+  display: grid;
+  gap: 0.2rem;
+  min-width: 0;
+}
+
+.web-tool-field-query {
+  min-width: 160px;
+}
+
+.web-tool-query-row {
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) auto;
+  gap: 0.35rem;
+  align-items: center;
+}
+
+.web-tool-submit {
+  height: 28px;
+  padding: 0 0.55rem;
+  font-size: 0.74rem;
+  white-space: nowrap;
+}
+
+.web-tool-view-toggle {
+  width: auto;
+  min-width: 0;
+  justify-self: start;
+  height: 28px;
+  padding: 0 0.75rem;
+  font-size: 0.72rem;
+  white-space: nowrap;
+}
+
+.web-tool-field-block {
+  display: grid;
+  gap: 0.25rem;
+}
+
+.web-tool-label {
+  font-size: 0.66rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+}
+
+.web-tool-mode {
+  -webkit-appearance: none;
+  appearance: none;
+  background-image:
+    linear-gradient(45deg, transparent 50%, var(--muted) 50%),
+    linear-gradient(135deg, var(--muted) 50%, transparent 50%);
+  background-position:
+    calc(100% - 14px) calc(50% - 2px),
+    calc(100% - 9px) calc(50% - 2px);
+  background-size: 5px 5px, 5px 5px;
+  background-repeat: no-repeat;
+  padding-right: 1.5rem;
+}
+
+.web-tool-mode option {
+  background: var(--surface-strong);
+  color: var(--ink);
+}
+
+.web-tool-status {
+  font-size: 0.72rem;
+  color: var(--muted);
+}
+
+.web-tool-result {
+  margin: 0;
+  border: none;
+  background: var(--surface-strong);
+  color: var(--ink);
+  min-height: 0;
+  overflow: auto;
+  padding: 0.55rem;
+  font-size: 0.72rem;
+  line-height: 1.35;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.web-tool-result a {
+  color: var(--accent);
+}
+
+.web-tool-result a:hover {
+  color: color-mix(in oklab, var(--accent) 84%, #fff 16%);
+}
+
+.web-tool-history-panel {
+  position: absolute;
+  top: 0.6rem;
+  right: 0.6rem;
+  bottom: 0.6rem;
+  width: 17.6rem;
+  border: 1px solid var(--line);
+  background: var(--surface-strong);
+  display: grid;
+  grid-template-rows: auto 1fr;
+  min-height: 0;
+}
+
+.web-tool-history-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.45rem;
+  padding: 0.45rem 0.5rem;
+  border-bottom: 1px solid var(--line);
+}
+
+.web-tool-history-title {
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.web-tool-history-clear {
+  height: 22px;
+  padding: 0 0.45rem;
+  font-size: 0.68rem;
+}
+
+.web-tool-history-list {
+  min-height: 0;
+  overflow: auto;
+  display: grid;
+  align-content: start;
+}
+
+.web-tool-history-item {
+  border: none;
+  border-bottom: 1px solid var(--line);
+  background: transparent;
+  color: var(--ink);
+  text-align: left;
+  display: grid;
+  gap: 0.15rem;
+  padding: 0.45rem 0.5rem;
+  cursor: pointer;
+}
+
+.web-tool-history-item:hover {
+  background: var(--surface-hover);
+}
+
+.web-tool-history-query {
+  font-size: 0.73rem;
+  line-height: 1.3;
+  color: var(--ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.web-tool-history-meta {
+  font-size: 0.64rem;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.web-tool-history-empty {
+  font-size: 0.72rem;
+  color: var(--muted);
+  padding: 0.55rem;
+}
+
+.web-tool-history-confirm-overlay {
+  position: absolute;
+  inset: 0;
+  background: color-mix(in oklab, var(--panel) 72%, #000 28%);
+  display: grid;
+  place-items: center;
+  padding: 0.8rem;
+  z-index: 14;
+}
+
+.web-tool-history-confirm-modal {
+  width: min(360px, 100%);
+  border: 1px solid var(--line);
+  background: var(--surface-strong);
+  padding: 0.75rem;
+  display: grid;
+  gap: 0.45rem;
+}
+
+.web-tool-history-confirm-title {
+  margin: 0;
+  font-size: 0.84rem;
+  color: var(--ink);
+}
+
+.web-tool-history-confirm-copy {
+  margin: 0;
+  font-size: 0.73rem;
+  color: var(--muted);
+}
+
+.web-tool-history-confirm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.35rem;
+}
+
+.web-tool-setup-overlay {
+  position: absolute;
+  inset: 0;
+  background: color-mix(in oklab, var(--panel) 55%, #000 45%);
+  display: grid;
+  place-items: center;
+  padding: 0.8rem;
+  z-index: 10;
+}
+
+.web-tool-setup-modal {
+  width: min(540px, 100%);
+  border: 1px solid var(--line);
+  background: var(--surface-strong);
+  padding: 0.75rem;
+  display: grid;
+  gap: 0.5rem;
+}
+
+.web-tool-setup-title {
+  margin: 0;
+  font-size: 0.9rem;
+  color: var(--ink);
+}
+
+.web-tool-setup-copy {
+  margin: 0;
+  font-size: 0.76rem;
+  color: var(--muted);
+}
+
+.web-tool-setup-form {
+  display: grid;
+  gap: 0.5rem;
+}
+
+.web-tool-setup-note {
+  font-size: 0.7rem;
+  color: var(--muted);
+}
+
+.web-tool-setup-message {
+  font-size: 0.72rem;
+  color: var(--ink);
+}
+
+.web-tool-setup-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.35rem;
+}
+
+@media (max-width: 1100px) {
+  .web-tool-form {
+    grid-template-columns: 1fr 1fr 1fr;
+  }
+
+  .web-tool-field-query {
+    grid-column: 1 / -1;
+  }
+
+  .web-tool-panel.has-history {
+    padding-right: 0.6rem;
+    padding-bottom: 12.4rem;
+  }
+
+  .web-tool-history-panel {
+    top: auto;
+    left: 0.6rem;
+    right: 0.6rem;
+    bottom: 0.6rem;
+    width: auto;
+    height: 11.2rem;
+  }
+}
