@@ -54,6 +54,8 @@ import type {
   TerminalOpenSessionResponse,
   TerminalResizeRequest,
   TerminalResizeResponse,
+  ToolInvokeRequest,
+  ToolInvokeResponse,
   WorkspaceToolRecord,
   WorkspaceToolsListRequest,
   WorkspaceToolsListResponse,
@@ -62,7 +64,19 @@ import type {
   WorkspaceToolsExportRequest,
   WorkspaceToolsExportResponse,
   WorkspaceToolsImportRequest,
-  WorkspaceToolsImportResponse
+  WorkspaceToolsImportResponse,
+  FilesListDirectoryRequest,
+  FilesListDirectoryResponse,
+  FlowListRunsRequest,
+  FlowListRunsResponse,
+  FlowRerunValidationRequest,
+  FlowRerunValidationResponse,
+  FlowStartRequest,
+  FlowStartResponse,
+  FlowStatusRequest,
+  FlowStatusResponse,
+  FlowStopRequest,
+  FlowStopResponse
 } from "./contracts";
 import { APP_BUILD_VERSION } from "./version";
 import { getAllToolManifests } from "./tools/registry";
@@ -83,9 +97,12 @@ export interface ChatIpcClient {
     request: TerminalCloseSessionRequest
   ): Promise<TerminalCloseSessionResponse>;
   listWorkspaceTools(request: WorkspaceToolsListRequest): Promise<WorkspaceToolsListResponse>;
+  exportWorkspaceTools(request: WorkspaceToolsExportRequest): Promise<WorkspaceToolsExportResponse>;
+  importWorkspaceTools(request: WorkspaceToolsImportRequest): Promise<WorkspaceToolsImportResponse>;
   setWorkspaceToolEnabled(
     request: WorkspaceToolSetEnabledRequest
   ): Promise<WorkspaceToolSetEnabledResponse>;
+  toolInvoke(request: ToolInvokeRequest): Promise<ToolInvokeResponse>;
   listApiConnections(request: ApiConnectionsListRequest): Promise<ApiConnectionsListResponse>;
   createApiConnection(request: ApiConnectionCreateRequest): Promise<ApiConnectionCreateResponse>;
   updateApiConnection(request: ApiConnectionUpdateRequest): Promise<ApiConnectionUpdateResponse>;
@@ -96,7 +113,6 @@ export interface ChatIpcClient {
   getApiConnectionSecret(
     request: ApiConnectionGetSecretRequest
   ): Promise<ApiConnectionGetSecretResponse>;
-  webSearch(request: WebSearchRequest): Promise<WebSearchResponse>;
   getLlamaRuntimeStatus(request: LlamaRuntimeStatusRequest): Promise<LlamaRuntimeStatusResponse>;
   installLlamaRuntimeEngine(
     request: LlamaRuntimeInstallRequest
@@ -229,6 +245,23 @@ class TauriChatIpcClient implements ChatIpcClient {
     });
   }
 
+  toolInvoke(request: ToolInvokeRequest): Promise<ToolInvokeResponse> {
+    return this.invokeFn<ToolInvokeResponse>("cmd_tool_invoke", { request });
+  }
+
+  private async invokeToolTyped<TResponse>(
+    request: Omit<ToolInvokeRequest, "mode">
+  ): Promise<TResponse> {
+    const response = await this.toolInvoke({
+      ...request,
+      mode: "sandbox"
+    });
+    if (!response.ok) {
+      throw new Error(response.error || `Tool invoke failed: ${request.toolId}.${request.action}`);
+    }
+    return response.data as unknown as TResponse;
+  }
+
   exportWorkspaceTools(
     request: WorkspaceToolsExportRequest
   ): Promise<WorkspaceToolsExportResponse> {
@@ -269,10 +302,6 @@ class TauriChatIpcClient implements ChatIpcClient {
     return this.invokeFn<ApiConnectionGetSecretResponse>("cmd_api_connection_get_secret", {
       request
     });
-  }
-
-  webSearch(request: WebSearchRequest): Promise<WebSearchResponse> {
-    return this.invokeFn<WebSearchResponse>("cmd_web_search", { request });
   }
 
   getLlamaRuntimeStatus(
@@ -346,6 +375,7 @@ class TauriChatIpcClient implements ChatIpcClient {
 
 export class MockChatIpcClient implements ChatIpcClient {
   private listeners: Array<(event: AppEvent) => void> = [];
+  private readonly flowRuns: FlowListRunsResponse["runs"] = [];
   private readonly tools = new Map<string, WorkspaceToolRecord>(
     getAllToolManifests().map((manifest) => [
       manifest.id,
@@ -584,6 +614,237 @@ export class MockChatIpcClient implements ChatIpcClient {
     };
   }
 
+  async toolInvoke(request: ToolInvokeRequest): Promise<ToolInvokeResponse> {
+    const payload = request.payload as Record<string, unknown>;
+    try {
+      if (request.toolId === "files" && (request.action === "list-directory" || request.action === "listDirectory")) {
+        const path = typeof payload.path === "string" ? payload.path : null;
+        const response = await this.mockFilesListDirectory({
+          correlationId: String(payload.correlationId ?? request.correlationId),
+          ...(path ? { path } : {})
+        });
+        return {
+          correlationId: request.correlationId,
+          toolId: request.toolId,
+          action: request.action,
+          ok: true,
+          data: response as unknown as Record<string, unknown>
+        };
+      }
+      if (request.toolId === "flow" && request.action === "start") {
+        const response = await this.mockFlowStart(payload as unknown as FlowStartRequest);
+        return {
+          correlationId: request.correlationId,
+          toolId: request.toolId,
+          action: request.action,
+          ok: true,
+          data: response as unknown as Record<string, unknown>
+        };
+      }
+      if (request.toolId === "flow" && request.action === "stop") {
+        const response = await this.mockFlowStop(payload as unknown as FlowStopRequest);
+        return {
+          correlationId: request.correlationId,
+          toolId: request.toolId,
+          action: request.action,
+          ok: true,
+          data: response as unknown as Record<string, unknown>
+        };
+      }
+      if (request.toolId === "flow" && request.action === "status") {
+        const response = await this.mockFlowStatus(payload as unknown as FlowStatusRequest);
+        return {
+          correlationId: request.correlationId,
+          toolId: request.toolId,
+          action: request.action,
+          ok: true,
+          data: response as unknown as Record<string, unknown>
+        };
+      }
+      if (request.toolId === "flow" && (request.action === "rerun-validation" || request.action === "rerunValidation")) {
+        const response = await this.mockFlowRerunValidation(
+          payload as unknown as FlowRerunValidationRequest
+        );
+        return {
+          correlationId: request.correlationId,
+          toolId: request.toolId,
+          action: request.action,
+          ok: true,
+          data: response as unknown as Record<string, unknown>
+        };
+      }
+      if (request.toolId === "flow" && (request.action === "list-runs" || request.action === "listRuns")) {
+        const response = await this.mockFlowListRuns(payload as unknown as FlowListRunsRequest);
+        return {
+          correlationId: request.correlationId,
+          toolId: request.toolId,
+          action: request.action,
+          ok: true,
+          data: response as unknown as Record<string, unknown>
+        };
+      }
+      if ((request.toolId === "webSearch" || request.toolId === "web") && request.action === "search") {
+        const response = await this.mockWebSearch(payload as unknown as WebSearchRequest);
+        return {
+          correlationId: request.correlationId,
+          toolId: request.toolId,
+          action: request.action,
+          ok: true,
+          data: response as unknown as Record<string, unknown>
+        };
+      }
+    } catch (error) {
+      return {
+        correlationId: request.correlationId,
+        toolId: request.toolId,
+        action: request.action,
+        ok: false,
+        data: {},
+        error: error instanceof Error ? error.message : String(error)
+      };
+    }
+    return {
+      correlationId: request.correlationId,
+      toolId: request.toolId,
+      action: request.action,
+      ok: false,
+      data: {},
+      error: "Mock runtime does not implement generic tool invoke."
+    };
+  }
+
+  private async mockFilesListDirectory(
+    request: FilesListDirectoryRequest
+  ): Promise<FilesListDirectoryResponse> {
+    const rootPath = "/";
+    const listedPath = request.path?.trim() || rootPath;
+    return {
+      correlationId: request.correlationId,
+      rootPath,
+      listedPath,
+      entries: [
+        {
+          name: "src",
+          path: `${listedPath.replace(/\/$/, "")}/src`,
+          isDir: true,
+          sizeBytes: 0,
+          modifiedMs: Date.now()
+        },
+        {
+          name: "README.md",
+          path: `${listedPath.replace(/\/$/, "")}/README.md`,
+          isDir: false,
+          sizeBytes: 1320,
+          modifiedMs: Date.now()
+        }
+      ]
+    };
+  }
+
+  private async mockFlowStart(request: FlowStartRequest): Promise<FlowStartResponse> {
+    const runId = `mock-flow-${Date.now()}`;
+    const startedAtMs = Date.now();
+    const run: FlowListRunsResponse["runs"][number] = {
+      runId,
+      mode: request.mode,
+      status: "queued",
+      maxIterations: request.maxIterations ?? null,
+      currentIteration: 0,
+      startedAtMs,
+      completedAtMs: null,
+      dryRun: request.dryRun ?? true,
+      autoPush: request.autoPush ?? false,
+      promptPlanPath: request.promptPlanPath ?? "PROMPT_plan.md",
+      promptBuildPath: request.promptBuildPath ?? "PROMPT_build.md",
+      planPath: request.planPath ?? "IMPLEMENTATION_PLAN.md",
+      specsGlob: request.specsGlob ?? "specs/*.md",
+      backpressureCommands: request.backpressureCommands ?? [],
+      implementCommand: request.implementCommand ?? "",
+      summary: null,
+      iterations: []
+    };
+    this.flowRuns.unshift(run);
+    this.emit({
+      timestampMs: startedAtMs,
+      correlationId: request.correlationId,
+      subsystem: "service",
+      action: "flow.run.start",
+      stage: "start",
+      severity: "info",
+      payload: { runId, mode: request.mode }
+    });
+    return {
+      correlationId: request.correlationId,
+      runId,
+      status: "queued"
+    };
+  }
+
+  private async mockFlowStop(request: FlowStopRequest): Promise<FlowStopResponse> {
+    const run = this.flowRuns.find((item) => item.runId === request.runId);
+    if (run) {
+      run.status = "stopped";
+      run.completedAtMs = Date.now();
+      run.summary = "Stopped by user";
+    }
+    this.emit({
+      timestampMs: Date.now(),
+      correlationId: request.correlationId,
+      subsystem: "service",
+      action: "flow.run.complete",
+      stage: "complete",
+      severity: "info",
+      payload: { runId: request.runId, stopped: true }
+    });
+    return {
+      correlationId: request.correlationId,
+      runId: request.runId,
+      stopped: true
+    };
+  }
+
+  private async mockFlowStatus(request: FlowStatusRequest): Promise<FlowStatusResponse> {
+    const run = this.flowRuns.find((item) => item.runId === request.runId);
+    if (!run) {
+      throw new Error(`Flow run not found: ${request.runId}`);
+    }
+    return {
+      correlationId: request.correlationId,
+      run
+    };
+  }
+
+  private async mockFlowListRuns(request: FlowListRunsRequest): Promise<FlowListRunsResponse> {
+    return {
+      correlationId: request.correlationId,
+      runs: [...this.flowRuns]
+    };
+  }
+
+  private async mockFlowRerunValidation(
+    request: FlowRerunValidationRequest
+  ): Promise<FlowRerunValidationResponse> {
+    const run = this.flowRuns.find((item) => item.runId === request.runId);
+    if (!run) {
+      throw new Error(`Flow run not found: ${request.runId}`);
+    }
+    const results = (run.backpressureCommands ?? []).map((command) => ({
+      command,
+      ok: true,
+      exitCode: 0,
+      stdout: "",
+      stderr: "",
+      durationMs: 0
+    }));
+    return {
+      correlationId: request.correlationId,
+      runId: request.runId,
+      iteration: request.iteration ?? run.currentIteration ?? null,
+      ok: true,
+      results
+    };
+  }
+
   async exportWorkspaceTools(
     request: WorkspaceToolsExportRequest
   ): Promise<WorkspaceToolsExportResponse> {
@@ -736,7 +997,7 @@ export class MockChatIpcClient implements ChatIpcClient {
     };
   }
 
-  async webSearch(request: WebSearchRequest): Promise<WebSearchResponse> {
+  private async mockWebSearch(request: WebSearchRequest): Promise<WebSearchResponse> {
     const query = request.query.trim();
     if (!query) {
       throw new Error("query is required");

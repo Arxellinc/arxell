@@ -15,8 +15,13 @@ export function renderWorkspacePane(
   terminalActionsHtml: string,
   toolsUiHtml: string,
   toolsActionsHtml: string,
-  webUiHtml: string,
-  webActionsHtml: string,
+  toolViews: Record<
+    string,
+    {
+      actionsHtml: string;
+      bodyHtml: string;
+    }
+  >,
   workspaceTools: WorkspaceToolRecord[],
   activeTab: WorkspaceTab
 ): string {
@@ -29,8 +34,7 @@ export function renderWorkspacePane(
       terminalActionsHtml,
       toolsUiHtml,
       toolsActionsHtml,
-      webUiHtml,
-      webActionsHtml
+      toolViews
     }
   );
   const workspaceContentClass = contentActionsHtml

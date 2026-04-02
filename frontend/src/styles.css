@@ -944,6 +944,76 @@ body {
   color: var(--muted);
 }
 
+.message-tool-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-bottom: 0.28rem;
+}
+
+.message-tool-row {
+  border: 1px solid color-mix(in oklab, var(--line) 78%, transparent 22%);
+  background: color-mix(in oklab, var(--surface-soft) 90%, var(--surface-strong) 10%);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.message-tool-row-toggle {
+  width: 100%;
+  height: 20px;
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0 0.35rem;
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.7rem;
+}
+
+.message-tool-row-left {
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.32rem;
+}
+
+.message-tool-row-icon {
+  display: inline-flex;
+  align-items: center;
+  opacity: 0.92;
+}
+
+.message-tool-row-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.message-tool-row-chevron {
+  font-size: 0.66rem;
+  opacity: 0.9;
+}
+
+.message-tool-row-details {
+  border-top: 1px solid color-mix(in oklab, var(--line) 62%, transparent 38%);
+  padding: 0.3rem 0.42rem 0.36rem;
+  font-size: 0.72rem;
+  line-height: 1.32;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--ink);
+}
+
+.message-text-pending {
+  opacity: 0.72;
+  font-style: italic;
+}
+
 .message-thinking {
   margin-top: 0.22rem;
   border: 1px solid var(--line);
@@ -1117,7 +1187,7 @@ body {
 
 .workspace-panel-actions {
   display: block;
-  margin: 0 0 0.55rem;
+  margin: 0;
   padding: 0;
   position: relative;
 }

@@ -106,8 +106,13 @@ impl ApiRegistryService {
         let model_name = normalize_optional(input.model_name.as_deref());
         let cost = normalize_cost(input.cost_per_month_usd)?;
         let api_standard_path = normalize_optional(input.api_standard_path.as_deref());
-        let (status, status_message) =
-            verify_connection(input.api_type.clone(), api_url.as_str(), api_key.as_str(), api_standard_path.as_deref()).await;
+        let (status, status_message) = verify_connection(
+            input.api_type.clone(),
+            api_url.as_str(),
+            api_key.as_str(),
+            api_standard_path.as_deref(),
+        )
+        .await;
 
         let record = ApiConnectionSecretRecord {
             id: format!("api-{}", Uuid::new_v4()),
@@ -168,7 +173,11 @@ impl ApiRegistryService {
         Ok(to_public_record(&existing))
     }
 
-    pub fn update(&self, id: &str, input: UpdateApiConnectionInput) -> Result<ApiConnectionRecord, String> {
+    pub fn update(
+        &self,
+        id: &str,
+        input: UpdateApiConnectionInput,
+    ) -> Result<ApiConnectionRecord, String> {
         let mut existing = {
             let connections = self.connections.read().expect("api registry lock poisoned");
             connections
@@ -270,16 +279,19 @@ impl ApiRegistryService {
                 .cmp(&a.created_ms)
                 .then_with(|| a.id.cmp(&b.id))
         });
-        candidates.into_iter().next().map(|record| ApiConnectionAgentRecord {
-            id: record.id,
-            api_type: record.api_type,
-            api_url: record.api_url,
-            name: record.name,
-            api_key: record.api_key,
-            model_name: record.model_name,
-            cost_per_month_usd: record.cost_per_month_usd,
-            api_standard_path: record.api_standard_path,
-        })
+        candidates
+            .into_iter()
+            .next()
+            .map(|record| ApiConnectionAgentRecord {
+                id: record.id,
+                api_type: record.api_type,
+                api_url: record.api_url,
+                name: record.name,
+                api_key: record.api_key,
+                model_name: record.model_name,
+                cost_per_month_usd: record.cost_per_month_usd,
+                api_standard_path: record.api_standard_path,
+            })
     }
 
     fn persist_snapshot(
@@ -467,7 +479,11 @@ async fn verify_connection(
     }
 }
 
-fn build_verify_url(api_type: ApiConnectionType, api_url: &str, api_standard_path: Option<&str>) -> String {
+fn build_verify_url(
+    api_type: ApiConnectionType,
+    api_url: &str,
+    api_standard_path: Option<&str>,
+) -> String {
     let base = api_url.trim().trim_end_matches('/');
     let default_path = match api_type {
         ApiConnectionType::Search => "/search",

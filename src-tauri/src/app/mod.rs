@@ -1,4 +1,6 @@
 pub mod chat_service;
+pub mod files_service;
+pub mod flow_service;
 pub mod model_manager_service;
 pub mod permission_service;
 pub mod runtime_service;
@@ -21,6 +23,8 @@ pub struct AppContext {
     pub runtime: Arc<runtime_service::LlamaRuntimeService>,
     pub permissions: Arc<permission_service::PermissionService>,
     pub model_manager: Arc<model_manager_service::ModelManagerService>,
+    pub files: Arc<files_service::FilesService>,
+    pub flow: Arc<flow_service::FlowService>,
 }
 
 impl AppContext {
@@ -49,8 +53,10 @@ impl AppContext {
         let runtime = Arc::new(runtime_service::LlamaRuntimeService::new(hub.clone()));
         let permissions = Arc::new(permission_service::PermissionService::new(hub.clone()));
         let model_manager = Arc::new(model_manager_service::ModelManagerService::new(hub.clone()));
+        let files = Arc::new(files_service::FilesService::new());
+        let flow = Arc::new(flow_service::FlowService::new(hub.clone()));
 
-        let ipc = IpcLayer::new(hub, service, terminal);
+        let ipc = IpcLayer::new(hub, service, terminal, Arc::clone(&flow));
         Self {
             ipc,
             workspace_tools,
@@ -59,6 +65,8 @@ impl AppContext {
             runtime,
             permissions,
             model_manager,
+            files,
+            flow,
         }
     }
 }
@@ -75,6 +83,7 @@ impl AppContext {
         crate::ipc::tauri_bridge::TauriBridgeState {
             chat: Arc::new(self.ipc.chat.clone()),
             terminal: Arc::new(self.ipc.terminal.clone()),
+            flow_handler: Arc::new(self.ipc.flow.clone()),
             hub: self.ipc.event_hub(),
             workspace_tools: Arc::clone(&self.workspace_tools),
             api_registry: Arc::clone(&self.api_registry),
@@ -82,6 +91,8 @@ impl AppContext {
             runtime: Arc::clone(&self.runtime),
             permissions: Arc::clone(&self.permissions),
             model_manager: Arc::clone(&self.model_manager),
+            files: Arc::clone(&self.files),
+            flow: Arc::clone(&self.flow),
         }
     }
 }

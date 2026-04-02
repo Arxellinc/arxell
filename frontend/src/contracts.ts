@@ -1,5 +1,22 @@
 export type ToolMode = "sandbox" | "shell" | "root";
 
+export interface ToolInvokeRequest {
+  correlationId: string;
+  toolId: string;
+  action: string;
+  mode: ToolMode;
+  payload: Record<string, unknown>;
+}
+
+export interface ToolInvokeResponse {
+  correlationId: string;
+  toolId: string;
+  action: string;
+  ok: boolean;
+  data: Record<string, unknown>;
+  error?: string;
+}
+
 export interface ChatSendRequest {
   conversationId: string;
   userMessage: string;
@@ -163,6 +180,7 @@ export interface WorkspaceToolsExportRequest {
 
 export interface WorkspaceToolsExportResponse {
   correlationId: string;
+  fileName: string;
   payloadJson: string;
 }
 
@@ -174,6 +192,52 @@ export interface WorkspaceToolsImportRequest {
 export interface WorkspaceToolsImportResponse {
   correlationId: string;
   tools: WorkspaceToolRecord[];
+}
+
+export interface FilesListDirectoryRequest {
+  correlationId: string;
+  path?: string;
+}
+
+export interface FilesListDirectoryEntry {
+  name: string;
+  path: string;
+  isDir: boolean;
+  sizeBytes: number;
+  modifiedMs: number | null;
+}
+
+export interface FilesListDirectoryResponse {
+  correlationId: string;
+  rootPath: string;
+  listedPath: string;
+  entries: FilesListDirectoryEntry[];
+}
+
+export interface FilesReadFileRequest {
+  correlationId: string;
+  path: string;
+}
+
+export interface FilesReadFileResponse {
+  correlationId: string;
+  path: string;
+  content: string;
+  sizeBytes: number;
+  readOnly: boolean;
+  isBinary: boolean;
+}
+
+export interface FilesWriteFileRequest {
+  correlationId: string;
+  path: string;
+  content: string;
+}
+
+export interface FilesWriteFileResponse {
+  correlationId: string;
+  path: string;
+  sizeBytes: number;
 }
 
 export type ApiConnectionType = "llm" | "search" | "stt" | "tts" | "image" | "other";
@@ -454,6 +518,121 @@ export interface DevicesProbeMicrophoneResponse {
 
 export interface AppVersionResponse {
   version: string;
+}
+
+export type FlowMode = "plan" | "build";
+export type FlowRunStatus = "idle" | "queued" | "running" | "succeeded" | "failed" | "stopped";
+export type FlowStepState = "pending" | "running" | "complete" | "error" | "skipped";
+
+export interface FlowStartRequest {
+  correlationId: string;
+  mode: FlowMode;
+  maxIterations?: number;
+  dryRun?: boolean;
+  autoPush?: boolean;
+  promptPlanPath?: string;
+  promptBuildPath?: string;
+  planPath?: string;
+  specsGlob?: string;
+  backpressureCommands?: string[];
+  implementCommand?: string;
+}
+
+export interface FlowStartResponse {
+  correlationId: string;
+  runId: string;
+  status: FlowRunStatus;
+}
+
+export interface FlowStopRequest {
+  correlationId: string;
+  runId: string;
+}
+
+export interface FlowStopResponse {
+  correlationId: string;
+  runId: string;
+  stopped: boolean;
+}
+
+export interface FlowStatusRequest {
+  correlationId: string;
+  runId: string;
+}
+
+export interface FlowListRunsRequest {
+  correlationId: string;
+}
+
+export interface FlowRerunValidationRequest {
+  correlationId: string;
+  runId: string;
+  iteration?: number;
+}
+
+export interface FlowRerunValidationResult {
+  command: string;
+  ok: boolean;
+  exitCode: number;
+  stdout: string;
+  stderr: string;
+  durationMs: number;
+}
+
+export interface FlowRerunValidationResponse {
+  correlationId: string;
+  runId: string;
+  iteration: number | null;
+  ok: boolean;
+  results: FlowRerunValidationResult[];
+}
+
+export interface FlowStepStatus {
+  step: string;
+  state: FlowStepState;
+  startedAtMs: number | null;
+  completedAtMs: number | null;
+  result: string | null;
+  error: string | null;
+}
+
+export interface FlowIterationStatus {
+  index: number;
+  status: FlowRunStatus;
+  startedAtMs: number;
+  completedAtMs: number | null;
+  taskId: string | null;
+  steps: FlowStepStatus[];
+}
+
+export interface FlowRunRecord {
+  runId: string;
+  mode: FlowMode;
+  status: FlowRunStatus;
+  maxIterations: number | null;
+  currentIteration: number;
+  startedAtMs: number;
+  completedAtMs: number | null;
+  dryRun: boolean;
+  autoPush: boolean;
+  promptPlanPath: string;
+  promptBuildPath: string;
+  planPath: string;
+  specsGlob: string;
+  backpressureCommands: string[];
+  implementCommand: string;
+  summary: string | null;
+  iterations: FlowIterationStatus[];
+}
+
+export interface FlowStatusResponse {
+  correlationId: string;
+  run: FlowRunRecord;
+}
+
+export interface FlowListRunsResponse {
+  correlationId: string;
+  runs: FlowRunRecord[];
 }
 
 export interface ChatStreamStartPayload {

@@ -39,3 +39,34 @@ export const WEB_UI_ID = {
   setupAccountInput: "webSearchSetupAccount",
   setupApiKeyInput: "webSearchSetupApiKey"
 } as const;
+
+export const FILES_DATA_ATTR = {
+  action: "data-files-action",
+  path: "data-files-path",
+  isDir: "data-files-is-dir",
+  column: "data-files-column"
+} as const;
+
+export const FILES_UI_ID = {
+  refreshButton: "filesToolRefreshBtn"
+} as const;
+
+export const FLOW_DATA_ATTR = {
+  action: "data-flow-action",
+  runId: "data-flow-run-id",
+  mode: "data-flow-mode"
+} as const;
+
+export const FLOW_UI_ID = {
+  modeSelect: "flowModeSelect",
+  maxIterationsInput: "flowMaxIterationsInput",
+  dryRunToggle: "flowDryRunToggle",
+  autoPushToggle: "flowAutoPushToggle",
+  promptPlanPath: "flowPromptPlanPath",
+  promptBuildPath: "flowPromptBuildPath",
+  planPath: "flowPlanPath",
+  specsGlob: "flowSpecsGlob",
+  implementCommand: "flowImplementCommand",
+  backpressureCommands: "flowBackpressureCommands",
+  eventFilterInput: "flowEventFilterInput"
+} as const;

@@ -5,6 +5,7 @@ import columns2 from "./columns-2.svg?raw";
 import edit from "./edit.svg?raw";
 import fileBadge from "./file-badge.svg?raw";
 import folder from "./folder.svg?raw";
+import gitCompareArrows from "./git-compare-arrows.svg?raw";
 import globe from "./globe.svg?raw";
 import history from "./history.svg?raw";
 import image from "./image.svg?raw";
@@ -35,6 +36,16 @@ import cpu from "./cpu.svg?raw";
 import audioLines from "./audio-lines.svg?raw";
 import search from "./search.svg?raw";
 import databaseZap from "./database-zap.svg?raw";
+import save from "./save.svg?raw";
+import saveAll from "./save-all.svg?raw";
+import fileOutput from "./file-output.svg?raw";
+import folderOpen from "./folder-open.svg?raw";
+import copy from "./copy.svg?raw";
+import copyPlus from "./copy-plus.svg?raw";
+import filePlus from "./file-plus.svg?raw";
+import files from "./files.svg?raw";
+import x from "./x.svg?raw";
+import replace from "./replace.svg?raw";
 
 const ICON_SVGS = {
   bot,
@@ -44,6 +55,7 @@ const ICON_SVGS = {
   edit,
   "file-badge": fileBadge,
   folder,
+  "git-compare-arrows": gitCompareArrows,
   globe,
   history,
   image,
@@ -67,6 +79,16 @@ const ICON_SVGS = {
   "square-terminal": squareTerminal,
   sun,
   search,
+  save,
+  "save-all": saveAll,
+  "file-output": fileOutput,
+  "folder-open": folderOpen,
+  copy,
+  "copy-plus": copyPlus,
+  "file-plus": filePlus,
+  files,
+  x,
+  replace,
   "trash-2": trash2,
   "triangle-alert": triangleAlert,
   "volume-2": volume2,
@@ -93,7 +115,7 @@ export function iconHtml(
   const tone = opts?.tone ?? "dark";
   const label = opts?.label ?? "";
   const extra = opts?.className ? ` ${opts.className}` : "";
-  const raw = ICON_SVGS[name];
+  const raw = ICON_SVGS[name] ?? ICON_SVGS.wrench;
 
   return `<span class="icon icon-${size} icon-${tone}${extra}" aria-hidden="${label ? "false" : "true"}" ${label ? `aria-label="${escapeHtml(label)}"` : ""}>${raw}</span>`;
 }

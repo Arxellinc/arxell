@@ -7,7 +7,7 @@ export const flowToolManifest: ToolManifest = {
   description: "Node-based workflow orchestration surface",
   category: "agent",
   core: false,
-  defaultEnabled: false,
+  defaultEnabled: true,
   source: "builtin",
-  icon: "bot"
+  icon: "git-compare-arrows"
 };

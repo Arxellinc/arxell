@@ -1,5 +1,5 @@
-use crate::api_registry::ApiRegistryService;
 use crate::agent_tools::web_search::WebSearchTool;
+use crate::api_registry::ApiRegistryService;
 use crate::app::web_search_service::WebSearchService;
 use crate::contracts::{
     ApiConnectionType, ChatCancelResponse, ChatDeleteConversationResponse, ChatGetMessagesRequest,
@@ -280,17 +280,19 @@ impl ChatService {
             }),
         ));
 
-        self.hub.emit(self.hub.make_event(
-            correlation_id,
-            Subsystem::Service,
-            "chat.stream.start",
-            EventStage::Start,
-            EventSeverity::Info,
-            serde_json::to_value(ChatStreamStartPayload {
-                conversation_id: conversation_id.to_string(),
-            })
-            .unwrap_or_else(|_| json!({})),
-        ));
+        self.hub.emit(
+            self.hub.make_event(
+                correlation_id,
+                Subsystem::Service,
+                "chat.stream.start",
+                EventStage::Start,
+                EventSeverity::Info,
+                serde_json::to_value(ChatStreamStartPayload {
+                    conversation_id: conversation_id.to_string(),
+                })
+                .unwrap_or_else(|_| json!({})),
+            ),
+        );
 
         let cwd = resolve_agent_cwd();
         let mut session = Session::in_memory(
@@ -308,8 +310,10 @@ impl ChatService {
 
         let provider = OpenAiCompatibleProvider::new(provider_config);
         let agent_tools = self.resolve_enabled_agent_tools();
-        let enabled_tool_names: Vec<String> =
-            agent_tools.iter().map(|tool| tool.name().to_string()).collect();
+        let enabled_tool_names: Vec<String> = agent_tools
+            .iter()
+            .map(|tool| tool.name().to_string())
+            .collect();
         self.hub.emit(self.hub.make_event(
             correlation_id,
             Subsystem::Service,
@@ -351,127 +355,131 @@ impl ChatService {
             }
         });
 
-        let events = agent
-            .run_collect(user_message.to_string(), None, Some(cancel_rx))
-            .await;
-        cancel_task.abort();
-
         let mut assistant = String::new();
         let mut reasoning = String::new();
         let mut assistant_from_turn_end: Option<String> = None;
         let mut agent_error: Option<String> = None;
 
-        for event in events {
-            match event {
-                AgentEvent::TextDelta { delta } => {
-                    assistant.push_str(delta.as_str());
-                    self.hub.emit(self.hub.make_event(
-                        correlation_id,
-                        Subsystem::Service,
-                        "chat.stream.chunk",
-                        EventStage::Progress,
-                        EventSeverity::Info,
-                        serde_json::to_value(ChatStreamChunkPayload {
-                            conversation_id: conversation_id.to_string(),
-                            delta,
-                            done: false,
-                        })
-                        .unwrap_or_else(|_| json!({})),
-                    ));
-                }
-                AgentEvent::ThinkingDelta { delta } if thinking_enabled => {
-                    reasoning.push_str(delta.as_str());
-                    self.hub.emit(self.hub.make_event(
-                        correlation_id,
-                        Subsystem::Service,
-                        "chat.stream.reasoning_chunk",
-                        EventStage::Progress,
-                        EventSeverity::Info,
-                        serde_json::to_value(ChatStreamReasoningChunkPayload {
-                            conversation_id: conversation_id.to_string(),
-                            delta,
-                            done: false,
-                        })
-                        .unwrap_or_else(|_| json!({})),
-                    ));
-                }
-                AgentEvent::ToolStart {
-                    tool_call_id,
-                    tool_name,
-                } => {
-                    self.hub.emit(self.hub.make_event(
-                        correlation_id,
-                        Subsystem::Tool,
-                        "chat.agent.tool.start",
-                        EventStage::Start,
-                        EventSeverity::Info,
-                        json!({ "toolCallId": tool_call_id, "toolName": tool_name }),
-                    ));
-                }
-                AgentEvent::ToolEnd {
-                    tool_call_id,
-                    tool_name,
-                    display,
-                    ..
-                } => {
-                    self.hub.emit(self.hub.make_event(
-                        correlation_id,
-                        Subsystem::Tool,
-                        "chat.agent.tool.end",
-                        EventStage::Complete,
-                        EventSeverity::Info,
-                        json!({
-                            "toolCallId": tool_call_id,
-                            "toolName": tool_name,
-                            "display": display
-                        }),
-                    ));
-                }
-                AgentEvent::ToolResult {
-                    tool_call_id,
-                    tool_name,
-                    result,
-                } => {
-                    let success = result.as_ref().map(|value| value.success).unwrap_or(false);
-                    self.hub.emit(self.hub.make_event(
-                        correlation_id,
-                        Subsystem::Tool,
-                        "chat.agent.tool.result",
-                        EventStage::Complete,
-                        if success {
-                            EventSeverity::Info
-                        } else {
-                            EventSeverity::Warn
-                        },
-                        json!({
-                            "toolCallId": tool_call_id,
-                            "toolName": tool_name,
-                            "success": success,
-                            "display": result.and_then(|value| value.display)
-                        }),
-                    ));
-                }
-                AgentEvent::TurnEnd {
-                    assistant_message, ..
-                } => {
-                    if let Some(AgentMessage::Assistant { content, .. }) = assistant_message {
-                        let mut text = String::new();
-                        for part in content {
-                            if let AgentContentPart::Text { text: value } = part {
-                                text.push_str(value.as_str());
+        let _events = agent
+            .run_collect_with_callback(user_message.to_string(), None, Some(cancel_rx), |event| {
+                match event {
+                    AgentEvent::TextDelta { delta } => {
+                        assistant.push_str(delta.as_str());
+                        self.hub.emit(
+                            self.hub.make_event(
+                                correlation_id,
+                                Subsystem::Service,
+                                "chat.stream.chunk",
+                                EventStage::Progress,
+                                EventSeverity::Info,
+                                serde_json::to_value(ChatStreamChunkPayload {
+                                    conversation_id: conversation_id.to_string(),
+                                    delta: delta.clone(),
+                                    done: false,
+                                })
+                                .unwrap_or_else(|_| json!({})),
+                            ),
+                        );
+                    }
+                    AgentEvent::ThinkingDelta { delta } if thinking_enabled => {
+                        reasoning.push_str(delta.as_str());
+                        self.hub.emit(
+                            self.hub.make_event(
+                                correlation_id,
+                                Subsystem::Service,
+                                "chat.stream.reasoning_chunk",
+                                EventStage::Progress,
+                                EventSeverity::Info,
+                                serde_json::to_value(ChatStreamReasoningChunkPayload {
+                                    conversation_id: conversation_id.to_string(),
+                                    delta: delta.clone(),
+                                    done: false,
+                                })
+                                .unwrap_or_else(|_| json!({})),
+                            ),
+                        );
+                    }
+                    AgentEvent::ToolStart {
+                        tool_call_id,
+                        tool_name,
+                    } => {
+                        self.hub.emit(self.hub.make_event(
+                            correlation_id,
+                            Subsystem::Tool,
+                            "chat.agent.tool.start",
+                            EventStage::Start,
+                            EventSeverity::Info,
+                            json!({ "toolCallId": tool_call_id, "toolName": tool_name }),
+                        ));
+                    }
+                    AgentEvent::ToolEnd {
+                        tool_call_id,
+                        tool_name,
+                        display,
+                        ..
+                    } => {
+                        self.hub.emit(self.hub.make_event(
+                            correlation_id,
+                            Subsystem::Tool,
+                            "chat.agent.tool.end",
+                            EventStage::Complete,
+                            EventSeverity::Info,
+                            json!({
+                                "toolCallId": tool_call_id,
+                                "toolName": tool_name,
+                                "display": display
+                            }),
+                        ));
+                    }
+                    AgentEvent::ToolResult {
+                        tool_call_id,
+                        tool_name,
+                        result,
+                    } => {
+                        let success = result.as_ref().map(|value| value.success).unwrap_or(false);
+                        self.hub.emit(self.hub.make_event(
+                            correlation_id,
+                            Subsystem::Tool,
+                            "chat.agent.tool.result",
+                            EventStage::Complete,
+                            if success {
+                                EventSeverity::Info
+                            } else {
+                                EventSeverity::Warn
+                            },
+                            json!({
+                                "toolCallId": tool_call_id,
+                                "toolName": tool_name,
+                                "success": success,
+                                "display": result.as_ref().and_then(|value| value.display.clone())
+                            }),
+                        ));
+                    }
+                    AgentEvent::TurnEnd {
+                        assistant_message, ..
+                    } => {
+                        if let Some(AgentMessage::Assistant { content, .. }) =
+                            assistant_message.as_ref()
+                        {
+                            let mut text = String::new();
+                            for part in content {
+                                if let AgentContentPart::Text { text: value } = part {
+                                    text.push_str(value.as_str());
+                                }
+                            }
+                            if !text.trim().is_empty() {
+                                assistant_from_turn_end = Some(text);
                             }
                         }
-                        if !text.trim().is_empty() {
-                            assistant_from_turn_end = Some(text);
-                        }
                     }
+                    AgentEvent::Error { error } => {
+                        agent_error = Some(error.clone());
+                    }
+                    _ => {}
                 }
-                AgentEvent::Error { error } => {
-                    agent_error = Some(error);
-                }
-                _ => {}
-            }
-        }
+            })
+            .await;
+        cancel_task.abort();
 
         if assistant.trim().is_empty() {
             if let Some(fallback_assistant) = assistant_from_turn_end {
@@ -487,18 +495,20 @@ impl ChatService {
             return Err(message);
         }
 
-        self.hub.emit(self.hub.make_event(
-            correlation_id,
-            Subsystem::Service,
-            "chat.stream.complete",
-            EventStage::Complete,
-            EventSeverity::Info,
-            serde_json::to_value(ChatStreamCompletePayload {
-                conversation_id: conversation_id.to_string(),
-                assistant_length: assistant.len(),
-            })
-            .unwrap_or_else(|_| json!({})),
-        ));
+        self.hub.emit(
+            self.hub.make_event(
+                correlation_id,
+                Subsystem::Service,
+                "chat.stream.complete",
+                EventStage::Complete,
+                EventSeverity::Info,
+                serde_json::to_value(ChatStreamCompletePayload {
+                    conversation_id: conversation_id.to_string(),
+                    assistant_length: assistant.len(),
+                })
+                .unwrap_or_else(|_| json!({})),
+            ),
+        );
         self.hub.emit(self.hub.make_event(
             correlation_id,
             Subsystem::Service,

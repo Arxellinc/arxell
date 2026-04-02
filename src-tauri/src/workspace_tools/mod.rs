@@ -48,7 +48,7 @@ const WORKSPACE_TOOL_MANIFESTS: &[WorkspaceToolManifest] = &[
         description: "Node-based workflow orchestration surface",
         category: "agent",
         core: false,
-        default_enabled: false,
+        default_enabled: true,
     },
     WorkspaceToolManifest {
         tool_id: "tasks",

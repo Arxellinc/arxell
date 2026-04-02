@@ -300,6 +300,66 @@ pub struct WorkspaceToolsImportResponse {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FilesListDirectoryRequest {
+    pub correlation_id: String,
+    pub path: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FilesListDirectoryEntry {
+    pub name: String,
+    pub path: String,
+    pub is_dir: bool,
+    pub size_bytes: u64,
+    pub modified_ms: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FilesListDirectoryResponse {
+    pub correlation_id: String,
+    pub root_path: String,
+    pub listed_path: String,
+    pub entries: Vec<FilesListDirectoryEntry>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FilesReadFileRequest {
+    pub correlation_id: String,
+    pub path: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FilesReadFileResponse {
+    pub correlation_id: String,
+    pub path: String,
+    pub content: String,
+    pub size_bytes: u64,
+    pub read_only: bool,
+    pub is_binary: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FilesWriteFileRequest {
+    pub correlation_id: String,
+    pub path: String,
+    pub content: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FilesWriteFileResponse {
+    pub correlation_id: String,
+    pub path: String,
+    pub size_bytes: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ApiConnectionType {
     Llm,
@@ -688,6 +748,175 @@ pub struct DevicesProbeMicrophoneResponse {
 #[serde(rename_all = "camelCase")]
 pub struct AppVersionResponse {
     pub version: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FlowMode {
+    Plan,
+    Build,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FlowRunStatus {
+    Idle,
+    Queued,
+    Running,
+    #[serde(alias = "completed")]
+    Succeeded,
+    Failed,
+    Stopped,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FlowStartRequest {
+    pub correlation_id: String,
+    pub mode: FlowMode,
+    pub max_iterations: Option<u32>,
+    pub dry_run: Option<bool>,
+    pub auto_push: Option<bool>,
+    pub prompt_plan_path: Option<String>,
+    pub prompt_build_path: Option<String>,
+    pub plan_path: Option<String>,
+    pub specs_glob: Option<String>,
+    pub backpressure_commands: Option<Vec<String>>,
+    pub implement_command: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FlowStartResponse {
+    pub correlation_id: String,
+    pub run_id: String,
+    pub status: FlowRunStatus,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FlowStopRequest {
+    pub correlation_id: String,
+    pub run_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FlowStopResponse {
+    pub correlation_id: String,
+    pub run_id: String,
+    pub stopped: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FlowStatusRequest {
+    pub correlation_id: String,
+    pub run_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FlowListRunsRequest {
+    pub correlation_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FlowRerunValidationRequest {
+    pub correlation_id: String,
+    pub run_id: String,
+    pub iteration: Option<u32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FlowRerunValidationResult {
+    pub command: String,
+    pub ok: bool,
+    pub exit_code: i32,
+    pub stdout: String,
+    pub stderr: String,
+    pub duration_ms: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FlowRerunValidationResponse {
+    pub correlation_id: String,
+    pub run_id: String,
+    pub iteration: Option<u32>,
+    pub ok: bool,
+    pub results: Vec<FlowRerunValidationResult>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FlowStepState {
+    Pending,
+    Running,
+    Complete,
+    Error,
+    Skipped,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FlowStepStatus {
+    pub step: String,
+    pub state: FlowStepState,
+    pub started_at_ms: Option<i64>,
+    pub completed_at_ms: Option<i64>,
+    pub result: Option<String>,
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FlowIterationStatus {
+    pub index: u32,
+    pub status: FlowRunStatus,
+    pub started_at_ms: i64,
+    pub completed_at_ms: Option<i64>,
+    pub task_id: Option<String>,
+    pub steps: Vec<FlowStepStatus>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FlowRunRecord {
+    pub run_id: String,
+    pub mode: FlowMode,
+    pub status: FlowRunStatus,
+    pub max_iterations: Option<u32>,
+    pub current_iteration: u32,
+    pub started_at_ms: i64,
+    pub completed_at_ms: Option<i64>,
+    pub dry_run: bool,
+    pub auto_push: bool,
+    pub prompt_plan_path: String,
+    pub prompt_build_path: String,
+    pub plan_path: String,
+    pub specs_glob: String,
+    pub backpressure_commands: Vec<String>,
+    #[serde(default)]
+    pub implement_command: String,
+    pub summary: Option<String>,
+    pub iterations: Vec<FlowIterationStatus>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FlowStatusResponse {
+    pub correlation_id: String,
+    pub run: FlowRunRecord,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FlowListRunsResponse {
+    pub correlation_id: String,
+    pub runs: Vec<FlowRunRecord>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -38,6 +38,13 @@ export interface UiMessage {
   correlationId?: string;
 }
 
+export interface ChatToolEventRow {
+  rowId: string;
+  title: string;
+  details: string;
+  icon: IconName;
+}
+
 export interface SttState {
   status: "idle" | "starting" | "running" | "error";
   message: string | null;
@@ -79,6 +86,9 @@ export interface PrimaryPanelRenderState {
   chatReasoningByCorrelation: Record<string, string>;
   chatThinkingPlacementByCorrelation: Record<string, "before" | "after">;
   chatThinkingExpandedByCorrelation: Record<string, boolean>;
+  chatToolRowsByCorrelation: Record<string, ChatToolEventRow[]>;
+  chatToolRowExpandedById: Record<string, boolean>;
+  chatStreamCompleteByCorrelation: Record<string, boolean>;
   chatStreaming: boolean;
   chatDraft: string;
   devices: DevicesState;

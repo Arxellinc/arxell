@@ -1,12 +1,15 @@
 #![cfg(feature = "tauri-runtime")]
 
 use crate::api_registry::ApiRegistryService;
+use crate::app::files_service::FilesService;
+use crate::app::flow_service::FlowService;
 use crate::app::model_manager_service::ModelManagerService;
 use crate::app::permission_service::PermissionService;
 use crate::app::runtime_service::LlamaRuntimeService;
 use crate::app::web_search_service::WebSearchService;
 use crate::contracts::AppEvent;
 use crate::ipc::chat::ChatCommandHandler;
+use crate::ipc::flow::FlowCommandHandler;
 use crate::ipc::terminal::TerminalCommandHandler;
 use crate::observability::EventHub;
 use crate::workspace_tools::WorkspaceToolsService;
@@ -16,6 +19,7 @@ use tauri::{AppHandle, Emitter};
 pub struct TauriBridgeState {
     pub chat: Arc<ChatCommandHandler>,
     pub terminal: Arc<TerminalCommandHandler>,
+    pub flow_handler: Arc<FlowCommandHandler>,
     pub hub: EventHub,
     pub workspace_tools: Arc<WorkspaceToolsService>,
     pub api_registry: Arc<ApiRegistryService>,
@@ -23,6 +27,8 @@ pub struct TauriBridgeState {
     pub runtime: Arc<LlamaRuntimeService>,
     pub permissions: Arc<PermissionService>,
     pub model_manager: Arc<ModelManagerService>,
+    pub files: Arc<FilesService>,
+    pub flow: Arc<FlowService>,
 }
 
 pub fn attach_event_forwarder(app: AppHandle, hub: EventHub) {

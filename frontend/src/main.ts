@@ -6,10 +6,11 @@ import type {
   ChatStreamChunkPayload,
   ChatStreamReasoningChunkPayload,
   ConversationSummaryRecord,
+  FilesListDirectoryEntry,
+  FlowRerunValidationResult,
   LlamaRuntimeStatusResponse,
   ModelManagerHfCandidate,
   ModelManagerInstalledModel,
-  WebSearchResponse,
   WorkspaceToolRecord
 } from "./contracts";
 import { iconHtml } from "./icons";
@@ -25,7 +26,13 @@ import {
   renderWorkspacePane
 } from "./layout";
 import { attachPrimaryPanelInteractions, getPanelDefinition } from "./panels";
-import type { ApiConnectionDraft, DevicesState, SidebarTab, UiMessage } from "./panels/types";
+import type {
+  ApiConnectionDraft,
+  ChatToolEventRow,
+  DevicesState,
+  SidebarTab,
+  UiMessage
+} from "./panels/types";
 import type { DisplayMode, LayoutOrientation, WorkspaceTab } from "./layout";
 import { escapeHtml } from "./panels/utils";
 import { TerminalManager, renderTerminalToolbar, renderTerminalWorkspace } from "./tools/terminal/index";
@@ -35,12 +42,39 @@ import {
   MANAGER_UI_ID,
   TERMINAL_DATA_ATTR,
   TERMINAL_UI_ID,
-  WEB_DATA_ATTR,
   WEB_UI_ID,
   WORKSPACE_DATA_ATTR
 } from "./tools/ui/constants";
 import { renderWorkspaceToolsActions, renderWorkspaceToolsBody } from "./tools/manager/index";
-import { renderWebToolActions, renderWebToolBody } from "./tools/webSearch/index";
+import {
+  filterFlowEvents,
+  normalizeFlowRun as normalizeFlowRunView
+} from "./tools/flow/runtime";
+import type { FlowRunView } from "./tools/flow/state";
+import { applyFlowRuntimeEvent } from "./tools/host/flowEvents";
+import {
+  dispatchWorkspaceToolChange,
+  dispatchWorkspaceToolClick,
+  dispatchWorkspaceToolDoubleClick,
+  dispatchWorkspaceToolInput,
+  dispatchWorkspaceToolKeyDown,
+  dispatchWorkspaceToolPointerDown,
+  dispatchWorkspaceToolSubmit,
+  WORKSPACE_TOOL_TARGET_SELECTOR
+} from "./tools/host/workspaceDispatch";
+import {
+  createFlowRunsRefreshScheduler,
+  refreshFlowRunsFromToolInvoke
+} from "./tools/host/flowRefresh";
+import { handleWorkspaceToolTabActivation } from "./tools/host/workspaceLifecycle";
+import { createWorkspaceToolsRuntime } from "./tools/host/workspaceRuntime";
+import { buildWorkspaceToolViews } from "./tools/host/viewBuilder";
+import {
+  createWebTab,
+  loadPersistedWebSearchHistory,
+  persistWebSearchHistory
+} from "./tools/webSearch/runtime";
+import type { WebSearchHistoryItem, WebTabState } from "./tools/webSearch/state";
 import { renderChatMessages } from "./panels/chatPanel";
 import { APP_BUILD_VERSION, normalizeVersionLabel } from "./version";
 import {
@@ -54,31 +88,10 @@ const MAX_CONSOLE_ENTRIES = 600;
 const LLAMA_MODEL_PATH_STORAGE_KEY = "arxell.llama.modelPath";
 const LLAMA_MAX_TOKENS_STORAGE_KEY = "arxell.llama.maxTokens";
 const MIC_PERMISSION_BUBBLE_DISMISSED_KEY = "arxell.micPermissionBubbleDismissed";
-const WEB_SEARCH_HISTORY_STORAGE_KEY = "arxell.webSearch.history.v1";
 const CHAT_ID_ALPHANUM = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
 let chatStreamDomUpdateScheduled = false;
 let chatThinkingDelegationInstalled = false;
 const FALLBACK_APP_VERSION = normalizeVersionLabel(APP_BUILD_VERSION);
-
-interface WebTabState {
-  id: string;
-  title: string;
-  query: string;
-  mode: string;
-  viewMode: "markdown" | "json";
-  num: number;
-  busy: boolean;
-  message: string | null;
-  result: Record<string, unknown> | null;
-}
-
-interface WebSearchHistoryItem {
-  id: string;
-  query: string;
-  mode: string;
-  num: number;
-  timestampMs: number;
-}
 
 function generateChatConversationId(): string {
   let suffix = "";
@@ -144,52 +157,6 @@ function loadMicBubbleDismissed(): boolean {
   }
 }
 
-function loadPersistedWebSearchHistory(): WebSearchHistoryItem[] {
-  try {
-    const raw = window.localStorage.getItem(WEB_SEARCH_HISTORY_STORAGE_KEY);
-    if (!raw) return [];
-    const parsed = JSON.parse(raw);
-    if (!Array.isArray(parsed)) return [];
-    return parsed
-      .map((item) => normalizeWebHistoryItem(item))
-      .filter((item): item is WebSearchHistoryItem => item !== null)
-      .slice(0, 200);
-  } catch {
-    return [];
-  }
-}
-
-function persistWebSearchHistory(entries: WebSearchHistoryItem[]): void {
-  try {
-    window.localStorage.setItem(WEB_SEARCH_HISTORY_STORAGE_KEY, JSON.stringify(entries.slice(0, 200)));
-  } catch {
-    // Ignore local storage failures.
-  }
-}
-
-function normalizeWebHistoryItem(value: unknown): WebSearchHistoryItem | null {
-  if (!value || typeof value !== "object") return null;
-  const item = value as {
-    id?: unknown;
-    query?: unknown;
-    mode?: unknown;
-    num?: unknown;
-    timestampMs?: unknown;
-  };
-  const query = typeof item.query === "string" ? item.query.trim() : "";
-  if (!query) return null;
-  const mode = typeof item.mode === "string" && item.mode.trim() ? item.mode.trim() : "search";
-  const numRaw = typeof item.num === "number" ? item.num : 10;
-  const num = Number.isFinite(numRaw) ? Math.max(1, Math.min(20, Math.trunc(numRaw))) : 10;
-  const tsRaw = typeof item.timestampMs === "number" ? item.timestampMs : Date.now();
-  const timestampMs = Number.isFinite(tsRaw) ? tsRaw : Date.now();
-  const id =
-    typeof item.id === "string" && item.id.trim()
-      ? item.id.trim()
-      : `webh-${timestampMs}-${Math.floor(Math.random() * 1000)}`;
-  return { id, query, mode, num, timestampMs };
-}
-
 function persistMicBubbleDismissed(dismissed: boolean): void {
   try {
     if (dismissed) {
@@ -229,26 +196,16 @@ function defaultApiConnectionDraft(): ApiConnectionDraft {
   };
 }
 
-function createWebTab(index: number): WebTabState {
-  return {
-    id: `web-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
-    title: `Search ${index}`,
-    query: "",
-    mode: "search",
-    viewMode: "markdown",
-    num: 10,
-    busy: false,
-    message: null,
-    result: null
-  };
-}
-
 const state: {
   conversationId: string;
   messages: UiMessage[];
   chatReasoningByCorrelation: Record<string, string>;
   chatThinkingPlacementByCorrelation: Record<string, "before" | "after">;
   chatThinkingExpandedByCorrelation: Record<string, boolean>;
+  chatToolRowsByCorrelation: Record<string, ChatToolEventRow[]>;
+  chatToolRowExpandedById: Record<string, boolean>;
+  chatStreamCompleteByCorrelation: Record<string, boolean>;
+  chatToolIntentByCorrelation: Record<string, boolean>;
   chatFirstAssistantChunkMsByCorrelation: Record<string, number>;
   chatFirstReasoningChunkMsByCorrelation: Record<string, number>;
   chatStreaming: boolean;
@@ -268,6 +225,7 @@ const state: {
     source: "browser" | "app";
     message: string;
   }>;
+  consoleLegacyWrappersOnly: boolean;
   runtimeMode: "tauri" | "mock" | "unknown";
   chatPanePercent: number;
   portraitWorkspacePercent: number;
@@ -289,6 +247,50 @@ const state: {
   webSetupApiKey: string;
   webSetupMessage: string | null;
   webSetupBusy: boolean;
+  filesRootPath: string | null;
+  filesSelectedPath: string | null;
+  filesSelectedEntryPath: string | null;
+  filesOpenTabs: string[];
+  filesActiveTabPath: string | null;
+  filesContentByPath: Record<string, string>;
+  filesSavedContentByPath: Record<string, string>;
+  filesDirtyByPath: Record<string, boolean>;
+  filesLoadingFileByPath: Record<string, boolean>;
+  filesSavingFileByPath: Record<string, boolean>;
+  filesReadOnlyByPath: Record<string, boolean>;
+  filesSizeByPath: Record<string, number>;
+  filesExpandedByPath: Record<string, boolean>;
+  filesEntriesByPath: Record<string, FilesListDirectoryEntry[]>;
+  filesLoadingByPath: Record<string, boolean>;
+  filesColumnWidths: {
+    name?: number;
+    type?: number;
+    size?: number;
+    modified?: number;
+  };
+  filesSidebarWidth: number;
+  filesFindOpen: boolean;
+  filesFindQuery: string;
+  filesReplaceQuery: string;
+  filesFindCaseSensitive: boolean;
+  filesError: string | null;
+  flowRuns: FlowRunView[];
+  flowActiveRunId: string | null;
+  flowMode: "plan" | "build";
+  flowMaxIterations: number;
+  flowDryRun: boolean;
+  flowAutoPush: boolean;
+  flowPromptPlanPath: string;
+  flowPromptBuildPath: string;
+  flowPlanPath: string;
+  flowSpecsGlob: string;
+  flowImplementCommand: string;
+  flowBackpressureCommands: string;
+  flowEventFilter: string;
+  flowFilteredEvents: AppEvent[];
+  flowValidationResults: FlowRerunValidationResult[];
+  flowMessage: string | null;
+  flowBusy: boolean;
   displayMode: DisplayMode;
   appVersion: string;
   chatThinkingEnabled: boolean;
@@ -356,6 +358,10 @@ const state: {
   chatReasoningByCorrelation: {},
   chatThinkingPlacementByCorrelation: {},
   chatThinkingExpandedByCorrelation: {},
+  chatToolRowsByCorrelation: {},
+  chatToolRowExpandedById: {},
+  chatStreamCompleteByCorrelation: {},
+  chatToolIntentByCorrelation: {},
   chatFirstAssistantChunkMsByCorrelation: {},
   chatFirstReasoningChunkMsByCorrelation: {},
   chatStreaming: false,
@@ -370,6 +376,7 @@ const state: {
   micPermissionBubbleDismissed: loadMicBubbleDismissed(),
   events: [],
   consoleEntries: [],
+  consoleLegacyWrappersOnly: false,
   runtimeMode: "unknown",
   chatPanePercent: 35,
   portraitWorkspacePercent: 46,
@@ -391,6 +398,50 @@ const state: {
   webSetupApiKey: "",
   webSetupMessage: null,
   webSetupBusy: false,
+  filesRootPath: null,
+  filesSelectedPath: null,
+  filesSelectedEntryPath: null,
+  filesOpenTabs: [],
+  filesActiveTabPath: null,
+  filesContentByPath: {},
+  filesSavedContentByPath: {},
+  filesDirtyByPath: {},
+  filesLoadingFileByPath: {},
+  filesSavingFileByPath: {},
+  filesReadOnlyByPath: {},
+  filesSizeByPath: {},
+  filesExpandedByPath: {},
+  filesEntriesByPath: {},
+  filesLoadingByPath: {},
+  filesColumnWidths: {
+    name: 260,
+    type: 120,
+    size: 96,
+    modified: 132
+  },
+  filesSidebarWidth: 320,
+  filesFindOpen: false,
+  filesFindQuery: "",
+  filesReplaceQuery: "",
+  filesFindCaseSensitive: false,
+  filesError: null,
+  flowRuns: [],
+  flowActiveRunId: null,
+  flowMode: "plan",
+  flowMaxIterations: 1,
+  flowDryRun: true,
+  flowAutoPush: false,
+  flowPromptPlanPath: "PROMPT_plan.md",
+  flowPromptBuildPath: "PROMPT_build.md",
+  flowPlanPath: "IMPLEMENTATION_PLAN.md",
+  flowSpecsGlob: "specs/*.md",
+  flowImplementCommand: "",
+  flowBackpressureCommands: "",
+  flowEventFilter: "",
+  flowFilteredEvents: [],
+  flowValidationResults: [],
+  flowMessage: null,
+  flowBusy: false,
   displayMode: "dark",
   appVersion: FALLBACK_APP_VERSION,
   chatThinkingEnabled: false,
@@ -777,12 +828,13 @@ function render(): void {
       state.llamaRuntime.pid
   );
 
+  const visibleConsoleEntries = getVisibleConsoleEntries();
   const consoleHtml = `
     <div class="console-panel">
       <div class="console-lines">
         ${
-          state.consoleEntries.length
-            ? state.consoleEntries
+          visibleConsoleEntries.length
+            ? visibleConsoleEntries
                 .map((entry) => {
                   const time = new Date(entry.timestampMs).toLocaleTimeString();
                   return `<div class="console-line">${escapeHtml(
@@ -796,6 +848,7 @@ function render(): void {
     </div>
   `;
   const consoleActionsHtml = `
+    <button type="button" class="tool-action-btn ${state.consoleLegacyWrappersOnly ? "active" : ""}" id="legacyWrapperFilterBtn" aria-label="Toggle legacy wrapper event filter" title="Show only cmd.legacy_wrapper.used events">Legacy Wrappers</button>
     <button type="button" class="tool-action-btn" id="copyConsoleBtn" aria-label="Copy console output" title="Copy all console lines to clipboard">Copy</button>
     <button type="button" class="tool-action-btn" id="saveConsoleBtn" aria-label="Save console output to text file" title="Save all console lines to a .txt file">Save .txt</button>
   `;
@@ -811,36 +864,60 @@ function render(): void {
   );
   const toolsUiHtml = renderWorkspaceToolsBody(state.workspaceTools);
   const toolsActionsHtml = renderWorkspaceToolsActions();
-  const activeWebTab = getActiveWebTab();
-  const webUiHtml = renderWebToolBody({
-    tabId: activeWebTab?.id ?? "",
-    title: activeWebTab?.title ?? "Search",
-    query: activeWebTab?.query ?? "",
-    mode: activeWebTab?.mode ?? "search",
-    viewMode: activeWebTab?.viewMode ?? "markdown",
-    num: activeWebTab?.num ?? 10,
-    busy: activeWebTab?.busy ?? false,
-    message: activeWebTab?.message ?? null,
-    result: activeWebTab?.result ?? null,
-    historyOpen: state.webHistoryOpen,
-    historyClearConfirmOpen: state.webHistoryClearConfirmOpen,
-    historyItems: state.webHistory,
-    setupModalOpen: state.webSetupModalOpen,
-    setupAccount: state.webSetupAccount,
-    setupApiKey: state.webSetupApiKey,
-    setupMessage: state.webSetupMessage,
-    setupBusy: state.webSetupBusy
+  const activeWebTab = workspaceToolsRuntime.getActiveWebTab();
+  const filteredFlow = filterFlowEvents(state.events, state.flowEventFilter, 120);
+  state.flowFilteredEvents = filteredFlow.forInspector;
+  const toolViews = buildWorkspaceToolViews({
+    activeWebTab,
+    webTabs: state.webTabs,
+    activeWebTabId: state.activeWebTabId,
+    webHistoryOpen: state.webHistoryOpen,
+    webHistoryClearConfirmOpen: state.webHistoryClearConfirmOpen,
+    webHistory: state.webHistory,
+    webSetupModalOpen: state.webSetupModalOpen,
+    webSetupAccount: state.webSetupAccount,
+    webSetupApiKey: state.webSetupApiKey,
+    webSetupMessage: state.webSetupMessage,
+    webSetupBusy: state.webSetupBusy,
+    filesRootPath: state.filesRootPath,
+    filesSelectedPath: state.filesSelectedPath,
+    filesSelectedEntryPath: state.filesSelectedEntryPath,
+    filesOpenTabs: state.filesOpenTabs,
+    filesActiveTabPath: state.filesActiveTabPath,
+    filesContentByPath: state.filesContentByPath,
+    filesDirtyByPath: state.filesDirtyByPath,
+    filesLoadingFileByPath: state.filesLoadingFileByPath,
+    filesSavingFileByPath: state.filesSavingFileByPath,
+    filesReadOnlyByPath: state.filesReadOnlyByPath,
+    filesSizeByPath: state.filesSizeByPath,
+    filesExpandedByPath: state.filesExpandedByPath,
+    filesEntriesByPath: state.filesEntriesByPath,
+    filesLoadingByPath: state.filesLoadingByPath,
+    filesColumnWidths: state.filesColumnWidths,
+    filesSidebarWidth: state.filesSidebarWidth,
+    filesFindOpen: state.filesFindOpen,
+    filesFindQuery: state.filesFindQuery,
+    filesReplaceQuery: state.filesReplaceQuery,
+    filesFindCaseSensitive: state.filesFindCaseSensitive,
+    filesError: state.filesError,
+    flowRuns: state.flowRuns,
+    flowActiveRunId: state.flowActiveRunId,
+    flowMode: state.flowMode,
+    flowMaxIterations: state.flowMaxIterations,
+    flowDryRun: state.flowDryRun,
+    flowAutoPush: state.flowAutoPush,
+    flowPromptPlanPath: state.flowPromptPlanPath,
+    flowPromptBuildPath: state.flowPromptBuildPath,
+    flowPlanPath: state.flowPlanPath,
+    flowSpecsGlob: state.flowSpecsGlob,
+    flowImplementCommand: state.flowImplementCommand,
+    flowBackpressureCommands: state.flowBackpressureCommands,
+    flowEventFilter: state.flowEventFilter,
+    flowValidationResults: state.flowValidationResults,
+    flowBusy: state.flowBusy,
+    flowMessage: state.flowMessage,
+    filteredFlowEvents: filteredFlow.forRender
   });
-  const webActionsHtml = renderWebToolActions(
-    state.webTabs.map((tab) => ({
-      id: tab.id,
-      label: tab.title,
-      active: tab.id === state.activeWebTabId
-    })),
-    activeWebTab?.viewMode ?? "markdown",
-    state.webHistoryOpen,
-    activeWebTab?.busy ?? false
-  );
 
   const panel = getPanelDefinition(state.sidebarTab, {
     conversationId: state.conversationId,
@@ -848,6 +925,9 @@ function render(): void {
     chatReasoningByCorrelation: state.chatReasoningByCorrelation,
     chatThinkingPlacementByCorrelation: state.chatThinkingPlacementByCorrelation,
     chatThinkingExpandedByCorrelation: state.chatThinkingExpandedByCorrelation,
+    chatToolRowsByCorrelation: state.chatToolRowsByCorrelation,
+    chatToolRowExpandedById: state.chatToolRowExpandedById,
+    chatStreamCompleteByCorrelation: state.chatStreamCompleteByCorrelation,
     chatStreaming: state.chatStreaming,
     chatDraft: state.chatDraft,
     devices: state.devices,
@@ -907,8 +987,7 @@ function render(): void {
     terminalActionsHtml,
     toolsUiHtml,
     toolsActionsHtml,
-    webUiHtml,
-    webActionsHtml,
+    toolViews,
     state.workspaceTools,
     state.workspaceTab
   );
@@ -978,8 +1057,20 @@ function pushConsoleEntry(
   }
 }
 
+function getVisibleConsoleEntries(): Array<{
+  timestampMs: number;
+  level: "log" | "info" | "warn" | "error" | "debug";
+  source: "browser" | "app";
+  message: string;
+}> {
+  if (!state.consoleLegacyWrappersOnly) {
+    return state.consoleEntries;
+  }
+  return state.consoleEntries.filter((entry) => entry.message.includes("cmd.legacy_wrapper.used"));
+}
+
 function buildConsoleCopyText(): string {
-  return state.consoleEntries
+  return getVisibleConsoleEntries()
     .map((entry) => {
       const time = new Date(entry.timestampMs).toLocaleTimeString();
       return `${time} [${entry.source}] ${entry.level.toUpperCase()} ${entry.message}`;
@@ -1073,6 +1164,10 @@ function resetCurrentConversationUiState(): void {
   state.chatReasoningByCorrelation = {};
   state.chatThinkingPlacementByCorrelation = {};
   state.chatThinkingExpandedByCorrelation = {};
+  state.chatToolRowsByCorrelation = {};
+  state.chatToolRowExpandedById = {};
+  state.chatStreamCompleteByCorrelation = {};
+  state.chatToolIntentByCorrelation = {};
   state.chatFirstAssistantChunkMsByCorrelation = {};
   state.chatFirstReasoningChunkMsByCorrelation = {};
   state.chatStreaming = false;
@@ -1120,6 +1215,83 @@ function parseReasoningStreamChunk(
     delta: value.delta,
     done: value.done
   };
+}
+
+function parseAgentToolPayload(
+  payload: AppEvent["payload"]
+): { toolCallId: string; toolName: string; display: string; success: boolean | null } | null {
+  if (!payload || typeof payload !== "object") return null;
+  const value = payload as Record<string, unknown>;
+  if (typeof value.toolCallId !== "string" || typeof value.toolName !== "string") {
+    return null;
+  }
+  return {
+    toolCallId: value.toolCallId,
+    toolName: value.toolName,
+    display: typeof value.display === "string" ? value.display : "",
+    success: typeof value.success === "boolean" ? value.success : null
+  };
+}
+
+function toolTitleName(rawToolName: string): string {
+  const raw = rawToolName.trim();
+  if (!raw) return "Tool";
+  if (raw === "web_search") return "Web Search";
+  if (raw === "bash") return "Terminal";
+  if (["read", "write", "edit", "move_file", "mkdir", "find", "grep", "chmod", "ls"].includes(raw)) {
+    return "Files";
+  }
+  return raw
+    .replace(/[_-]+/g, " ")
+    .replace(/\b\w/g, (ch) => ch.toUpperCase());
+}
+
+function toolIconName(rawToolName: string): IconName {
+  const raw = rawToolName.trim();
+  if (raw === "web_search") return "globe";
+  if (raw === "bash") return "square-terminal";
+  if (["read", "write", "edit", "move_file", "mkdir", "find", "grep", "chmod", "ls"].includes(raw)) {
+    return "file-badge";
+  }
+  return "wrench";
+}
+
+function ensureAssistantMessageForCorrelation(correlationId: string): void {
+  const existing = state.messages.find(
+    (m) => m.role === "assistant" && m.correlationId === correlationId
+  );
+  if (existing) return;
+  state.messages.push({ role: "assistant", text: "", correlationId });
+}
+
+function isCurrentChatCorrelation(correlationId: string): boolean {
+  if (state.activeChatCorrelationId === correlationId) return true;
+  return state.messages.some(
+    (message) => message.role === "assistant" && message.correlationId === correlationId
+  );
+}
+
+function appendChatToolRow(
+  correlationId: string,
+  row: Omit<ChatToolEventRow, "rowId">
+): void {
+  const existing = state.chatToolRowsByCorrelation[correlationId] ?? [];
+  const rowId = `tool-row-${correlationId}-${existing.length + 1}`;
+  state.chatToolRowsByCorrelation[correlationId] = [...existing, { rowId, ...row }];
+  if (state.chatToolRowExpandedById[rowId] === undefined) {
+    state.chatToolRowExpandedById[rowId] = false;
+  }
+}
+
+function ensureToolIntentRow(correlationId: string, toolName: string): void {
+  const key = `${correlationId}:${toolName}`;
+  if (state.chatToolIntentByCorrelation[key]) return;
+  state.chatToolIntentByCorrelation[key] = true;
+  appendChatToolRow(correlationId, {
+    icon: toolIconName(toolName),
+    title: `Use ${toolTitleName(toolName)} tool`,
+    details: `Agent confirmed it will use the ${toolTitleName(toolName)} tool.`,
+  });
 }
 
 function parseTerminalOutput(payload: AppEvent["payload"]): { sessionId: string; data: string } | null {
@@ -1332,6 +1504,10 @@ async function loadConversation(conversationId: string): Promise<void> {
   state.chatReasoningByCorrelation = {};
   state.chatThinkingPlacementByCorrelation = {};
   state.chatThinkingExpandedByCorrelation = {};
+  state.chatToolRowsByCorrelation = {};
+  state.chatToolRowExpandedById = {};
+  state.chatStreamCompleteByCorrelation = {};
+  state.chatToolIntentByCorrelation = {};
   state.chatFirstAssistantChunkMsByCorrelation = {};
   state.chatFirstReasoningChunkMsByCorrelation = {};
 }
@@ -1342,172 +1518,28 @@ async function refreshTools(): Promise<void> {
   state.workspaceTools = response.tools;
 }
 
+async function refreshFlowRuns(): Promise<void> {
+  await refreshFlowRunsFromToolInvoke(state, {
+    client: clientRef,
+    nextCorrelationId,
+    normalizeRun: normalizeFlowRunView
+  });
+}
+
 async function refreshApiConnections(): Promise<void> {
   if (!clientRef) return;
   const response = await clientRef.listApiConnections({ correlationId: nextCorrelationId() });
   state.apiConnections = response.connections;
 }
 
-function getActiveWebTab(): WebTabState | null {
-  if (!state.webTabs.length) return null;
-  const found = state.webTabs.find((tab) => tab.id === state.activeWebTabId);
-  return found ?? state.webTabs[0] ?? null;
-}
-
-function withActiveWebTab(mutator: (tab: WebTabState) => void): void {
-  const active = getActiveWebTab();
-  if (!active) return;
-  mutator(active);
-}
-
-function ensureWebTabs(): void {
-  if (state.webTabs.length) return;
-  const tab = createWebTab(state.nextWebTabIndex++);
-  state.webTabs = [tab];
-  state.activeWebTabId = tab.id;
-}
-
-function createAndActivateWebTab(): void {
-  const tab = createWebTab(state.nextWebTabIndex++);
-  state.webTabs = [...state.webTabs, tab];
-  state.activeWebTabId = tab.id;
-}
-
-async function runWebSearch(): Promise<void> {
-  const client = clientRef;
-  const activeTab = getActiveWebTab();
-  if (!client || !activeTab || activeTab.busy) return;
-  await refreshApiConnections();
-  if (!hasVerifiedSearchConnection()) {
-    state.webSetupModalOpen = true;
-    state.webSetupMessage = "Add and verify a Serper Search API connection to continue.";
-    return;
-  }
-  const query = activeTab.query.trim();
-  if (!query) {
-    activeTab.message = "Enter a query.";
-    return;
-  }
-
-  activeTab.busy = true;
-  activeTab.message = null;
-  try {
-    const response = await client.webSearch({
-      correlationId: nextCorrelationId(),
-      query,
-      mode: activeTab.mode,
-      num: activeTab.num
-    });
-    activeTab.result = response.result;
-    const resultCount = getWebResultCount(response);
-    activeTab.message =
-      resultCount !== null
-        ? `Fetched ${resultCount} result${resultCount === 1 ? "" : "s"}.`
-        : "Search completed.";
-    recordWebSearchHistory(query, activeTab.mode, activeTab.num);
-  } catch (error) {
-    const message = error instanceof Error ? error.message : "Web search failed.";
-    activeTab.message = message;
-    if (isMissingSearchApiError(message)) {
-      state.webSetupModalOpen = true;
-      state.webSetupMessage = "Search API is missing or not verified. Configure Serper to continue.";
-    }
-  } finally {
-    activeTab.busy = false;
-  }
-}
-
-function recordWebSearchHistory(query: string, mode: string, num: number): void {
-  const normalizedQuery = query.trim();
-  if (!normalizedQuery) return;
-  const entry: WebSearchHistoryItem = {
-    id: `webh-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
-    query: normalizedQuery,
-    mode: mode.trim() || "search",
-    num: Math.max(1, Math.min(20, Math.trunc(num))),
-    timestampMs: Date.now()
-  };
-  const deduped = state.webHistory.filter(
-    (item) =>
-      !(
-        item.query.toLowerCase() === entry.query.toLowerCase() &&
-        item.mode === entry.mode &&
-        item.num === entry.num
-      )
-  );
-  state.webHistory = [entry, ...deduped].slice(0, 200);
-  persistWebSearchHistory(state.webHistory);
-}
-
-function hasVerifiedSearchConnection(): boolean {
-  return state.apiConnections.some(
-    (connection) => connection.apiType === "search" && connection.status === "verified"
-  );
-}
-
-function isMissingSearchApiError(message: string): boolean {
-  const value = message.toLowerCase();
-  return value.includes("no verified search api configured") || value.includes("search api key");
-}
-
-async function saveWebSearchSetup(): Promise<void> {
-  const client = clientRef;
-  if (!client || state.webSetupBusy) return;
-  const account = state.webSetupAccount.trim();
-  const apiKey = state.webSetupApiKey.trim();
-  if (!account || !apiKey) {
-    state.webSetupMessage = "Account name and API key are required.";
-    return;
-  }
-
-  state.webSetupBusy = true;
-  state.webSetupMessage = "Saving and verifying Serper connection...";
-  try {
-    const created = await client.createApiConnection({
-      correlationId: nextCorrelationId(),
-      apiType: "search",
-      apiUrl: "https://google.serper.dev",
-      name: account,
-      apiKey
-    });
-    await refreshApiConnections();
-    if (created.connection.status === "verified") {
-      state.webSetupMessage = "Serper connection verified.";
-      state.webSetupModalOpen = false;
-      state.webSetupApiKey = "";
-      withActiveWebTab((tab) => {
-        tab.message = "Search API configured. You can run searches now.";
-      });
-      return;
-    }
-    state.webSetupMessage = created.connection.statusMessage;
-  } catch (error) {
-    state.webSetupMessage =
-      error instanceof Error ? error.message : "Failed saving Serper connection.";
-  } finally {
-    state.webSetupBusy = false;
-  }
-}
-
-function getWebResultCount(response: WebSearchResponse): number | null {
-  const raw = response.result as {
-    items?: unknown;
-    organic?: unknown;
-    news?: unknown;
-    images?: unknown;
-    videos?: unknown;
-    shopping?: unknown;
-    places?: unknown;
-  };
-  if (Array.isArray(raw.items)) return raw.items.length;
-  if (Array.isArray(raw.organic)) return raw.organic.length;
-  if (Array.isArray(raw.news)) return raw.news.length;
-  if (Array.isArray(raw.images)) return raw.images.length;
-  if (Array.isArray(raw.videos)) return raw.videos.length;
-  if (Array.isArray(raw.shopping)) return raw.shopping.length;
-  if (Array.isArray(raw.places)) return raw.places.length;
-  return null;
-}
+const workspaceToolsRuntime = createWorkspaceToolsRuntime(state, {
+  getClient: () => clientRef,
+  nextCorrelationId,
+  refreshFlowRuns,
+  refreshApiConnections,
+  createWebTab,
+  persistWebSearchHistory
+});
 
 async function refreshModelManagerInstalled(): Promise<void> {
   if (!clientRef) return;
@@ -2806,6 +2838,9 @@ function currentPrimaryPanelRenderState() {
     chatReasoningByCorrelation: state.chatReasoningByCorrelation,
     chatThinkingPlacementByCorrelation: state.chatThinkingPlacementByCorrelation,
     chatThinkingExpandedByCorrelation: state.chatThinkingExpandedByCorrelation,
+    chatToolRowsByCorrelation: state.chatToolRowsByCorrelation,
+    chatToolRowExpandedById: state.chatToolRowExpandedById,
+    chatStreamCompleteByCorrelation: state.chatStreamCompleteByCorrelation,
     chatStreaming: state.chatStreaming,
     chatDraft: state.chatDraft,
     devices: state.devices,
@@ -2875,6 +2910,19 @@ function installThinkingToggleDelegation(sendMessage: (text: string) => Promise<
   chatThinkingDelegationInstalled = true;
   document.addEventListener("click", (event) => {
     const target = event.target as HTMLElement | null;
+    const toolToggle = target?.closest<HTMLButtonElement>("[data-tool-row-toggle-id]");
+    if (toolToggle) {
+      const rowId = toolToggle.dataset.toolRowToggleId;
+      if (!rowId) return;
+      const current = state.chatToolRowExpandedById[rowId] === true;
+      state.chatToolRowExpandedById[rowId] = !current;
+      if (state.sidebarTab === "chat") {
+        renderChatMessagesOnly();
+        return;
+      }
+      renderAndBind(sendMessage);
+      return;
+    }
     const toggle = target?.closest<HTMLButtonElement>("[data-thinking-toggle-corr]");
     if (!toggle) return;
     const correlationId = toggle.dataset.thinkingToggleCorr;
@@ -2956,9 +3004,41 @@ function attachWorkspaceInteractions(sendMessage: (text: string) => Promise<void
   const workspacePane = document.querySelector<HTMLElement>(".workspace-pane");
   const shellPopover = document.querySelector<HTMLElement>(`#${TERMINAL_UI_ID.shellPopover}`);
   if (workspacePane) {
+    const workspaceToolDeps = {
+      flow: {
+        refreshRuns: refreshFlowRuns,
+        startRun: workspaceToolsRuntime.startFlowRun,
+        stopRun: workspaceToolsRuntime.stopFlowRun,
+        resumeRun: workspaceToolsRuntime.resumeFlowRun,
+        retryRun: workspaceToolsRuntime.retryFlowRun,
+        rerunValidation: workspaceToolsRuntime.rerunFlowValidation
+      },
+      files: {
+        listFilesDirectory: workspaceToolsRuntime.listFilesDirectory,
+        selectFilesPath: workspaceToolsRuntime.selectFilesPath,
+        toggleFilesNode: workspaceToolsRuntime.toggleFilesNode,
+        openFilesFile: workspaceToolsRuntime.openFilesFile,
+        activateFilesTab: workspaceToolsRuntime.activateFilesTab,
+        closeFilesTab: workspaceToolsRuntime.closeFilesTab,
+        updateFilesBuffer: workspaceToolsRuntime.updateFilesBuffer,
+        saveActiveFilesTab: workspaceToolsRuntime.saveActiveFilesTab,
+        saveActiveFilesTabAs: workspaceToolsRuntime.saveActiveFilesTabAs,
+        saveAllFilesTabs: workspaceToolsRuntime.saveAllFilesTabs,
+        createNewFilesFile: workspaceToolsRuntime.createNewFilesFile,
+        duplicateActiveFilesTab: workspaceToolsRuntime.duplicateActiveFilesTab
+      },
+      web: {
+        runWebSearch: workspaceToolsRuntime.runWebSearch,
+        createAndActivateWebTab: workspaceToolsRuntime.createAndActivateWebTab,
+        ensureTerminalSession,
+        persistWebSearchHistory,
+        withActiveWebTab: workspaceToolsRuntime.withActiveWebTab,
+        saveWebSearchSetup: workspaceToolsRuntime.saveWebSearchSetup
+      }
+    };
     workspacePane.onclick = async (event) => {
       const target = (event.target as HTMLElement | null)?.closest<HTMLElement>(
-        `[${WORKSPACE_DATA_ATTR.tab}], [${TERMINAL_DATA_ATTR.closeSessionId}], [${TERMINAL_DATA_ATTR.sessionId}], [${TERMINAL_DATA_ATTR.action}], #${TERMINAL_UI_ID.shellButton}, [${TERMINAL_DATA_ATTR.shellProfile}], #${MANAGER_UI_ID.refreshToolsButton}, #${MANAGER_UI_ID.exportToolsButton}, #${MANAGER_UI_ID.importToolsButton}, [${WEB_DATA_ATTR.action}], [${WEB_DATA_ATTR.tabId}]`
+        WORKSPACE_TOOL_TARGET_SELECTOR
       );
       if (!target) return;
 
@@ -2972,15 +3052,18 @@ function attachWorkspaceInteractions(sendMessage: (text: string) => Promise<void
         if (workspaceTab === "manager-tool") {
           await refreshTools();
         }
-        if (workspaceTab === "webSearch-tool" || workspaceTab === "web-tool") {
-          state.workspaceTab = "webSearch-tool";
-          ensureWebTabs();
-          await refreshApiConnections();
-          if (!hasVerifiedSearchConnection()) {
-            state.webSetupModalOpen = true;
-            state.webSetupMessage = "Set up Serper Search API to enable this tool.";
-          }
-        }
+        await handleWorkspaceToolTabActivation(workspaceTab, state, {
+          ensureWebTabs: workspaceToolsRuntime.ensureWebTabs,
+          refreshApiConnections,
+          hasVerifiedSearchConnection: workspaceToolsRuntime.hasVerifiedSearchConnection,
+          ensureFilesExplorerLoaded: workspaceToolsRuntime.ensureFilesExplorerLoaded,
+          refreshFlowRuns
+        });
+        renderAndBind(sendMessage);
+        return;
+      }
+
+      if (await dispatchWorkspaceToolClick(target, state, workspaceToolDeps)) {
         renderAndBind(sendMessage);
         return;
       }
@@ -3052,108 +3135,6 @@ function attachWorkspaceInteractions(sendMessage: (text: string) => Promise<void
         return;
       }
 
-      const webAction = target.getAttribute(WEB_DATA_ATTR.action);
-      const webTabId = target.getAttribute(WEB_DATA_ATTR.tabId);
-      if (webTabId && !webAction) {
-        state.activeWebTabId = webTabId;
-        renderAndBind(sendMessage);
-        return;
-      }
-      if (webAction === "run") {
-        await runWebSearch();
-        renderAndBind(sendMessage);
-        return;
-      }
-      if (webAction === "new-tab") {
-        createAndActivateWebTab();
-        renderAndBind(sendMessage);
-        return;
-      }
-      if (webAction === "toggle-history") {
-        state.webHistoryOpen = !state.webHistoryOpen;
-        if (!state.webHistoryOpen) {
-          state.webHistoryClearConfirmOpen = false;
-        }
-        renderAndBind(sendMessage);
-        return;
-      }
-      if (webAction === "clear-history") {
-        state.webHistoryClearConfirmOpen = true;
-        renderAndBind(sendMessage);
-        return;
-      }
-      if (webAction === "clear-history-cancel") {
-        state.webHistoryClearConfirmOpen = false;
-        renderAndBind(sendMessage);
-        return;
-      }
-      if (webAction === "clear-history-confirm") {
-        state.webHistory = [];
-        state.webHistoryClearConfirmOpen = false;
-        persistWebSearchHistory(state.webHistory);
-        renderAndBind(sendMessage);
-        return;
-      }
-      if (webAction === "run-history-item") {
-        const historyId = target.getAttribute(WEB_DATA_ATTR.historyId);
-        if (!historyId) return;
-        const item = state.webHistory.find((entry) => entry.id === historyId);
-        if (!item) return;
-        withActiveWebTab((tab) => {
-          tab.query = item.query;
-          tab.mode = item.mode;
-          tab.num = item.num;
-        });
-        await runWebSearch();
-        renderAndBind(sendMessage);
-        return;
-      }
-      if (webAction === "toggle-view-mode") {
-        withActiveWebTab((tab) => {
-          tab.viewMode = tab.viewMode === "markdown" ? "json" : "markdown";
-        });
-        renderAndBind(sendMessage);
-        return;
-      }
-      if (webAction === "close-tab") {
-        if (!webTabId) return;
-        const remaining = state.webTabs.filter((tab) => tab.id !== webTabId);
-        if (!remaining.length) {
-          state.workspaceTab = "terminal";
-          await ensureTerminalSession();
-        } else {
-          state.webTabs = remaining;
-          if (state.activeWebTabId === webTabId) {
-            state.activeWebTabId = remaining[remaining.length - 1]?.id ?? remaining[0]?.id ?? "";
-          }
-        }
-        renderAndBind(sendMessage);
-        return;
-      }
-      if (webAction === "setup-cancel") {
-        state.webSetupModalOpen = false;
-        state.webSetupMessage = null;
-        state.webSetupApiKey = "";
-        renderAndBind(sendMessage);
-        return;
-      }
-      if (webAction === "setup-open-apis") {
-        state.webSetupModalOpen = false;
-        state.sidebarTab = "apis";
-        state.apiFormOpen = true;
-        state.apiDraft = {
-          apiType: "search",
-          apiUrl: "https://google.serper.dev",
-          name: state.webSetupAccount.trim(),
-          apiKey: state.webSetupApiKey,
-          modelName: "",
-          costPerMonthUsd: "",
-          apiStandardPath: ""
-        };
-        renderAndBind(sendMessage);
-        return;
-      }
-
       const closeSessionId = target.getAttribute(TERMINAL_DATA_ATTR.closeSessionId);
       if (closeSessionId) {
         event.preventDefault();
@@ -3206,6 +3187,13 @@ function attachWorkspaceInteractions(sendMessage: (text: string) => Promise<void
         renderAndBind(sendMessage);
       }
     };
+    workspacePane.onmousedown = (event) => {
+      const target = (event.target as HTMLElement | null)?.closest<HTMLElement>(
+        WORKSPACE_TOOL_TARGET_SELECTOR
+      );
+      if (!target) return;
+      dispatchWorkspaceToolPointerDown(event, target, state);
+    };
     workspacePane.onchange = async (event) => {
       const toggle = (event.target as HTMLElement | null)?.closest<HTMLInputElement>(
         `[${MANAGER_DATA_ATTR.toggleToolId}]`
@@ -3222,89 +3210,50 @@ function attachWorkspaceInteractions(sendMessage: (text: string) => Promise<void
         await refreshTools();
       }
 
-      const modeSelect = document.querySelector<HTMLSelectElement>(`#${WEB_UI_ID.modeSelect}`);
-      if (modeSelect) {
-        withActiveWebTab((tab) => {
-          tab.mode = modeSelect.value || "search";
-        });
-      }
-
-      const numInput = document.querySelector<HTMLInputElement>(`#${WEB_UI_ID.numInput}`);
-      if (numInput) {
-        const parsed = Number.parseInt(numInput.value, 10);
-        withActiveWebTab((tab) => {
-          tab.num = Number.isFinite(parsed) ? Math.max(1, Math.min(20, parsed)) : 10;
-        });
-      }
+      dispatchWorkspaceToolChange(event.target as HTMLElement, state, workspaceToolDeps);
 
       renderAndBind(sendMessage);
     };
 
     workspacePane.onsubmit = async (event) => {
-      const form = (event.target as HTMLElement | null)?.closest<HTMLFormElement>(
-        `#${WEB_UI_ID.searchForm}`
-      );
-      if (form) {
+      if (await dispatchWorkspaceToolSubmit(event.target as HTMLElement, state, workspaceToolDeps)) {
         event.preventDefault();
-        const queryInput = form.querySelector<HTMLInputElement>(`#${WEB_UI_ID.queryInput}`);
-        withActiveWebTab((tab) => {
-          tab.query = queryInput?.value ?? "";
-        });
-        await runWebSearch();
         renderAndBind(sendMessage);
-        return;
       }
-
-      const setupForm = (event.target as HTMLElement | null)?.closest<HTMLFormElement>(
-        `#${WEB_UI_ID.setupForm}`
-      );
-      if (!setupForm) return;
-      event.preventDefault();
-      const accountInput = setupForm.querySelector<HTMLInputElement>(`#${WEB_UI_ID.setupAccountInput}`);
-      const keyInput = setupForm.querySelector<HTMLInputElement>(`#${WEB_UI_ID.setupApiKeyInput}`);
-      state.webSetupAccount = accountInput?.value ?? "";
-      state.webSetupApiKey = keyInput?.value ?? "";
-      await saveWebSearchSetup();
-      renderAndBind(sendMessage);
     };
 
     workspacePane.oninput = (event) => {
-      const queryInput = (event.target as HTMLElement | null)?.closest<HTMLInputElement>(
-        `#${WEB_UI_ID.queryInput}`
+      let rerenderForFlow = false;
+      const toolInput = dispatchWorkspaceToolInput(
+        event.target as HTMLElement,
+        state,
+        workspaceToolDeps
       );
-      if (queryInput) {
-        withActiveWebTab((tab) => {
-          tab.query = queryInput.value;
-        });
+      if (toolInput.handled && toolInput.rerender) {
+        rerenderForFlow = true;
       }
-      const accountInput = (event.target as HTMLElement | null)?.closest<HTMLInputElement>(
-        `#${WEB_UI_ID.setupAccountInput}`
-      );
-      if (accountInput) {
-        state.webSetupAccount = accountInput.value;
-        state.webSetupMessage = null;
-      }
-      const keyInput = (event.target as HTMLElement | null)?.closest<HTMLInputElement>(
-        `#${WEB_UI_ID.setupApiKeyInput}`
-      );
-      if (keyInput) {
-        state.webSetupApiKey = keyInput.value;
-        state.webSetupMessage = null;
+      if (rerenderForFlow) {
+        renderAndBind(sendMessage);
       }
     };
 
     workspacePane.onkeydown = async (event) => {
-      if (event.key !== "Enter") return;
-      const queryInput = (event.target as HTMLElement | null)?.closest<HTMLInputElement>(
-        `#${WEB_UI_ID.queryInput}`
-      );
-      if (!queryInput) return;
-      event.preventDefault();
-      withActiveWebTab((tab) => {
-        tab.query = queryInput.value;
-      });
-      await runWebSearch();
-      renderAndBind(sendMessage);
+      if (await dispatchWorkspaceToolKeyDown(event, state, workspaceToolDeps)) {
+        event.preventDefault();
+        renderAndBind(sendMessage);
+      }
+    };
+
+    workspacePane.ondblclick = async (event) => {
+      if (
+        await dispatchWorkspaceToolDoubleClick(
+          event.target as HTMLElement,
+          state,
+          workspaceToolDeps
+        )
+      ) {
+        renderAndBind(sendMessage);
+      }
     };
   }
   if (shellPopover) {
@@ -3320,10 +3269,20 @@ function attachWorkspaceInteractions(sendMessage: (text: string) => Promise<void
     }
   }
 
+  const legacyWrapperFilterBtn =
+    document.querySelector<HTMLButtonElement>("#legacyWrapperFilterBtn");
+  if (legacyWrapperFilterBtn) {
+    legacyWrapperFilterBtn.onclick = () => {
+      state.consoleLegacyWrappersOnly = !state.consoleLegacyWrappersOnly;
+      renderAndBind(sendMessage);
+    };
+  }
+
   const copyConsoleBtn = document.querySelector<HTMLButtonElement>("#copyConsoleBtn");
   if (copyConsoleBtn) {
     copyConsoleBtn.onclick = async () => {
       const text = buildConsoleCopyText();
+      const visibleCount = getVisibleConsoleEntries().length;
       if (!text) {
         pushConsoleEntry("info", "browser", "Console is empty; nothing copied.");
         renderAndBind(sendMessage);
@@ -3331,7 +3290,7 @@ function attachWorkspaceInteractions(sendMessage: (text: string) => Promise<void
       }
       try {
         await navigator.clipboard.writeText(text);
-        pushConsoleEntry("info", "browser", `Copied ${state.consoleEntries.length} console lines.`);
+        pushConsoleEntry("info", "browser", `Copied ${visibleCount} console lines.`);
       } catch {
         const textarea = document.createElement("textarea");
         textarea.value = text;
@@ -3346,7 +3305,7 @@ function attachWorkspaceInteractions(sendMessage: (text: string) => Promise<void
         if (!ok) {
           pushConsoleEntry("error", "browser", "Failed to copy console output.");
         } else {
-          pushConsoleEntry("info", "browser", `Copied ${state.consoleEntries.length} console lines.`);
+          pushConsoleEntry("info", "browser", `Copied ${visibleCount} console lines.`);
         }
       }
       renderAndBind(sendMessage);
@@ -3357,6 +3316,7 @@ function attachWorkspaceInteractions(sendMessage: (text: string) => Promise<void
   if (saveConsoleBtn) {
     saveConsoleBtn.onclick = () => {
       const text = buildConsoleCopyText();
+      const visibleCount = getVisibleConsoleEntries().length;
       if (!text) {
         pushConsoleEntry("info", "browser", "Console is empty; nothing to save.");
         renderAndBind(sendMessage);
@@ -3371,7 +3331,7 @@ function attachWorkspaceInteractions(sendMessage: (text: string) => Promise<void
       anchor.click();
       document.body.removeChild(anchor);
       URL.revokeObjectURL(url);
-      pushConsoleEntry("info", "browser", `Saved ${state.consoleEntries.length} console lines as .txt.`);
+      pushConsoleEntry("info", "browser", `Saved ${visibleCount} console lines as .txt.`);
       renderAndBind(sendMessage);
     };
   }
@@ -3404,6 +3364,7 @@ async function bootstrap(): Promise<void> {
 
   await refreshConversations();
   await refreshTools();
+  await refreshFlowRuns();
   await refreshApiConnections();
   await refreshDevicesState();
   await refreshLlamaRuntime();
@@ -3455,6 +3416,12 @@ async function bootstrap(): Promise<void> {
       renderAndBind(sendMessage);
     });
   }
+
+  const scheduleFlowRunsRefresh = createFlowRunsRefreshScheduler({
+    refresh: refreshFlowRuns,
+    onRefreshed: () => renderAndBind(sendMessage),
+    delayMs: 250
+  });
 
   client.onEvent((event) => {
     const agentEventLine = formatAgentEventLine(event);
@@ -3542,6 +3509,76 @@ async function bootstrap(): Promise<void> {
     }
 
     state.events.push(event);
+    applyFlowRuntimeEvent(state, event, scheduleFlowRunsRefresh);
+
+    if (event.action === "chat.stream.start") {
+      if (!isCurrentChatCorrelation(event.correlationId)) {
+        return;
+      }
+      state.chatStreamCompleteByCorrelation[event.correlationId] = false;
+    }
+    if (event.action === "chat.stream.complete") {
+      if (!isCurrentChatCorrelation(event.correlationId)) {
+        return;
+      }
+      state.chatStreamCompleteByCorrelation[event.correlationId] = true;
+      scheduleChatStreamDomUpdate();
+      return;
+    }
+    if (event.action === "chat.agent.tool.start") {
+      if (!isCurrentChatCorrelation(event.correlationId)) {
+        return;
+      }
+      const payload = parseAgentToolPayload(event.payload);
+      if (payload) {
+        ensureAssistantMessageForCorrelation(event.correlationId);
+        ensureToolIntentRow(event.correlationId, payload.toolName);
+        appendChatToolRow(event.correlationId, {
+          icon: toolIconName(payload.toolName),
+          title: `${toolTitleName(payload.toolName)} · start`,
+          details: payload.display || `Started tool call ${payload.toolCallId}.`
+        });
+        scheduleChatStreamDomUpdate();
+        return;
+      }
+    }
+    if (event.action === "chat.agent.tool.end") {
+      if (!isCurrentChatCorrelation(event.correlationId)) {
+        return;
+      }
+      const payload = parseAgentToolPayload(event.payload);
+      if (payload) {
+        ensureAssistantMessageForCorrelation(event.correlationId);
+        appendChatToolRow(event.correlationId, {
+          icon: toolIconName(payload.toolName),
+          title: `${toolTitleName(payload.toolName)} · complete`,
+          details: payload.display || `Tool call ${payload.toolCallId} completed.`
+        });
+        scheduleChatStreamDomUpdate();
+        return;
+      }
+    }
+    if (event.action === "chat.agent.tool.result") {
+      if (!isCurrentChatCorrelation(event.correlationId)) {
+        return;
+      }
+      const payload = parseAgentToolPayload(event.payload);
+      if (payload) {
+        ensureAssistantMessageForCorrelation(event.correlationId);
+        const status = payload.success === false ? "error" : "result";
+        const defaultDetail =
+          payload.success === false
+            ? `Tool call ${payload.toolCallId} returned an error.`
+            : `Tool call ${payload.toolCallId} returned successfully.`;
+        appendChatToolRow(event.correlationId, {
+          icon: payload.success === false ? "triangle-alert" : toolIconName(payload.toolName),
+          title: `${toolTitleName(payload.toolName)} · ${status}`,
+          details: payload.display || defaultDetail
+        });
+        scheduleChatStreamDomUpdate();
+        return;
+      }
+    }
 
     if (event.action === "chat.stream.chunk") {
       const chunk = parseStreamChunk(event.payload);
@@ -3572,6 +3609,7 @@ async function bootstrap(): Promise<void> {
     state.chatDraft = "";
     state.chatStreaming = true;
     state.activeChatCorrelationId = correlationId;
+    state.chatStreamCompleteByCorrelation[correlationId] = false;
     renderAndBind(sendMessage);
 
     try {

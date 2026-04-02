@@ -9,8 +9,13 @@ interface WorkspaceViewRenderContext {
   terminalActionsHtml: string;
   toolsUiHtml: string;
   toolsActionsHtml: string;
-  webUiHtml: string;
-  webActionsHtml: string;
+  toolViews: Record<
+    string,
+    {
+      actionsHtml: string;
+      bodyHtml: string;
+    }
+  >;
 }
 
 interface WorkspaceTabView {
@@ -30,14 +35,6 @@ const WORKSPACE_TAB_VIEWS: Record<string, WorkspaceTabView> = {
   "manager-tool": {
     renderActionsHtml: (ctx) => ctx.toolsActionsHtml,
     renderBodyHtml: (ctx) => ctx.toolsUiHtml
-  },
-  "webSearch-tool": {
-    renderActionsHtml: (ctx) => ctx.webActionsHtml,
-    renderBodyHtml: (ctx) => ctx.webUiHtml
-  },
-  "web-tool": {
-    renderActionsHtml: (ctx) => ctx.webActionsHtml,
-    renderBodyHtml: (ctx) => ctx.webUiHtml
   }
 };
 
@@ -54,7 +51,15 @@ export function resolveWorkspaceView(tab: WorkspaceTab, ctx: WorkspaceViewRender
   }
 
   const toolId = tab.replace(/-tool$/, "");
-  const manifest = getToolManifest(toolId);
+  const normalizedToolId = toolId === "web" ? "webSearch" : toolId;
+  const view = ctx.toolViews[normalizedToolId];
+  if (view) {
+    return {
+      actionsHtml: view.actionsHtml,
+      bodyHtml: view.bodyHtml
+    };
+  }
+  const manifest = getToolManifest(normalizedToolId);
   return {
     actionsHtml: renderToolToolbar({
       tabsMode: "none",

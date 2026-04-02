@@ -194,11 +194,7 @@ impl Default for WebSearchService {
 }
 
 fn normalize_mode(value: Option<&str>) -> &'static str {
-    match value
-        .map(str::trim)
-        .map(str::to_ascii_lowercase)
-        .as_deref()
-    {
+    match value.map(str::trim).map(str::to_ascii_lowercase).as_deref() {
         Some("images") => "images",
         Some("news") => "news",
         Some("maps") => "maps",

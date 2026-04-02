@@ -8,29 +8,33 @@ use app_foundation::app::AppContext;
 #[cfg(feature = "tauri-runtime")]
 use app_foundation::contracts::{
     ApiConnectionCreateRequest, ApiConnectionCreateResponse, ApiConnectionDeleteRequest,
-    ApiConnectionDeleteResponse, ApiConnectionReverifyRequest, ApiConnectionReverifyResponse,
-    ApiConnectionGetSecretRequest, ApiConnectionGetSecretResponse,
-    ApiConnectionUpdateRequest, ApiConnectionUpdateResponse,
-    ApiConnectionsListRequest, ApiConnectionsListResponse, AppVersionResponse, ChatCancelRequest,
-    ChatCancelResponse, ChatDeleteConversationRequest, ChatDeleteConversationResponse,
-    ChatGetMessagesRequest, ChatGetMessagesResponse, ChatListConversationsRequest,
-    ChatListConversationsResponse, ChatSendRequest, ChatSendResponse, WebSearchRequest,
-    WebSearchResponse,
-    DevicesProbeMicrophoneRequest, DevicesProbeMicrophoneResponse, LlamaRuntimeInstallRequest,
-    LlamaRuntimeInstallResponse, LlamaRuntimeStartRequest, LlamaRuntimeStartResponse,
-    LlamaRuntimeStatusRequest, LlamaRuntimeStatusResponse, LlamaRuntimeStopRequest,
-    LlamaRuntimeStopResponse, ModelManagerDeleteInstalledRequest,
+    ApiConnectionDeleteResponse, ApiConnectionGetSecretRequest, ApiConnectionGetSecretResponse,
+    ApiConnectionReverifyRequest, ApiConnectionReverifyResponse, ApiConnectionUpdateRequest,
+    ApiConnectionUpdateResponse, ApiConnectionsListRequest, ApiConnectionsListResponse,
+    AppVersionResponse, ChatCancelRequest, ChatCancelResponse, ChatDeleteConversationRequest,
+    ChatDeleteConversationResponse, ChatGetMessagesRequest, ChatGetMessagesResponse,
+    ChatListConversationsRequest, ChatListConversationsResponse, ChatSendRequest, ChatSendResponse,
+    DevicesProbeMicrophoneRequest, DevicesProbeMicrophoneResponse, FilesListDirectoryRequest,
+    FilesListDirectoryResponse, FlowListRunsRequest, FlowListRunsResponse,
+    FlowRerunValidationRequest, FlowRerunValidationResponse, FlowStartRequest, FlowStartResponse,
+    FlowStatusRequest, FlowStatusResponse, FlowStopRequest, FlowStopResponse,
+    LlamaRuntimeInstallRequest, LlamaRuntimeInstallResponse, LlamaRuntimeStartRequest,
+    LlamaRuntimeStartResponse, LlamaRuntimeStatusRequest, LlamaRuntimeStatusResponse,
+    LlamaRuntimeStopRequest, LlamaRuntimeStopResponse, ModelManagerDeleteInstalledRequest,
     ModelManagerDeleteInstalledResponse, ModelManagerDownloadHfRequest,
     ModelManagerDownloadHfResponse, ModelManagerListCatalogCsvRequest,
     ModelManagerListCatalogCsvResponse, ModelManagerListInstalledRequest,
     ModelManagerListInstalledResponse, ModelManagerSearchHfRequest, ModelManagerSearchHfResponse,
     TerminalCloseSessionRequest, TerminalCloseSessionResponse, TerminalInputRequest,
     TerminalInputResponse, TerminalOpenSessionRequest, TerminalOpenSessionResponse,
-    TerminalResizeRequest, TerminalResizeResponse, WorkspaceToolSetEnabledRequest,
-    WorkspaceToolSetEnabledResponse, WorkspaceToolsExportRequest, WorkspaceToolsExportResponse,
-    WorkspaceToolsImportRequest, WorkspaceToolsImportResponse, WorkspaceToolsListRequest,
-    WorkspaceToolsListResponse,
+    TerminalResizeRequest, TerminalResizeResponse, ToolInvokeRequest, ToolInvokeResponse,
+    WebSearchRequest, WebSearchResponse,
+    WorkspaceToolSetEnabledRequest, WorkspaceToolSetEnabledResponse, WorkspaceToolsExportRequest,
+    WorkspaceToolsExportResponse, WorkspaceToolsImportRequest, WorkspaceToolsImportResponse,
+    WorkspaceToolsListRequest, WorkspaceToolsListResponse,
 };
+#[cfg(feature = "tauri-runtime")]
+use app_foundation::ipc::tool_runtime::{invoke_legacy_tool_command, invoke_tool};
 #[cfg(feature = "tauri-runtime")]
 use app_foundation::ipc::tauri_bridge::{attach_event_forwarder, TauriBridgeState};
 #[cfg(feature = "tauri-runtime")]
@@ -82,6 +86,7 @@ fn main() {
     let state = TauriBridgeState {
         chat: std::sync::Arc::new(app_context.ipc.chat.clone()),
         terminal: std::sync::Arc::new(app_context.ipc.terminal.clone()),
+        flow_handler: std::sync::Arc::new(app_context.ipc.flow.clone()),
         hub: hub.clone(),
         workspace_tools: std::sync::Arc::clone(&app_context.workspace_tools),
         api_registry: std::sync::Arc::clone(&app_context.api_registry),
@@ -89,6 +94,8 @@ fn main() {
         runtime: std::sync::Arc::clone(&app_context.runtime),
         permissions: std::sync::Arc::clone(&app_context.permissions),
         model_manager: std::sync::Arc::clone(&app_context.model_manager),
+        files: std::sync::Arc::clone(&app_context.files),
+        flow: std::sync::Arc::clone(&app_context.flow),
     };
 
     tauri::Builder::default()
@@ -171,6 +178,13 @@ fn main() {
             cmd_model_manager_download_hf,
             cmd_model_manager_delete_installed,
             cmd_model_manager_list_catalog_csv,
+            cmd_files_list_directory,
+            cmd_tool_invoke,
+            cmd_flow_start,
+            cmd_flow_stop,
+            cmd_flow_status,
+            cmd_flow_list_runs,
+            cmd_flow_rerun_validation,
             start_stt,
             stop_stt,
             stt_status,
@@ -550,21 +564,18 @@ async fn cmd_web_search(
     state: State<'_, TauriBridgeState>,
     request: WebSearchRequest,
 ) -> Result<WebSearchResponse, String> {
-    let result = state
-        .web_search
-        .search(app_foundation::app::web_search_service::WebSearchRequest {
-            query: request.query,
-            mode: request.mode,
-            num: request.num,
-            page: request.page,
-        })
-        .await?;
-    let result_value = serde_json::to_value(result)
-        .map_err(|e| format!("failed serializing web search response: {e}"))?;
-    Ok(WebSearchResponse {
-        correlation_id: request.correlation_id,
-        result: result_value,
-    })
+    // Compatibility wrapper retained for external callers still using cmd_web_search.
+    // Canonical path is cmd_tool_invoke with toolId=webSearch, action=search.
+    let correlation_id = request.correlation_id.clone();
+    invoke_legacy_tool_command(
+        &state,
+        correlation_id.as_str(),
+        "cmd_web_search",
+        "webSearch",
+        "search",
+        &request,
+    )
+    .await
 }
 
 #[cfg(feature = "tauri-runtime")]
@@ -787,6 +798,135 @@ async fn cmd_model_manager_list_catalog_csv(
         list_name: request.list_name,
         rows,
     })
+}
+
+#[cfg(feature = "tauri-runtime")]
+#[tauri::command]
+async fn cmd_tool_invoke(
+    state: State<'_, TauriBridgeState>,
+    request: ToolInvokeRequest,
+) -> Result<ToolInvokeResponse, String> {
+    invoke_tool(&state, request).await
+}
+
+#[cfg(feature = "tauri-runtime")]
+#[tauri::command]
+async fn cmd_files_list_directory(
+    state: State<'_, TauriBridgeState>,
+    request: FilesListDirectoryRequest,
+) -> Result<FilesListDirectoryResponse, String> {
+    // Compatibility wrapper retained for external callers still using cmd_files_list_directory.
+    // Canonical path is cmd_tool_invoke with toolId=files, action=list-directory.
+    let correlation_id = request.correlation_id.clone();
+    invoke_legacy_tool_command(
+        &state,
+        correlation_id.as_str(),
+        "cmd_files_list_directory",
+        "files",
+        "list-directory",
+        &request,
+    )
+    .await
+}
+
+#[cfg(feature = "tauri-runtime")]
+#[tauri::command]
+async fn cmd_flow_start(
+    state: State<'_, TauriBridgeState>,
+    request: FlowStartRequest,
+) -> Result<FlowStartResponse, String> {
+    // Compatibility wrapper retained for external callers still using cmd_flow_start.
+    // Canonical path is cmd_tool_invoke with toolId=flow, action=start.
+    let correlation_id = request.correlation_id.clone();
+    invoke_legacy_tool_command(
+        &state,
+        correlation_id.as_str(),
+        "cmd_flow_start",
+        "flow",
+        "start",
+        &request,
+    )
+    .await
+}
+
+#[cfg(feature = "tauri-runtime")]
+#[tauri::command]
+async fn cmd_flow_stop(
+    state: State<'_, TauriBridgeState>,
+    request: FlowStopRequest,
+) -> Result<FlowStopResponse, String> {
+    // Compatibility wrapper retained for external callers still using cmd_flow_stop.
+    // Canonical path is cmd_tool_invoke with toolId=flow, action=stop.
+    let correlation_id = request.correlation_id.clone();
+    invoke_legacy_tool_command(
+        &state,
+        correlation_id.as_str(),
+        "cmd_flow_stop",
+        "flow",
+        "stop",
+        &request,
+    )
+    .await
+}
+
+#[cfg(feature = "tauri-runtime")]
+#[tauri::command]
+async fn cmd_flow_status(
+    state: State<'_, TauriBridgeState>,
+    request: FlowStatusRequest,
+) -> Result<FlowStatusResponse, String> {
+    // Compatibility wrapper retained for external callers still using cmd_flow_status.
+    // Canonical path is cmd_tool_invoke with toolId=flow, action=status.
+    let correlation_id = request.correlation_id.clone();
+    invoke_legacy_tool_command(
+        &state,
+        correlation_id.as_str(),
+        "cmd_flow_status",
+        "flow",
+        "status",
+        &request,
+    )
+    .await
+}
+
+#[cfg(feature = "tauri-runtime")]
+#[tauri::command]
+async fn cmd_flow_list_runs(
+    state: State<'_, TauriBridgeState>,
+    request: FlowListRunsRequest,
+) -> Result<FlowListRunsResponse, String> {
+    // Compatibility wrapper retained for external callers still using cmd_flow_list_runs.
+    // Canonical path is cmd_tool_invoke with toolId=flow, action=list-runs.
+    let correlation_id = request.correlation_id.clone();
+    invoke_legacy_tool_command(
+        &state,
+        correlation_id.as_str(),
+        "cmd_flow_list_runs",
+        "flow",
+        "list-runs",
+        &request,
+    )
+    .await
+}
+
+#[cfg(feature = "tauri-runtime")]
+#[tauri::command]
+async fn cmd_flow_rerun_validation(
+    state: State<'_, TauriBridgeState>,
+    request: FlowRerunValidationRequest,
+) -> Result<FlowRerunValidationResponse, String> {
+    // Compatibility wrapper retained for external callers still using cmd_flow_rerun_validation.
+    // Canonical path is cmd_tool_invoke with toolId=flow, action=rerun-validation.
+    let correlation_id = request.correlation_id.clone();
+    invoke_legacy_tool_command(
+        &state,
+        correlation_id.as_str(),
+        "cmd_flow_rerun_validation",
+        "flow",
+        "rerun-validation",
+        &request,
+    )
+    .await
 }
 
 #[cfg(feature = "tauri-runtime")]

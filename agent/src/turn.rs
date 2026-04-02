@@ -24,11 +24,18 @@ pub struct TurnOutcome {
     pub interrupted: bool,
 }
 
+fn push_event<F: FnMut(&Event) + Send>(events: &mut Vec<Event>, on_event: &mut F, event: Event) {
+    events.push(event);
+    if let Some(last) = events.last() {
+        on_event(last);
+    }
+}
+
 fn count_tokens(text: &str) -> i64 {
     (text.len() / 4) as i64
 }
 
-pub async fn run_single_turn(
+pub async fn run_single_turn<F: FnMut(&Event) + Send>(
     provider: &dyn Provider,
     messages: Vec<Message>,
     tools: &[Box<dyn Tool>],
@@ -36,6 +43,7 @@ pub async fn run_single_turn(
     turn: i64,
     cancel: Option<tokio::sync::watch::Receiver<bool>>,
     retry_delays: Option<Vec<i64>>,
+    on_event: &mut F,
 ) -> TurnOutcome {
     let mut events = Vec::new();
     let mut content: Vec<ContentPart> = Vec::new();
@@ -43,15 +51,23 @@ pub async fn run_single_turn(
 
     if let Some(c) = &cancel {
         if *c.borrow() {
-            events.push(Event::Interrupted {
-                message: "Interrupted by user".to_string(),
-            });
-            events.push(Event::TurnEnd {
-                turn,
-                assistant_message: None,
-                tool_results: vec![],
-                stop_reason: StopReason::Interrupted,
-            });
+            push_event(
+                &mut events,
+                on_event,
+                Event::Interrupted {
+                    message: "Interrupted by user".to_string(),
+                },
+            );
+            push_event(
+                &mut events,
+                on_event,
+                Event::TurnEnd {
+                    turn,
+                    assistant_message: None,
+                    tool_results: vec![],
+                    stop_reason: StopReason::Interrupted,
+                },
+            );
             return TurnOutcome {
                 events,
                 assistant_message: None,
@@ -96,23 +112,31 @@ pub async fn run_single_turn(
             Err(e) => {
                 if provider.should_retry_for_error(&e) {
                     if let Some(delay) = delay_opt {
-                        events.push(Event::Retry {
-                            attempt: attempt as i64 + 1,
-                            total_attempts: delays.len() as i64,
-                            delay: delay as f64,
-                            error: e,
-                        });
+                        push_event(
+                            &mut events,
+                            on_event,
+                            Event::Retry {
+                                attempt: attempt as i64 + 1,
+                                total_attempts: delays.len() as i64,
+                                delay: delay as f64,
+                                error: e,
+                            },
+                        );
                         tokio::time::sleep(std::time::Duration::from_secs(delay as u64)).await;
                         continue;
                     }
                 }
-                events.push(Event::Error { error: e });
-                events.push(Event::TurnEnd {
-                    turn,
-                    assistant_message: None,
-                    tool_results: vec![],
-                    stop_reason: StopReason::Error,
-                });
+                push_event(&mut events, on_event, Event::Error { error: e });
+                push_event(
+                    &mut events,
+                    on_event,
+                    Event::TurnEnd {
+                        turn,
+                        assistant_message: None,
+                        tool_results: vec![],
+                        stop_reason: StopReason::Error,
+                    },
+                );
                 return TurnOutcome {
                     events,
                     assistant_message: None,
@@ -127,15 +151,23 @@ pub async fn run_single_turn(
     let mut stream = match stream {
         Some(s) => s,
         None => {
-            events.push(Event::Error {
-                error: "provider stream unavailable".to_string(),
-            });
-            events.push(Event::TurnEnd {
-                turn,
-                assistant_message: None,
-                tool_results: vec![],
-                stop_reason: StopReason::Error,
-            });
+            push_event(
+                &mut events,
+                on_event,
+                Event::Error {
+                    error: "provider stream unavailable".to_string(),
+                },
+            );
+            push_event(
+                &mut events,
+                on_event,
+                Event::TurnEnd {
+                    turn,
+                    assistant_message: None,
+                    tool_results: vec![],
+                    stop_reason: StopReason::Error,
+                },
+            );
             return TurnOutcome {
                 events,
                 assistant_message: None,
@@ -172,7 +204,7 @@ pub async fn run_single_turn(
         let part = match part {
             Ok(p) => p,
             Err(e) => {
-                events.push(Event::Error { error: e });
+                push_event(&mut events, on_event, Event::Error { error: e });
                 stop_reason = StopReason::Error;
                 break;
             }
@@ -181,9 +213,13 @@ pub async fn run_single_turn(
         match part {
             crate::types::StreamPart::Think { think, signature } => {
                 if text_open {
-                    events.push(Event::TextEnd {
-                        text: text_buf.clone(),
-                    });
+                    push_event(
+                        &mut events,
+                        on_event,
+                        Event::TextEnd {
+                            text: text_buf.clone(),
+                        },
+                    );
                     content.push(ContentPart::Text {
                         text: text_buf.clone(),
                     });
@@ -194,23 +230,31 @@ pub async fn run_single_turn(
                     pending_raw.push(current_tool.take().expect("checked"));
                 }
                 if !think_open {
-                    events.push(Event::ThinkingStart);
+                    push_event(&mut events, on_event, Event::ThinkingStart);
                 }
                 think_open = true;
                 think_buf.push_str(&think);
-                events.push(Event::ThinkingDelta {
-                    delta: think.clone(),
-                });
+                push_event(
+                    &mut events,
+                    on_event,
+                    Event::ThinkingDelta {
+                        delta: think.clone(),
+                    },
+                );
                 if let Some(sig) = signature {
                     let _ = sig;
                 }
             }
             crate::types::StreamPart::Text { text } => {
                 if think_open {
-                    events.push(Event::ThinkingEnd {
-                        thinking: think_buf.clone(),
-                        signature: None,
-                    });
+                    push_event(
+                        &mut events,
+                        on_event,
+                        Event::ThinkingEnd {
+                            thinking: think_buf.clone(),
+                            signature: None,
+                        },
+                    );
                     content.push(ContentPart::Thinking {
                         thinking: think_buf.clone(),
                         signature: None,
@@ -222,18 +266,22 @@ pub async fn run_single_turn(
                     pending_raw.push(current_tool.take().expect("checked"));
                 }
                 if !text_open {
-                    events.push(Event::TextStart);
+                    push_event(&mut events, on_event, Event::TextStart);
                 }
                 text_open = true;
                 text_buf.push_str(&text);
-                events.push(Event::TextDelta { delta: text });
+                push_event(&mut events, on_event, Event::TextDelta { delta: text });
             }
             crate::types::StreamPart::ToolCallStart { id, name, .. } => {
                 if think_open {
-                    events.push(Event::ThinkingEnd {
-                        thinking: think_buf.clone(),
-                        signature: None,
-                    });
+                    push_event(
+                        &mut events,
+                        on_event,
+                        Event::ThinkingEnd {
+                            thinking: think_buf.clone(),
+                            signature: None,
+                        },
+                    );
                     content.push(ContentPart::Thinking {
                         thinking: think_buf.clone(),
                         signature: None,
@@ -242,9 +290,13 @@ pub async fn run_single_turn(
                     think_buf.clear();
                 }
                 if text_open {
-                    events.push(Event::TextEnd {
-                        text: text_buf.clone(),
-                    });
+                    push_event(
+                        &mut events,
+                        on_event,
+                        Event::TextEnd {
+                            text: text_buf.clone(),
+                        },
+                    );
                     content.push(ContentPart::Text {
                         text: text_buf.clone(),
                     });
@@ -258,30 +310,42 @@ pub async fn run_single_turn(
                 tool_arg_chunk_counter = 0;
                 tool_arg_token_count = 0;
                 current_tool = Some((id.clone(), name.clone(), String::new()));
-                events.push(Event::ToolStart {
-                    tool_call_id: id,
-                    tool_name: name,
-                });
+                push_event(
+                    &mut events,
+                    on_event,
+                    Event::ToolStart {
+                        tool_call_id: id,
+                        tool_name: name,
+                    },
+                );
             }
             crate::types::StreamPart::ToolCallDelta {
                 arguments_delta, ..
             } => {
                 if let Some((id, name, args)) = &mut current_tool {
                     args.push_str(&arguments_delta);
-                    events.push(Event::ToolArgsDelta {
-                        tool_call_id: id.clone(),
-                        delta: arguments_delta.clone(),
-                    });
+                    push_event(
+                        &mut events,
+                        on_event,
+                        Event::ToolArgsDelta {
+                            tool_call_id: id.clone(),
+                            delta: arguments_delta.clone(),
+                        },
+                    );
                     tool_arg_chunk_counter += 1;
                     tool_arg_token_count += count_tokens(&arguments_delta);
                     if tool_arg_token_count > TOOL_ARGS_TOKEN_DISPLAY_THRESHOLD
                         && tool_arg_chunk_counter % TOOL_ARGS_TOKEN_CHUNK_UPDATE_INTERVAL == 0
                     {
-                        events.push(Event::ToolArgsTokenUpdate {
-                            tool_call_id: id.clone(),
-                            tool_name: name.clone(),
-                            token_count: tool_arg_token_count,
-                        });
+                        push_event(
+                            &mut events,
+                            on_event,
+                            Event::ToolArgsTokenUpdate {
+                                tool_call_id: id.clone(),
+                                tool_name: name.clone(),
+                                token_count: tool_arg_token_count,
+                            },
+                        );
                     }
                 }
             }
@@ -290,7 +354,7 @@ pub async fn run_single_turn(
                 break;
             }
             crate::types::StreamPart::Error { error } => {
-                events.push(Event::Error { error });
+                push_event(&mut events, on_event, Event::Error { error });
                 stop_reason = StopReason::Error;
                 break;
             }
@@ -298,19 +362,27 @@ pub async fn run_single_turn(
     }
 
     if think_open {
-        events.push(Event::ThinkingEnd {
-            thinking: think_buf.clone(),
-            signature: None,
-        });
+        push_event(
+            &mut events,
+            on_event,
+            Event::ThinkingEnd {
+                thinking: think_buf.clone(),
+                signature: None,
+            },
+        );
         content.push(ContentPart::Thinking {
             thinking: think_buf,
             signature: None,
         });
     }
     if text_open {
-        events.push(Event::TextEnd {
-            text: text_buf.clone(),
-        });
+        push_event(
+            &mut events,
+            on_event,
+            Event::TextEnd {
+                text: text_buf.clone(),
+            },
+        );
         content.push(ContentPart::Text { text: text_buf });
     }
     if let Some(t) = current_tool.take() {
@@ -328,12 +400,16 @@ pub async fn run_single_turn(
             .map(|t| t.format_call(&arguments))
             .unwrap_or_default();
 
-        events.push(Event::ToolEnd {
-            tool_call_id: id.clone(),
-            tool_name: name.clone(),
-            arguments: arguments.clone(),
-            display: display.clone(),
-        });
+        push_event(
+            &mut events,
+            on_event,
+            Event::ToolEnd {
+                tool_call_id: id.clone(),
+                tool_name: name.clone(),
+                arguments: arguments.clone(),
+                display: display.clone(),
+            },
+        );
 
         pending.push(PendingToolCall {
             id,
@@ -375,11 +451,15 @@ pub async fn run_single_turn(
             }
         };
 
-        events.push(Event::ToolResult {
-            tool_call_id: p.id.clone(),
-            tool_name: p.name.clone(),
-            result: Some(res.clone()),
-        });
+        push_event(
+            &mut events,
+            on_event,
+            Event::ToolResult {
+                tool_call_id: p.id.clone(),
+                tool_name: p.name.clone(),
+                result: Some(res.clone()),
+            },
+        );
 
         let text = res
             .result
@@ -395,9 +475,13 @@ pub async fn run_single_turn(
     }
 
     if interrupted {
-        events.push(Event::Interrupted {
-            message: "Interrupted by user".to_string(),
-        });
+        push_event(
+            &mut events,
+            on_event,
+            Event::Interrupted {
+                message: "Interrupted by user".to_string(),
+            },
+        );
     }
 
     let assistant_message = Message::Assistant {
@@ -406,12 +490,16 @@ pub async fn run_single_turn(
         stop_reason: Some(stop_reason),
     };
 
-    events.push(Event::TurnEnd {
-        turn,
-        assistant_message: Some(assistant_message.clone()),
-        tool_results: tool_results.clone(),
-        stop_reason,
-    });
+    push_event(
+        &mut events,
+        on_event,
+        Event::TurnEnd {
+            turn,
+            assistant_message: Some(assistant_message.clone()),
+            tool_results: tool_results.clone(),
+            stop_reason,
+        },
+    );
 
     TurnOutcome {
         events,

@@ -42,6 +42,13 @@ pub struct Agent {
 }
 
 impl Agent {
+    fn push_event<F: FnMut(&Event) + Send>(events: &mut Vec<Event>, on_event: &mut F, event: Event) {
+        events.push(event);
+        if let Some(last) = events.last() {
+            on_event(last);
+        }
+    }
+
     pub fn new(
         provider: Box<dyn Provider>,
         tools: Vec<Box<dyn Tool>>,
@@ -91,6 +98,30 @@ impl Agent {
         images: Option<Vec<(String, String)>>,
         cancel: Option<tokio::sync::watch::Receiver<bool>>,
     ) -> Vec<Event> {
+        self.run_collect_inner(query, images, cancel, |_| {}).await
+    }
+
+    pub async fn run_collect_with_callback<F>(
+        &mut self,
+        query: String,
+        images: Option<Vec<(String, String)>>,
+        cancel: Option<tokio::sync::watch::Receiver<bool>>,
+        mut on_event: F,
+    ) -> Vec<Event>
+    where
+        F: FnMut(&Event) + Send,
+    {
+        self.run_collect_inner(query, images, cancel, &mut on_event)
+            .await
+    }
+
+    async fn run_collect_inner<F: FnMut(&Event) + Send>(
+        &mut self,
+        query: String,
+        images: Option<Vec<(String, String)>>,
+        cancel: Option<tokio::sync::watch::Receiver<bool>>,
+        mut on_event: F,
+    ) -> Vec<Event> {
         self.run_usage = Usage::default();
 
         let user_message = if let Some(images) = images {
@@ -107,7 +138,8 @@ impl Agent {
             }
         };
 
-        let mut events = vec![Event::AgentStart];
+        let mut events = Vec::new();
+        Self::push_event(&mut events, &mut on_event, Event::AgentStart);
         let _ = self.session.append_message(user_message);
 
         let mut turn = 0i64;
@@ -122,15 +154,19 @@ impl Agent {
             if let Some(c) = &cancel {
                 if *c.borrow() {
                     stop_reason = StopReason::Interrupted;
-                    events.push(Event::Interrupted {
-                        message: "Interrupted by user".to_string(),
-                    });
+                    Self::push_event(
+                        &mut events,
+                        &mut on_event,
+                        Event::Interrupted {
+                            message: "Interrupted by user".to_string(),
+                        },
+                    );
                     break;
                 }
             }
 
             turn += 1;
-            events.push(Event::TurnStart { turn });
+            Self::push_event(&mut events, &mut on_event, Event::TurnStart { turn });
 
             let messages = self.session.messages();
             let outcome = run_single_turn(
@@ -141,6 +177,7 @@ impl Agent {
                 turn,
                 cancel.clone(),
                 None,
+                &mut on_event,
             )
             .await;
 
@@ -188,11 +225,15 @@ impl Agent {
             stop_reason = StopReason::Length;
         }
 
-        events.push(Event::AgentEnd {
-            stop_reason,
-            total_turns: turn,
-            total_usage: self.run_usage.clone(),
-        });
+        Self::push_event(
+            &mut events,
+            &mut on_event,
+            Event::AgentEnd {
+                stop_reason,
+                total_turns: turn,
+                total_usage: self.run_usage.clone(),
+            },
+        );
         events
     }
 

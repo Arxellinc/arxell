@@ -1,25 +1,45 @@
 import type { ToolManifest } from "./types";
-import {
-  terminalToolManifest,
-  filesToolManifest,
-  webSearchToolManifest,
-  flowToolManifest,
-  tasksToolManifest,
-  memoryToolManifest,
-  skillsToolManifest
-} from "./index";
+interface ManifestModuleRecord {
+  [key: string]: unknown;
+}
 
-export const TOOL_REGISTRY: Record<string, ToolManifest> = {
-  terminal: terminalToolManifest,
-  files: filesToolManifest,
-  webSearch: webSearchToolManifest,
-  flow: flowToolManifest,
-  tasks: tasksToolManifest,
-  memory: memoryToolManifest,
-  skills: skillsToolManifest
-};
+const manifestModules = import.meta.glob("./*/manifest.ts", {
+  eager: true
+}) as Record<string, ManifestModuleRecord>;
 
-export const TOOL_ORDER = [
+function isToolManifest(value: unknown): value is ToolManifest {
+  if (!value || typeof value !== "object") return false;
+  const row = value as Record<string, unknown>;
+  return (
+    typeof row.id === "string" &&
+    typeof row.title === "string" &&
+    typeof row.description === "string" &&
+    typeof row.version === "string"
+  );
+}
+
+function extractManifest(moduleRecord: ManifestModuleRecord): ToolManifest | null {
+  for (const value of Object.values(moduleRecord)) {
+    if (isToolManifest(value)) {
+      return value;
+    }
+  }
+  return null;
+}
+
+function buildRegistry(): Record<string, ToolManifest> {
+  const registry: Record<string, ToolManifest> = {};
+  Object.values(manifestModules).forEach((moduleRecord) => {
+    const manifest = extractManifest(moduleRecord);
+    if (!manifest) return;
+    registry[manifest.id] = manifest;
+  });
+  return registry;
+}
+
+export const TOOL_REGISTRY: Record<string, ToolManifest> = buildRegistry();
+
+const PREFERRED_TOOL_ORDER = [
   "terminal",
   "files",
   "webSearch",
@@ -28,6 +48,19 @@ export const TOOL_ORDER = [
   "memory",
   "skills"
 ] as const;
+
+function buildToolOrder(): string[] {
+  const discovered = new Set(Object.keys(TOOL_REGISTRY));
+  const ordered: string[] = [];
+  PREFERRED_TOOL_ORDER.forEach((toolId) => {
+    if (!discovered.has(toolId)) return;
+    ordered.push(toolId);
+    discovered.delete(toolId);
+  });
+  return [...ordered, ...Array.from(discovered).sort((a, b) => a.localeCompare(b))];
+}
+
+export const TOOL_ORDER = buildToolOrder();
 
 function canonicalToolId(toolId: string): string {
   return toolId === "web" ? "webSearch" : toolId;

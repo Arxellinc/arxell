@@ -49,6 +49,37 @@ export function renderChatMessages(state: PrimaryPanelRenderState): string {
         const placement = correlationId
           ? state.chatThinkingPlacementByCorrelation[correlationId] ?? "after"
           : "after";
+        const toolRows = correlationId
+          ? (state.chatToolRowsByCorrelation[correlationId] ?? [])
+          : [];
+        const streamComplete = correlationId
+          ? state.chatStreamCompleteByCorrelation[correlationId] === true
+          : true;
+        const hasToolRows = toolRows.length > 0;
+        const showAssistantText = !(hasToolRows && !streamComplete);
+        const toolRowsHtml = hasToolRows
+          ? `<section class="message-tool-rows">
+              ${toolRows
+                .map((row) => {
+                  const expanded = state.chatToolRowExpandedById[row.rowId] === true;
+                  const chevron = expanded ? "▾" : "▸";
+                  return `<article class="message-tool-row ${expanded ? "is-open" : ""}">
+                    <button type="button" class="message-tool-row-toggle" data-tool-row-toggle-id="${escapeHtml(row.rowId)}" aria-expanded="${expanded ? "true" : "false"}" title="${expanded ? "Collapse details" : "Expand details"}">
+                      <span class="message-tool-row-left">
+                        <span class="message-tool-row-icon">${iconHtml(row.icon, { size: 16, tone: "dark" })}</span>
+                        <span class="message-tool-row-title">${escapeHtml(row.title)}</span>
+                      </span>
+                      <span class="message-tool-row-chevron" aria-hidden="true">${chevron}</span>
+                    </button>
+                    ${expanded ? `<div class="message-tool-row-details">${escapeHtml(row.details)}</div>` : ""}
+                  </article>`;
+                })
+                .join("")}
+            </section>`
+          : "";
+        const textHtml = showAssistantText
+          ? `<div class="message-text">${escapeHtml(m.text)}</div>`
+          : `<div class="message-text message-text-pending">Running tools...</div>`;
         const thinkingHtml =
           correlationId && thinkingText
             ? `<section class="message-thinking ${expanded ? "is-open" : ""}" data-thinking-corr="${escapeHtml(correlationId)}">
@@ -61,8 +92,8 @@ export function renderChatMessages(state: PrimaryPanelRenderState): string {
             : "";
         const contentHtml =
           placement === "before"
-            ? `${thinkingHtml}<div class="message-text">${escapeHtml(m.text)}</div>`
-            : `<div class="message-text">${escapeHtml(m.text)}</div>${thinkingHtml}`;
+            ? `${toolRowsHtml}${thinkingHtml}${textHtml}`
+            : `${toolRowsHtml}${textHtml}${thinkingHtml}`;
         return `<div class="message ${m.role}">
           ${contentHtml}
         </div>`;
