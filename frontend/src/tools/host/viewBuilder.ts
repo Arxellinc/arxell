@@ -6,6 +6,7 @@ import type { FlowRunView } from "../flow/state";
 import { renderMemoryToolActions, renderMemoryToolBody } from "../memory";
 import { renderSkillsToolActions, renderSkillsToolBody } from "../skills";
 import { renderTasksToolActions, renderTasksToolBody } from "../tasks";
+import type { TaskFolder, TaskSortDirection, TaskSortKey, TaskRecord } from "../tasks/state";
 import { renderWebToolActions, renderWebToolBody } from "../webSearch";
 import type { WebSearchHistoryItem, WebTabState } from "../webSearch/state";
 
@@ -42,11 +43,20 @@ export interface WorkspaceToolViewInput {
   filesLoadingByPath: Record<string, boolean>;
   filesColumnWidths: Partial<FilesColumnWidths>;
   filesSidebarWidth: number;
+  filesSidebarCollapsed: boolean;
   filesFindOpen: boolean;
   filesFindQuery: string;
   filesReplaceQuery: string;
   filesFindCaseSensitive: boolean;
+  filesLineWrap: boolean;
   filesError: string | null;
+  tasksById: Record<string, TaskRecord>;
+  tasksSelectedId: string | null;
+  tasksFolder: TaskFolder;
+  tasksSortKey: TaskSortKey;
+  tasksSortDirection: TaskSortDirection;
+  tasksDetailsCollapsed: boolean;
+  tasksJsonDraft: string;
   flowRuns: FlowRunView[];
   flowActiveRunId: string | null;
   flowMode: "plan" | "build";
@@ -119,10 +129,12 @@ export function buildWorkspaceToolViews(input: WorkspaceToolViewInput): Record<s
         loadingByPath: input.filesLoadingByPath,
         columnWidths: input.filesColumnWidths,
         sidebarWidth: input.filesSidebarWidth,
+        sidebarCollapsed: input.filesSidebarCollapsed,
         findOpen: input.filesFindOpen,
         findQuery: input.filesFindQuery,
         replaceQuery: input.filesReplaceQuery,
         findCaseSensitive: input.filesFindCaseSensitive,
+        lineWrap: input.filesLineWrap,
         error: input.filesError
       }),
       bodyHtml: renderFilesToolBody({
@@ -142,10 +154,12 @@ export function buildWorkspaceToolViews(input: WorkspaceToolViewInput): Record<s
         loadingByPath: input.filesLoadingByPath,
         columnWidths: input.filesColumnWidths,
         sidebarWidth: input.filesSidebarWidth,
+        sidebarCollapsed: input.filesSidebarCollapsed,
         findOpen: input.filesFindOpen,
         findQuery: input.filesFindQuery,
         replaceQuery: input.filesReplaceQuery,
         findCaseSensitive: input.filesFindCaseSensitive,
+        lineWrap: input.filesLineWrap,
         error: input.filesError
       })
     },
@@ -190,8 +204,24 @@ export function buildWorkspaceToolViews(input: WorkspaceToolViewInput): Record<s
       })
     },
     tasks: {
-      actionsHtml: renderTasksToolActions(),
-      bodyHtml: renderTasksToolBody()
+      actionsHtml: renderTasksToolActions({
+        tasksById: input.tasksById,
+        selectedId: input.tasksSelectedId,
+        folder: input.tasksFolder,
+        sortKey: input.tasksSortKey,
+        sortDirection: input.tasksSortDirection,
+        detailsCollapsed: input.tasksDetailsCollapsed,
+        jsonDraft: input.tasksJsonDraft
+      }),
+      bodyHtml: renderTasksToolBody({
+        tasksById: input.tasksById,
+        selectedId: input.tasksSelectedId,
+        folder: input.tasksFolder,
+        sortKey: input.tasksSortKey,
+        sortDirection: input.tasksSortDirection,
+        detailsCollapsed: input.tasksDetailsCollapsed,
+        jsonDraft: input.tasksJsonDraft
+      })
     },
     memory: {
       actionsHtml: renderMemoryToolActions(),

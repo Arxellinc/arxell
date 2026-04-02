@@ -1424,46 +1424,26 @@ body {
   border: 1px solid var(--line);
   border-radius: 8px;
   background: var(--surface-strong);
-  overflow-y: auto;
-  overflow-x: auto;
+  overflow: auto;
 }
 
-.console-lines {
-  font: 12px/14px "SFMono-Regular", Menlo, Consolas, "Liberation Mono", monospace;
-  font-weight: 400;
-  display: grid;
+.console-text {
+  margin: 0;
+  padding: 6px 7px 48px;
+  min-width: max-content;
   min-height: 100%;
-  align-content: start;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
-  text-rendering: optimizeLegibility;
-  font-synthesis: none;
-}
-
-.console-lines::after {
-  content: "";
-  display: block;
-  height: 4em;
-}
-
-.console-line {
-  display: block;
-  padding: 2px 7px;
-  line-height: 14px;
+  font: 11px/12px "SFMono-Regular", Menlo, Consolas, "Liberation Mono", monospace;
+  font-weight: 400;
   color: var(--ink);
-  white-space: nowrap;
-  font-weight: 400;
-}
-
-.console-empty {
-  font: 12px/14px "SFMono-Regular", Menlo, Consolas, "Liberation Mono", monospace;
-  font-weight: 400;
-  color: var(--muted);
-  padding: 8px;
+  white-space: pre;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   text-rendering: optimizeLegibility;
   font-synthesis: none;
+}
+
+.console-text.is-empty {
+  color: var(--muted);
 }
 
 .workspace-topbar-actions {

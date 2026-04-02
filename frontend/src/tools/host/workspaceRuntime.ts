@@ -50,7 +50,9 @@ interface FilesRuntimeSlice {
   filesSavingFileByPath: Record<string, boolean>;
   filesReadOnlyByPath: Record<string, boolean>;
   filesSizeByPath: Record<string, number>;
+  filesSidebarCollapsed: boolean;
   filesError: string | null;
+  filesLineWrap: boolean;
 }
 
 export interface WorkspaceToolsRuntimeState

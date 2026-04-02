@@ -75,6 +75,8 @@ import {
   persistWebSearchHistory
 } from "./tools/webSearch/runtime";
 import type { WebSearchHistoryItem, WebTabState } from "./tools/webSearch/state";
+import { loadPersistedTasksById } from "./tools/tasks/actions";
+import type { TaskFolder, TaskSortDirection, TaskSortKey, TaskRecord } from "./tools/tasks/state";
 import { renderChatMessages } from "./panels/chatPanel";
 import { APP_BUILD_VERSION, normalizeVersionLabel } from "./version";
 import {
@@ -269,11 +271,20 @@ const state: {
     modified?: number;
   };
   filesSidebarWidth: number;
+  filesSidebarCollapsed: boolean;
   filesFindOpen: boolean;
   filesFindQuery: string;
   filesReplaceQuery: string;
   filesFindCaseSensitive: boolean;
+  filesLineWrap: boolean;
   filesError: string | null;
+  tasksById: Record<string, TaskRecord>;
+  tasksSelectedId: string | null;
+  tasksFolder: TaskFolder;
+  tasksSortKey: TaskSortKey;
+  tasksSortDirection: TaskSortDirection;
+  tasksDetailsCollapsed: boolean;
+  tasksJsonDraft: string;
   flowRuns: FlowRunView[];
   flowActiveRunId: string | null;
   flowMode: "plan" | "build";
@@ -420,11 +431,20 @@ const state: {
     modified: 132
   },
   filesSidebarWidth: 320,
+  filesSidebarCollapsed: false,
   filesFindOpen: false,
   filesFindQuery: "",
   filesReplaceQuery: "",
   filesFindCaseSensitive: false,
+  filesLineWrap: false,
   filesError: null,
+  tasksById: loadPersistedTasksById(),
+  tasksSelectedId: null,
+  tasksFolder: "inbox",
+  tasksSortKey: "createdAt",
+  tasksSortDirection: "desc",
+  tasksDetailsCollapsed: false,
+  tasksJsonDraft: "",
   flowRuns: [],
   flowActiveRunId: null,
   flowMode: "plan",
@@ -829,22 +849,19 @@ function render(): void {
   );
 
   const visibleConsoleEntries = getVisibleConsoleEntries();
+  const consoleText = visibleConsoleEntries.length
+    ? visibleConsoleEntries
+        .map((entry) => {
+          const time = new Date(entry.timestampMs).toLocaleTimeString();
+          return `${time} [${entry.source}] ${entry.level.toUpperCase()} ${entry.message}`;
+        })
+        .join("\n")
+    : "No console output yet.";
   const consoleHtml = `
     <div class="console-panel">
-      <div class="console-lines">
-        ${
-          visibleConsoleEntries.length
-            ? visibleConsoleEntries
-                .map((entry) => {
-                  const time = new Date(entry.timestampMs).toLocaleTimeString();
-                  return `<div class="console-line">${escapeHtml(
-                    `${time} [${entry.source}] ${entry.level.toUpperCase()} ${entry.message}`
-                  )}</div>`;
-                })
-                .join("")
-            : "<div class='console-empty'>No console output yet.</div>"
-        }
-      </div>
+      <pre class="console-text ${visibleConsoleEntries.length ? "" : "is-empty"}">${escapeHtml(
+        consoleText
+      )}</pre>
     </div>
   `;
   const consoleActionsHtml = `
@@ -895,11 +912,20 @@ function render(): void {
     filesLoadingByPath: state.filesLoadingByPath,
     filesColumnWidths: state.filesColumnWidths,
     filesSidebarWidth: state.filesSidebarWidth,
+    filesSidebarCollapsed: state.filesSidebarCollapsed,
     filesFindOpen: state.filesFindOpen,
     filesFindQuery: state.filesFindQuery,
     filesReplaceQuery: state.filesReplaceQuery,
     filesFindCaseSensitive: state.filesFindCaseSensitive,
+    filesLineWrap: state.filesLineWrap,
     filesError: state.filesError,
+    tasksById: state.tasksById,
+    tasksSelectedId: state.tasksSelectedId,
+    tasksFolder: state.tasksFolder,
+    tasksSortKey: state.tasksSortKey,
+    tasksSortDirection: state.tasksSortDirection,
+    tasksDetailsCollapsed: state.tasksDetailsCollapsed,
+    tasksJsonDraft: state.tasksJsonDraft,
     flowRuns: state.flowRuns,
     flowActiveRunId: state.flowActiveRunId,
     flowMode: state.flowMode,

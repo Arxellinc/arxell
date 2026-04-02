@@ -40,10 +40,12 @@ interface FilesSlice {
   filesError?: string | null;
   filesColumnWidths?: Partial<FilesColumnWidths>;
   filesSidebarWidth?: number;
+  filesSidebarCollapsed?: boolean;
   filesFindOpen?: boolean;
   filesFindQuery?: string;
   filesReplaceQuery?: string;
   filesFindCaseSensitive?: boolean;
+  filesLineWrap?: boolean;
 }
 
 interface FilesDeps {
@@ -202,6 +204,14 @@ export async function handleFilesClick(
     slice.filesFindOpen = false;
     return true;
   }
+  if (filesAction === "toggle-sidebar-collapse") {
+    slice.filesSidebarCollapsed = slice.filesSidebarCollapsed !== true;
+    return true;
+  }
+  if (filesAction === "toggle-wrap") {
+    slice.filesLineWrap = slice.filesLineWrap !== true;
+    return true;
+  }
   if (filesAction === "refresh") {
     const selected = slice.filesSelectedPath || slice.filesRootPath || undefined;
     await deps.listFilesDirectory(selected);
@@ -338,6 +348,12 @@ export async function handleFilesKeyDown(
       deps.closeFilesTab(active);
       return true;
     }
+  }
+
+  if (!event.metaKey && !event.ctrlKey && event.altKey && event.key.toLowerCase() === "z") {
+    event.preventDefault();
+    slice.filesLineWrap = slice.filesLineWrap !== true;
+    return true;
   }
 
   if ((event.metaKey || event.ctrlKey) && event.altKey && event.key.toLowerCase() === "s") {
@@ -518,6 +534,7 @@ export function handleFilesPointerDown(
     `[${FILES_DATA_ATTR.action}="resize-sidebar"]`
   );
   if (sidebarHandle) {
+    if (slice.filesSidebarCollapsed) return true;
     const root = sidebarHandle.closest<HTMLElement>(".files-tool");
     const leftPane = sidebarHandle.previousElementSibling as HTMLElement | null;
     if (!root || !leftPane) return true;
@@ -642,7 +659,10 @@ function refreshEditorDecorations(textarea: HTMLTextAreaElement, content: string
     const path = textarea.getAttribute(FILES_DATA_ATTR.path) || undefined;
     highlight.innerHTML = highlightCode(content, path);
   }
-  const height = Math.max(220, lineCount * 20 + 20);
+  textarea.style.height = "0px";
+  const measuredHeight = textarea.scrollHeight;
+  const fallback = lineCount * 20 + 20;
+  const height = Math.max(220, measuredHeight || fallback);
   textarea.style.height = `${height}px`;
 }
 

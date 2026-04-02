@@ -51,6 +51,15 @@ export const FILES_UI_ID = {
   refreshButton: "filesToolRefreshBtn"
 } as const;
 
+export const TASKS_DATA_ATTR = {
+  action: "data-tasks-action",
+  taskId: "data-tasks-id",
+  sort: "data-tasks-sort",
+  folder: "data-tasks-folder",
+  field: "data-tasks-field",
+  value: "data-tasks-value"
+} as const;
+
 export const FLOW_DATA_ATTR = {
   action: "data-flow-action",
   runId: "data-flow-run-id",

@@ -13,11 +13,13 @@ import {
   handleWebKeyDown,
   handleWebSubmit
 } from "../webSearch/bindings";
+import { handleTasksChange, handleTasksClick, handleTasksInput } from "../tasks/bindings";
 import {
   FILES_DATA_ATTR,
   FILES_UI_ID,
   FLOW_DATA_ATTR,
   MANAGER_UI_ID,
+  TASKS_DATA_ATTR,
   TERMINAL_DATA_ATTR,
   TERMINAL_UI_ID,
   WEB_DATA_ATTR,
@@ -41,6 +43,9 @@ export const WORKSPACE_TOOL_TARGET_SELECTOR = [
   `[${FILES_DATA_ATTR.action}]`,
   `[${FILES_DATA_ATTR.path}]`,
   `#${FILES_UI_ID.refreshButton}`,
+  `[${TASKS_DATA_ATTR.action}]`,
+  `[${TASKS_DATA_ATTR.taskId}]`,
+  `[${TASKS_DATA_ATTR.field}]`,
   `[${FLOW_DATA_ATTR.action}]`,
   `[${FLOW_DATA_ATTR.runId}]`
 ].join(", ");
@@ -89,6 +94,9 @@ export async function dispatchWorkspaceToolClick(
   if (await handleFilesClick(target, state as any, deps.files)) {
     return true;
   }
+  if (await handleTasksClick(target, state as any)) {
+    return true;
+  }
   if (await handleWebClick(target, state as any, deps.web as any)) {
     return true;
   }
@@ -102,7 +110,8 @@ export function dispatchWorkspaceToolChange(
 ): boolean {
   const webHandled = handleWebChange(target, { withActiveWebTab: deps.web.withActiveWebTab as any });
   const flowHandled = handleFlowChange(target, state as any);
-  return webHandled || flowHandled;
+  const tasksHandled = handleTasksChange(target, state as any);
+  return webHandled || flowHandled || tasksHandled;
 }
 
 export function dispatchWorkspaceToolInput(
@@ -111,11 +120,12 @@ export function dispatchWorkspaceToolInput(
   deps: WorkspaceToolDispatchDeps
 ): { handled: boolean; rerender: boolean } {
   const filesResult = handleFilesInput(target, state as any);
+  const tasksHandled = handleTasksInput(target, state as any);
   const webHandled = handleWebInput(target, state as any, { withActiveWebTab: deps.web.withActiveWebTab as any });
   const flowResult = handleFlowInput(target, state as any);
   return {
-    handled: filesResult.handled || webHandled || flowResult.handled,
-    rerender: filesResult.rerender || flowResult.rerender
+    handled: filesResult.handled || tasksHandled || webHandled || flowResult.handled,
+    rerender: filesResult.rerender || tasksHandled || flowResult.rerender
   };
 }
 

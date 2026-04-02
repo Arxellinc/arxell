@@ -49,10 +49,12 @@ export interface FilesExplorerViewState {
   loadingByPath: Record<string, boolean>;
   columnWidths?: Partial<FilesColumnWidths>;
   sidebarWidth?: number;
+  sidebarCollapsed?: boolean;
   findOpen?: boolean;
   findQuery?: string;
   replaceQuery?: string;
   findCaseSensitive?: boolean;
+  lineWrap?: boolean;
   error: string | null;
 }
 
@@ -78,6 +80,7 @@ export function renderFilesToolActions(view: FilesExplorerViewState): string {
   const activeDirty = active ? view.dirtyByPath[active] === true : false;
   const activeSaving = active ? view.savingFileByPath[active] === true : false;
   const activeReadOnly = active ? view.readOnlyByPath[active] === true : false;
+  const lineWrap = view.lineWrap === true;
   return renderToolToolbar({
     tabsMode: "dynamic",
     tabs,
@@ -110,29 +113,11 @@ export function renderFilesToolActions(view: FilesExplorerViewState): string {
         }
       },
       {
-        id: "files-close",
-        title: "Close Tab",
-        icon: "x",
-        disabled: !active,
-        buttonAttrs: {
-          [FILES_DATA_ATTR.action]: "close-active-file"
-        }
-      },
-      {
         id: "files-open",
         title: "Open File",
         icon: "folder-open",
         buttonAttrs: {
           [FILES_DATA_ATTR.action]: "open-file"
-        }
-      },
-      {
-        id: "files-copy-path",
-        title: "Copy Path",
-        icon: "copy",
-        disabled: !active,
-        buttonAttrs: {
-          [FILES_DATA_ATTR.action]: "copy-file-path"
         }
       },
       {
@@ -154,7 +139,7 @@ export function renderFilesToolActions(view: FilesExplorerViewState): string {
       },
       {
         id: "files-search",
-        title: "Search In File",
+        title: "Find / Replace",
         icon: "search",
         disabled: !active,
         buttonAttrs: {
@@ -162,12 +147,12 @@ export function renderFilesToolActions(view: FilesExplorerViewState): string {
         }
       },
       {
-        id: "files-replace",
-        title: "Find & Replace",
-        icon: "replace",
+        id: "files-wrap",
+        title: lineWrap ? "Disable line wrap (Alt+Z)" : "Enable line wrap (Alt+Z)",
+        icon: "list",
         disabled: !active,
         buttonAttrs: {
-          [FILES_DATA_ATTR.action]: "replace-in-file"
+          [FILES_DATA_ATTR.action]: "toggle-wrap"
         }
       },
       {
@@ -190,7 +175,8 @@ export function renderFilesToolBody(view: FilesExplorerViewState): string {
   const leftTree = renderTree(view, view.rootPath);
   const selectedLabel = selected || "No folder selected";
   const widths = normalizeColumnWidths(view.columnWidths);
-  const sidebarWidth = normalizeSidebarWidth(view.sidebarWidth);
+  const sidebarCollapsed = view.sidebarCollapsed === true;
+  const sidebarWidth = sidebarCollapsed ? 36 : normalizeSidebarWidth(view.sidebarWidth);
   const rootStyle = `--files-sidebar-width:${sidebarWidth}px;`;
   const gridStyle = `--files-col-name:${widths.name}px;--files-col-type:${widths.type}px;--files-col-size:${widths.size}px;--files-col-modified:${widths.modified}px;`;
   const activePath = view.activeTabPath;
@@ -198,24 +184,35 @@ export function renderFilesToolBody(view: FilesExplorerViewState): string {
   const activeLoading = activePath ? view.loadingFileByPath[activePath] === true : false;
   const activeSaving = activePath ? view.savingFileByPath[activePath] === true : false;
   const activeReadOnly = activePath ? view.readOnlyByPath[activePath] === true : false;
+  const lineWrap = view.lineWrap === true;
   const activeLineCount = Math.max(1, activeContent.split("\n").length);
   const findOpen = view.findOpen === true;
   const findQuery = view.findQuery ?? "";
   const replaceQuery = view.replaceQuery ?? "";
   const findStats = activePath ? computeFindStats(activeContent, findQuery, view.findCaseSensitive === true) : { count: 0 };
 
-  return `<div class="files-tool primary-pane-body" style="${rootStyle}">
+  return `<div class="files-tool primary-pane-body ${sidebarCollapsed ? "is-sidebar-collapsed" : ""}" style="${rootStyle}">
     <section class="files-tool-left">
-      <div class="files-tool-pane-title">Folders</div>
+      <div class="files-tool-pane-title files-tool-left-title">
+        <span class="files-tool-left-title-text">${sidebarCollapsed ? "" : "Folders"}</span>
+        <button type="button" class="files-tool-sidebar-toggle" ${FILES_DATA_ATTR.action}="toggle-sidebar-collapse" aria-label="${sidebarCollapsed ? "Expand folders sidebar" : "Collapse folders sidebar"}">${sidebarCollapsed ? "▸" : "◂"}</button>
+      </div>
       <div class="files-tool-tree">${leftTree}</div>
     </section>
     <button type="button" class="files-tool-pane-resizer" aria-label="Resize folders pane" ${FILES_DATA_ATTR.action}="resize-sidebar"></button>
     <section class="files-tool-right">
       <div class="files-tool-pane-title files-tool-right-title">
-        <span class="files-tool-breadcrumb">${escapeHtml(selectedLabel)}</span>
+        <span class="files-tool-path-cluster">
+          <span class="files-tool-breadcrumb">${escapeHtml(selectedLabel)}</span>
+          ${
+            activePath
+              ? `<button type="button" class="files-tool-path-copy-btn" ${FILES_DATA_ATTR.action}="copy-file-path" title="Copy active file path">${iconHtml("copy", { size: 16, tone: "dark" })}</button>`
+              : ""
+          }
+        </span>
         ${
           activePath
-            ? `<span class="files-tool-editor-meta">${activeReadOnly ? "read-only" : activeSaving ? "saving..." : view.dirtyByPath[activePath] ? "modified" : "saved"}</span>`
+            ? `<span class="files-tool-editor-right"><span class="files-tool-editor-meta">${activeReadOnly ? "read-only" : activeSaving ? "saving..." : view.dirtyByPath[activePath] ? "modified" : "saved"}</span></span>`
             : ""
         }
       </div>
@@ -225,6 +222,7 @@ export function renderFilesToolBody(view: FilesExplorerViewState): string {
               activePath,
               activeContent,
               lineCount: activeLineCount,
+              wrap: lineWrap,
               readOnly: activeReadOnly,
               loading: activeLoading,
               sizeBytes: view.sizeByPath[activePath] ?? 0
@@ -329,6 +327,7 @@ function renderEditorPane(input: {
   activePath: string;
   activeContent: string;
   lineCount: number;
+  wrap: boolean;
   readOnly: boolean;
   loading: boolean;
   sizeBytes: number;
@@ -344,7 +343,7 @@ function renderEditorPane(input: {
   const lineNumbers = createLineNumbers(input.lineCount);
   const highlighted = highlightCode(input.activeContent, input.activePath);
   const editorHeight = Math.max(220, input.lineCount * 20 + 20);
-  return `<div class="files-editor-panel">
+  return `<div class="files-editor-panel ${input.wrap ? "is-wrap" : ""}">
     <div class="files-editor-scroll">
       <pre class="files-editor-lines">${escapeHtml(lineNumbers)}</pre>
       <div class="files-editor-code-wrap">

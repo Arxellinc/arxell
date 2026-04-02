@@ -1,0 +1,387 @@
+.tasks-tool {
+  width: 100%;
+  max-width: 100%;
+  min-height: 0;
+  height: 100%;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(260px, 30%);
+  overflow: hidden;
+}
+
+.tasks-tool.is-details-collapsed {
+  grid-template-columns: minmax(0, 1fr) 120px;
+}
+
+.tasks-list-pane {
+  min-width: 0;
+  min-height: 0;
+  border-right: 1px solid var(--line);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.tasks-list-header,
+.tasks-row {
+  display: grid;
+  grid-template-columns: 2rem 2rem minmax(56px, 10%) minmax(84px, 14%) minmax(140px, 1fr) 100px;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+.tasks-list-header {
+  height: 32px;
+  border-bottom: 1px solid var(--line);
+  padding: 0 0.55rem;
+  position: sticky;
+  top: 0;
+  background: var(--surface-strong);
+  z-index: 1;
+}
+
+.tasks-col-head {
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  text-align: left;
+  font-size: var(--text-xs);
+  cursor: pointer;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  height: 100%;
+}
+
+.tasks-col-head.is-active {
+  color: var(--ink);
+}
+
+.tasks-col-head:hover {
+  background: var(--surface-hover);
+}
+
+.tasks-col-head-created {
+  justify-content: flex-end;
+}
+
+.tasks-col-head-check {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.2rem;
+}
+
+.tasks-col-head-star {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.2rem;
+}
+
+.tasks-col-head-checkbox {
+  color: color-mix(in oklab, var(--ink) 82%, var(--muted) 18%);
+  font-size: 0.84rem;
+  line-height: 1;
+}
+
+.tasks-col-head-star {
+  color: var(--muted);
+  font-size: 0.86rem;
+  line-height: 1;
+}
+
+.tasks-col-head-arrow {
+  color: var(--muted);
+  margin-left: 0.35rem;
+  font-size: 0.86rem;
+  line-height: 1;
+  display: inline-block;
+  vertical-align: middle;
+  transform: translateY(-3px);
+}
+
+.tasks-list-rows {
+  width: 100%;
+  min-height: 0;
+  flex: 1 1 auto;
+  overflow: auto;
+  scrollbar-gutter: stable;
+}
+
+.tasks-row {
+  border: none;
+  border-bottom: 1px solid color-mix(in oklab, var(--line) 62%, transparent 38%);
+  background: transparent;
+  color: var(--ink);
+  text-align: left;
+  min-height: 32px;
+  padding: 0 0.55rem;
+  cursor: pointer;
+}
+
+.tasks-row:hover {
+  background: var(--surface-hover);
+}
+
+.tasks-row.is-selected {
+  background: var(--active-bg);
+  box-shadow: inset 0 0 0 1px var(--active-line);
+}
+
+.tasks-cell {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--text-xs);
+}
+
+.tasks-cell-check {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-start;
+}
+
+.tasks-check-btn {
+  border: none;
+  background: transparent;
+  color: color-mix(in oklab, var(--ink) 82%, var(--muted) 18%);
+  padding: 0;
+  font-size: 0.84rem;
+  cursor: pointer;
+  line-height: 1;
+}
+
+.tasks-check-btn.is-checked {
+  color: color-mix(in oklab, var(--active-line) 60%, var(--ink) 40%);
+}
+
+.tasks-cell-star {
+  display: inline-flex;
+}
+
+.tasks-star-btn {
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  padding: 0;
+  font-size: 0.86rem;
+  cursor: pointer;
+  line-height: 1;
+}
+
+.tasks-star-btn.is-starred {
+  color: var(--ink);
+}
+
+.tasks-mono {
+  font-family: "SFMono-Regular", Menlo, Consolas, "Liberation Mono", monospace;
+}
+
+.tasks-task-name {
+  font-size: var(--text-sm);
+}
+
+.tasks-cell-created {
+  text-align: right;
+}
+
+.tasks-empty {
+  padding: 0.75rem;
+  color: var(--muted);
+  font-size: var(--text-sm);
+}
+
+.tasks-details-pane {
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: auto;
+  background: color-mix(in oklab, var(--surface-soft) 82%, var(--surface-strong) 18%);
+  scrollbar-gutter: stable;
+}
+
+@media (max-width: 1100px) {
+  .tasks-tool {
+    grid-template-columns: minmax(0, 1fr) 260px;
+  }
+}
+
+.tasks-details-pane-top {
+  height: 32px;
+  border-bottom: 1px solid var(--line);
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.35rem;
+  padding: 0 0.5rem;
+  background: color-mix(in oklab, var(--surface-soft) 76%, var(--surface-strong) 24%);
+}
+
+.tasks-details,
+.tasks-details-empty {
+  padding: 0.65rem;
+}
+
+.tasks-details-empty {
+  color: var(--muted);
+  font-size: var(--text-sm);
+}
+
+.tasks-details {
+  display: grid;
+  gap: 0.55rem;
+}
+
+.tasks-details-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 24px;
+}
+
+.tasks-details-star {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: var(--text-xs);
+}
+
+.tasks-details-meta {
+  font-size: var(--text-xs);
+  color: var(--muted);
+}
+
+.tasks-field,
+.tasks-field-grid {
+  display: grid;
+  gap: 0.22rem;
+}
+
+.tasks-field > span,
+.tasks-field-grid > span {
+  font-size: var(--text-xs);
+  color: var(--muted);
+}
+
+.tasks-field input,
+.tasks-field-grid input,
+.tasks-field-grid select,
+.tasks-field textarea {
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface-strong);
+  color: var(--ink);
+  font-size: var(--text-sm);
+  padding: 0.4rem 0.5rem;
+}
+
+.tasks-field textarea {
+  min-height: 160px;
+  resize: vertical;
+}
+
+.tasks-chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+}
+
+.tasks-chip-btn {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface-strong);
+  color: var(--ink);
+  font-size: 11px;
+  line-height: 1;
+  height: 22px;
+  padding: 0 0.55rem;
+  cursor: pointer;
+}
+
+.tasks-chip-btn:hover {
+  background: var(--surface-hover);
+}
+
+.tasks-chip-btn.is-active {
+  border-color: var(--active-line);
+  background: color-mix(in oklab, var(--active-bg) 84%, var(--surface-strong) 16%);
+  color: var(--ink);
+}
+
+.tasks-current-pill {
+  margin-top: -0.25rem;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.tasks-field-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.tasks-details-meta-block {
+  border-top: 1px solid var(--line);
+  padding-top: 0.45rem;
+  display: grid;
+  gap: 0.22rem;
+  font-size: var(--text-xs);
+  color: var(--muted);
+}
+
+.tasks-pane-btn {
+  height: 22px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: var(--surface-strong);
+  color: var(--ink);
+  font-size: var(--text-xs);
+  padding: 0 0.5rem;
+  cursor: pointer;
+}
+
+.tasks-pane-btn:hover:not(:disabled) {
+  background: var(--surface-hover);
+}
+
+.tasks-pane-btn:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.tasks-pane-icon-btn {
+  width: 24px;
+  min-width: 24px;
+  padding: 0;
+  font-size: 12px;
+  line-height: 1;
+}
+
+.tasks-json-block {
+  margin-top: 0.25rem;
+  display: grid;
+  gap: 0.2rem;
+}
+
+.tasks-json-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: var(--text-xs);
+  color: var(--muted);
+}
+
+.tasks-json {
+  margin: 0;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface-strong);
+  padding: 0.45rem 0.5rem;
+  font-family: "SFMono-Regular", Menlo, Consolas, "Liberation Mono", monospace;
+  font-size: 11px;
+  line-height: 1.35;
+  color: color-mix(in oklab, var(--ink) 86%, var(--muted) 14%);
+  min-height: 210px;
+  resize: vertical;
+}
