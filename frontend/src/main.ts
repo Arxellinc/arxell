@@ -77,6 +77,8 @@ import {
 import type { WebSearchHistoryItem, WebTabState } from "./tools/webSearch/state";
 import { loadPersistedTasksById } from "./tools/tasks/actions";
 import type { TaskFolder, TaskSortDirection, TaskSortKey, TaskRecord } from "./tools/tasks/state";
+import { DEFAULT_CREATE_TOOL_SPEC } from "./tools/createTool/state";
+import { getAllToolManifests } from "./tools/registry";
 import { renderChatMessages } from "./panels/chatPanel";
 import { APP_BUILD_VERSION, normalizeVersionLabel } from "./version";
 import {
@@ -285,6 +287,16 @@ const state: {
   tasksSortDirection: TaskSortDirection;
   tasksDetailsCollapsed: boolean;
   tasksJsonDraft: string;
+  createToolSpec: typeof DEFAULT_CREATE_TOOL_SPEC;
+  createToolWorkspaceRoot: string;
+  createToolPreviewFiles: Record<string, string>;
+  createToolPreviewOrder: string[];
+  createToolSelectedPreviewPath: string;
+  createToolValidationErrors: string[];
+  createToolValidationWarnings: string[];
+  createToolStatusMessage: string | null;
+  createToolLastResultJson: string;
+  createToolBusy: boolean;
   flowRuns: FlowRunView[];
   flowActiveRunId: string | null;
   flowMode: "plan" | "build";
@@ -445,6 +457,16 @@ const state: {
   tasksSortDirection: "desc",
   tasksDetailsCollapsed: false,
   tasksJsonDraft: "",
+  createToolSpec: { ...DEFAULT_CREATE_TOOL_SPEC },
+  createToolWorkspaceRoot: "",
+  createToolPreviewFiles: {},
+  createToolPreviewOrder: [],
+  createToolSelectedPreviewPath: "",
+  createToolValidationErrors: [],
+  createToolValidationWarnings: [],
+  createToolStatusMessage: null,
+  createToolLastResultJson: "",
+  createToolBusy: false,
   flowRuns: [],
   flowActiveRunId: null,
   flowMode: "plan",
@@ -926,6 +948,16 @@ function render(): void {
     tasksSortDirection: state.tasksSortDirection,
     tasksDetailsCollapsed: state.tasksDetailsCollapsed,
     tasksJsonDraft: state.tasksJsonDraft,
+    createToolSpec: state.createToolSpec,
+    createToolWorkspaceRoot: state.createToolWorkspaceRoot,
+    createToolPreviewFiles: state.createToolPreviewFiles,
+    createToolPreviewOrder: state.createToolPreviewOrder,
+    createToolSelectedPreviewPath: state.createToolSelectedPreviewPath,
+    createToolValidationErrors: state.createToolValidationErrors,
+    createToolValidationWarnings: state.createToolValidationWarnings,
+    createToolStatusMessage: state.createToolStatusMessage,
+    createToolLastResultJson: state.createToolLastResultJson,
+    createToolBusy: state.createToolBusy,
     flowRuns: state.flowRuns,
     flowActiveRunId: state.flowActiveRunId,
     flowMode: state.flowMode,
@@ -1541,7 +1573,23 @@ async function loadConversation(conversationId: string): Promise<void> {
 async function refreshTools(): Promise<void> {
   if (!clientRef) return;
   const response = await clientRef.listWorkspaceTools({ correlationId: nextCorrelationId() });
-  state.workspaceTools = response.tools;
+  const byId = new Map(response.tools.map((tool) => [tool.toolId, tool]));
+  for (const manifest of getAllToolManifests()) {
+    if (byId.has(manifest.id)) continue;
+    byId.set(manifest.id, {
+      toolId: manifest.id,
+      title: manifest.title,
+      description: manifest.description,
+      category: manifest.category,
+      core: manifest.core,
+      optional: !manifest.core,
+      version: manifest.version,
+      source: manifest.source,
+      enabled: manifest.defaultEnabled,
+      status: manifest.defaultEnabled ? "ready" : "disabled"
+    });
+  }
+  state.workspaceTools = Array.from(byId.values()).sort((a, b) => a.toolId.localeCompare(b.toolId));
 }
 
 async function refreshFlowRuns(): Promise<void> {
@@ -1562,6 +1610,7 @@ const workspaceToolsRuntime = createWorkspaceToolsRuntime(state, {
   getClient: () => clientRef,
   nextCorrelationId,
   refreshFlowRuns,
+  refreshTools,
   refreshApiConnections,
   createWebTab,
   persistWebSearchHistory
@@ -3060,6 +3109,10 @@ function attachWorkspaceInteractions(sendMessage: (text: string) => Promise<void
         persistWebSearchHistory,
         withActiveWebTab: workspaceToolsRuntime.withActiveWebTab,
         saveWebSearchSetup: workspaceToolsRuntime.saveWebSearchSetup
+      },
+      createTool: {
+        createScaffold: workspaceToolsRuntime.createToolScaffold,
+        registerTool: workspaceToolsRuntime.registerCreateToolInWorkspace
       }
     };
     workspacePane.onclick = async (event) => {

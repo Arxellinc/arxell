@@ -5,6 +5,8 @@ import { renderFlowToolActions, renderFlowToolBody } from "../flow";
 import type { FlowRunView } from "../flow/state";
 import { renderMemoryToolActions, renderMemoryToolBody } from "../memory";
 import { renderSkillsToolActions, renderSkillsToolBody } from "../skills";
+import { renderCreateToolActions, renderCreateToolBody } from "../createTool";
+import type { CreateToolRuntimeSlice } from "../createTool/state";
 import { renderTasksToolActions, renderTasksToolBody } from "../tasks";
 import type { TaskFolder, TaskSortDirection, TaskSortKey, TaskRecord } from "../tasks/state";
 import { renderWebToolActions, renderWebToolBody } from "../webSearch";
@@ -57,6 +59,16 @@ export interface WorkspaceToolViewInput {
   tasksSortDirection: TaskSortDirection;
   tasksDetailsCollapsed: boolean;
   tasksJsonDraft: string;
+  createToolSpec: CreateToolRuntimeSlice["createToolSpec"];
+  createToolWorkspaceRoot: string;
+  createToolPreviewFiles: Record<string, string>;
+  createToolPreviewOrder: string[];
+  createToolSelectedPreviewPath: string;
+  createToolValidationErrors: string[];
+  createToolValidationWarnings: string[];
+  createToolStatusMessage: string | null;
+  createToolLastResultJson: string;
+  createToolBusy: boolean;
   flowRuns: FlowRunView[];
   flowActiveRunId: string | null;
   flowMode: "plan" | "build";
@@ -221,6 +233,32 @@ export function buildWorkspaceToolViews(input: WorkspaceToolViewInput): Record<s
         sortDirection: input.tasksSortDirection,
         detailsCollapsed: input.tasksDetailsCollapsed,
         jsonDraft: input.tasksJsonDraft
+      })
+    },
+    createTool: {
+      actionsHtml: renderCreateToolActions({
+        createToolSpec: input.createToolSpec,
+        createToolWorkspaceRoot: input.createToolWorkspaceRoot,
+        createToolPreviewFiles: input.createToolPreviewFiles,
+        createToolPreviewOrder: input.createToolPreviewOrder,
+        createToolSelectedPreviewPath: input.createToolSelectedPreviewPath,
+        createToolValidationErrors: input.createToolValidationErrors,
+        createToolValidationWarnings: input.createToolValidationWarnings,
+        createToolStatusMessage: input.createToolStatusMessage,
+        createToolLastResultJson: input.createToolLastResultJson,
+        createToolBusy: input.createToolBusy
+      }),
+      bodyHtml: renderCreateToolBody({
+        createToolSpec: input.createToolSpec,
+        createToolWorkspaceRoot: input.createToolWorkspaceRoot,
+        createToolPreviewFiles: input.createToolPreviewFiles,
+        createToolPreviewOrder: input.createToolPreviewOrder,
+        createToolSelectedPreviewPath: input.createToolSelectedPreviewPath,
+        createToolValidationErrors: input.createToolValidationErrors,
+        createToolValidationWarnings: input.createToolValidationWarnings,
+        createToolStatusMessage: input.createToolStatusMessage,
+        createToolLastResultJson: input.createToolLastResultJson,
+        createToolBusy: input.createToolBusy
       })
     },
     memory: {

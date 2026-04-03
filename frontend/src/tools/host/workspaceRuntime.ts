@@ -33,6 +33,11 @@ import {
   withActiveWebTab
 } from "../webSearch/actions";
 import type { WebSearchHistoryItem, WebSearchSlice, WebTabState } from "../webSearch/state";
+import {
+  createToolScaffold,
+  registerCreateToolInWorkspace
+} from "../createTool/actions";
+import type { CreateToolRuntimeSlice } from "../createTool/state";
 
 interface FilesRuntimeSlice {
   filesRootPath: string | null;
@@ -58,7 +63,8 @@ interface FilesRuntimeSlice {
 export interface WorkspaceToolsRuntimeState
   extends FlowRuntimeSlice,
     FilesRuntimeSlice,
-    Omit<WebSearchSlice, "apiConnections"> {
+    Omit<WebSearchSlice, "apiConnections">,
+    CreateToolRuntimeSlice {
   apiConnections: ApiConnectionRecord[];
 }
 
@@ -66,6 +72,7 @@ export interface WorkspaceToolsRuntimeDeps {
   getClient: () => ChatIpcClient | null;
   nextCorrelationId: () => string;
   refreshFlowRuns: () => Promise<void>;
+  refreshTools: () => Promise<void>;
   refreshApiConnections: () => Promise<void>;
   createWebTab: (index: number) => WebTabState;
   persistWebSearchHistory: (entries: WebSearchHistoryItem[]) => void;
@@ -97,6 +104,8 @@ export interface WorkspaceToolsRuntime {
   createAndActivateWebTab: () => void;
   runWebSearch: () => Promise<void>;
   saveWebSearchSetup: () => Promise<void>;
+  createToolScaffold: () => Promise<void>;
+  registerCreateToolInWorkspace: () => Promise<void>;
 }
 
 export function createWorkspaceToolsRuntime(
@@ -199,6 +208,20 @@ export function createWorkspaceToolsRuntime(
     },
     saveWebSearchSetup: async () => {
       await saveWebSearchSetup(state, webDeps);
+    },
+    createToolScaffold: async () => {
+      await createToolScaffold(state, {
+        client: deps.getClient(),
+        nextCorrelationId: deps.nextCorrelationId,
+        refreshTools: deps.refreshTools
+      });
+    },
+    registerCreateToolInWorkspace: async () => {
+      await registerCreateToolInWorkspace(state, {
+        client: deps.getClient(),
+        nextCorrelationId: deps.nextCorrelationId,
+        refreshTools: deps.refreshTools
+      });
     }
   };
 }

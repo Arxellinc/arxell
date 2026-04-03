@@ -59,6 +59,14 @@ const WORKSPACE_TOOL_MANIFESTS: &[WorkspaceToolManifest] = &[
         default_enabled: true,
     },
     WorkspaceToolManifest {
+        tool_id: "createTool",
+        title: "Create Tool",
+        description: "Scaffold and register custom workspace tools",
+        category: "workspace",
+        core: false,
+        default_enabled: true,
+    },
+    WorkspaceToolManifest {
         tool_id: "memory",
         title: "Memory",
         description: "Persistent context and memory references",

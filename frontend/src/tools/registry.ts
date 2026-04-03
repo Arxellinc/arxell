@@ -45,6 +45,7 @@ const PREFERRED_TOOL_ORDER = [
   "webSearch",
   "flow",
   "tasks",
+  "createTool",
   "memory",
   "skills"
 ] as const;

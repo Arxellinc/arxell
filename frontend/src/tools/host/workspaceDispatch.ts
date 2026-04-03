@@ -13,6 +13,11 @@ import {
   handleWebKeyDown,
   handleWebSubmit
 } from "../webSearch/bindings";
+import {
+  handleCreateToolChange,
+  handleCreateToolClick,
+  handleCreateToolInput
+} from "../createTool/bindings";
 import { handleTasksChange, handleTasksClick, handleTasksInput } from "../tasks/bindings";
 import {
   FILES_DATA_ATTR,
@@ -46,6 +51,9 @@ export const WORKSPACE_TOOL_TARGET_SELECTOR = [
   `[${TASKS_DATA_ATTR.action}]`,
   `[${TASKS_DATA_ATTR.taskId}]`,
   `[${TASKS_DATA_ATTR.field}]`,
+  "[data-create-tool-action]",
+  "[data-create-tool-field]",
+  "[data-create-tool-guard]",
   `[${FLOW_DATA_ATTR.action}]`,
   `[${FLOW_DATA_ATTR.runId}]`
 ].join(", ");
@@ -81,6 +89,10 @@ export interface WorkspaceToolDispatchDeps {
     withActiveWebTab: (mutator: any) => void;
     saveWebSearchSetup: () => Promise<void>;
   };
+  createTool: {
+    createScaffold: () => Promise<void>;
+    registerTool: () => Promise<void>;
+  };
 }
 
 export async function dispatchWorkspaceToolClick(
@@ -97,6 +109,9 @@ export async function dispatchWorkspaceToolClick(
   if (await handleTasksClick(target, state as any)) {
     return true;
   }
+  if (await handleCreateToolClick(target, state as any, deps as any)) {
+    return true;
+  }
   if (await handleWebClick(target, state as any, deps.web as any)) {
     return true;
   }
@@ -111,7 +126,8 @@ export function dispatchWorkspaceToolChange(
   const webHandled = handleWebChange(target, { withActiveWebTab: deps.web.withActiveWebTab as any });
   const flowHandled = handleFlowChange(target, state as any);
   const tasksHandled = handleTasksChange(target, state as any);
-  return webHandled || flowHandled || tasksHandled;
+  const createToolHandled = handleCreateToolChange(target, state as any);
+  return webHandled || flowHandled || tasksHandled || createToolHandled;
 }
 
 export function dispatchWorkspaceToolInput(
@@ -121,11 +137,12 @@ export function dispatchWorkspaceToolInput(
 ): { handled: boolean; rerender: boolean } {
   const filesResult = handleFilesInput(target, state as any);
   const tasksHandled = handleTasksInput(target, state as any);
+  const createToolHandled = handleCreateToolInput(target, state as any);
   const webHandled = handleWebInput(target, state as any, { withActiveWebTab: deps.web.withActiveWebTab as any });
   const flowResult = handleFlowInput(target, state as any);
   return {
-    handled: filesResult.handled || tasksHandled || webHandled || flowResult.handled,
-    rerender: filesResult.rerender || tasksHandled || flowResult.rerender
+    handled: filesResult.handled || tasksHandled || createToolHandled || webHandled || flowResult.handled,
+    rerender: filesResult.rerender || tasksHandled || createToolHandled || flowResult.rerender
   };
 }
 
