@@ -48,6 +48,7 @@ export function renderWorkspaceToolsBody(tools: WorkspaceToolRecord[]): string {
     <div class="tool-header-cell tool-header-status">Status</div>
     <div class="tool-header-cell tool-header-enabled">Enabled</div>
     <div class="tool-header-cell tool-header-agent">Agent</div>
+    <div class="tool-header-cell tool-header-actions">Actions</div>
   </div>`;
 
   const dedupedTools = new Map<string, WorkspaceToolRecord>();
@@ -67,6 +68,9 @@ export function renderWorkspaceToolsBody(tools: WorkspaceToolRecord[]): string {
       const category = tool.category || manifest?.category || "workspace";
       const scopeLabel = tool.core ? "core" : "optional";
       const isAgent = category === "agent";
+      const showActions = isUserTool(tool);
+      const exportButton = `<button type="button" class="tool-row-action" ${MANAGER_DATA_ATTR.action}="export-tool" ${MANAGER_DATA_ATTR.actionToolId}="${escapeHtml(tool.toolId)}" title="Export tool" aria-label="Export ${escapeHtml(tool.toolId)}">${iconHtml("file-output", { size: 16, tone: "dark" })}</button>`;
+      const deleteButton = `<button type="button" class="tool-row-action is-danger" ${MANAGER_DATA_ATTR.action}="delete-tool" ${MANAGER_DATA_ATTR.actionToolId}="${escapeHtml(tool.toolId)}" title="Remove tool" aria-label="Remove ${escapeHtml(tool.toolId)}">${iconHtml("trash-2", { size: 16, tone: "dark" })}</button>`;
       return `<div class="tool-row">
         <div class="tool-cell tool-cell-icon">
           <span class="tool-row-icon">${iconHtml(icon, { size: 16, tone: "dark" })}</span>
@@ -93,6 +97,9 @@ export function renderWorkspaceToolsBody(tools: WorkspaceToolRecord[]): string {
         <div class="tool-cell tool-cell-agent">
           ${isAgent ? `<input type="checkbox" class="tool-agent-checkbox" ${MANAGER_DATA_ATTR.toggleToolId}="${escapeHtml(tool.toolId)}" data-workspace-tool-enable="true" ${tool.enabled ? "checked" : ""} aria-label="Enable agent tool">` : ''}
         </div>
+        <div class="tool-cell tool-cell-actions">
+          ${showActions ? `${exportButton}${deleteButton}` : ""}
+        </div>
       </div>`;
     })
     .join("");
@@ -100,6 +107,22 @@ export function renderWorkspaceToolsBody(tools: WorkspaceToolRecord[]): string {
   const rows = toolRows || '<div class="history-empty">No tools available</div>';
 
   return `<div class="tools-table primary-pane-body">${header}${rows}</div>`;
+}
+
+function isUserTool(tool: WorkspaceToolRecord): boolean {
+  const protectedIds = new Set([
+    "terminal",
+    "files",
+    "webSearch",
+    "flow",
+    "tasks",
+    "createTool",
+    "memory",
+    "skills"
+  ]);
+  if (protectedIds.has(tool.toolId)) return false;
+  if (tool.core) return false;
+  return true;
 }
 
 function toolIcon(toolId: string, manifestIcon?: IconName): IconName {

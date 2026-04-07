@@ -23,6 +23,7 @@ import {
   FILES_DATA_ATTR,
   FILES_UI_ID,
   FLOW_DATA_ATTR,
+  MANAGER_DATA_ATTR,
   MANAGER_UI_ID,
   TASKS_DATA_ATTR,
   TERMINAL_DATA_ATTR,
@@ -30,6 +31,7 @@ import {
   WEB_DATA_ATTR,
   WORKSPACE_DATA_ATTR
 } from "../ui/constants";
+import type { CreateToolPrdSection } from "../createTool/state";
 import type { FlowRunView, FlowRuntimeSlice } from "../flow/state";
 export type WorkspaceToolState = FlowRuntimeSlice & Record<string, unknown>;
 
@@ -43,6 +45,7 @@ export const WORKSPACE_TOOL_TARGET_SELECTOR = [
   `#${MANAGER_UI_ID.refreshToolsButton}`,
   `#${MANAGER_UI_ID.exportToolsButton}`,
   `#${MANAGER_UI_ID.importToolsButton}`,
+  `[${MANAGER_DATA_ATTR.action}]`,
   `[${WEB_DATA_ATTR.action}]`,
   `[${WEB_DATA_ATTR.tabId}]`,
   `[${FILES_DATA_ATTR.action}]`,
@@ -91,6 +94,11 @@ export interface WorkspaceToolDispatchDeps {
   };
   createTool: {
     createScaffold: () => Promise<void>;
+    browseIcons: () => Promise<void>;
+    generatePrd: () => Promise<void>;
+    generatePrdSection: (section: CreateToolPrdSection, onUpdate?: () => void) => Promise<void>;
+    runPrdReview: () => Promise<void>;
+    generateDevPlan: () => Promise<void>;
     registerTool: () => Promise<void>;
   };
 }
@@ -137,12 +145,21 @@ export function dispatchWorkspaceToolInput(
 ): { handled: boolean; rerender: boolean } {
   const filesResult = handleFilesInput(target, state as any);
   const tasksHandled = handleTasksInput(target, state as any);
-  const createToolHandled = handleCreateToolInput(target, state as any);
+  const createToolResult = handleCreateToolInput(target, state as any);
   const webHandled = handleWebInput(target, state as any, { withActiveWebTab: deps.web.withActiveWebTab as any });
   const flowResult = handleFlowInput(target, state as any);
   return {
-    handled: filesResult.handled || tasksHandled || createToolHandled || webHandled || flowResult.handled,
-    rerender: filesResult.rerender || tasksHandled || createToolHandled || flowResult.rerender
+    handled:
+      filesResult.handled ||
+      tasksHandled ||
+      createToolResult.handled ||
+      webHandled ||
+      flowResult.handled,
+    rerender:
+      filesResult.rerender ||
+      tasksHandled ||
+      createToolResult.rerender ||
+      flowResult.rerender
   };
 }
 

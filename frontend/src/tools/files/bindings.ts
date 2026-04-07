@@ -27,6 +27,8 @@ const FILES_COLUMN_MIN_WIDTHS: FilesColumnWidths = {
 
 interface FilesSlice {
   filesRootPath: string | null;
+  filesScopeRootPath?: string | null;
+  filesRootSelectorOpen?: boolean;
   filesSelectedPath: string | null;
   filesSelectedEntryPath?: string | null;
   filesExpandedByPath: Record<string, boolean>;
@@ -68,6 +70,14 @@ export async function handleFilesClick(
   slice: FilesSlice,
   deps: FilesDeps
 ): Promise<boolean> {
+  if (
+    slice.filesRootSelectorOpen &&
+    !target.closest(".files-root-selector") &&
+    target.closest(".files-tool")
+  ) {
+    slice.filesRootSelectorOpen = false;
+  }
+
   if (target.id === FILES_UI_ID.refreshButton) {
     const selected = slice.filesSelectedPath || slice.filesRootPath || undefined;
     await deps.listFilesDirectory(selected);
@@ -210,6 +220,32 @@ export async function handleFilesClick(
   }
   if (filesAction === "toggle-wrap") {
     slice.filesLineWrap = slice.filesLineWrap !== true;
+    return true;
+  }
+  if (filesAction === "toggle-root-selector") {
+    slice.filesRootSelectorOpen = slice.filesRootSelectorOpen !== true;
+    if (slice.filesRootSelectorOpen) {
+      await preloadRootPickerTree(slice, deps);
+    }
+    return true;
+  }
+  if (filesAction === "root-tree-toggle" && filesPath) {
+    await deps.toggleFilesNode(filesPath);
+    return true;
+  }
+  if (filesAction === "root-tree-select" && filesPath) {
+    const requested = filesPath.trim();
+    if (!requested) return true;
+    if (hasUnsavedTabs(slice)) {
+      const confirmed = window.confirm(
+        "You have unsaved file changes. Switch root directory anyway?"
+      );
+      if (!confirmed) return true;
+    }
+    slice.filesScopeRootPath = requested;
+    slice.filesRootSelectorOpen = false;
+    slice.filesSelectedEntryPath = null;
+    await deps.selectFilesPath(requested);
     return true;
   }
   if (filesAction === "refresh") {
@@ -371,7 +407,6 @@ export async function handleFilesKeyDown(
   const replaceInput = (event.target as HTMLElement | null)?.closest<HTMLInputElement>(
     `[${FILES_DATA_ATTR.action}="replace-query-input"]`
   );
-
   if (!editorInput) {
     if (slice.filesFindOpen && event.key === "Escape") {
       slice.filesFindOpen = false;
@@ -840,4 +875,41 @@ async function pickSaveFilePath(defaultPath: string, title = "Save File As"): Pr
   }
   const entered = window.prompt(title, defaultPath)?.trim();
   return entered || null;
+}
+
+function hasUnsavedTabs(slice: FilesSlice): boolean {
+  return slice.filesOpenTabs.some((path) => slice.filesDirtyByPath[path] === true);
+}
+
+async function preloadRootPickerTree(slice: FilesSlice, deps: FilesDeps): Promise<void> {
+  const root = slice.filesRootPath?.trim();
+  if (!root) return;
+  await ensurePathListed(root, slice, deps);
+  const plugins = findChildDirPath(slice, root, "plugins");
+  const frontend = findChildDirPath(slice, root, "frontend");
+  if (plugins) {
+    await ensurePathListed(plugins, slice, deps);
+  }
+  if (frontend) {
+    await ensurePathListed(frontend, slice, deps);
+    const src = findChildDirPath(slice, frontend, "src");
+    if (src) {
+      await ensurePathListed(src, slice, deps);
+      const tools = findChildDirPath(slice, src, "tools");
+      if (tools) {
+        await ensurePathListed(tools, slice, deps);
+      }
+    }
+  }
+}
+
+async function ensurePathListed(path: string, slice: FilesSlice, deps: FilesDeps): Promise<void> {
+  if (slice.filesEntriesByPath[path]) return;
+  await deps.listFilesDirectory(path);
+}
+
+function findChildDirPath(slice: FilesSlice, parentPath: string, name: string): string | null {
+  const entries = slice.filesEntriesByPath[parentPath] ?? [];
+  const match = entries.find((entry) => entry.isDir && entry.name.toLowerCase() === name.toLowerCase());
+  return match?.path ?? null;
 }

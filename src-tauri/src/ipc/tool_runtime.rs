@@ -93,8 +93,8 @@ where
         }),
     ));
 
-    let payload =
-        serde_json::to_value(request).map_err(|e| format!("failed serializing tool payload: {e}"))?;
+    let payload = serde_json::to_value(request)
+        .map_err(|e| format!("failed serializing tool payload: {e}"))?;
     let response = invoke_tool(
         state,
         ToolInvokeRequest {

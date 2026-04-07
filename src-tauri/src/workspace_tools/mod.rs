@@ -1,8 +1,8 @@
 use crate::contracts::WorkspaceToolRecord;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::RwLock;
 
 const TOOL_REGISTRY_ENV_PATH: &str = "ARXELL_TOOL_REGISTRY_PATH";
@@ -90,15 +90,48 @@ struct ToolRegistrySnapshot {
     enabled: HashMap<String, bool>,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PluginManifest {
+    id: String,
+    name: String,
+    version: String,
+    entry: String,
+    category: Option<String>,
+    min_host_version: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PluginPermissions {
+    capabilities: Vec<String>,
+}
+
+#[derive(Debug, Clone)]
+struct PluginDiscovery {
+    manifest: PluginManifest,
+    permissions: PluginPermissions,
+    entry_path: PathBuf,
+}
+
+struct WorkspaceToolsState {
+    tools: HashMap<String, WorkspaceToolRecord>,
+    plugin_ids: HashSet<String>,
+    plugin_capabilities: HashMap<String, HashSet<String>>,
+}
+
 pub struct WorkspaceToolsService {
-    tools: RwLock<HashMap<String, WorkspaceToolRecord>>,
+    state: RwLock<WorkspaceToolsState>,
     registry_path: PathBuf,
+    plugins_root: PathBuf,
 }
 
 impl WorkspaceToolsService {
     pub fn new() -> Self {
         let registry_path = default_registry_path();
         let snapshot = read_registry_snapshot(&registry_path);
+        let plugins_root = default_plugins_root();
+
         let mut tools = HashMap::new();
         for manifest in WORKSPACE_TOOL_MANIFESTS {
             let enabled = snapshot
@@ -119,36 +152,88 @@ impl WorkspaceToolsService {
                     source: "builtin".to_string(),
                     enabled,
                     status: status_for_enabled(enabled).to_string(),
+                    entry: None,
                 },
             );
         }
+
+        let mut state = WorkspaceToolsState {
+            tools,
+            plugin_ids: HashSet::new(),
+            plugin_capabilities: HashMap::new(),
+        };
+        apply_plugins(&mut state, &plugins_root, &snapshot);
+
         Self {
-            tools: RwLock::new(tools),
+            state: RwLock::new(state),
             registry_path,
+            plugins_root,
         }
     }
 
     pub fn list(&self) -> Vec<WorkspaceToolRecord> {
-        let tools = self.tools.read().expect("workspace tools lock poisoned");
-        let mut records: Vec<_> = tools.values().cloned().collect();
+        let mut state = self.state.write().expect("workspace tools lock poisoned");
+        let snapshot = read_registry_snapshot(&self.registry_path);
+        apply_plugins(&mut state, &self.plugins_root, &snapshot);
+
+        let mut records: Vec<_> = state.tools.values().cloned().collect();
         records.sort_by(|a, b| a.tool_id.cmp(&b.tool_id));
         records
     }
 
     pub fn set_enabled(&self, tool_id: &str, enabled: bool) -> Result<(), String> {
-        let mut tools = self.tools.write().expect("workspace tools lock poisoned");
-        let Some(tool) = tools.get_mut(tool_id) else {
+        let mut state = self.state.write().expect("workspace tools lock poisoned");
+        let snapshot = read_registry_snapshot(&self.registry_path);
+        apply_plugins(&mut state, &self.plugins_root, &snapshot);
+        let Some(tool) = state.tools.get_mut(tool_id) else {
             return Err(format!("workspace tool not found: {tool_id}"));
         };
         tool.enabled = enabled;
         tool.status = status_for_enabled(enabled).to_string();
-        self.persist_snapshot(&tools)?;
+        self.persist_snapshot(&state.tools)?;
         Ok(())
     }
 
+    pub fn ensure_custom_tool_capability(
+        &self,
+        custom_tool_id: &str,
+        capability: &str,
+    ) -> Result<(), String> {
+        let mut state = self.state.write().expect("workspace tools lock poisoned");
+        let snapshot = read_registry_snapshot(&self.registry_path);
+        apply_plugins(&mut state, &self.plugins_root, &snapshot);
+
+        let Some(tool) = state.tools.get(custom_tool_id) else {
+            return Err("plugin_not_found".to_string());
+        };
+        if tool.source != "custom" && tool.source != "plugin" {
+            return Err("plugin_not_found".to_string());
+        }
+        if !tool.enabled {
+            return Err("plugin_disabled".to_string());
+        }
+
+        let Some(capabilities) = state.plugin_capabilities.get(custom_tool_id) else {
+            return Err("plugin_permissions_missing".to_string());
+        };
+        if !capabilities.contains(capability) {
+            return Err("capability_denied".to_string());
+        }
+        Ok(())
+    }
+
+    pub fn ensure_plugin_capability(
+        &self,
+        plugin_id: &str,
+        capability: &str,
+    ) -> Result<(), String> {
+        self.ensure_custom_tool_capability(plugin_id, capability)
+    }
+
     pub fn export_snapshot_json(&self) -> Result<String, String> {
-        let tools = self.tools.read().expect("workspace tools lock poisoned");
-        let enabled = tools
+        let state = self.state.read().expect("workspace tools lock poisoned");
+        let enabled = state
+            .tools
             .iter()
             .map(|(tool_id, tool)| (tool_id.clone(), tool.enabled))
             .collect::<HashMap<_, _>>();
@@ -167,14 +252,14 @@ impl WorkspaceToolsService {
     ) -> Result<Vec<WorkspaceToolRecord>, String> {
         let parsed = serde_json::from_str::<ToolRegistrySnapshot>(snapshot_json)
             .map_err(|e| format!("invalid tool registry import payload: {e}"))?;
-        let mut tools = self.tools.write().expect("workspace tools lock poisoned");
-        for (tool_id, tool) in tools.iter_mut() {
+        let mut state = self.state.write().expect("workspace tools lock poisoned");
+        for (tool_id, tool) in state.tools.iter_mut() {
             let enabled = parsed.enabled.get(tool_id).copied().unwrap_or(tool.enabled);
             tool.enabled = enabled;
             tool.status = status_for_enabled(enabled).to_string();
         }
-        self.persist_snapshot(&tools)?;
-        let mut records: Vec<_> = tools.values().cloned().collect();
+        self.persist_snapshot(&state.tools)?;
+        let mut records: Vec<_> = state.tools.values().cloned().collect();
         records.sort_by(|a, b| a.tool_id.cmp(&b.tool_id));
         Ok(records)
     }
@@ -218,6 +303,139 @@ fn status_for_enabled(enabled: bool) -> &'static str {
     }
 }
 
+fn apply_plugins(
+    state: &mut WorkspaceToolsState,
+    plugins_root: &Path,
+    snapshot: &ToolRegistrySnapshot,
+) {
+    for plugin_id in state.plugin_ids.iter() {
+        state.tools.remove(plugin_id.as_str());
+    }
+    state.plugin_ids.clear();
+    state.plugin_capabilities.clear();
+
+    let builtins: HashSet<&str> = WORKSPACE_TOOL_MANIFESTS.iter().map(|m| m.tool_id).collect();
+    for plugin in discover_plugins(plugins_root) {
+        let plugin_id = plugin.manifest.id.trim().to_string();
+        if plugin_id.is_empty() || builtins.contains(plugin_id.as_str()) {
+            continue;
+        }
+
+        let enabled = snapshot
+            .enabled
+            .get(plugin_id.as_str())
+            .copied()
+            .unwrap_or(true);
+        let category = normalize_category(plugin.manifest.category.as_deref());
+        let capabilities = plugin
+            .permissions
+            .capabilities
+            .iter()
+            .map(|item| item.trim().to_string())
+            .filter(|item| !item.is_empty())
+            .collect::<HashSet<_>>();
+        let mut description = format!("Custom tool ({})", plugin_id);
+        if !capabilities.is_empty() {
+            let mut sorted = capabilities.iter().cloned().collect::<Vec<_>>();
+            sorted.sort();
+            description = format!("{description}; capabilities {}", sorted.join(","));
+        }
+        if let Some(min_host) = plugin.manifest.min_host_version.as_ref() {
+            if !min_host.trim().is_empty() {
+                description = format!("{description}; minHostVersion {min_host}");
+            }
+        }
+
+        state.tools.insert(
+            plugin_id.clone(),
+            WorkspaceToolRecord {
+                tool_id: plugin_id.clone(),
+                title: plugin.manifest.name,
+                description,
+                category: category.to_string(),
+                core: false,
+                optional: true,
+                version: plugin.manifest.version,
+                source: "custom".to_string(),
+                enabled,
+                status: status_for_enabled(enabled).to_string(),
+                entry: Some(path_to_string(plugin.entry_path.as_path())),
+            },
+        );
+        state.plugin_ids.insert(plugin_id);
+        state
+            .plugin_capabilities
+            .insert(plugin.manifest.id.trim().to_string(), capabilities);
+    }
+}
+
+fn discover_plugins(root: &Path) -> Vec<PluginDiscovery> {
+    let read_dir = match fs::read_dir(root) {
+        Ok(dir) => dir,
+        Err(_) => return Vec::new(),
+    };
+
+    let mut discovered = Vec::new();
+    for entry in read_dir {
+        let entry = match entry {
+            Ok(value) => value,
+            Err(_) => continue,
+        };
+        let plugin_dir = entry.path();
+        if !plugin_dir.is_dir() {
+            continue;
+        }
+
+        let manifest_path = plugin_dir.join("manifest.json");
+        let manifest_raw = match fs::read_to_string(&manifest_path) {
+            Ok(raw) => raw,
+            Err(_) => continue,
+        };
+        let manifest = match serde_json::from_str::<PluginManifest>(&manifest_raw) {
+            Ok(parsed) => parsed,
+            Err(_) => continue,
+        };
+        let permissions_path = plugin_dir.join("permissions.json");
+        let permissions_raw = match fs::read_to_string(&permissions_path) {
+            Ok(raw) => raw,
+            Err(_) => continue,
+        };
+        let permissions = match serde_json::from_str::<PluginPermissions>(&permissions_raw) {
+            Ok(parsed) => parsed,
+            Err(_) => continue,
+        };
+
+        let entry_rel = manifest.entry.trim();
+        if entry_rel.is_empty() {
+            continue;
+        }
+        let entry_path = plugin_dir.join(entry_rel);
+        if !entry_path.is_file() {
+            continue;
+        }
+
+        discovered.push(PluginDiscovery {
+            manifest,
+            permissions,
+            entry_path,
+        });
+    }
+
+    discovered
+}
+
+fn normalize_category(input: Option<&str>) -> &'static str {
+    match input.unwrap_or("workspace").trim() {
+        "workspace" => "workspace",
+        "agent" => "agent",
+        "models" => "models",
+        "data" => "data",
+        "media" => "media",
+        "ops" => "ops",
+        _ => "workspace",
+    }
+}
+
 fn default_registry_path() -> PathBuf {
     if let Ok(raw) = std::env::var(TOOL_REGISTRY_ENV_PATH) {
         let trimmed = raw.trim();
@@ -225,9 +443,62 @@ fn default_registry_path() -> PathBuf {
             return PathBuf::from(trimmed);
         }
     }
-    std::env::temp_dir()
-        .join("arxell-lite")
-        .join("tools-registry.json")
+
+    default_app_state_root().join("tools-registry.json")
+}
+
+fn default_plugins_root() -> PathBuf {
+    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let workspace_root = if cwd.ends_with("src-tauri") {
+        cwd.parent().unwrap_or(cwd.as_path()).to_path_buf()
+    } else {
+        cwd
+    };
+    workspace_root.join("plugins")
+}
+
+fn default_app_state_root() -> PathBuf {
+    #[cfg(target_os = "windows")]
+    {
+        if let Ok(appdata) = std::env::var("APPDATA") {
+            let trimmed = appdata.trim();
+            if !trimmed.is_empty() {
+                return PathBuf::from(trimmed).join("arxell-lite");
+            }
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        if let Ok(home) = std::env::var("HOME") {
+            let trimmed = home.trim();
+            if !trimmed.is_empty() {
+                return PathBuf::from(trimmed)
+                    .join("Library")
+                    .join("Application Support")
+                    .join("arxell-lite");
+            }
+        }
+    }
+
+    if let Ok(xdg_state_home) = std::env::var("XDG_STATE_HOME") {
+        let trimmed = xdg_state_home.trim();
+        if !trimmed.is_empty() {
+            return PathBuf::from(trimmed).join("arxell-lite");
+        }
+    }
+
+    if let Ok(home) = std::env::var("HOME") {
+        let trimmed = home.trim();
+        if !trimmed.is_empty() {
+            return PathBuf::from(trimmed)
+                .join(".local")
+                .join("state")
+                .join("arxell-lite");
+        }
+    }
+
+    std::env::temp_dir().join("arxell-lite")
 }
 
 fn read_registry_snapshot(path: &PathBuf) -> ToolRegistrySnapshot {
@@ -244,4 +515,8 @@ fn read_registry_snapshot(path: &PathBuf) -> ToolRegistrySnapshot {
         };
     };
     parsed
+}
+
+fn path_to_string(path: &Path) -> String {
+    path.to_string_lossy().to_string()
 }

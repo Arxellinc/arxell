@@ -20,6 +20,7 @@
 .files-tool-left {
   background: color-mix(in oklab, var(--surface-soft) 88%, var(--surface-strong) 12%);
   overflow: hidden;
+  position: relative;
 }
 
 .files-tool-left-title {
@@ -30,6 +31,275 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.files-tool-root-row {
+  position: static;
+  padding: 0 0.45rem 0 0.45rem;
+  border-bottom: 1px solid color-mix(in oklab, var(--line) 70%, transparent 30%);
+}
+
+.files-root-selector {
+  position: static;
+}
+
+.files-root-selector-trigger {
+  width: 100%;
+  border: none;
+  background: transparent;
+  color: var(--ink);
+  border-radius: 0;
+  height: 25px;
+  padding: 0 0.55rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 0.35rem;
+  cursor: pointer;
+  text-align: left;
+}
+
+.files-root-selector-trigger:hover {
+  background: color-mix(in oklab, var(--surface-hover) 92%, var(--surface-strong) 8%);
+}
+
+.files-root-selector-label {
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--text-xs);
+  text-align: left;
+}
+
+.files-root-selector-icon {
+  display: inline-flex;
+  align-items: center;
+  color: var(--muted);
+  flex: 0 0 auto;
+}
+
+.files-root-selector-chevron {
+  color: var(--muted);
+  font-size: 0.72rem;
+  line-height: 1;
+  flex: 0 0 auto;
+  margin-left: auto;
+}
+
+.files-root-popover {
+  position: absolute;
+  top: 56px;
+  left: 4px;
+  right: 4px;
+  height: 65%;
+  overflow: auto;
+  background: var(--surface-strong);
+  border: 1px solid color-mix(in oklab, var(--line) 68%, transparent 32%);
+  border-radius: 0;
+  box-shadow: 0 8px 18px rgba(0, 0, 0, 0.2);
+  z-index: 40;
+  padding: 0;
+  pointer-events: auto;
+}
+
+.files-root-popover-tree {
+  display: grid;
+  gap: 0.08rem;
+  padding: 0.2rem 0;
+}
+
+.files-root-tree-node {
+  display: grid;
+  gap: 0.04rem;
+}
+
+.files-root-tree-row {
+  width: 100%;
+  min-height: 24px;
+  display: grid;
+  grid-template-columns: 16px 1fr auto;
+  align-items: center;
+  gap: 0.2rem;
+  padding: 0 0.45rem 0 calc(0.45rem + (var(--depth) * 0.72rem));
+}
+
+.files-root-tree-row.is-active-scope {
+  background: transparent;
+}
+
+.files-root-tree-chevron-btn {
+  width: 16px;
+  height: 16px;
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.files-root-tree-hit {
+  width: 100%;
+  height: 24px;
+  border: none;
+  background: transparent;
+  color: var(--ink);
+  border-radius: 0;
+  display: grid;
+  grid-template-columns: 14px 1fr;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0 0.35rem;
+  text-align: left;
+  cursor: pointer;
+}
+
+.files-root-tree-hit:hover {
+  background: color-mix(in oklab, var(--surface-hover) 92%, var(--surface-strong) 8%);
+}
+
+.files-root-tree-chevron {
+  font-size: 0.68rem;
+  line-height: 1;
+}
+
+.files-root-tree-icon {
+  display: inline-flex;
+  align-items: center;
+}
+
+.files-root-tree-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--text-xs);
+}
+
+.files-root-tree-loading {
+  font-size: 0.68rem;
+  color: var(--muted);
+  padding: 0.08rem 0.45rem 0.1rem calc(1.35rem + (var(--depth, 0) * 0.72rem));
+}
+
+.files-root-tree-lock {
+  color: var(--muted);
+  opacity: 0.5;
+  font-size: 0.72rem;
+  line-height: 1;
+  user-select: none;
+}
+
+.files-root-empty {
+  font-size: var(--text-xs);
+  color: var(--muted);
+  padding: 0.28rem 0.1rem;
+}
+
+.files-root-selector.is-open .files-root-selector-trigger {
+  background: color-mix(in oklab, var(--surface-hover) 92%, var(--surface-strong) 8%);
+}
+
+.files-root-selector.is-open .files-root-selector-chevron {
+  transform: rotate(180deg);
+}
+
+.files-root-selector-chevron {
+  transition: transform 130ms ease;
+}
+
+.files-root-selector-trigger:focus-visible,
+.files-root-tree-chevron-btn:focus-visible,
+.files-root-tree-hit:focus-visible {
+  outline: 1px solid var(--active-line);
+  outline-offset: 1px;
+}
+
+.files-root-tree-row.is-active-scope .files-root-tree-hit {
+  background: transparent;
+}
+
+.files-root-tree-row.is-active-scope .files-root-tree-label {
+  font-weight: 600;
+}
+
+.files-root-tree-row.is-active-scope .files-root-tree-chevron-btn {
+  color: var(--ink);
+}
+
+.files-root-tree-row.is-active-scope .files-root-tree-hit:hover {
+  background: color-mix(in oklab, var(--surface-hover) 92%, var(--surface-strong) 8%);
+}
+
+.files-root-tree-chevron-btn:hover {
+  color: var(--ink);
+}
+
+.files-root-tree-hit:active {
+  transform: translateY(0.5px);
+}
+
+.files-root-popover::-webkit-scrollbar {
+  width: 9px;
+}
+
+.files-root-popover::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: color-mix(in oklab, var(--line) 65%, transparent 35%);
+}
+
+.files-root-popover::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.files-root-popover {
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in oklab, var(--line) 65%, transparent 35%) transparent;
+}
+
+.files-tool-left.is-root-selector-open .files-tool-tree {
+  pointer-events: none;
+}
+
+.files-root-tree-row .files-root-tree-hit {
+  border: 1px solid transparent;
+}
+
+.files-root-tree-row.is-active-scope .files-root-tree-hit {
+  border-color: color-mix(in oklab, var(--active-line) 80%, transparent 20%);
+}
+
+.files-root-tree-row.is-locked .files-root-tree-label {
+  color: color-mix(in oklab, var(--ink) 72%, var(--muted) 28%);
+}
+
+.files-root-tree-row.is-locked .files-root-tree-hit {
+  cursor: default;
+}
+
+.files-root-tree-row.is-locked .files-root-tree-hit:hover {
+  background: transparent;
+}
+
+.files-root-tree-row .files-root-tree-chevron-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.files-root-tree-row .files-root-tree-chevron-btn:disabled:hover {
+  color: var(--muted);
+}
+
+.files-root-tree-row .files-root-tree-hit:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.files-root-tree-row .files-root-tree-hit:disabled:hover {
+  border-radius: 6px;
+  background: transparent;
 }
 
 .files-tool-sidebar-toggle {

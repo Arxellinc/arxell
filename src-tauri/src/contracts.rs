@@ -240,6 +240,7 @@ pub struct WorkspaceToolRecord {
     pub source: String,
     pub enabled: bool,
     pub status: String,
+    pub entry: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -301,6 +302,73 @@ pub struct WorkspaceToolsImportResponse {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct CustomToolCapabilityInvokeRequest {
+    pub correlation_id: String,
+    #[serde(alias = "pluginId")]
+    pub custom_tool_id: String,
+    pub request_id: String,
+    pub capability: String,
+    pub payload: Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CustomToolCapabilityInvokeResponse {
+    pub correlation_id: String,
+    #[serde(alias = "pluginId")]
+    pub custom_tool_id: String,
+    pub request_id: String,
+    pub capability: String,
+    pub ok: bool,
+    pub data: Value,
+    pub error: Option<String>,
+    pub code: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PluginCapabilityInvokeRequest {
+    pub correlation_id: String,
+    pub plugin_id: String,
+    pub request_id: String,
+    pub capability: String,
+    pub payload: Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PluginCapabilityInvokeResponse {
+    pub correlation_id: String,
+    pub plugin_id: String,
+    pub request_id: String,
+    pub capability: String,
+    pub ok: bool,
+    pub data: Value,
+    pub error: Option<String>,
+    pub code: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateToolGenerateTextRequest {
+    pub correlation_id: String,
+    pub model_id: String,
+    pub prompt: String,
+    pub max_tokens: Option<u32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateToolGenerateTextResponse {
+    pub correlation_id: String,
+    pub model_id: String,
+    pub resolved_model: String,
+    pub resolved_endpoint: String,
+    pub text: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct FilesListDirectoryRequest {
     pub correlation_id: String,
     pub path: Option<String>,
@@ -357,6 +425,22 @@ pub struct FilesWriteFileResponse {
     pub correlation_id: String,
     pub path: String,
     pub size_bytes: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FilesDeletePathRequest {
+    pub correlation_id: String,
+    pub path: String,
+    pub recursive: Option<bool>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FilesDeletePathResponse {
+    pub correlation_id: String,
+    pub path: String,
+    pub deleted: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

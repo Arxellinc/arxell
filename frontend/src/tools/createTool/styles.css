@@ -16,6 +16,71 @@
   gap: 0.55rem;
 }
 
+.create-tool-stage-tracker {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.3rem;
+  align-items: center;
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  background: var(--surface);
+  height: 2rem;
+  margin-bottom: 1rem;
+  padding: 0;
+}
+
+.create-tool-stage-btn {
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface-strong);
+  color: var(--ink);
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  justify-content: center;
+  height: 24px;
+  cursor: pointer;
+  font-size: 12px;
+  padding: 0 0.45rem;
+  text-align: center;
+  width: 100%;
+  min-width: 0;
+}
+
+.create-tool-stage-btn.is-active {
+  border-color: var(--active-line);
+  background: var(--active-bg);
+}
+
+.create-tool-stage-num {
+  opacity: 0.7;
+  font-size: 10px;
+}
+
+.create-tool-stage {
+  display: grid;
+  gap: 0.5rem;
+}
+
+.create-tool-stage h2 {
+  margin: 0;
+  font-size: 0.95rem;
+}
+
+.create-tool-prd-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.45rem;
+}
+
+.create-tool-stage p {
+  margin: 0;
+  color: var(--muted);
+  font-size: var(--text-xs);
+}
+
 .create-tool-config h2 {
   margin: 0;
   font-size: 1rem;
@@ -37,6 +102,64 @@
   font-size: var(--text-xs);
 }
 
+.create-tool-field-title {
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.45rem;
+  width: 100%;
+}
+
+.create-tool-inline-generate {
+  height: 20px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1;
+  padding: 0 0.4rem;
+  cursor: pointer;
+  white-space: nowrap;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.create-tool-inline-generate:hover:not(:disabled) {
+  border-color: var(--active-line);
+  color: var(--ink);
+}
+
+.create-tool-inline-generate:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.create-tool-inline-spinner {
+  width: 11px;
+  height: 11px;
+  border-radius: 999px;
+  border: 1.5px solid color-mix(in oklab, var(--muted) 55%, transparent);
+  border-top-color: var(--ink);
+  animation: create-tool-spin 0.7s linear infinite;
+}
+
+@keyframes create-tool-spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.create-tool-toolid-hint {
+  color: var(--muted);
+  font-size: 11px;
+  opacity: 0.9;
+}
+
 .create-tool-field input,
 .create-tool-field select,
 .create-tool-field textarea {
@@ -48,9 +171,98 @@
   padding: 0.4rem 0.5rem;
 }
 
+.create-tool-field select {
+  appearance: none;
+  -webkit-appearance: none;
+  background-color: var(--surface-strong);
+  color: var(--ink);
+  background-image: linear-gradient(45deg, transparent 50%, var(--muted) 50%),
+    linear-gradient(135deg, var(--muted) 50%, transparent 50%);
+  background-position: calc(100% - 14px) calc(50% - 2px), calc(100% - 9px) calc(50% - 2px);
+  background-size: 5px 5px, 5px 5px;
+  background-repeat: no-repeat;
+  padding-right: 1.8rem;
+}
+
 .create-tool-field textarea {
   min-height: 90px;
   resize: vertical;
+}
+
+.create-tool-ui-preset-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.4rem;
+}
+
+.create-tool-ui-preset-card {
+  min-width: 0;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--ink);
+  padding: 0.2rem;
+  display: grid;
+  gap: 0.25rem;
+  cursor: pointer;
+}
+
+.create-tool-ui-preset-card.is-active {
+  background: color-mix(in oklab, var(--active-bg) 60%, transparent);
+}
+
+.create-tool-ui-preset-svg svg {
+  width: 100%;
+  height: 28px;
+  display: block;
+}
+
+.create-tool-ui-preset-svg .ui-frame {
+  fill: none;
+  stroke: color-mix(in oklab, var(--muted) 78%, transparent);
+  stroke-width: 1.2;
+}
+
+.create-tool-ui-preset-svg .ui-block {
+  fill: none;
+  stroke: color-mix(in oklab, var(--muted) 75%, transparent);
+  stroke-width: 1.1;
+}
+
+.create-tool-ui-preset-svg .ui-main {
+  fill: none;
+  stroke: color-mix(in oklab, var(--ink) 45%, transparent);
+  stroke-width: 1.1;
+}
+
+.create-tool-ui-preset-label {
+  font-size: 10px;
+  color: var(--muted);
+  line-height: 1.2;
+  text-align: center;
+}
+
+.create-tool-layout-mods {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.create-tool-layout-mod-chip {
+  height: 24px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 11px;
+  padding: 0 0.55rem;
+  cursor: pointer;
+}
+
+.create-tool-layout-mod-chip.is-active {
+  border-color: var(--active-line);
+  background: var(--active-bg);
+  color: var(--ink);
 }
 
 .create-tool-grid2 {
@@ -71,6 +283,66 @@
 .create-tool-guardrails h3 {
   margin: 0;
   font-size: var(--text-sm);
+}
+
+.create-tool-prd-review {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-strong);
+  padding: 0.55rem;
+  display: grid;
+  gap: 0.4rem;
+}
+
+.create-tool-prd-review-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.45rem;
+}
+
+.create-tool-prd-review-head h3 {
+  margin: 0;
+  font-size: var(--text-sm);
+}
+
+.create-tool-prd-review p {
+  margin: 0;
+  color: var(--muted);
+  font-size: var(--text-xs);
+}
+
+.create-tool-review-list {
+  display: grid;
+  gap: 0.35rem;
+}
+
+.create-tool-review-item {
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 0.4rem 0.45rem;
+  display: grid;
+  gap: 0.2rem;
+  background: color-mix(in oklab, var(--surface) 82%, transparent);
+}
+
+.create-tool-review-item.sev-critical {
+  border-color: color-mix(in oklab, #f97066 42%, var(--line));
+}
+
+.create-tool-review-item.sev-high {
+  border-color: color-mix(in oklab, #f6ad55 42%, var(--line));
+}
+
+.create-tool-review-title {
+  font-size: 11px;
+  color: var(--ink);
+}
+
+.create-tool-review-detail,
+.create-tool-review-suggest {
+  font-size: 11px;
+  color: var(--muted);
 }
 
 .create-tool-guard-row {
@@ -119,10 +391,15 @@
   gap: 0.45rem;
 }
 
+.create-tool-preview-modes {
+  display: inline-flex;
+  gap: 0.35rem;
+}
+
 .create-tool-preview-paths {
   min-width: 0;
-  display: flex;
-  align-items: center;
+  display: grid;
+  align-items: start;
   gap: 0.35rem;
   overflow: auto;
 }
@@ -157,6 +434,12 @@
   resize: none;
 }
 
+.create-tool-ui-preview {
+  min-height: 0;
+  overflow: auto;
+  background: var(--surface-soft);
+}
+
 .create-tool-result-json {
   border-top: 1px solid var(--line);
   display: grid;
@@ -183,6 +466,155 @@
 .create-tool-empty {
   color: var(--muted);
   font-size: var(--text-sm);
+}
+
+.create-tool-footer {
+  margin-top: auto;
+  display: flex;
+  justify-content: flex-end;
+  position: sticky;
+  bottom: 0;
+  padding-top: 0.45rem;
+  background: linear-gradient(180deg, rgba(0, 0, 0, 0), var(--surface) 50%);
+}
+
+.create-tool-next-btn {
+  height: 28px;
+  border: 1px solid var(--active-line);
+  border-radius: 7px;
+  background: var(--active-bg);
+  color: var(--ink);
+  font-size: 12px;
+  padding: 0 0.9rem;
+  cursor: pointer;
+}
+
+.create-tool-next-btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.create-tool-icon-browser-grid {
+  min-height: 0;
+  overflow: auto;
+  background: transparent;
+  padding: 0.6rem;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
+  gap: 0.4rem;
+  justify-items: center;
+  align-content: start;
+}
+
+.create-tool-icon-browser {
+  min-height: 0;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  background: transparent;
+}
+
+.create-tool-icon-browser-search {
+  border-bottom: 1px solid var(--line);
+  padding: 0.5rem;
+  display: grid;
+  gap: 0.35rem;
+}
+
+.create-tool-icon-search-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.35rem;
+  align-items: center;
+}
+
+.create-tool-icon-browser-search input {
+  height: 28px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface-strong);
+  color: var(--ink);
+  padding: 0 0.55rem;
+  font-size: 12px;
+}
+
+.create-tool-icon-browser-empty {
+  min-height: 0;
+  overflow: auto;
+  background: transparent;
+  color: var(--muted);
+  font-size: var(--text-sm);
+  padding: 0.7rem;
+}
+
+.create-tool-icon-controls {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  flex-wrap: wrap;
+}
+
+.create-tool-selected-icon {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.create-tool-selected-icon-art {
+  width: 18px;
+  height: 18px;
+  display: inline-grid;
+  place-items: center;
+  color: var(--ink);
+}
+
+.create-tool-selected-icon-art svg {
+  width: 16px;
+  height: 16px;
+}
+
+.create-tool-selected-icon-name,
+.create-tool-selected-icon-empty {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.create-tool-icon-tile {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-strong);
+  color: var(--ink);
+  width: 96px;
+  min-height: 74px;
+  padding: 0.35rem;
+  display: grid;
+  gap: 0.22rem;
+  align-content: start;
+  cursor: pointer;
+  text-align: center;
+}
+
+.create-tool-icon-tile.is-selected {
+  border-color: var(--active-line);
+  background: var(--active-bg);
+}
+
+.create-tool-icon-art {
+  height: 30px;
+  display: grid;
+  place-items: center;
+  color: var(--ink);
+}
+
+.create-tool-icon-art svg {
+  width: 24px;
+  height: 24px;
+}
+
+.create-tool-icon-name {
+  font-size: 10px;
+  color: var(--muted);
+  line-height: 1.25;
+  word-break: break-word;
 }
 
 @media (max-width: 1120px) {

@@ -65,6 +65,12 @@ import type {
   WorkspaceToolsExportResponse,
   WorkspaceToolsImportRequest,
   WorkspaceToolsImportResponse,
+  CustomToolCapabilityInvokeRequest,
+  CustomToolCapabilityInvokeResponse,
+  CreateToolGenerateTextRequest,
+  CreateToolGenerateTextResponse,
+  PluginCapabilityInvokeRequest,
+  PluginCapabilityInvokeResponse,
   FilesListDirectoryRequest,
   FilesListDirectoryResponse,
   FlowListRunsRequest,
@@ -103,6 +109,15 @@ export interface ChatIpcClient {
     request: WorkspaceToolSetEnabledRequest
   ): Promise<WorkspaceToolSetEnabledResponse>;
   toolInvoke(request: ToolInvokeRequest): Promise<ToolInvokeResponse>;
+  customToolCapabilityInvoke(
+    request: CustomToolCapabilityInvokeRequest
+  ): Promise<CustomToolCapabilityInvokeResponse>;
+  createToolGenerateText(
+    request: CreateToolGenerateTextRequest
+  ): Promise<CreateToolGenerateTextResponse>;
+  pluginCapabilityInvoke(
+    request: PluginCapabilityInvokeRequest
+  ): Promise<PluginCapabilityInvokeResponse>;
   listApiConnections(request: ApiConnectionsListRequest): Promise<ApiConnectionsListResponse>;
   createApiConnection(request: ApiConnectionCreateRequest): Promise<ApiConnectionCreateResponse>;
   updateApiConnection(request: ApiConnectionUpdateRequest): Promise<ApiConnectionUpdateResponse>;
@@ -247,6 +262,43 @@ class TauriChatIpcClient implements ChatIpcClient {
 
   toolInvoke(request: ToolInvokeRequest): Promise<ToolInvokeResponse> {
     return this.invokeFn<ToolInvokeResponse>("cmd_tool_invoke", { request });
+  }
+
+  customToolCapabilityInvoke(
+    request: CustomToolCapabilityInvokeRequest
+  ): Promise<CustomToolCapabilityInvokeResponse> {
+    return this.invokeFn<CustomToolCapabilityInvokeResponse>("cmd_custom_tool_capability_invoke", {
+      request
+    });
+  }
+
+  createToolGenerateText(
+    request: CreateToolGenerateTextRequest
+  ): Promise<CreateToolGenerateTextResponse> {
+    return this.invokeFn<CreateToolGenerateTextResponse>("cmd_create_tool_generate_text", {
+      request
+    });
+  }
+
+  pluginCapabilityInvoke(
+    request: PluginCapabilityInvokeRequest
+  ): Promise<PluginCapabilityInvokeResponse> {
+    return this.customToolCapabilityInvoke({
+      correlationId: request.correlationId,
+      customToolId: request.pluginId,
+      requestId: request.requestId,
+      capability: request.capability,
+      payload: request.payload
+    }).then((response) => ({
+      correlationId: response.correlationId,
+      pluginId: response.customToolId,
+      requestId: response.requestId,
+      capability: response.capability,
+      ok: response.ok,
+      data: response.data,
+      error: response.error,
+      code: response.code
+    }));
   }
 
   private async invokeToolTyped<TResponse>(
@@ -710,6 +762,75 @@ export class MockChatIpcClient implements ChatIpcClient {
       ok: false,
       data: {},
       error: "Mock runtime does not implement generic tool invoke."
+    };
+  }
+
+  async customToolCapabilityInvoke(
+    request: CustomToolCapabilityInvokeRequest
+  ): Promise<CustomToolCapabilityInvokeResponse> {
+    if (request.capability === "files.read") {
+      const payload = request.payload as Record<string, unknown>;
+      const action = typeof payload.action === "string" ? payload.action : "list-directory";
+      if (action === "list-directory" || action === "listDirectory") {
+        const path = typeof payload.path === "string" ? payload.path : null;
+        const response = await this.mockFilesListDirectory({
+          correlationId: request.correlationId,
+          ...(path ? { path } : {})
+        });
+        return {
+          correlationId: request.correlationId,
+          customToolId: request.customToolId,
+          requestId: request.requestId,
+          capability: request.capability,
+          ok: true,
+          data: response as unknown as Record<string, unknown>
+        };
+      }
+    }
+    return {
+      correlationId: request.correlationId,
+      customToolId: request.customToolId,
+      requestId: request.requestId,
+      capability: request.capability,
+      ok: false,
+      data: {},
+      error: "Mock runtime does not implement this custom tool capability.",
+      code: "capability_unavailable"
+    };
+  }
+
+  async createToolGenerateText(
+    request: CreateToolGenerateTextRequest
+  ): Promise<CreateToolGenerateTextResponse> {
+    const snippet = request.prompt.trim().slice(0, 220);
+    return {
+      correlationId: request.correlationId,
+      modelId: request.modelId,
+      resolvedModel: request.modelId === "primary-agent" ? "primary-agent" : request.modelId,
+      resolvedEndpoint: "mock://create-tool",
+      text: `Mock generated content for ${request.modelId}:\n\n${snippet}`
+    };
+  }
+
+  async pluginCapabilityInvoke(
+    request: PluginCapabilityInvokeRequest
+  ): Promise<PluginCapabilityInvokeResponse> {
+    const response = await this.customToolCapabilityInvoke({
+      correlationId: request.correlationId,
+      customToolId: request.pluginId,
+      requestId: request.requestId,
+      capability: request.capability,
+      payload: request.payload
+    });
+    return {
+      correlationId: response.correlationId,
+      pluginId: response.customToolId,
+      requestId: response.requestId,
+      capability: response.capability,
+      ok: response.ok,
+      data: response.data,
+      error: response.error,
+      code: response.code
     };
   }
 

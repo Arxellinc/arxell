@@ -25,7 +25,14 @@ export function renderWorkspacePane(
   workspaceTools: WorkspaceToolRecord[],
   activeTab: WorkspaceTab
 ): string {
-  const { actionsHtml: contentActionsHtml, bodyHtml: contentBodyHtml } = resolveWorkspaceView(
+  const workspaceToolsById = Object.fromEntries(
+    workspaceTools.map((tool) => [tool.toolId === "web" ? "webSearch" : tool.toolId, tool])
+  );
+  const {
+    actionsHtml: contentActionsHtml,
+    bodyHtml: contentBodyHtml,
+    usesIframe
+  } = resolveWorkspaceView(
     activeTab,
     {
       consoleHtml,
@@ -34,12 +41,15 @@ export function renderWorkspacePane(
       terminalActionsHtml,
       toolsUiHtml,
       toolsActionsHtml,
+      workspaceToolsById,
       toolViews
     }
   );
   const workspaceContentClass = contentActionsHtml
     ? "workspace-content"
-    : "workspace-content no-actions";
+    : usesIframe
+      ? "workspace-content no-actions iframe-content"
+      : "workspace-content no-actions";
   
   return `
     <section class="pane workspace-pane">
@@ -68,7 +78,7 @@ function renderWorkspaceTopbar(activeTab: WorkspaceTab, workspaceTools: Workspac
     },
     {
       tabId: "manager-tool",
-      icon: APP_ICON.sidebar.settings,
+      icon: APP_ICON.sidebar.tools,
       title: "Tool Manager"
     }
   ] satisfies Array<{ tabId: WorkspacePrimaryTab; icon: IconName; title: string }>;

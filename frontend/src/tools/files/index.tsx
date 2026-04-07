@@ -34,6 +34,8 @@ export const FILES_COLUMN_MIN_WIDTHS: FilesColumnWidths = {
 
 export interface FilesExplorerViewState {
   rootPath: string | null;
+  scopeRootPath?: string | null;
+  rootSelectorOpen?: boolean;
   selectedPath: string | null;
   selectedEntryPath?: string | null;
   openTabs: string[];
@@ -169,17 +171,19 @@ export function renderFilesToolActions(view: FilesExplorerViewState): string {
 }
 
 export function renderFilesToolBody(view: FilesExplorerViewState): string {
-  const selected = view.selectedPath ?? view.rootPath ?? "";
+  const activeRoot = view.scopeRootPath ?? view.rootPath;
+  const selected = view.selectedPath ?? activeRoot ?? "";
+  const activePath = view.activeTabPath;
   const selectedEntryPath = view.selectedEntryPath ?? null;
   const rightEntries = selected ? view.entriesByPath[selected] ?? [] : [];
-  const leftTree = renderTree(view, view.rootPath);
-  const selectedLabel = selected || "No folder selected";
+  const leftTree = renderTree(view, activeRoot);
+  const selectedLabel = activePath || selected || "No folder selected";
   const widths = normalizeColumnWidths(view.columnWidths);
   const sidebarCollapsed = view.sidebarCollapsed === true;
   const sidebarWidth = sidebarCollapsed ? 36 : normalizeSidebarWidth(view.sidebarWidth);
+  const rootSelectorHtml = renderRootSelector(view);
   const rootStyle = `--files-sidebar-width:${sidebarWidth}px;`;
   const gridStyle = `--files-col-name:${widths.name}px;--files-col-type:${widths.type}px;--files-col-size:${widths.size}px;--files-col-modified:${widths.modified}px;`;
-  const activePath = view.activeTabPath;
   const activeContent = activePath ? view.contentByPath[activePath] ?? "" : "";
   const activeLoading = activePath ? view.loadingFileByPath[activePath] === true : false;
   const activeSaving = activePath ? view.savingFileByPath[activePath] === true : false;
@@ -192,11 +196,12 @@ export function renderFilesToolBody(view: FilesExplorerViewState): string {
   const findStats = activePath ? computeFindStats(activeContent, findQuery, view.findCaseSensitive === true) : { count: 0 };
 
   return `<div class="files-tool primary-pane-body ${sidebarCollapsed ? "is-sidebar-collapsed" : ""}" style="${rootStyle}">
-    <section class="files-tool-left">
+    <section class="files-tool-left ${view.rootSelectorOpen ? "is-root-selector-open" : ""}">
       <div class="files-tool-pane-title files-tool-left-title">
         <span class="files-tool-left-title-text">${sidebarCollapsed ? "" : "Folders"}</span>
         <button type="button" class="files-tool-sidebar-toggle" ${FILES_DATA_ATTR.action}="toggle-sidebar-collapse" aria-label="${sidebarCollapsed ? "Expand folders sidebar" : "Collapse folders sidebar"}">${sidebarCollapsed ? "▸" : "◂"}</button>
       </div>
+      ${sidebarCollapsed ? "" : `<div class="files-tool-root-row">${rootSelectorHtml}</div>`}
       <div class="files-tool-tree">${leftTree}</div>
     </section>
     <button type="button" class="files-tool-pane-resizer" aria-label="Resize folders pane" ${FILES_DATA_ATTR.action}="resize-sidebar"></button>
@@ -270,6 +275,129 @@ export function renderFilesToolBody(view: FilesExplorerViewState): string {
       ${view.error ? `<div class="files-tool-error">${escapeHtml(view.error)}</div>` : ""}
     </section>
   </div>`;
+}
+
+function renderRootSelector(view: FilesExplorerViewState): string {
+  const workspaceRoot = view.rootPath?.trim() ?? "";
+  const scopeRoot = view.scopeRootPath?.trim() || workspaceRoot;
+  const selectorOpen = view.rootSelectorOpen === true;
+  const triggerLabel = formatScopeLabel(workspaceRoot, scopeRoot);
+  const triggerTitle = scopeRoot || "Select root directory";
+  const treeHtml = renderRootPickerTree(view, workspaceRoot, scopeRoot);
+
+  return `<div class="files-root-selector ${selectorOpen ? "is-open" : ""}">
+    <button type="button" class="files-root-selector-trigger" ${FILES_DATA_ATTR.action}="toggle-root-selector" title="${escapeHtml(triggerTitle)}" aria-label="Select root directory">
+      <span class="files-root-selector-icon">${iconHtml("folder", { size: 16, tone: "dark" })}</span>
+      <span class="files-root-selector-label">${escapeHtml(triggerLabel)}</span>
+      <span class="files-root-selector-chevron">▾</span>
+    </button>
+    ${
+      selectorOpen
+        ? `<div class="files-root-popover">
+      <div class="files-root-popover-tree">${treeHtml}</div>
+    </div>`
+        : ""
+    }
+  </div>`;
+}
+
+function formatScopeLabel(workspaceRoot: string, scopeRoot: string): string {
+  const normalizedRoot = normalizePickerPath(workspaceRoot);
+  const normalizedScope = normalizePickerPath(scopeRoot);
+  if (!normalizedScope) return "Select Root";
+  if (!normalizedRoot) return normalizedScope;
+  if (normalizedScope === normalizedRoot) return basename(normalizedRoot);
+  if (normalizedScope.startsWith(`${normalizedRoot}/`)) {
+    const suffix = normalizedScope.slice(normalizedRoot.length + 1);
+    return `${basename(normalizedRoot)}/${suffix}`;
+  }
+  return normalizedScope;
+}
+
+function renderRootPickerTree(
+  view: FilesExplorerViewState,
+  rootPath: string,
+  scopePath: string
+): string {
+  if (!rootPath) {
+    return '<div class="files-root-empty">No workspace folder loaded.</div>';
+  }
+  return renderRootPickerNode(view, rootPath, basename(rootPath), 0, scopePath, rootPath);
+}
+
+function renderRootPickerNode(
+  view: FilesExplorerViewState,
+  path: string,
+  label: string,
+  depth: number,
+  scopePath: string,
+  workspaceRoot: string
+): string {
+  const expandedState = view.expandedByPath[path];
+  const expanded =
+    expandedState === true ||
+    (expandedState === undefined && shouldAutoExpandRootPickerNode(path, depth, workspaceRoot));
+  const entries = view.entriesByPath[path] ?? [];
+  const childDirs = entries.filter((entry) => entry.isDir);
+  const hasChildren = childDirs.length > 0;
+  const loading = view.loadingByPath[path] === true;
+  const isActiveScope = normalizePickerPath(path) === normalizePickerPath(scopePath);
+  const isLocked = isLockedSystemFolder(path, workspaceRoot);
+  const rowClass = `files-root-tree-row${isActiveScope ? " is-active-scope" : ""}${isLocked ? " is-locked" : ""}`;
+  const chevron = hasChildren ? (expanded ? "▾" : "▸") : "";
+  const childrenHtml =
+    expanded && hasChildren
+      ? childDirs
+          .map((entry) =>
+            renderRootPickerNode(view, entry.path, entry.name, depth + 1, scopePath, workspaceRoot)
+          )
+          .join("")
+      : "";
+  return `<div class="files-root-tree-node ${expanded ? "is-expanded" : ""}" ${FILES_DATA_ATTR.path}="${escapeHtml(path)}">
+    <div class="${rowClass}" style="--depth:${depth}">
+      <button type="button" class="files-root-tree-chevron-btn" ${FILES_DATA_ATTR.action}="root-tree-toggle" ${FILES_DATA_ATTR.path}="${escapeHtml(path)}" aria-label="${expanded ? "Collapse folder" : "Expand folder"}"${hasChildren ? "" : ' disabled aria-disabled="true"'}>
+        <span class="files-root-tree-chevron">${chevron}</span>
+      </button>
+      <button type="button" class="files-root-tree-hit" ${FILES_DATA_ATTR.action}="root-tree-select" ${FILES_DATA_ATTR.path}="${escapeHtml(path)}" title="${escapeHtml(path)}"${isLocked ? ' disabled aria-disabled="true"' : ""}>
+        <span class="files-root-tree-icon">${iconHtml("folder", { size: 14, tone: "dark" })}</span>
+        <span class="files-root-tree-label">${escapeHtml(label)}</span>
+      </button>
+      ${isLocked ? '<span class="files-root-tree-lock" title="Read-only folder">🔒</span>' : ""}
+    </div>
+    ${loading ? '<div class="files-root-tree-loading">Loading...</div>' : ""}
+    ${childrenHtml}
+  </div>`;
+}
+
+function shouldAutoExpandRootPickerNode(path: string, depth: number, workspaceRoot: string): boolean {
+  if (depth === 0) return true;
+  const current = normalizePickerPath(path);
+  const root = normalizePickerPath(workspaceRoot);
+  const auto = new Set([
+    `${root}/frontend`,
+    `${root}/frontend/src`,
+    `${root}/frontend/src/tools`,
+    `${root}/plugins`
+  ]);
+  return auto.has(current);
+}
+
+function isLockedSystemFolder(path: string, workspaceRoot: string): boolean {
+  const normalized = normalizePickerPath(path);
+  const root = normalizePickerPath(workspaceRoot);
+  const leaf = basename(normalized);
+  if (leaf === ".git" || leaf === ".github" || leaf === "node_modules" || leaf === "target") {
+    return true;
+  }
+  const lockedPrefixes = [`${root}/src-tauri`, `${root}/.git`, `${root}/.github`];
+  return lockedPrefixes.some((prefix) => normalized === prefix || normalized.startsWith(`${prefix}/`));
+}
+
+function normalizePickerPath(path: string): string {
+  const normalized = path.trim().replace(/\\/g, "/");
+  if (!normalized) return "";
+  if (normalized === "/") return "/";
+  return normalized.replace(/\/+$/, "");
 }
 
 function renderFindBar(input: {

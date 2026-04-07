@@ -2,6 +2,11 @@ export const WORKSPACE_DATA_ATTR = {
   tab: "data-workspace-tab"
 } as const;
 
+export const CONSOLE_DATA_ATTR = {
+  view: "data-console-view",
+  action: "data-console-action"
+} as const;
+
 export const TERMINAL_DATA_ATTR = {
   sessionId: "data-terminal-session-id",
   closeSessionId: "data-terminal-close-session-id",
@@ -15,7 +20,9 @@ export const TERMINAL_UI_ID = {
 } as const;
 
 export const MANAGER_DATA_ATTR = {
-  toggleToolId: "data-workspace-tool-toggle-id"
+  toggleToolId: "data-workspace-tool-toggle-id",
+  action: "data-workspace-tool-action",
+  actionToolId: "data-workspace-tool-action-id"
 } as const;
 
 export const MANAGER_UI_ID = {

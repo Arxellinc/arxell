@@ -1,5 +1,6 @@
 use crate::contracts::{
-    FilesListDirectoryEntry, FilesListDirectoryResponse, FilesReadFileResponse, FilesWriteFileResponse,
+    FilesDeletePathResponse, FilesListDirectoryEntry, FilesListDirectoryResponse, FilesReadFileResponse,
+    FilesWriteFileResponse,
 };
 use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
@@ -58,7 +59,8 @@ impl FilesService {
                 is_binary: false,
             });
         }
-        let bytes = std::fs::read(target.as_path()).map_err(|e| format!("failed reading file: {e}"))?;
+        let bytes =
+            std::fs::read(target.as_path()).map_err(|e| format!("failed reading file: {e}"))?;
         let is_binary = bytes.iter().any(|b| *b == 0);
         let content = if is_binary {
             String::new()
@@ -91,6 +93,34 @@ impl FilesService {
             correlation_id,
             path: path_to_string(target.as_path()),
             size_bytes: content.len() as u64,
+        })
+    }
+
+    pub fn delete_path(
+        &self,
+        path: &str,
+        recursive: bool,
+        correlation_id: String,
+    ) -> Result<FilesDeletePathResponse, String> {
+        let target = resolve_target_path(self.root_path.as_path(), Some(path))?;
+        let metadata = std::fs::metadata(target.as_path())
+            .map_err(|e| format!("failed reading target metadata: {e}"))?;
+        if metadata.is_dir() {
+            if recursive {
+                std::fs::remove_dir_all(target.as_path())
+                    .map_err(|e| format!("failed deleting directory recursively: {e}"))?;
+            } else {
+                std::fs::remove_dir(target.as_path())
+                    .map_err(|e| format!("failed deleting directory: {e}"))?;
+            }
+        } else {
+            std::fs::remove_file(target.as_path())
+                .map_err(|e| format!("failed deleting file: {e}"))?;
+        }
+        Ok(FilesDeletePathResponse {
+            correlation_id,
+            path: path_to_string(target.as_path()),
+            deleted: true,
         })
     }
 }

@@ -14,33 +14,37 @@ use app_foundation::contracts::{
     AppVersionResponse, ChatCancelRequest, ChatCancelResponse, ChatDeleteConversationRequest,
     ChatDeleteConversationResponse, ChatGetMessagesRequest, ChatGetMessagesResponse,
     ChatListConversationsRequest, ChatListConversationsResponse, ChatSendRequest, ChatSendResponse,
-    DevicesProbeMicrophoneRequest, DevicesProbeMicrophoneResponse, FilesListDirectoryRequest,
-    FilesListDirectoryResponse, FlowListRunsRequest, FlowListRunsResponse,
+    DevicesProbeMicrophoneRequest, DevicesProbeMicrophoneResponse, EventSeverity, EventStage,
+    FilesListDirectoryRequest, FilesListDirectoryResponse, FlowListRunsRequest, FlowListRunsResponse,
     FlowRerunValidationRequest, FlowRerunValidationResponse, FlowStartRequest, FlowStartResponse,
     FlowStatusRequest, FlowStatusResponse, FlowStopRequest, FlowStopResponse,
-    LlamaRuntimeInstallRequest, LlamaRuntimeInstallResponse, LlamaRuntimeStartRequest,
-    LlamaRuntimeStartResponse, LlamaRuntimeStatusRequest, LlamaRuntimeStatusResponse,
-    LlamaRuntimeStopRequest, LlamaRuntimeStopResponse, ModelManagerDeleteInstalledRequest,
-    ModelManagerDeleteInstalledResponse, ModelManagerDownloadHfRequest,
-    ModelManagerDownloadHfResponse, ModelManagerListCatalogCsvRequest,
-    ModelManagerListCatalogCsvResponse, ModelManagerListInstalledRequest,
-    ModelManagerListInstalledResponse, ModelManagerSearchHfRequest, ModelManagerSearchHfResponse,
-    TerminalCloseSessionRequest, TerminalCloseSessionResponse, TerminalInputRequest,
-    TerminalInputResponse, TerminalOpenSessionRequest, TerminalOpenSessionResponse,
-    TerminalResizeRequest, TerminalResizeResponse, ToolInvokeRequest, ToolInvokeResponse,
-    WebSearchRequest, WebSearchResponse,
-    WorkspaceToolSetEnabledRequest, WorkspaceToolSetEnabledResponse, WorkspaceToolsExportRequest,
-    WorkspaceToolsExportResponse, WorkspaceToolsImportRequest, WorkspaceToolsImportResponse,
-    WorkspaceToolsListRequest, WorkspaceToolsListResponse,
+    CreateToolGenerateTextRequest, CreateToolGenerateTextResponse, LlamaRuntimeInstallRequest, LlamaRuntimeInstallResponse,
+    LlamaRuntimeStartRequest, LlamaRuntimeStartResponse, LlamaRuntimeStatusRequest,
+    LlamaRuntimeStatusResponse, LlamaRuntimeStopRequest, LlamaRuntimeStopResponse,
+    ModelManagerDeleteInstalledRequest, ModelManagerDeleteInstalledResponse,
+    ModelManagerDownloadHfRequest, ModelManagerDownloadHfResponse,
+    ModelManagerListCatalogCsvRequest, ModelManagerListCatalogCsvResponse,
+    ModelManagerListInstalledRequest, ModelManagerListInstalledResponse,
+    ModelManagerSearchHfRequest, ModelManagerSearchHfResponse,
+    CustomToolCapabilityInvokeRequest, CustomToolCapabilityInvokeResponse,
+    PluginCapabilityInvokeRequest, PluginCapabilityInvokeResponse, ApiConnectionStatus, ApiConnectionType, Subsystem, TerminalCloseSessionRequest,
+    TerminalCloseSessionResponse, TerminalInputRequest, TerminalInputResponse,
+    TerminalOpenSessionRequest, TerminalOpenSessionResponse, TerminalResizeRequest,
+    TerminalResizeResponse, ToolInvokeRequest, ToolInvokeResponse, WebSearchRequest,
+    WebSearchResponse, WorkspaceToolSetEnabledRequest, WorkspaceToolSetEnabledResponse,
+    WorkspaceToolsExportRequest, WorkspaceToolsExportResponse, WorkspaceToolsImportRequest,
+    WorkspaceToolsImportResponse, WorkspaceToolsListRequest, WorkspaceToolsListResponse,
 };
 #[cfg(feature = "tauri-runtime")]
-use app_foundation::ipc::tool_runtime::{invoke_legacy_tool_command, invoke_tool};
-#[cfg(feature = "tauri-runtime")]
 use app_foundation::ipc::tauri_bridge::{attach_event_forwarder, TauriBridgeState};
+#[cfg(feature = "tauri-runtime")]
+use app_foundation::ipc::tool_runtime::{invoke_legacy_tool_command, invoke_tool};
 #[cfg(feature = "tauri-runtime")]
 use app_foundation::stt::STTState;
 #[cfg(feature = "tauri-runtime")]
 use serde::{Deserialize, Serialize};
+#[cfg(feature = "tauri-runtime")]
+use serde_json::{json, Value};
 #[cfg(feature = "tauri-runtime")]
 use std::path::PathBuf;
 #[cfg(feature = "tauri-runtime")]
@@ -178,8 +182,11 @@ fn main() {
             cmd_model_manager_download_hf,
             cmd_model_manager_delete_installed,
             cmd_model_manager_list_catalog_csv,
+            cmd_create_tool_generate_text,
             cmd_files_list_directory,
             cmd_tool_invoke,
+            cmd_custom_tool_capability_invoke,
+            cmd_plugin_capability_invoke,
             cmd_flow_start,
             cmd_flow_stop,
             cmd_flow_status,
@@ -801,12 +808,458 @@ async fn cmd_model_manager_list_catalog_csv(
 }
 
 #[cfg(feature = "tauri-runtime")]
+#[derive(Debug, Serialize)]
+struct CreateToolOpenAiMessage {
+    role: String,
+    content: String,
+}
+
+#[cfg(feature = "tauri-runtime")]
+#[derive(Debug, Serialize)]
+struct CreateToolOpenAiRequest {
+    model: String,
+    messages: Vec<CreateToolOpenAiMessage>,
+    stream: bool,
+    max_tokens: Option<u32>,
+    temperature: Option<f32>,
+}
+
+#[cfg(feature = "tauri-runtime")]
+#[tauri::command]
+async fn cmd_create_tool_generate_text(
+    state: State<'_, TauriBridgeState>,
+    request: CreateToolGenerateTextRequest,
+) -> Result<CreateToolGenerateTextResponse, String> {
+    let (endpoint, model, api_key) = resolve_create_tool_provider(&state, request.model_id.as_str())?;
+    let prompt = request.prompt.trim();
+    if prompt.is_empty() {
+        return Err("prompt is required".to_string());
+    }
+
+    let payload = CreateToolOpenAiRequest {
+        model: model.clone(),
+        messages: vec![
+            CreateToolOpenAiMessage {
+                role: "system".to_string(),
+                content: "You are assisting with structured product and implementation planning for a workspace tool. Return concise high-signal text."
+                    .to_string(),
+            },
+            CreateToolOpenAiMessage {
+                role: "user".to_string(),
+                content: prompt.to_string(),
+            },
+        ],
+        stream: false,
+        max_tokens: request.max_tokens.or(Some(1400)),
+        temperature: Some(0.25),
+    };
+
+    let client = reqwest::Client::builder()
+        .connect_timeout(std::time::Duration::from_secs(8))
+        .timeout(std::time::Duration::from_secs(60))
+        .build()
+        .map_err(|e| format!("failed creating HTTP client: {e}"))?;
+
+    let mut req = client
+        .post(endpoint.as_str())
+        .header("Content-Type", "application/json")
+        .header("User-Agent", "arxell-lite/create-tool");
+    if let Some(key) = api_key {
+        req = req
+            .header("Authorization", format!("Bearer {key}"))
+            .header("x-api-key", key);
+    }
+
+    let response = req
+        .json(&payload)
+        .send()
+        .await
+        .map_err(|e| format!("generation request failed: {e}"))?;
+
+    if !response.status().is_success() {
+        let status = response.status();
+        let body = response
+            .text()
+            .await
+            .unwrap_or_else(|_| "<unreadable body>".to_string());
+        return Err(format!(
+            "generation failed (HTTP {}): {}",
+            status.as_u16(),
+            body.chars().take(240).collect::<String>()
+        ));
+    }
+
+    let body = response
+        .json::<Value>()
+        .await
+        .map_err(|e| format!("failed parsing generation response: {e}"))?;
+    let text = extract_generated_text_from_value(&body);
+    if text.trim().is_empty() {
+        return Err("generation response was empty".to_string());
+    }
+
+    Ok(CreateToolGenerateTextResponse {
+        correlation_id: request.correlation_id,
+        model_id: request.model_id,
+        resolved_model: model,
+        resolved_endpoint: endpoint,
+        text,
+    })
+}
+
+#[cfg(feature = "tauri-runtime")]
+fn resolve_create_tool_provider(
+    state: &TauriBridgeState,
+    model_id: &str,
+) -> Result<(String, String, Option<String>), String> {
+    let trimmed = model_id.trim();
+    if trimmed.is_empty() || trimmed == "primary-agent" {
+        let verified_llm = state
+            .api_registry
+            .verified_for_agent()
+            .into_iter()
+            .find(|record| matches!(record.api_type, ApiConnectionType::Llm));
+        if let Some(record) = verified_llm {
+            let endpoint =
+                create_tool_chat_endpoint(record.api_url.as_str(), record.api_standard_path.as_deref());
+            let model = record
+                .model_name
+                .unwrap_or_else(fallback_model_name);
+            return Ok((endpoint, model, Some(record.api_key)));
+        }
+        return Ok((
+            fallback_endpoint(),
+            fallback_model_name(),
+            std::env::var("OPENAI_API_KEY").ok(),
+        ));
+    }
+
+    if let Some(rest) = trimmed.strip_prefix("api:") {
+        let id = rest.split(':').next().unwrap_or("").trim();
+        if id.is_empty() {
+            return Err("invalid api model id".to_string());
+        }
+        let record = state
+            .api_registry
+            .list()
+            .into_iter()
+            .find(|item| item.id == id)
+            .ok_or_else(|| format!("api connection not found: {id}"))?;
+        if !matches!(record.api_type, ApiConnectionType::Llm) {
+            return Err(format!("api connection is not an LLM endpoint: {id}"));
+        }
+        if !matches!(record.status, ApiConnectionStatus::Verified | ApiConnectionStatus::Warning) {
+            return Err(format!("api connection is not usable (status={:?}): {id}", record.status));
+        }
+        let api_key = state.api_registry.get_secret_api_key(id)?;
+        let endpoint =
+            create_tool_chat_endpoint(record.api_url.as_str(), record.api_standard_path.as_deref());
+        let model = record
+            .model_name
+            .unwrap_or_else(fallback_model_name);
+        return Ok((endpoint, model, Some(api_key)));
+    }
+
+    if let Some(rest) = trimmed.strip_prefix("mm:") {
+        let model = rest.trim();
+        if model.is_empty() {
+            return Err("invalid model-manager model id".to_string());
+        }
+        return Ok((fallback_endpoint(), model.to_string(), std::env::var("OPENAI_API_KEY").ok()));
+    }
+
+    Err(format!("unsupported model id: {trimmed}"))
+}
+
+#[cfg(feature = "tauri-runtime")]
+fn create_tool_chat_endpoint(api_url: &str, api_standard_path: Option<&str>) -> String {
+    let base = api_url.trim().trim_end_matches('/');
+    let path = api_standard_path
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("/chat/completions");
+    if path.starts_with("http://") || path.starts_with("https://") {
+        return path.to_string();
+    }
+    let lower = base.to_ascii_lowercase();
+    if lower.ends_with("/chat/completions") {
+        return base.to_string();
+    }
+    if path.starts_with('/') {
+        format!("{base}{path}")
+    } else {
+        format!("{base}/{path}")
+    }
+}
+
+#[cfg(feature = "tauri-runtime")]
+fn extract_generated_text_from_value(body: &Value) -> String {
+    let from_message = body
+        .get("choices")
+        .and_then(|v| v.get(0))
+        .and_then(|v| v.get("message"))
+        .and_then(|v| v.get("content"))
+        .map(value_to_flat_text);
+    if let Some(text) = from_message {
+        if !text.trim().is_empty() {
+            return text;
+        }
+    }
+    let from_text = body
+        .get("choices")
+        .and_then(|v| v.get(0))
+        .and_then(|v| v.get("text"))
+        .map(value_to_flat_text);
+    from_text.unwrap_or_default()
+}
+
+#[cfg(feature = "tauri-runtime")]
+fn value_to_flat_text(value: &Value) -> String {
+    match value {
+        Value::String(s) => s.clone(),
+        Value::Array(items) => {
+            let mut out = String::new();
+            for item in items {
+                if let Some(s) = item.get("text").and_then(|v| v.as_str()) {
+                    out.push_str(s);
+                } else if let Some(s) = item.as_str() {
+                    out.push_str(s);
+                }
+            }
+            out
+        }
+        _ => String::new(),
+    }
+}
+
+#[cfg(feature = "tauri-runtime")]
+fn fallback_endpoint() -> String {
+    std::env::var("FOUNDATION_LLM_ENDPOINT")
+        .unwrap_or_else(|_| "http://127.0.0.1:1420/v1/chat/completions".to_string())
+}
+
+#[cfg(feature = "tauri-runtime")]
+fn fallback_model_name() -> String {
+    std::env::var("FOUNDATION_LLM_MODEL").unwrap_or_else(|_| "local-model".to_string())
+}
+
+#[cfg(feature = "tauri-runtime")]
 #[tauri::command]
 async fn cmd_tool_invoke(
     state: State<'_, TauriBridgeState>,
     request: ToolInvokeRequest,
 ) -> Result<ToolInvokeResponse, String> {
     invoke_tool(&state, request).await
+}
+
+#[cfg(feature = "tauri-runtime")]
+#[tauri::command]
+async fn cmd_custom_tool_capability_invoke(
+    state: State<'_, TauriBridgeState>,
+    request: CustomToolCapabilityInvokeRequest,
+) -> Result<CustomToolCapabilityInvokeResponse, String> {
+    handle_custom_tool_capability_invoke(&state, &request)
+}
+
+#[cfg(feature = "tauri-runtime")]
+#[tauri::command]
+async fn cmd_plugin_capability_invoke(
+    state: State<'_, TauriBridgeState>,
+    request: PluginCapabilityInvokeRequest,
+) -> Result<PluginCapabilityInvokeResponse, String> {
+    let bridged = CustomToolCapabilityInvokeRequest {
+        correlation_id: request.correlation_id,
+        custom_tool_id: request.plugin_id,
+        request_id: request.request_id,
+        capability: request.capability,
+        payload: request.payload,
+    };
+    let response = handle_custom_tool_capability_invoke(&state, &bridged)?;
+    Ok(PluginCapabilityInvokeResponse {
+        correlation_id: response.correlation_id,
+        plugin_id: response.custom_tool_id,
+        request_id: response.request_id,
+        capability: response.capability,
+        ok: response.ok,
+        data: response.data,
+        error: response.error,
+        code: response.code,
+    })
+}
+
+#[cfg(feature = "tauri-runtime")]
+fn handle_custom_tool_capability_invoke(
+    state: &TauriBridgeState,
+    request: &CustomToolCapabilityInvokeRequest,
+) -> Result<CustomToolCapabilityInvokeResponse, String> {
+    state.hub.emit(state.hub.make_event(
+        request.correlation_id.as_str(),
+        Subsystem::Ipc,
+        "custom_tool.capability.invoke",
+        EventStage::Start,
+        EventSeverity::Info,
+        json!({
+            "customToolId": request.custom_tool_id,
+            "pluginId": request.custom_tool_id,
+            "requestId": request.request_id,
+            "capability": request.capability
+        }),
+    ));
+
+    if let Err(code) = state
+        .workspace_tools
+        .ensure_custom_tool_capability(request.custom_tool_id.as_str(), request.capability.as_str())
+    {
+        let response = custom_tool_capability_error(
+            &request,
+            code.as_str(),
+            format!(
+                "Custom tool capability denied: {} for {}",
+                request.capability, request.custom_tool_id
+            ),
+        );
+        state.hub.emit(state.hub.make_event(
+            request.correlation_id.as_str(),
+            Subsystem::Ipc,
+            "custom_tool.capability.invoke",
+            EventStage::Error,
+            EventSeverity::Warn,
+            json!({
+                "customToolId": request.custom_tool_id,
+                "pluginId": request.custom_tool_id,
+                "requestId": request.request_id,
+                "capability": request.capability,
+                "code": response.code,
+                "error": response.error
+            }),
+        ));
+        return Ok(response);
+    }
+
+    let result = invoke_custom_tool_capability(&state, &request);
+    let response = match result {
+        Ok(data) => CustomToolCapabilityInvokeResponse {
+            correlation_id: request.correlation_id.clone(),
+            custom_tool_id: request.custom_tool_id.clone(),
+            request_id: request.request_id.clone(),
+            capability: request.capability.clone(),
+            ok: true,
+            data,
+            error: None,
+            code: None,
+        },
+        Err((code, message)) => custom_tool_capability_error(&request, code, message),
+    };
+
+    state.hub.emit(state.hub.make_event(
+        request.correlation_id.as_str(),
+        Subsystem::Ipc,
+        "custom_tool.capability.invoke",
+        if response.ok {
+            EventStage::Complete
+        } else {
+            EventStage::Error
+        },
+        if response.ok {
+            EventSeverity::Info
+        } else {
+            EventSeverity::Warn
+        },
+        json!({
+            "customToolId": request.custom_tool_id,
+            "pluginId": request.custom_tool_id,
+            "requestId": request.request_id,
+            "capability": request.capability,
+            "ok": response.ok,
+            "code": response.code,
+            "error": response.error
+        }),
+    ));
+    Ok(response)
+}
+
+#[cfg(feature = "tauri-runtime")]
+fn custom_tool_capability_error(
+    request: &CustomToolCapabilityInvokeRequest,
+    code: &str,
+    message: String,
+) -> CustomToolCapabilityInvokeResponse {
+    CustomToolCapabilityInvokeResponse {
+        correlation_id: request.correlation_id.clone(),
+        custom_tool_id: request.custom_tool_id.clone(),
+        request_id: request.request_id.clone(),
+        capability: request.capability.clone(),
+        ok: false,
+        data: json!({}),
+        error: Some(message),
+        code: Some(code.to_string()),
+    }
+}
+
+#[cfg(feature = "tauri-runtime")]
+fn invoke_custom_tool_capability(
+    state: &TauriBridgeState,
+    request: &CustomToolCapabilityInvokeRequest,
+) -> Result<Value, (&'static str, String)> {
+    match request.capability.as_str() {
+        "files.read" => {
+            let action = request
+                .payload
+                .get("action")
+                .and_then(|value| value.as_str())
+                .unwrap_or("list-directory");
+            match action {
+                "list-directory" | "listDirectory" => {
+                    let path = request
+                        .payload
+                        .get("path")
+                        .and_then(|value| value.as_str())
+                        .map(|value| value.to_string());
+                    let response = state
+                        .files
+                        .list_directory(path.as_deref(), request.correlation_id.clone())
+                        .map_err(|e| ("files_read_failed", e))?;
+                    serde_json::to_value(response).map_err(|e| {
+                        (
+                            "serialization_failed",
+                            format!("failed serializing result: {e}"),
+                        )
+                    })
+                }
+                "read-file" | "readFile" => {
+                    let Some(path) = request.payload.get("path").and_then(|value| value.as_str())
+                    else {
+                        return Err((
+                            "invalid_payload",
+                            "files.read read-file requires payload.path".to_string(),
+                        ));
+                    };
+                    let response = state
+                        .files
+                        .read_file(path, request.correlation_id.clone())
+                        .map_err(|e| ("files_read_failed", e))?;
+                    serde_json::to_value(response).map_err(|e| {
+                        (
+                            "serialization_failed",
+                            format!("failed serializing result: {e}"),
+                        )
+                    })
+                }
+                _ => Err((
+                    "invalid_action",
+                    format!("Unsupported files.read action: {action}"),
+                )),
+            }
+        }
+        "tasks.read" => Err((
+            "capability_unavailable",
+            "tasks.read is not yet available in host runtime.".to_string(),
+        )),
+        _ => Err((
+            "capability_unknown",
+            format!("Unsupported custom tool capability: {}", request.capability),
+        )),
+    }
 }
 
 #[cfg(feature = "tauri-runtime")]

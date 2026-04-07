@@ -56,9 +56,11 @@ export function renderToolToolbar(config: ToolToolbarConfig): string {
       const disabledAttr = action.disabled ? " disabled" : "";
       const attrs = attrsToHtml(action.buttonAttrs);
       const inner =
-        action.icon !== undefined
-          ? iconHtml(action.icon, { size: 16, tone: "dark" })
-          : escapeHtml(action.label ?? action.title);
+        action.icon !== undefined && action.label
+          ? `${iconHtml(action.icon, { size: 16, tone: "dark" })}<span class="tool-toolbar-btn-label">${escapeHtml(action.label)}</span>`
+          : action.icon !== undefined
+            ? iconHtml(action.icon, { size: 16, tone: "dark" })
+            : escapeHtml(action.label ?? action.title);
       return `<button type="button" class="tool-toolbar-btn${activeClass}${className}" aria-label="${escapeHtml(action.title)}" title="${escapeHtml(action.title)}"${disabledAttr} ${attrs}>
         ${inner}
       </button>`;

@@ -15,13 +15,14 @@ export function renderSidebarRail(tab: SidebarTab, llamaRuntimeOnline: boolean, 
         </button>`;
   }).join("");
 
+  const settingsActiveClass = tab === "settings" ? "is-active" : "";
   return `
     <aside class="left-sidebar" id="leftSidebar">
       <nav class="sidebar-nav" aria-label="Primary">
         ${panelButtons}
       </nav>
       <div class="sidebar-bottom">
-        <button type="button" class="sidebar-icon-btn" data-title="Settings" aria-label="Settings">
+        <button type="button" class="sidebar-icon-btn ${settingsActiveClass}" data-sidebar-tab="settings" data-title="Settings" aria-label="Settings">
           ${iconHtml(APP_ICON.sidebar.settings, { size: 24, tone: "dark", label: "Settings" })}
         </button>
       </div>

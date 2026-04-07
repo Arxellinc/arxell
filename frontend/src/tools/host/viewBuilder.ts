@@ -30,6 +30,8 @@ export interface WorkspaceToolViewInput {
   webSetupMessage: string | null;
   webSetupBusy: boolean;
   filesRootPath: string | null;
+  filesScopeRootPath: string | null;
+  filesRootSelectorOpen: boolean;
   filesSelectedPath: string | null;
   filesSelectedEntryPath: string | null;
   filesOpenTabs: string[];
@@ -60,6 +62,26 @@ export interface WorkspaceToolViewInput {
   tasksDetailsCollapsed: boolean;
   tasksJsonDraft: string;
   createToolSpec: CreateToolRuntimeSlice["createToolSpec"];
+  createToolStage: CreateToolRuntimeSlice["createToolStage"];
+  createToolModelOptions: CreateToolRuntimeSlice["createToolModelOptions"];
+  createToolSelectedModelId: CreateToolRuntimeSlice["createToolSelectedModelId"];
+  createToolPrdUiPreset: CreateToolRuntimeSlice["createToolPrdUiPreset"];
+  createToolLayoutModifiers: CreateToolRuntimeSlice["createToolLayoutModifiers"];
+  createToolPrdUiNotes: string;
+  createToolPrdInputs: string;
+  createToolPrdProcess: string;
+  createToolPrdConnections: string;
+  createToolPrdDependencies: string;
+  createToolPrdExpectedBehavior: string;
+  createToolPrdOutputs: string;
+  createToolDevPlan: string;
+  createToolBuildViewMode: CreateToolRuntimeSlice["createToolBuildViewMode"];
+  createToolUiPreviewHtml: string;
+  createToolFixNotes: string;
+  createToolIconBrowserOpen: boolean;
+  createToolIconBrowserQuery: string;
+  createToolIconBrowserAppliedQuery: string;
+  createToolIconLibrary: Array<{ name: string; svg: string }>;
   createToolWorkspaceRoot: string;
   createToolPreviewFiles: Record<string, string>;
   createToolPreviewOrder: string[];
@@ -68,6 +90,10 @@ export interface WorkspaceToolViewInput {
   createToolValidationWarnings: string[];
   createToolStatusMessage: string | null;
   createToolLastResultJson: string;
+  createToolPrdGeneratingSection: CreateToolRuntimeSlice["createToolPrdGeneratingSection"];
+  createToolPrdGeneratingAll: CreateToolRuntimeSlice["createToolPrdGeneratingAll"];
+  createToolPrdReviewBusy: CreateToolRuntimeSlice["createToolPrdReviewBusy"];
+  createToolPrdReviewFindings: CreateToolRuntimeSlice["createToolPrdReviewFindings"];
   createToolBusy: boolean;
   flowRuns: FlowRunView[];
   flowActiveRunId: string | null;
@@ -126,6 +152,8 @@ export function buildWorkspaceToolViews(input: WorkspaceToolViewInput): Record<s
     files: {
       actionsHtml: renderFilesToolActions({
         rootPath: input.filesRootPath,
+        scopeRootPath: input.filesScopeRootPath,
+        rootSelectorOpen: input.filesRootSelectorOpen,
         selectedPath: input.filesSelectedPath,
         selectedEntryPath: input.filesSelectedEntryPath,
         openTabs: input.filesOpenTabs,
@@ -151,6 +179,8 @@ export function buildWorkspaceToolViews(input: WorkspaceToolViewInput): Record<s
       }),
       bodyHtml: renderFilesToolBody({
         rootPath: input.filesRootPath,
+        scopeRootPath: input.filesScopeRootPath,
+        rootSelectorOpen: input.filesRootSelectorOpen,
         selectedPath: input.filesSelectedPath,
         selectedEntryPath: input.filesSelectedEntryPath,
         openTabs: input.filesOpenTabs,
@@ -237,6 +267,26 @@ export function buildWorkspaceToolViews(input: WorkspaceToolViewInput): Record<s
     },
     createTool: {
       actionsHtml: renderCreateToolActions({
+        createToolStage: input.createToolStage,
+        createToolModelOptions: input.createToolModelOptions,
+        createToolSelectedModelId: input.createToolSelectedModelId,
+        createToolPrdUiPreset: input.createToolPrdUiPreset,
+        createToolLayoutModifiers: input.createToolLayoutModifiers,
+        createToolPrdUiNotes: input.createToolPrdUiNotes,
+        createToolPrdInputs: input.createToolPrdInputs,
+        createToolPrdProcess: input.createToolPrdProcess,
+        createToolPrdConnections: input.createToolPrdConnections,
+        createToolPrdDependencies: input.createToolPrdDependencies,
+        createToolPrdExpectedBehavior: input.createToolPrdExpectedBehavior,
+        createToolPrdOutputs: input.createToolPrdOutputs,
+        createToolDevPlan: input.createToolDevPlan,
+        createToolBuildViewMode: input.createToolBuildViewMode,
+        createToolUiPreviewHtml: input.createToolUiPreviewHtml,
+        createToolFixNotes: input.createToolFixNotes,
+        createToolIconBrowserOpen: input.createToolIconBrowserOpen,
+        createToolIconBrowserQuery: input.createToolIconBrowserQuery,
+        createToolIconBrowserAppliedQuery: input.createToolIconBrowserAppliedQuery,
+        createToolIconLibrary: input.createToolIconLibrary,
         createToolSpec: input.createToolSpec,
         createToolWorkspaceRoot: input.createToolWorkspaceRoot,
         createToolPreviewFiles: input.createToolPreviewFiles,
@@ -246,9 +296,33 @@ export function buildWorkspaceToolViews(input: WorkspaceToolViewInput): Record<s
         createToolValidationWarnings: input.createToolValidationWarnings,
         createToolStatusMessage: input.createToolStatusMessage,
         createToolLastResultJson: input.createToolLastResultJson,
+        createToolPrdGeneratingSection: input.createToolPrdGeneratingSection,
+        createToolPrdGeneratingAll: input.createToolPrdGeneratingAll,
+        createToolPrdReviewBusy: input.createToolPrdReviewBusy,
+        createToolPrdReviewFindings: input.createToolPrdReviewFindings,
         createToolBusy: input.createToolBusy
       }),
       bodyHtml: renderCreateToolBody({
+        createToolStage: input.createToolStage,
+        createToolModelOptions: input.createToolModelOptions,
+        createToolSelectedModelId: input.createToolSelectedModelId,
+        createToolPrdUiPreset: input.createToolPrdUiPreset,
+        createToolLayoutModifiers: input.createToolLayoutModifiers,
+        createToolPrdUiNotes: input.createToolPrdUiNotes,
+        createToolPrdInputs: input.createToolPrdInputs,
+        createToolPrdProcess: input.createToolPrdProcess,
+        createToolPrdConnections: input.createToolPrdConnections,
+        createToolPrdDependencies: input.createToolPrdDependencies,
+        createToolPrdExpectedBehavior: input.createToolPrdExpectedBehavior,
+        createToolPrdOutputs: input.createToolPrdOutputs,
+        createToolDevPlan: input.createToolDevPlan,
+        createToolBuildViewMode: input.createToolBuildViewMode,
+        createToolUiPreviewHtml: input.createToolUiPreviewHtml,
+        createToolFixNotes: input.createToolFixNotes,
+        createToolIconBrowserOpen: input.createToolIconBrowserOpen,
+        createToolIconBrowserQuery: input.createToolIconBrowserQuery,
+        createToolIconBrowserAppliedQuery: input.createToolIconBrowserAppliedQuery,
+        createToolIconLibrary: input.createToolIconLibrary,
         createToolSpec: input.createToolSpec,
         createToolWorkspaceRoot: input.createToolWorkspaceRoot,
         createToolPreviewFiles: input.createToolPreviewFiles,
@@ -258,6 +332,10 @@ export function buildWorkspaceToolViews(input: WorkspaceToolViewInput): Record<s
         createToolValidationWarnings: input.createToolValidationWarnings,
         createToolStatusMessage: input.createToolStatusMessage,
         createToolLastResultJson: input.createToolLastResultJson,
+        createToolPrdGeneratingSection: input.createToolPrdGeneratingSection,
+        createToolPrdGeneratingAll: input.createToolPrdGeneratingAll,
+        createToolPrdReviewBusy: input.createToolPrdReviewBusy,
+        createToolPrdReviewFindings: input.createToolPrdReviewFindings,
         createToolBusy: input.createToolBusy
       })
     },

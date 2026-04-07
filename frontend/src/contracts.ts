@@ -151,6 +151,7 @@ export interface WorkspaceToolRecord {
   source: string;
   enabled: boolean;
   status: string;
+  entry?: string | null;
 }
 
 export interface WorkspaceToolsListRequest {
@@ -192,6 +193,59 @@ export interface WorkspaceToolsImportRequest {
 export interface WorkspaceToolsImportResponse {
   correlationId: string;
   tools: WorkspaceToolRecord[];
+}
+
+export interface CustomToolCapabilityInvokeRequest {
+  correlationId: string;
+  customToolId: string;
+  requestId: string;
+  capability: string;
+  payload: Record<string, unknown>;
+}
+
+export interface CustomToolCapabilityInvokeResponse {
+  correlationId: string;
+  customToolId: string;
+  requestId: string;
+  capability: string;
+  ok: boolean;
+  data: Record<string, unknown>;
+  error?: string;
+  code?: string;
+}
+
+export interface PluginCapabilityInvokeRequest {
+  correlationId: string;
+  pluginId: string;
+  requestId: string;
+  capability: string;
+  payload: Record<string, unknown>;
+}
+
+export interface PluginCapabilityInvokeResponse {
+  correlationId: string;
+  pluginId: string;
+  requestId: string;
+  capability: string;
+  ok: boolean;
+  data: Record<string, unknown>;
+  error?: string;
+  code?: string;
+}
+
+export interface CreateToolGenerateTextRequest {
+  correlationId: string;
+  modelId: string;
+  prompt: string;
+  maxTokens?: number;
+}
+
+export interface CreateToolGenerateTextResponse {
+  correlationId: string;
+  modelId: string;
+  resolvedModel: string;
+  resolvedEndpoint: string;
+  text: string;
 }
 
 export interface FilesListDirectoryRequest {

@@ -2,10 +2,10 @@ pub mod bridge;
 pub mod chat;
 pub mod flow;
 #[cfg(feature = "tauri-runtime")]
-pub mod tool_runtime;
-#[cfg(feature = "tauri-runtime")]
 pub mod tauri_bridge;
 pub mod terminal;
+#[cfg(feature = "tauri-runtime")]
+pub mod tool_runtime;
 
 use crate::app::chat_service::ChatService;
 use crate::app::flow_service::FlowService;
