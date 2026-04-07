@@ -23,6 +23,7 @@ use tauri::{AppHandle, Emitter, Manager};
 use tokio::net::TcpStream;
 use tokio::process::Child;
 use tokio::sync::Mutex;
+use tokio::task::JoinHandle;
 use tokio::time::Duration;
 
 /// Platform-specific binary names for whisper.cpp server
@@ -58,7 +59,8 @@ pub struct WhisperSupervisor {
     endpoint: Mutex<Option<String>>,
     child: Mutex<Option<Child>>,
     model_path: Mutex<Option<PathBuf>>,
-    shutdown_requested: AtomicBool,
+    shutdown_requested: Arc<AtomicBool>,
+    health_check_task: Mutex<Option<JoinHandle<()>>>,
 }
 
 impl WhisperSupervisor {
@@ -70,7 +72,8 @@ impl WhisperSupervisor {
             endpoint: Mutex::new(None),
             child: Mutex::new(None),
             model_path: Mutex::new(None),
-            shutdown_requested: AtomicBool::new(false),
+            shutdown_requested: Arc::new(AtomicBool::new(false)),
+            health_check_task: Mutex::new(None),
         }
     }
 
@@ -98,6 +101,12 @@ impl WhisperSupervisor {
                 return Ok(());
             }
         }
+
+        // Ensure any stale health-check loop is stopped before starting again.
+        if let Some(task) = self.health_check_task.lock().await.take() {
+            task.abort();
+        }
+        self.shutdown_requested.store(false, Ordering::SeqCst);
 
         // Mark as starting
         *self.status.lock().await = SupervisorStatus::Starting;
@@ -244,9 +253,10 @@ impl WhisperSupervisor {
         // Start health check background task
         let self_arc = Arc::new(self.clone_inner());
         let app_clone = app.clone();
-        tokio::spawn(async move {
+        let health_task = tokio::spawn(async move {
             health_check_loop(self_arc, app_clone).await;
         });
+        *self.health_check_task.lock().await = Some(health_task);
 
         Ok(())
     }
@@ -254,6 +264,9 @@ impl WhisperSupervisor {
     /// Stop the whisper.cpp server gracefully.
     pub async fn stop(&self) -> Result<(), String> {
         self.shutdown_requested.store(true, Ordering::SeqCst);
+        if let Some(task) = self.health_check_task.lock().await.take() {
+            task.abort();
+        }
 
         let mut child_guard = self.child.lock().await;
         if let Some(mut child) = child_guard.take() {
@@ -324,9 +337,7 @@ impl WhisperSupervisor {
     fn clone_inner(&self) -> WhisperSupervisorInner {
         WhisperSupervisorInner {
             port: self.port.load(Ordering::SeqCst),
-            shutdown_requested: Arc::new(AtomicBool::new(
-                self.shutdown_requested.load(Ordering::SeqCst),
-            )),
+            shutdown_requested: Arc::clone(&self.shutdown_requested),
         }
     }
 }
