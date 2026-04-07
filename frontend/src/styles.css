@@ -66,6 +66,27 @@ body {
   color: var(--ink);
 }
 
+.os-theme-arxell.os-scrollbar {
+  --os-size: 8px;
+  --os-padding-perpendicular: 0px;
+  --os-padding-axis: 0px;
+  --os-handle-border-radius: 4px;
+  --os-handle-bg: #6f7780;
+  --os-handle-bg-hover: #858d96;
+  --os-handle-bg-active: #858d96;
+}
+
+.os-theme-arxell.os-scrollbar .os-scrollbar-track {
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+}
+
+.os-theme-arxell.os-scrollbar .os-scrollbar-handle {
+  outline: none;
+  box-shadow: none;
+}
+
 [data-theme="terminal"] {
   --bg: #0d1115;
   --panel: #0d1115;
@@ -1198,6 +1219,32 @@ body {
   color: var(--muted);
 }
 
+.composer .composer-model-meta {
+  width: 100%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.4rem;
+  margin: 0 0 0.18rem;
+  color: var(--muted);
+}
+
+.composer .composer-model-name {
+  max-width: 58%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.62rem;
+  line-height: 1.2;
+}
+
+.composer .composer-model-caps {
+  font-size: 0.6rem;
+  line-height: 1.2;
+  opacity: 0.9;
+  white-space: nowrap;
+}
+
 .composer .composer-attachment-meta[hidden] {
   display: none;
 }
@@ -1541,7 +1588,7 @@ body {
 .tool-toolbar-btn {
   width: var(--tool-toolbar-btn-size);
   height: var(--tool-toolbar-btn-size);
-  border: 1px solid var(--line);
+  border: 1px solid transparent;
   border-radius: var(--tool-toolbar-btn-radius);
   background: var(--surface-strong);
   color: var(--muted);
@@ -1573,6 +1620,7 @@ body {
 
 .tool-toolbar-btn:hover:not(:disabled) {
   background: var(--hover-bg);
+  border-color: var(--line);
   color: var(--ink);
 }
 
@@ -1756,12 +1804,7 @@ body {
   min-width: 0;
   overflow-x: auto;
   overflow-y: hidden;
-  scrollbar-width: thin;
   padding-bottom: 1px;
-}
-
-.workspace-topbar-left::-webkit-scrollbar {
-  height: 6px;
 }
 
 .workspace-topbar-right {

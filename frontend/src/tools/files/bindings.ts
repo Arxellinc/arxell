@@ -1,6 +1,13 @@
 import { FILES_DATA_ATTR, FILES_UI_ID } from "../ui/constants";
 import type { FilesListDirectoryEntry } from "../../contracts";
 import { renderHighlightedHtml } from "./highlight";
+import {
+  closeFilesContextMenu,
+  openFilesContextMenu,
+  type FilesConflictResolution,
+  selectAllFilesInDirectory,
+  setFilesClipboard
+} from "./actions";
 
 type FilesColumnKey = "name" | "type" | "size" | "modified";
 
@@ -33,13 +40,17 @@ interface FilesSlice {
   filesSelectedEntryPath?: string | null;
   filesExpandedByPath: Record<string, boolean>;
   filesEntriesByPath: Record<string, FilesListDirectoryEntry[]>;
+  filesLoadingByPath: Record<string, boolean>;
   filesOpenTabs: string[];
   filesActiveTabPath: string | null;
   filesContentByPath: Record<string, string>;
   filesSavedContentByPath: Record<string, string>;
   filesDirtyByPath: Record<string, boolean>;
   filesReadOnlyByPath: Record<string, boolean>;
-  filesError?: string | null;
+  filesLoadingFileByPath: Record<string, boolean>;
+  filesSavingFileByPath: Record<string, boolean>;
+  filesSizeByPath: Record<string, number>;
+  filesError: string | null;
   filesColumnWidths?: Partial<FilesColumnWidths>;
   filesSidebarWidth?: number;
   filesSidebarCollapsed?: boolean;
@@ -48,6 +59,17 @@ interface FilesSlice {
   filesReplaceQuery?: string;
   filesFindCaseSensitive?: boolean;
   filesLineWrap?: boolean;
+  filesSelectedPaths?: string[];
+  filesContextMenuOpen?: boolean;
+  filesContextMenuTargetPath?: string | null;
+  filesContextMenuTargetIsDir?: boolean;
+  filesContextMenuPointerInside?: boolean;
+  filesConflictModalOpen?: boolean;
+  filesConflictName?: string;
+  filesSelectionAnchorPath?: string | null;
+  filesSelectionDragActive?: boolean;
+  filesSelectionJustDragged?: boolean;
+  filesSelectionGesture?: "single" | "toggle" | "range" | null;
 }
 
 interface FilesDeps {
@@ -62,7 +84,36 @@ interface FilesDeps {
   saveActiveFilesTabAs: (path: string) => Promise<void>;
   saveAllFilesTabs: () => Promise<void>;
   createNewFilesFile: (path: string) => Promise<void>;
+  createNewFilesFolder: (path: string) => Promise<void>;
   duplicateActiveFilesTab: (path: string) => Promise<void>;
+  deleteFilesPath: (path: string, recursive?: boolean) => Promise<void>;
+  renameFilesPath: (from: string, to: string) => Promise<void>;
+  pasteFilesClipboard: (
+    targetDirectory: string,
+    resolveConflictChoice?: (name: string) => Promise<FilesConflictResolution>
+  ) => Promise<void>;
+  undoLastFilesDelete: () => Promise<void>;
+  openPathInTerminal: (path: string) => Promise<void>;
+}
+
+type FilesConflictChoice = "replace" | "copy" | "cancel";
+let pendingConflictResolver: ((resolution: FilesConflictResolution) => void) | null = null;
+
+function requestConflictChoice(slice: FilesSlice, name: string): Promise<FilesConflictResolution> {
+  if (pendingConflictResolver) {
+    pendingConflictResolver({ choice: "cancel", applyToAll: false });
+    pendingConflictResolver = null;
+  }
+  slice.filesConflictModalOpen = true;
+  slice.filesConflictName = name;
+  return new Promise<FilesConflictResolution>((resolve) => {
+    pendingConflictResolver = (resolution) => {
+      pendingConflictResolver = null;
+      slice.filesConflictModalOpen = false;
+      slice.filesConflictName = "";
+      resolve(resolution);
+    };
+  });
 }
 
 export async function handleFilesClick(
@@ -70,6 +121,9 @@ export async function handleFilesClick(
   slice: FilesSlice,
   deps: FilesDeps
 ): Promise<boolean> {
+  if (slice.filesContextMenuOpen && !target.closest(".files-context-menu")) {
+    closeFilesContextMenu(slice);
+  }
   if (
     slice.filesRootSelectorOpen &&
     !target.closest(".files-root-selector") &&
@@ -86,6 +140,32 @@ export async function handleFilesClick(
 
   const filesAction = target.getAttribute(FILES_DATA_ATTR.action);
   const filesPath = target.getAttribute(FILES_DATA_ATTR.path);
+  if (
+    filesAction === "conflict-choice-replace" ||
+    filesAction === "conflict-choice-copy" ||
+    filesAction === "conflict-choice-cancel" ||
+    filesAction === "conflict-choice-replace-all" ||
+    filesAction === "conflict-choice-copy-all"
+  ) {
+    const resolution: FilesConflictResolution =
+      filesAction === "conflict-choice-replace"
+        ? { choice: "replace", applyToAll: false }
+        : filesAction === "conflict-choice-copy"
+          ? { choice: "copy", applyToAll: false }
+          : filesAction === "conflict-choice-replace-all"
+            ? { choice: "replace", applyToAll: true }
+            : filesAction === "conflict-choice-copy-all"
+              ? { choice: "copy", applyToAll: true }
+              : { choice: "cancel", applyToAll: false };
+    if (pendingConflictResolver) {
+      const resolve = pendingConflictResolver;
+      pendingConflictResolver = null;
+      slice.filesConflictModalOpen = false;
+      slice.filesConflictName = "";
+      resolve(resolution);
+    }
+    return true;
+  }
   if (filesAction === "toggle-node" && filesPath) {
     await deps.toggleFilesNode(filesPath);
     return true;
@@ -97,18 +177,40 @@ export async function handleFilesClick(
     return true;
   }
   if (filesAction === "select-entry" && filesPath) {
+    if (slice.filesSelectionJustDragged) {
+      slice.filesSelectionJustDragged = false;
+      return true;
+    }
     const isDir = target.getAttribute(FILES_DATA_ATTR.isDir) === "true";
     if (isDir) {
-      slice.filesSelectedEntryPath = null;
-      await deps.selectFilesPath(filesPath);
+      slice.filesSelectedEntryPath = filesPath;
+      slice.filesSelectedPaths = [];
+      slice.filesSelectionAnchorPath = filesPath;
+      slice.filesSelectionGesture = null;
+      return true;
     } else {
+      const gesture = slice.filesSelectionGesture;
+      const visibleFilePaths = listVisibleFilePaths(slice);
+      if (gesture === "range") {
+        applyRangeSelection(slice, visibleFilePaths, filesPath);
+        slice.filesSelectionGesture = null;
+        return true;
+      }
+      if (gesture === "toggle") {
+        toggleSelectionPath(slice, filesPath);
+        slice.filesSelectionAnchorPath = filesPath;
+        slice.filesSelectionGesture = null;
+        return true;
+      }
       const parent = parentDir(filesPath);
       slice.filesSelectedEntryPath = filesPath;
+      slice.filesSelectedPaths = [filesPath];
+      slice.filesSelectionAnchorPath = filesPath;
       if (parent && slice.filesSelectedPath !== parent) {
         await deps.selectFilesPath(parent);
       }
-      await deps.openFilesFile(filesPath);
     }
+    slice.filesSelectionGesture = null;
     return true;
   }
   if (filesAction === "activate-tab" && filesPath) {
@@ -141,6 +243,10 @@ export async function handleFilesClick(
     await deps.saveAllFilesTabs();
     return true;
   }
+  if (filesAction === "undo-delete") {
+    await deps.undoLastFilesDelete();
+    return true;
+  }
   if (filesAction === "close-active-file") {
     const active = slice.filesActiveTabPath;
     if (!active) return true;
@@ -166,6 +272,13 @@ export async function handleFilesClick(
     await copyText(active);
     return true;
   }
+  if (filesAction === "copy-path") {
+    const requested = filesPath || slice.filesContextMenuTargetPath || slice.filesSelectedEntryPath;
+    if (!requested) return true;
+    await copyText(requested);
+    closeFilesContextMenu(slice);
+    return true;
+  }
   if (filesAction === "duplicate-file") {
     const active = slice.filesActiveTabPath;
     if (!active) return true;
@@ -178,12 +291,142 @@ export async function handleFilesClick(
   }
   if (filesAction === "new-file") {
     const folder = slice.filesSelectedPath || slice.filesRootPath || "";
-    const requested = await pickSaveFilePath(
-      folder ? `${folder}/untitled.txt` : "untitled.txt",
-      "Create New File"
-    );
-    if (!requested) return true;
+    const entered = window.prompt("Create file", "untitled.txt")?.trim();
+    if (!entered) return true;
+    const requested =
+      entered.includes("/") || entered.includes("\\") || entered.startsWith(".")
+        ? entered
+        : folder
+          ? `${folder}/${entered}`
+          : entered;
     await deps.createNewFilesFile(requested);
+    return true;
+  }
+  if (filesAction === "select-all") {
+    selectAllFilesInDirectory(slice);
+    const selected = slice.filesSelectedPaths ?? [];
+    slice.filesSelectionAnchorPath = selected[selected.length - 1] ?? null;
+    closeFilesContextMenu(slice);
+    return true;
+  }
+  if (filesAction === "open-with") {
+    const requested = filesPath || slice.filesContextMenuTargetPath || slice.filesSelectedEntryPath;
+    if (!requested) return true;
+    const targetIsDir = slice.filesContextMenuTargetIsDir === true;
+    const mode = window.prompt("Open with (files|terminal)", "files")?.trim().toLowerCase();
+    if (mode === "terminal") {
+      await deps.openPathInTerminal(requested);
+    } else {
+      if (targetIsDir) {
+        await deps.selectFilesPath(requested);
+      } else {
+        await deps.openFilesFile(requested);
+      }
+    }
+    closeFilesContextMenu(slice);
+    return true;
+  }
+  if (filesAction === "open-in-terminal") {
+    const fallback =
+      slice.filesContextMenuTargetPath ||
+      slice.filesSelectedPath ||
+      slice.filesRootPath ||
+      "";
+    if (!fallback) return true;
+    const terminalPath =
+      slice.filesContextMenuTargetIsDir === false ? parentDir(fallback) : fallback;
+    await deps.openPathInTerminal(terminalPath || fallback);
+    closeFilesContextMenu(slice);
+    return true;
+  }
+  if (filesAction === "copy") {
+    const requested = filesPath || slice.filesContextMenuTargetPath || slice.filesSelectedEntryPath || "";
+    const selected = (slice.filesSelectedPaths ?? []).filter(Boolean);
+    const paths = selected.includes(requested) ? selected : requested ? [requested] : selected;
+    if (!paths.length) return true;
+    setFilesClipboard(slice, "copy", paths);
+    closeFilesContextMenu(slice);
+    return true;
+  }
+  if (filesAction === "cut") {
+    const requested = filesPath || slice.filesContextMenuTargetPath || slice.filesSelectedEntryPath || "";
+    const selected = (slice.filesSelectedPaths ?? []).filter(Boolean);
+    const paths = selected.includes(requested) ? selected : requested ? [requested] : selected;
+    if (!paths.length) return true;
+    setFilesClipboard(slice, "cut", paths);
+    closeFilesContextMenu(slice);
+    return true;
+  }
+  if (filesAction === "paste") {
+    const toDir =
+      slice.filesSelectedPath ||
+      slice.filesRootPath ||
+      "";
+    if (!toDir) return true;
+    await deps.pasteFilesClipboard(toDir, (name) => requestConflictChoice(slice, name));
+    closeFilesContextMenu(slice);
+    return true;
+  }
+  if (filesAction === "delete-path") {
+    const targetIsDir = slice.filesContextMenuTargetIsDir === true;
+    if (targetIsDir) {
+      const folderPath = filesPath || slice.filesContextMenuTargetPath || "";
+      if (!folderPath) return true;
+      const confirmed = window.confirm(`Delete folder '${folderPath}' and all contents?`);
+      if (!confirmed) return true;
+      await deps.deleteFilesPath(folderPath, true);
+      if (slice.filesSelectedPath === folderPath) {
+        const parent = parentDir(folderPath);
+        slice.filesSelectedPath = parent || slice.filesRootPath;
+      }
+      closeFilesContextMenu(slice);
+      return true;
+    }
+    const requested = filesPath || slice.filesContextMenuTargetPath || slice.filesSelectedEntryPath || "";
+    const selected = (slice.filesSelectedPaths ?? []).filter(Boolean);
+    const paths = selected.includes(requested) ? selected : requested ? [requested] : selected;
+    if (!paths.length) return true;
+    const confirmed = window.confirm(
+      paths.length === 1 ? `Delete '${paths[0]}'?` : `Delete ${paths.length} selected files?`
+    );
+    if (!confirmed) return true;
+    for (const path of paths) {
+      await deps.deleteFilesPath(path, false);
+    }
+    slice.filesSelectedPaths = [];
+    slice.filesSelectedEntryPath = null;
+    closeFilesContextMenu(slice);
+    return true;
+  }
+  if (filesAction === "rename-path") {
+    const requested = filesPath || slice.filesContextMenuTargetPath || slice.filesSelectedEntryPath;
+    if (!requested) return true;
+    if ((slice.filesSelectedPaths ?? []).length > 1) {
+      window.alert("Rename supports one file at a time.");
+      return true;
+    }
+    const parent = parentDir(requested);
+    const name = requested.slice(parent.length ? parent.length + 1 : 0);
+    const promptLabel =
+      slice.filesContextMenuTargetIsDir === true ? "Rename folder" : "Rename file";
+    const renamed = window.prompt(promptLabel, name)?.trim();
+    if (!renamed || renamed === name) return true;
+    const nextPath = `${parent}/${renamed}`;
+    await deps.renameFilesPath(requested, nextPath);
+    closeFilesContextMenu(slice);
+    return true;
+  }
+  if (filesAction === "new-folder") {
+    const folder = slice.filesSelectedPath || slice.filesRootPath || "";
+    const entered = window.prompt("Create folder", "new-folder")?.trim();
+    if (!entered) return true;
+    const requested =
+      entered.includes("/") || entered.includes("\\") || entered.startsWith(".")
+        ? entered
+        : folder
+          ? `${folder}/${entered}`
+          : entered;
+    await deps.createNewFilesFolder(requested);
     return true;
   }
   if (filesAction === "search-in-file") {
@@ -260,7 +503,7 @@ export async function handleFilesClick(
 export async function handleFilesDoubleClick(
   target: HTMLElement,
   slice: FilesSlice,
-  deps: Pick<FilesDeps, "selectFilesPath">
+  deps: Pick<FilesDeps, "selectFilesPath" | "openFilesFile">
 ): Promise<boolean> {
   const node = target.closest<HTMLElement>(
     `[${FILES_DATA_ATTR.action}="${"select-entry"}"][${FILES_DATA_ATTR.path}]`
@@ -268,9 +511,52 @@ export async function handleFilesDoubleClick(
   if (!node) return false;
   const path = node.getAttribute(FILES_DATA_ATTR.path);
   const isDir = node.getAttribute(FILES_DATA_ATTR.isDir) === "true";
-  if (!path || !isDir) return false;
-  slice.filesExpandedByPath[path] = true;
-  await deps.selectFilesPath(path);
+  if (!path) return false;
+  if (isDir) {
+    slice.filesExpandedByPath[path] = true;
+    await deps.selectFilesPath(path);
+    return true;
+  }
+  await deps.openFilesFile(path);
+  return true;
+}
+
+export function handleFilesContextMenu(
+  event: MouseEvent,
+  target: HTMLElement,
+  slice: FilesSlice
+): boolean {
+  const withinFilesTool = target.closest<HTMLElement>(".files-tool");
+  if (!withinFilesTool) return false;
+
+  const row = target.closest<HTMLElement>(
+    `[${FILES_DATA_ATTR.action}="select-entry"][${FILES_DATA_ATTR.path}]`
+  );
+  const path = row?.getAttribute(FILES_DATA_ATTR.path) ?? null;
+  const isDir = row?.getAttribute(FILES_DATA_ATTR.isDir) === "true";
+
+  event.preventDefault();
+  event.stopPropagation();
+  const rect = withinFilesTool.getBoundingClientRect();
+  const localX = event.clientX - rect.left;
+  const localY = event.clientY - rect.top;
+  openFilesContextMenu(slice, localX, localY, path, isDir);
+  if (path && !isDir) {
+    slice.filesSelectedEntryPath = path;
+  }
+  return true;
+}
+
+export function handleFilesMouseMove(target: HTMLElement, slice: FilesSlice): boolean {
+  if (!slice.filesContextMenuOpen) return false;
+  if (target.closest(".files-context-menu")) {
+    slice.filesContextMenuPointerInside = true;
+    return false;
+  }
+  if (!slice.filesContextMenuPointerInside) {
+    return false;
+  }
+  closeFilesContextMenu(slice);
   return true;
 }
 
@@ -330,6 +616,8 @@ export async function handleFilesKeyDown(
     | "openFilesFile"
     | "updateFilesBuffer"
     | "closeFilesTab"
+    | "pasteFilesClipboard"
+    | "undoLastFilesDelete"
   >
 ): Promise<boolean> {
   const target = event.target as HTMLElement | null;
@@ -337,6 +625,17 @@ export async function handleFilesKeyDown(
     Boolean(target?.closest(".files-tool")) ||
     Boolean(document.activeElement?.closest?.(".files-tool"));
   if (!withinFilesTool) return false;
+    if (slice.filesConflictModalOpen) {
+    if (event.key === "Escape" && pendingConflictResolver) {
+      const resolve = pendingConflictResolver;
+      pendingConflictResolver = null;
+      slice.filesConflictModalOpen = false;
+      slice.filesConflictName = "";
+      resolve({ choice: "cancel", applyToAll: false });
+      return true;
+    }
+    return false;
+  }
 
   if ((event.metaKey || event.ctrlKey) && !event.altKey) {
     const key = event.key.toLowerCase();
@@ -384,6 +683,56 @@ export async function handleFilesKeyDown(
       deps.closeFilesTab(active);
       return true;
     }
+    if (key === "a") {
+      const inEditor = Boolean(
+        (event.target as HTMLElement | null)?.closest(
+          `[${FILES_DATA_ATTR.action}="editor-input"][${FILES_DATA_ATTR.path}]`
+        )
+      );
+      if (inEditor) {
+        return false;
+      }
+      event.preventDefault();
+      selectAllFilesInDirectory(slice);
+      return true;
+    }
+    if (key === "v") {
+      event.preventDefault();
+      const toDir = slice.filesSelectedPath || slice.filesRootPath || "";
+      if (toDir) {
+        await deps.pasteFilesClipboard(toDir, (name) => requestConflictChoice(slice, name));
+      }
+      return true;
+    }
+    if (key === "c") {
+      const active = slice.filesSelectedEntryPath;
+      if (active) {
+        event.preventDefault();
+        setFilesClipboard(slice, "copy", [active]);
+        return true;
+      }
+    }
+    if (key === "x") {
+      const active = slice.filesSelectedEntryPath;
+      if (active) {
+        event.preventDefault();
+        setFilesClipboard(slice, "cut", [active]);
+        return true;
+      }
+    }
+    if (key === "z") {
+      const inEditor = Boolean(
+        (event.target as HTMLElement | null)?.closest(
+          `[${FILES_DATA_ATTR.action}="editor-input"][${FILES_DATA_ATTR.path}]`
+        )
+      );
+      if (inEditor) {
+        return false;
+      }
+      event.preventDefault();
+      await deps.undoLastFilesDelete();
+      return true;
+    }
   }
 
   if (!event.metaKey && !event.ctrlKey && event.altKey && event.key.toLowerCase() === "z") {
@@ -396,6 +745,10 @@ export async function handleFilesKeyDown(
     event.preventDefault();
     await deps.saveAllFilesTabs();
     return true;
+  }
+
+  if (event.key === "Escape") {
+    closeFilesContextMenu(slice);
   }
 
   const editorInput = (event.target as HTMLElement | null)?.closest<HTMLTextAreaElement>(
@@ -564,6 +917,61 @@ export function handleFilesPointerDown(
   target: HTMLElement,
   slice: FilesSlice
 ): boolean {
+  const fileRow = target.closest<HTMLElement>(
+    `[${FILES_DATA_ATTR.action}="select-entry"][${FILES_DATA_ATTR.path}]`
+  );
+  if (event.button === 0 && fileRow) {
+    const rowPath = fileRow.getAttribute(FILES_DATA_ATTR.path)?.trim() || "";
+    const isDir = fileRow.getAttribute(FILES_DATA_ATTR.isDir) === "true";
+    if (!isDir && rowPath) {
+      const visibleFilePaths = listVisibleFilePaths(slice);
+      if (event.shiftKey) {
+        slice.filesSelectionGesture = "range";
+        applyRangeSelection(slice, visibleFilePaths, rowPath);
+        slice.filesSelectionDragActive = false;
+        return true;
+      }
+      if (event.metaKey || event.ctrlKey) {
+        slice.filesSelectionGesture = "toggle";
+        toggleSelectionPath(slice, rowPath);
+        slice.filesSelectionAnchorPath = rowPath;
+        slice.filesSelectionDragActive = false;
+        return true;
+      }
+      slice.filesSelectionGesture = "single";
+      slice.filesSelectionAnchorPath = rowPath;
+      slice.filesSelectionDragActive = true;
+      slice.filesSelectionJustDragged = false;
+      const startPath = rowPath;
+      let currentHoverPath = startPath;
+      slice.filesSelectedPaths = [startPath];
+      const onMove = (moveEvent: MouseEvent) => {
+        if ((moveEvent.buttons & 1) !== 1) return;
+        const element = document.elementFromPoint(moveEvent.clientX, moveEvent.clientY) as HTMLElement | null;
+        const row = element?.closest<HTMLElement>(
+          `[${FILES_DATA_ATTR.action}="select-entry"][${FILES_DATA_ATTR.path}]`
+        );
+        const hoverPath = row?.getAttribute(FILES_DATA_ATTR.path)?.trim() || "";
+        const hoverIsDir = row?.getAttribute(FILES_DATA_ATTR.isDir) === "true";
+        if (!hoverPath || hoverIsDir || hoverPath === currentHoverPath) return;
+        currentHoverPath = hoverPath;
+        const before = JSON.stringify(slice.filesSelectedPaths ?? []);
+        applyRangeSelection(slice, visibleFilePaths, hoverPath);
+        const after = JSON.stringify(slice.filesSelectedPaths ?? []);
+        if (before !== after) {
+          slice.filesSelectionJustDragged = true;
+        }
+      };
+      const onUp = () => {
+        window.removeEventListener("mousemove", onMove);
+        slice.filesSelectionDragActive = false;
+      };
+      window.addEventListener("mousemove", onMove);
+      window.addEventListener("mouseup", onUp, { once: true });
+      return false;
+    }
+  }
+
   if (event.button !== 0) return false;
   const sidebarHandle = target.closest<HTMLElement>(
     `[${FILES_DATA_ATTR.action}="resize-sidebar"]`
@@ -642,6 +1050,44 @@ export function handleFilesPointerDown(
 
 function isFilesColumnKey(value: string | null): value is FilesColumnKey {
   return value === "name" || value === "type" || value === "size" || value === "modified";
+}
+
+function listVisibleFilePaths(slice: FilesSlice): string[] {
+  const selected = slice.filesSelectedPath || slice.filesRootPath;
+  if (!selected) return [];
+  const entries = slice.filesEntriesByPath[selected] ?? [];
+  return entries.filter((entry) => !entry.isDir).map((entry) => entry.path);
+}
+
+function applyRangeSelection(slice: FilesSlice, visibleFilePaths: string[], targetPath: string): void {
+  if (!visibleFilePaths.length) {
+    slice.filesSelectedPaths = [];
+    return;
+  }
+  const anchor = slice.filesSelectionAnchorPath?.trim() || targetPath;
+  const a = visibleFilePaths.indexOf(anchor);
+  const b = visibleFilePaths.indexOf(targetPath);
+  if (a < 0 || b < 0) {
+    slice.filesSelectedPaths = [targetPath];
+    slice.filesSelectedEntryPath = targetPath;
+    slice.filesSelectionAnchorPath = targetPath;
+    return;
+  }
+  const from = Math.min(a, b);
+  const to = Math.max(a, b);
+  slice.filesSelectedPaths = visibleFilePaths.slice(from, to + 1);
+  slice.filesSelectedEntryPath = targetPath;
+}
+
+function toggleSelectionPath(slice: FilesSlice, path: string): void {
+  const current = new Set(slice.filesSelectedPaths ?? []);
+  if (current.has(path)) {
+    current.delete(path);
+  } else {
+    current.add(path);
+  }
+  slice.filesSelectedPaths = Array.from(current);
+  slice.filesSelectedEntryPath = path;
 }
 
 function applyColumnWidth(grid: HTMLElement, key: FilesColumnKey, width: number): void {

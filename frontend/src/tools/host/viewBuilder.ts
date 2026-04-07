@@ -53,6 +53,21 @@ export interface WorkspaceToolViewInput {
   filesReplaceQuery: string;
   filesFindCaseSensitive: boolean;
   filesLineWrap: boolean;
+  filesSelectedPaths: string[];
+  filesContextMenuOpen: boolean;
+  filesContextMenuX: number;
+  filesContextMenuY: number;
+  filesContextMenuTargetPath: string | null;
+  filesContextMenuTargetIsDir: boolean;
+  filesClipboardMode: "copy" | "cut" | null;
+  filesClipboardPaths: string[];
+  filesUndoDeleteAvailable: boolean;
+  filesConflictModalOpen: boolean;
+  filesConflictName: string;
+  filesSelectionAnchorPath: string | null;
+  filesSelectionDragActive: boolean;
+  filesSelectionJustDragged: boolean;
+  filesSelectionGesture: "single" | "toggle" | "range" | null;
   filesError: string | null;
   tasksById: Record<string, TaskRecord>;
   tasksSelectedId: string | null;
@@ -175,6 +190,21 @@ export function buildWorkspaceToolViews(input: WorkspaceToolViewInput): Record<s
         replaceQuery: input.filesReplaceQuery,
         findCaseSensitive: input.filesFindCaseSensitive,
         lineWrap: input.filesLineWrap,
+        selectedPaths: input.filesSelectedPaths,
+        contextMenuOpen: input.filesContextMenuOpen,
+        contextMenuX: input.filesContextMenuX,
+        contextMenuY: input.filesContextMenuY,
+        contextMenuTargetPath: input.filesContextMenuTargetPath,
+        contextMenuTargetIsDir: input.filesContextMenuTargetIsDir,
+        clipboardMode: input.filesClipboardMode,
+        clipboardPaths: input.filesClipboardPaths,
+        undoDeleteAvailable: input.filesUndoDeleteAvailable,
+        conflictModalOpen: input.filesConflictModalOpen,
+        conflictModalName: input.filesConflictName,
+        selectionAnchorPath: input.filesSelectionAnchorPath,
+        selectionDragActive: input.filesSelectionDragActive,
+        selectionJustDragged: input.filesSelectionJustDragged,
+        selectionGesture: input.filesSelectionGesture,
         error: input.filesError
       }),
       bodyHtml: renderFilesToolBody({
@@ -202,6 +232,21 @@ export function buildWorkspaceToolViews(input: WorkspaceToolViewInput): Record<s
         replaceQuery: input.filesReplaceQuery,
         findCaseSensitive: input.filesFindCaseSensitive,
         lineWrap: input.filesLineWrap,
+        selectedPaths: input.filesSelectedPaths,
+        contextMenuOpen: input.filesContextMenuOpen,
+        contextMenuX: input.filesContextMenuX,
+        contextMenuY: input.filesContextMenuY,
+        contextMenuTargetPath: input.filesContextMenuTargetPath,
+        contextMenuTargetIsDir: input.filesContextMenuTargetIsDir,
+        clipboardMode: input.filesClipboardMode,
+        clipboardPaths: input.filesClipboardPaths,
+        undoDeleteAvailable: input.filesUndoDeleteAvailable,
+        conflictModalOpen: input.filesConflictModalOpen,
+        conflictModalName: input.filesConflictName,
+        selectionAnchorPath: input.filesSelectionAnchorPath,
+        selectionDragActive: input.filesSelectionDragActive,
+        selectionJustDragged: input.filesSelectionJustDragged,
+        selectionGesture: input.filesSelectionGesture,
         error: input.filesError
       })
     },

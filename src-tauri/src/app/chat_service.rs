@@ -6,7 +6,7 @@ use crate::contracts::{
     ChatGetMessagesResponse, ChatListConversationsRequest, ChatListConversationsResponse,
     ChatSendRequest, ChatSendResponse, ChatStreamChunkPayload, ChatStreamCompletePayload,
     ChatStreamReasoningChunkPayload, ChatStreamStartPayload, ConversationMessageRecord,
-    EventSeverity, EventStage, MessageRole, Subsystem,
+    EventSeverity, EventStage, MessageRole, Subsystem, ChatAttachment,
 };
 use crate::memory::MemoryManager;
 use crate::observability::EventHub;
@@ -131,6 +131,7 @@ impl ChatService {
                 &req.conversation_id,
                 &req.correlation_id,
                 &req.user_message,
+                req.attachments.as_deref(),
                 req.thinking_enabled.unwrap_or(false),
                 req.max_tokens,
             )
@@ -261,6 +262,7 @@ impl ChatService {
         conversation_id: &str,
         correlation_id: &str,
         user_message: &str,
+        attachments: Option<&[ChatAttachment]>,
         thinking_enabled: bool,
         requested_max_tokens: Option<u32>,
     ) -> Result<LocalLlamaResponse, String> {
@@ -276,7 +278,8 @@ impl ChatService {
             json!({
                 "baseUrl": provider_config.base_url,
                 "model": provider_config.model,
-                "maxTokens": provider_config.max_tokens
+                "maxTokens": provider_config.max_tokens,
+                "attachmentCount": attachments.map(|items| items.len()).unwrap_or(0)
             }),
         ));
 
@@ -360,8 +363,18 @@ impl ChatService {
         let mut assistant_from_turn_end: Option<String> = None;
         let mut agent_error: Option<String> = None;
 
+        let image_payloads = attachments
+            .map(|items| {
+                items
+                    .iter()
+                    .filter(|item| item.kind.eq_ignore_ascii_case("image"))
+                    .map(|item| (item.data_base64.clone(), item.mime_type.clone()))
+                    .collect::<Vec<_>>()
+            })
+            .filter(|items| !items.is_empty());
+
         let _events = agent
-            .run_collect_with_callback(user_message.to_string(), None, Some(cancel_rx), |event| {
+            .run_collect_with_callback(user_message.to_string(), image_payloads, Some(cancel_rx), |event| {
                 match event {
                     AgentEvent::TextDelta { delta } => {
                         assistant.push_str(delta.as_str());

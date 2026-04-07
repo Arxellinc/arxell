@@ -1,7 +1,38 @@
 import { iconHtml } from "../icons";
 import { APP_ICON } from "../icons/map";
+import type { ChatAttachment } from "../contracts";
 import type { PrimaryPanelRenderState } from "./types";
+import type { ChatModelCapabilities } from "../modelCapabilities";
 import { escapeHtml } from "./utils";
+
+interface ParsedAttachmentMessage {
+  displayText: string;
+  attachment: {
+    fileName: string;
+    content: string;
+  } | null;
+}
+
+function parseAttachmentMessage(raw: string): ParsedAttachmentMessage {
+  const pattern = /(?:^|\n\n)\[Attached file:\s*([^\]\n]+)\]\n\n([\s\S]*)$/;
+  const match = raw.match(pattern);
+  if (!match) {
+    return { displayText: raw, attachment: null };
+  }
+  const fullMatch = match[0] ?? "";
+  const fileName = (match[1] ?? "").trim();
+  const content = (match[2] ?? "").trim();
+  const before = raw.slice(0, raw.length - fullMatch.length).trim();
+  return {
+    displayText: before,
+    attachment: fileName
+      ? {
+          fileName,
+          content
+        }
+      : null
+  };
+}
 
 export function renderChatActions(state: PrimaryPanelRenderState): string {
   const sttRunning = state.stt?.status === "running" || state.stt?.status === "starting";
@@ -20,9 +51,23 @@ export function renderChatBody(state: PrimaryPanelRenderState): string {
   const isSpeaking = state.stt?.isSpeaking ?? false;
   const attachedFileName = state.chatAttachedFileName?.trim() ?? "";
   const hasAttachedFile = attachedFileName.length > 0;
+  const caps = state.chatActiveModelCapabilities;
+  const capabilitySummary = [
+    caps.text ? "text" : null,
+    caps.imageUnderstanding ? "image" : null,
+    caps.audioUnderstanding ? "audio" : null,
+    caps.toolUse ? "tools" : null,
+    caps.reasoningControl ? "reasoning" : null
+  ]
+    .filter((part): part is string => Boolean(part))
+    .join(", ");
   return `
     <div class="messages">${renderChatMessages(state)}</div>
     <form class="composer" id="composer">
+      <div class="composer-model-meta" id="chatModelMeta">
+        <span class="composer-model-name" title="${escapeHtml(state.chatActiveModelId)}">${escapeHtml(state.chatActiveModelLabel)}</span>
+        <span class="composer-model-caps">${escapeHtml(capabilitySummary || "text")}</span>
+      </div>
       <div class="composer-attachment-meta" id="chatAttachmentMeta" ${hasAttachedFile ? "" : "hidden"}>
         <span class="composer-attachment-icon" aria-hidden="true">${iconHtml("file-badge", { size: 16, tone: "dark" })}</span>
         <span class="composer-attachment-name" id="chatAttachmentName">${hasAttachedFile ? escapeHtml(attachedFileName) : ""}</span>
@@ -59,8 +104,9 @@ export function renderChatBody(state: PrimaryPanelRenderState): string {
 export function renderChatMessages(state: PrimaryPanelRenderState): string {
   const messagesHtml = state.messages
     .map(
-      (m) => {
+      (m, messageIndex) => {
         const correlationId = m.role === "assistant" ? m.correlationId : undefined;
+        const parsed = m.role === "user" ? parseAttachmentMessage(m.text) : { displayText: m.text, attachment: null };
         const thinkingText = correlationId
           ? (state.chatReasoningByCorrelation[correlationId] ?? "").trim()
           : "";
@@ -78,7 +124,7 @@ export function renderChatMessages(state: PrimaryPanelRenderState): string {
           : true;
         const hasToolRows = toolRows.length > 0;
         const showAssistantText = !(hasToolRows && !streamComplete);
-        const toolRowsHtml = hasToolRows
+        const assistantToolRowsHtml = hasToolRows
           ? `<section class="message-tool-rows">
               ${toolRows
                 .map((row) => {
@@ -98,8 +144,30 @@ export function renderChatMessages(state: PrimaryPanelRenderState): string {
                 .join("")}
             </section>`
           : "";
+        const attachmentRowId = parsed.attachment
+          ? `attachment-row-${messageIndex}-${parsed.attachment.fileName}`
+          : "";
+        const attachmentExpanded = parsed.attachment
+          ? state.chatToolRowExpandedById[attachmentRowId] === true
+          : false;
+        const attachmentRowsHtml = parsed.attachment
+          ? `<section class="message-tool-rows">
+              <article class="message-tool-row ${attachmentExpanded ? "is-open" : ""}">
+                <button type="button" class="message-tool-row-toggle" data-tool-row-toggle-id="${escapeHtml(attachmentRowId)}" aria-expanded="${attachmentExpanded ? "true" : "false"}" title="${attachmentExpanded ? "Collapse attachment" : "Expand attachment"}">
+                  <span class="message-tool-row-left">
+                    <span class="message-tool-row-icon">${iconHtml("file-badge", { size: 16, tone: "dark" })}</span>
+                    <span class="message-tool-row-title">${escapeHtml(parsed.attachment.fileName)}</span>
+                  </span>
+                  <span class="message-tool-row-chevron" aria-hidden="true">${attachmentExpanded ? "▾" : "▸"}</span>
+                </button>
+                ${attachmentExpanded ? `<div class="message-tool-row-details">${escapeHtml(parsed.attachment.content)}</div>` : ""}
+              </article>
+            </section>`
+          : "";
         const textHtml = showAssistantText
-          ? `<div class="message-text">${escapeHtml(m.text)}</div>`
+          ? parsed.displayText
+            ? `<div class="message-text">${escapeHtml(parsed.displayText)}</div>`
+            : ""
           : `<div class="message-text message-text-pending">Running tools...</div>`;
         const thinkingHtml =
           correlationId && thinkingText
@@ -113,8 +181,8 @@ export function renderChatMessages(state: PrimaryPanelRenderState): string {
             : "";
         const contentHtml =
           placement === "before"
-            ? `${toolRowsHtml}${thinkingHtml}${textHtml}`
-            : `${toolRowsHtml}${textHtml}${thinkingHtml}`;
+            ? `${attachmentRowsHtml}${assistantToolRowsHtml}${thinkingHtml}${textHtml}`
+            : `${attachmentRowsHtml}${assistantToolRowsHtml}${textHtml}${thinkingHtml}`;
         return `<div class="message ${m.role}">
           ${contentHtml}
         </div>`;
@@ -126,14 +194,16 @@ export function renderChatMessages(state: PrimaryPanelRenderState): string {
 }
 
 export function bindChatPanel(
-  onSendMessage: (text: string) => Promise<void>,
+  onSendMessage: (text: string, attachments?: ChatAttachment[]) => Promise<void>,
   onUpdateChatDraft: (text: string) => void,
   onSetChatAttachment: (fileName: string, content: string) => void,
   onClearChatAttachment: () => void,
   onStopCurrentResponse: () => Promise<void>,
   onToggleStt: () => Promise<void>,
   chatStreaming: boolean,
-  initialAttachment: { name: string; content: string } | null
+  initialAttachment: { name: string; content: string } | null,
+  activeModelLabel: string,
+  modelCapabilities: ChatModelCapabilities
 ): void {
   const form = document.querySelector<HTMLFormElement>("#composer");
   const input = document.querySelector<HTMLTextAreaElement>("#msg");
@@ -143,7 +213,9 @@ export function bindChatPanel(
   const attachmentName = document.querySelector<HTMLSpanElement>("#chatAttachmentName");
   if (!form || !input) return;
   const MAX_ATTACHMENT_CHARS = 12000;
+  const MAX_IMAGE_BYTES = 6 * 1024 * 1024;
   let attachedFile: { name: string; content: string } | null = initialAttachment;
+  let attachmentPayloads: ChatAttachment[] | null = null;
 
   const updateAttachmentUi = () => {
     if (!attachmentMeta || !attachmentName) return;
@@ -172,6 +244,8 @@ export function bindChatPanel(
     const text = attachedFile
       ? [
           promptText,
+          `[Attachment context: active model "${activeModelLabel}" capabilities -> text=${modelCapabilities.text ? "yes" : "no"}, inlineTextAttachments=${modelCapabilities.inlineTextAttachments ? "yes" : "no"}, imageUnderstanding=${modelCapabilities.imageUnderstanding ? "yes" : "no"}, imageAttachmentsEnabled=${modelCapabilities.imageAttachmentsEnabled ? "yes" : "no"}, audioUnderstanding=${modelCapabilities.audioUnderstanding ? "yes" : "no"}, toolUse=${modelCapabilities.toolUse ? "yes" : "no"}, reasoningControl=${modelCapabilities.reasoningControl ? "yes" : "no"}]`,
+          "[Attachment note: Uploaded files are included as inline content and may not exist in the workspace filesystem. Use the inline content directly and do not call Files/Terminal to open a path unless the user explicitly provided one.]",
           `[Attached file: ${attachedFile.name}]`,
           attachedFile.content
         ]
@@ -180,8 +254,9 @@ export function bindChatPanel(
       : promptText;
     input.value = "";
     onUpdateChatDraft("");
-    await onSendMessage(text);
+    await onSendMessage(text, attachmentPayloads || undefined);
     attachedFile = null;
+    attachmentPayloads = null;
     onClearChatAttachment();
     if (attachInput) attachInput.value = "";
     updateAttachmentUi();
@@ -239,16 +314,64 @@ export function bindChatPanel(
       const file = attachInput.files?.[0];
       if (!file) return;
       const lowerName = file.name.toLowerCase();
+      const isImage = file.type.startsWith("image/") || /\.(png|jpe?g|gif|webp|bmp|svg)$/i.test(lowerName);
       const isTextLike =
         file.type.startsWith("text/") ||
         /\.(txt|md|markdown|json|csv|xml|yaml|yml|toml|ini|log|js|ts|tsx|jsx|py|rs|go|java|c|cpp|h|hpp|css|html)$/i.test(
           lowerName
         );
+      if (isImage) {
+        if (!modelCapabilities.imageUnderstanding) {
+          attachedFile = {
+            name: file.name,
+            content:
+              "[Image attachment selected. Current model does not advertise image understanding; image pixels were not sent.]"
+          };
+          attachmentPayloads = null;
+        } else if (!modelCapabilities.imageAttachmentsEnabled) {
+          attachedFile = {
+            name: file.name,
+            content:
+              "[Image attachment selected. Model appears image-capable, but image attachment transport is not enabled yet in this build.]"
+          };
+          attachmentPayloads = null;
+        } else {
+          if (file.size > MAX_IMAGE_BYTES) {
+            attachedFile = {
+              name: file.name,
+              content: `[Image attachment too large: ${Math.round(file.size / 1024 / 1024)}MB. Maximum supported size is ${Math.round(MAX_IMAGE_BYTES / 1024 / 1024)}MB.]`
+            };
+            attachmentPayloads = null;
+            onSetChatAttachment(attachedFile.name, attachedFile.content);
+            updateAttachmentUi();
+            return;
+          }
+          const bytes = new Uint8Array(await file.arrayBuffer());
+          const base64 = bytesToBase64(bytes);
+          attachedFile = {
+            name: file.name,
+            content: `[Image attachment sent: ${file.name} (${file.type || "application/octet-stream"})]`
+          };
+          attachmentPayloads = [
+            {
+              kind: "image",
+              fileName: file.name,
+              mimeType: file.type || "application/octet-stream",
+              dataBase64: base64
+            }
+          ];
+        }
+        onSetChatAttachment(attachedFile.name, attachedFile.content);
+        updateAttachmentUi();
+        return;
+      }
       if (!isTextLike) {
         attachedFile = {
           name: file.name,
-          content: `[Non-text attachment selected. Filename: ${file.name}]`
+          content:
+            "[Non-text attachment selected. This build supports inline text attachments only; binary content was not inlined.]"
         };
+        attachmentPayloads = null;
         onSetChatAttachment(attachedFile.name, attachedFile.content);
         updateAttachmentUi();
         return;
@@ -258,6 +381,7 @@ export function bindChatPanel(
         text = `${text.slice(0, MAX_ATTACHMENT_CHARS)}\n\n[Attachment truncated to ${MAX_ATTACHMENT_CHARS} characters.]`;
       }
       attachedFile = { name: file.name, content: text };
+      attachmentPayloads = null;
       onSetChatAttachment(attachedFile.name, attachedFile.content);
       updateAttachmentUi();
     };
@@ -265,4 +389,14 @@ export function bindChatPanel(
 
   updateAttachmentUi();
 
+}
+
+function bytesToBase64(bytes: Uint8Array): string {
+  let binary = "";
+  const chunkSize = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    const chunk = bytes.subarray(i, i + chunkSize);
+    binary += String.fromCharCode(...chunk);
+  }
+  return btoa(binary);
 }

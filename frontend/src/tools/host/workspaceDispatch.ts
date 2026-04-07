@@ -1,10 +1,13 @@
 import {
   handleFilesClick,
+  handleFilesContextMenu,
   handleFilesDoubleClick,
   handleFilesInput,
   handleFilesKeyDown,
+  handleFilesMouseMove,
   handleFilesPointerDown
 } from "../files/bindings";
+import type { FilesConflictResolution } from "../files/actions";
 import { handleFlowChange, handleFlowClick, handleFlowInput } from "../flow/bindings";
 import {
   handleWebChange,
@@ -82,7 +85,16 @@ export interface WorkspaceToolDispatchDeps {
     saveActiveFilesTabAs: (path: string) => Promise<void>;
     saveAllFilesTabs: () => Promise<void>;
     createNewFilesFile: (path: string) => Promise<void>;
+    createNewFilesFolder: (path: string) => Promise<void>;
     duplicateActiveFilesTab: (path: string) => Promise<void>;
+    deleteFilesPath: (path: string, recursive?: boolean) => Promise<void>;
+    renameFilesPath: (from: string, to: string) => Promise<void>;
+    pasteFilesClipboard: (
+      targetDirectory: string,
+      resolveConflictChoice?: (name: string) => Promise<FilesConflictResolution>
+    ) => Promise<void>;
+    undoLastFilesDelete: () => Promise<void>;
+    openPathInTerminal: (path: string) => Promise<void>;
   };
   web: {
     runWebSearch: () => Promise<void>;
@@ -183,7 +195,9 @@ export async function dispatchWorkspaceToolKeyDown(
       saveAllFilesTabs: deps.files.saveAllFilesTabs,
       openFilesFile: deps.files.openFilesFile,
       closeFilesTab: deps.files.closeFilesTab,
-      updateFilesBuffer: deps.files.updateFilesBuffer
+      updateFilesBuffer: deps.files.updateFilesBuffer,
+      pasteFilesClipboard: deps.files.pasteFilesClipboard,
+      undoLastFilesDelete: deps.files.undoLastFilesDelete
     })
   ) {
     return true;
@@ -194,13 +208,29 @@ export async function dispatchWorkspaceToolKeyDown(
   });
 }
 
+export function dispatchWorkspaceToolContextMenu(
+  event: MouseEvent,
+  target: HTMLElement,
+  state: WorkspaceToolState
+): boolean {
+  return handleFilesContextMenu(event, target, state as any);
+}
+
+export function dispatchWorkspaceToolMouseMove(
+  target: HTMLElement,
+  state: WorkspaceToolState
+): boolean {
+  return handleFilesMouseMove(target, state as any);
+}
+
 export async function dispatchWorkspaceToolDoubleClick(
   target: HTMLElement,
   state: WorkspaceToolState,
   deps: WorkspaceToolDispatchDeps
 ): Promise<boolean> {
   return handleFilesDoubleClick(target, state as any, {
-    selectFilesPath: deps.files.selectFilesPath
+    selectFilesPath: deps.files.selectFilesPath,
+    openFilesFile: deps.files.openFilesFile
   });
 }
 

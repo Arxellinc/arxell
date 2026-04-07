@@ -1,7 +1,8 @@
 #![cfg(feature = "tauri-runtime")]
 
 use crate::contracts::{
-    FilesDeletePathRequest, FilesListDirectoryRequest, FilesReadFileRequest, FilesWriteFileRequest,
+    FilesCreateDirectoryRequest, FilesDeletePathRequest, FilesListDirectoryRequest,
+    FilesReadFileRequest, FilesWriteFileRequest,
 };
 use crate::ipc::tauri_bridge::TauriBridgeState;
 use crate::tools::invoke::registry::{decode_payload, InvokeRegistry, ToolInvokeFuture};
@@ -15,6 +16,11 @@ pub fn register(registry: &mut InvokeRegistry) {
     );
     registry.register("files", &["read-file", "readFile"], invoke_read_file);
     registry.register("files", &["write-file", "writeFile"], invoke_write_file);
+    registry.register(
+        "files",
+        &["create-directory", "createDirectory"],
+        invoke_create_directory,
+    );
     registry.register("files", &["delete-path", "deletePath"], invoke_delete_path);
 }
 
@@ -60,5 +66,19 @@ fn invoke_delete_path(state: &TauriBridgeState, payload: Value) -> ToolInvokeFut
         )?;
         serde_json::to_value(result)
             .map_err(|e| format!("failed serializing files delete-path response: {e}"))
+    })
+}
+
+fn invoke_create_directory(state: &TauriBridgeState, payload: Value) -> ToolInvokeFuture {
+    let files = state.files.clone();
+    Box::pin(async move {
+        let req: FilesCreateDirectoryRequest = decode_payload(payload)?;
+        let result = files.create_directory(
+            req.path.as_str(),
+            req.recursive.unwrap_or(true),
+            req.correlation_id,
+        )?;
+        serde_json::to_value(result)
+            .map_err(|e| format!("failed serializing files create-directory response: {e}"))
     })
 }

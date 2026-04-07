@@ -1,6 +1,6 @@
 use crate::contracts::{
-    FilesDeletePathResponse, FilesListDirectoryEntry, FilesListDirectoryResponse, FilesReadFileResponse,
-    FilesWriteFileResponse,
+    FilesCreateDirectoryResponse, FilesDeletePathResponse, FilesListDirectoryEntry,
+    FilesListDirectoryResponse, FilesReadFileResponse, FilesWriteFileResponse,
 };
 use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
@@ -26,7 +26,7 @@ impl FilesService {
         path: Option<&str>,
         correlation_id: String,
     ) -> Result<FilesListDirectoryResponse, String> {
-        let target = resolve_target_path(self.root_path.as_path(), path)?;
+        let target = resolve_existing_target_path(self.root_path.as_path(), path)?;
         let entries = list_directory_entries(target.as_path())?;
         Ok(FilesListDirectoryResponse {
             correlation_id,
@@ -42,7 +42,7 @@ impl FilesService {
         correlation_id: String,
     ) -> Result<FilesReadFileResponse, String> {
         const MAX_EDIT_BYTES: u64 = 1_000_000;
-        let target = resolve_target_path(self.root_path.as_path(), Some(path))?;
+        let target = resolve_existing_target_path(self.root_path.as_path(), Some(path))?;
         let metadata = std::fs::metadata(target.as_path())
             .map_err(|e| format!("failed reading file metadata: {e}"))?;
         if !metadata.is_file() {
@@ -83,9 +83,13 @@ impl FilesService {
         content: &str,
         correlation_id: String,
     ) -> Result<FilesWriteFileResponse, String> {
-        let target = resolve_target_path(self.root_path.as_path(), Some(path))?;
+        let target = resolve_writable_target_path(self.root_path.as_path(), path)?;
         if target.is_dir() {
             return Err("requested path is a directory".to_string());
+        }
+        if let Some(parent) = target.parent() {
+            std::fs::create_dir_all(parent)
+                .map_err(|e| format!("failed creating parent directories: {e}"))?;
         }
         std::fs::write(target.as_path(), content.as_bytes())
             .map_err(|e| format!("failed writing file: {e}"))?;
@@ -102,7 +106,7 @@ impl FilesService {
         recursive: bool,
         correlation_id: String,
     ) -> Result<FilesDeletePathResponse, String> {
-        let target = resolve_target_path(self.root_path.as_path(), Some(path))?;
+        let target = resolve_existing_target_path(self.root_path.as_path(), Some(path))?;
         let metadata = std::fs::metadata(target.as_path())
             .map_err(|e| format!("failed reading target metadata: {e}"))?;
         if metadata.is_dir() {
@@ -123,6 +127,31 @@ impl FilesService {
             deleted: true,
         })
     }
+
+    pub fn create_directory(
+        &self,
+        path: &str,
+        recursive: bool,
+        correlation_id: String,
+    ) -> Result<FilesCreateDirectoryResponse, String> {
+        let target = resolve_writable_target_path(self.root_path.as_path(), path)?;
+        let already_exists = target.exists();
+        if already_exists && !target.is_dir() {
+            return Err("requested path already exists as a file".to_string());
+        }
+        if recursive {
+            std::fs::create_dir_all(target.as_path())
+                .map_err(|e| format!("failed creating directory recursively: {e}"))?;
+        } else {
+            std::fs::create_dir(target.as_path())
+                .map_err(|e| format!("failed creating directory: {e}"))?;
+        }
+        Ok(FilesCreateDirectoryResponse {
+            correlation_id,
+            path: path_to_string(target.as_path()),
+            created: !already_exists,
+        })
+    }
 }
 
 impl Default for FilesService {
@@ -140,20 +169,38 @@ fn default_workspace_root() -> PathBuf {
     }
 }
 
-fn resolve_target_path(root: &Path, requested: Option<&str>) -> Result<PathBuf, String> {
-    let canonical_root = root
-        .canonicalize()
-        .map_err(|e| format!("failed resolving workspace root: {e}"))?;
+fn canonical_workspace_root(root: &Path) -> Result<PathBuf, String> {
+    root.canonicalize()
+        .map_err(|e| format!("failed resolving workspace root: {e}"))
+}
+
+fn resolve_requested_path(canonical_root: &Path, requested: &str) -> PathBuf {
+    let raw = PathBuf::from(requested);
+    if raw.is_absolute() {
+        raw
+    } else {
+        canonical_root.join(raw)
+    }
+}
+
+fn find_existing_ancestor(path: &Path) -> Option<PathBuf> {
+    let mut current = Some(path);
+    while let Some(candidate) = current {
+        if candidate.exists() {
+            return Some(candidate.to_path_buf());
+        }
+        current = candidate.parent();
+    }
+    None
+}
+
+fn resolve_existing_target_path(root: &Path, requested: Option<&str>) -> Result<PathBuf, String> {
+    let canonical_root = canonical_workspace_root(root)?;
     let requested = requested.unwrap_or("").trim();
     if requested.is_empty() {
         return Ok(canonical_root);
     }
-    let raw = PathBuf::from(requested);
-    let joined = if raw.is_absolute() {
-        raw
-    } else {
-        canonical_root.join(raw)
-    };
+    let joined = resolve_requested_path(canonical_root.as_path(), requested);
     let canonical_target = joined
         .canonicalize()
         .map_err(|e| format!("failed resolving requested path: {e}"))?;
@@ -161,6 +208,24 @@ fn resolve_target_path(root: &Path, requested: Option<&str>) -> Result<PathBuf, 
         return Err("requested path is outside workspace root".to_string());
     }
     Ok(canonical_target)
+}
+
+fn resolve_writable_target_path(root: &Path, requested: &str) -> Result<PathBuf, String> {
+    let canonical_root = canonical_workspace_root(root)?;
+    let trimmed = requested.trim();
+    if trimmed.is_empty() {
+        return Err("path is required".to_string());
+    }
+    let joined = resolve_requested_path(canonical_root.as_path(), trimmed);
+    let existing_anchor = find_existing_ancestor(joined.as_path())
+        .ok_or_else(|| "failed resolving requested path: no existing parent".to_string())?;
+    let canonical_anchor = existing_anchor
+        .canonicalize()
+        .map_err(|e| format!("failed resolving requested path: {e}"))?;
+    if !canonical_anchor.starts_with(canonical_root.as_path()) {
+        return Err("requested path is outside workspace root".to_string());
+    }
+    Ok(joined)
 }
 
 fn list_directory_entries(path: &Path) -> Result<Vec<FilesListDirectoryEntry>, String> {

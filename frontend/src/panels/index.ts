@@ -141,7 +141,9 @@ export function attachPrimaryPanelInteractions(
             name: state.chatAttachedFileName,
             content: state.chatAttachedFileContent ?? ""
           }
-        : null
+        : null,
+      state.chatActiveModelLabel,
+      state.chatActiveModelCapabilities
     );
     const newBtn = document.querySelector<HTMLButtonElement>("#chatNewBtn");
     if (newBtn) {

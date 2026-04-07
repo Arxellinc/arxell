@@ -3,11 +3,16 @@ import type { ChatIpcClient } from "../../ipcClient";
 import {
   activateFilesTab,
   closeFilesTab,
+  createNewFilesFolder,
   createNewFilesFile,
+  deleteFilesPath,
   duplicateActiveFilesTab,
   ensureFilesExplorerLoaded,
   listFilesDirectory,
   openFilesFile,
+  pasteFilesClipboard,
+  renameFilesPath,
+  undoLastFilesDelete,
   saveActiveFilesTab,
   saveActiveFilesTabAs,
   saveAllFilesTabs,
@@ -15,6 +20,7 @@ import {
   toggleFilesNode,
   updateFilesBuffer
 } from "../files/actions";
+import type { FilesConflictResolution } from "../files/actions";
 import {
   rerunFlowValidation,
   resumeFlowRun,
@@ -105,7 +111,15 @@ export interface WorkspaceToolsRuntime {
   saveActiveFilesTabAs: (path: string) => Promise<void>;
   saveAllFilesTabs: () => Promise<void>;
   createNewFilesFile: (path: string) => Promise<void>;
+  createNewFilesFolder: (path: string) => Promise<void>;
   duplicateActiveFilesTab: (path: string) => Promise<void>;
+  deleteFilesPath: (path: string, recursive?: boolean) => Promise<void>;
+  renameFilesPath: (from: string, to: string) => Promise<void>;
+  pasteFilesClipboard: (
+    targetDirectory: string,
+    resolveConflictChoice?: (name: string) => Promise<FilesConflictResolution>
+  ) => Promise<void>;
+  undoLastFilesDelete: () => Promise<void>;
   createAndActivateWebTab: () => void;
   runWebSearch: () => Promise<void>;
   saveWebSearchSetup: () => Promise<void>;
@@ -210,8 +224,23 @@ export function createWorkspaceToolsRuntime(
     createNewFilesFile: async (path) => {
       await createNewFilesFile(state, filesDeps, path);
     },
+    createNewFilesFolder: async (path) => {
+      await createNewFilesFolder(state, filesDeps, path);
+    },
     duplicateActiveFilesTab: async (path) => {
       await duplicateActiveFilesTab(state, filesDeps, path);
+    },
+    deleteFilesPath: async (path, recursive = false) => {
+      await deleteFilesPath(state, filesDeps, path, recursive);
+    },
+    renameFilesPath: async (from, to) => {
+      await renameFilesPath(state, filesDeps, from, to);
+    },
+    pasteFilesClipboard: async (targetDirectory, resolveConflictChoice) => {
+      await pasteFilesClipboard(state, filesDeps, targetDirectory, resolveConflictChoice);
+    },
+    undoLastFilesDelete: async () => {
+      await undoLastFilesDelete(state, filesDeps);
     },
     createAndActivateWebTab: () => {
       createAndActivateWebTab(state, { createWebTab: deps.createWebTab });

@@ -228,13 +228,30 @@ fn convert_messages(
                     out.push(serde_json::json!({"role":"user","content":t}))
                 }
                 crate::types::UserContent::Parts(parts) => {
-                    let mut text = String::new();
+                    let mut user_content_parts: Vec<serde_json::Value> = Vec::new();
                     for p in parts {
-                        if let crate::types::ContentPart::Text { text: t } = p {
-                            text.push_str(&t);
+                        match p {
+                            crate::types::ContentPart::Text { text: t } => {
+                                user_content_parts.push(serde_json::json!({
+                                    "type": "text",
+                                    "text": t
+                                }));
+                            }
+                            crate::types::ContentPart::Image { data, mime_type } => {
+                                let data_uri = format!("data:{mime_type};base64,{data}");
+                                user_content_parts.push(serde_json::json!({
+                                    "type": "image_url",
+                                    "image_url": { "url": data_uri }
+                                }));
+                            }
+                            _ => {}
                         }
                     }
-                    out.push(serde_json::json!({"role":"user","content":text}));
+                    if user_content_parts.is_empty() {
+                        out.push(serde_json::json!({"role":"user","content":""}));
+                    } else {
+                        out.push(serde_json::json!({"role":"user","content":user_content_parts}));
+                    }
                 }
             },
             Message::Assistant { content, .. } => {

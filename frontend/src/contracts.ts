@@ -23,6 +23,14 @@ export interface ChatSendRequest {
   correlationId: string;
   thinkingEnabled?: boolean;
   maxTokens?: number;
+  attachments?: ChatAttachment[];
+}
+
+export interface ChatAttachment {
+  kind: "image";
+  fileName: string;
+  mimeType: string;
+  dataBase64: string;
 }
 
 export interface ChatSendResponse {
@@ -292,6 +300,18 @@ export interface FilesWriteFileResponse {
   correlationId: string;
   path: string;
   sizeBytes: number;
+}
+
+export interface FilesCreateDirectoryRequest {
+  correlationId: string;
+  path: string;
+  recursive?: boolean;
+}
+
+export interface FilesCreateDirectoryResponse {
+  correlationId: string;
+  path: string;
+  created: boolean;
 }
 
 export type ApiConnectionType = "llm" | "search" | "stt" | "tts" | "image" | "other";

@@ -3,6 +3,7 @@ import "xterm/css/xterm.css";
 import type {
   ApiConnectionRecord,
   AppEvent,
+  ChatAttachment,
   ChatStreamChunkPayload,
   ChatStreamReasoningChunkPayload,
   ConversationSummaryRecord,
@@ -57,9 +58,11 @@ import { applyFlowRuntimeEvent } from "./tools/host/flowEvents";
 import {
   dispatchWorkspaceToolChange,
   dispatchWorkspaceToolClick,
+  dispatchWorkspaceToolContextMenu,
   dispatchWorkspaceToolDoubleClick,
   dispatchWorkspaceToolInput,
   dispatchWorkspaceToolKeyDown,
+  dispatchWorkspaceToolMouseMove,
   dispatchWorkspaceToolPointerDown,
   dispatchWorkspaceToolSubmit,
   WORKSPACE_TOOL_TARGET_SELECTOR
@@ -92,6 +95,12 @@ import {
   createTerminalSessionForProfile,
   ensureTerminalSessionForProfile
 } from "./workspace/controller";
+import {
+  inferChatModelCapabilities,
+  resolveActiveChatModelProfile,
+  type ChatModelCapabilities
+} from "./modelCapabilities";
+import { destroyOverlayScrollbars, syncOverlayScrollbars } from "./scrollbars";
 
 const terminalManager = new TerminalManager();
 const MAX_CONSOLE_ENTRIES = 600;
@@ -405,6 +414,9 @@ const state: {
   chatDraft: string;
   chatAttachedFileName: string | null;
   chatAttachedFileContent: string | null;
+  chatActiveModelId: string;
+  chatActiveModelLabel: string;
+  chatActiveModelCapabilities: ChatModelCapabilities;
   activeChatCorrelationId: string | null;
   devices: DevicesState;
   apiConnections: ApiConnectionRecord[];
@@ -472,6 +484,21 @@ const state: {
   filesReplaceQuery: string;
   filesFindCaseSensitive: boolean;
   filesLineWrap: boolean;
+  filesSelectedPaths: string[];
+  filesContextMenuOpen: boolean;
+  filesContextMenuX: number;
+  filesContextMenuY: number;
+  filesContextMenuTargetPath: string | null;
+  filesContextMenuTargetIsDir: boolean;
+  filesClipboardMode: "copy" | "cut" | null;
+  filesClipboardPaths: string[];
+  filesDeleteUndoStack: Array<{ deletedAtMs: number; snapshots: Array<Record<string, unknown>> }>;
+  filesConflictModalOpen: boolean;
+  filesConflictName: string;
+  filesSelectionAnchorPath: string | null;
+  filesSelectionDragActive: boolean;
+  filesSelectionJustDragged: boolean;
+  filesSelectionGesture: "single" | "toggle" | "range" | null;
   filesError: string | null;
   tasksById: Record<string, TaskRecord>;
   tasksSelectedId: string | null;
@@ -636,6 +663,9 @@ const state: {
   chatDraft: "",
   chatAttachedFileName: null,
   chatAttachedFileContent: null,
+  chatActiveModelId: "primary-agent",
+  chatActiveModelLabel: "local-model",
+  chatActiveModelCapabilities: inferChatModelCapabilities("local-model"),
   activeChatCorrelationId: null,
   devices: defaultDevicesState(),
   apiConnections: [],
@@ -698,6 +728,21 @@ const state: {
   filesReplaceQuery: "",
   filesFindCaseSensitive: false,
   filesLineWrap: false,
+  filesSelectedPaths: [],
+  filesContextMenuOpen: false,
+  filesContextMenuX: 16,
+  filesContextMenuY: 16,
+  filesContextMenuTargetPath: null,
+  filesContextMenuTargetIsDir: false,
+  filesClipboardMode: null,
+  filesClipboardPaths: [],
+  filesDeleteUndoStack: [],
+  filesConflictModalOpen: false,
+  filesConflictName: "",
+  filesSelectionAnchorPath: null,
+  filesSelectionDragActive: false,
+  filesSelectionJustDragged: false,
+  filesSelectionGesture: null,
   filesError: null,
   tasksById: loadPersistedTasksById(),
   tasksSelectedId: null,
@@ -1223,6 +1268,21 @@ function render(): void {
     filesReplaceQuery: state.filesReplaceQuery,
     filesFindCaseSensitive: state.filesFindCaseSensitive,
     filesLineWrap: state.filesLineWrap,
+    filesSelectedPaths: state.filesSelectedPaths,
+    filesContextMenuOpen: state.filesContextMenuOpen,
+    filesContextMenuX: state.filesContextMenuX,
+    filesContextMenuY: state.filesContextMenuY,
+    filesContextMenuTargetPath: state.filesContextMenuTargetPath,
+    filesContextMenuTargetIsDir: state.filesContextMenuTargetIsDir,
+    filesClipboardMode: state.filesClipboardMode,
+    filesClipboardPaths: state.filesClipboardPaths,
+    filesUndoDeleteAvailable: state.filesDeleteUndoStack.length > 0,
+    filesConflictModalOpen: state.filesConflictModalOpen,
+    filesConflictName: state.filesConflictName,
+    filesSelectionAnchorPath: state.filesSelectionAnchorPath,
+    filesSelectionDragActive: state.filesSelectionDragActive,
+    filesSelectionJustDragged: state.filesSelectionJustDragged,
+    filesSelectionGesture: state.filesSelectionGesture,
     filesError: state.filesError,
     tasksById: state.tasksById,
     tasksSelectedId: state.tasksSelectedId,
@@ -1297,6 +1357,9 @@ function render(): void {
     chatDraft: state.chatDraft,
     chatAttachedFileName: state.chatAttachedFileName,
     chatAttachedFileContent: state.chatAttachedFileContent,
+    chatActiveModelId: state.chatActiveModelId,
+    chatActiveModelLabel: state.chatActiveModelLabel,
+    chatActiveModelCapabilities: state.chatActiveModelCapabilities,
     devices: state.devices,
     apiConnections: state.apiConnections,
     apiFormOpen: state.apiFormOpen,
@@ -1986,7 +2049,15 @@ async function refreshApiConnections(): Promise<void> {
   if (!clientRef) return;
   const response = await clientRef.listApiConnections({ correlationId: nextCorrelationId() });
   state.apiConnections = response.connections;
+  refreshChatModelProfile();
   refreshCreateToolModelOptions();
+}
+
+function refreshChatModelProfile(): void {
+  const profile = resolveActiveChatModelProfile(state.apiConnections);
+  state.chatActiveModelId = profile.id;
+  state.chatActiveModelLabel = profile.label;
+  state.chatActiveModelCapabilities = profile.capabilities;
 }
 
 function refreshCreateToolModelOptions(): void {
@@ -2322,6 +2393,7 @@ async function autoStartLlamaRuntimeIfConfigured(): Promise<void> {
 function renderAndBind(sendMessage: (text: string) => Promise<void>): void {
   persistCreateToolDraft(state);
   render();
+  syncOverlayScrollbars();
   scrollConsoleToBottom();
   attachDividerResize();
   attachTopbarInteractions(sendMessage);
@@ -3012,6 +3084,10 @@ function renderAndBind(sendMessage: (text: string) => Promise<void>): void {
   });
 }
 
+window.addEventListener("beforeunload", () => {
+  destroyOverlayScrollbars();
+});
+
 function bindCustomToolIframes(): void {
   const iframes = document.querySelectorAll<HTMLIFrameElement>(
     ".tool-custom-tool-iframe, .tool-plugin-iframe"
@@ -3526,6 +3602,9 @@ function currentPrimaryPanelRenderState() {
     chatDraft: state.chatDraft,
     chatAttachedFileName: state.chatAttachedFileName,
     chatAttachedFileContent: state.chatAttachedFileContent,
+    chatActiveModelId: state.chatActiveModelId,
+    chatActiveModelLabel: state.chatActiveModelLabel,
+    chatActiveModelCapabilities: state.chatActiveModelCapabilities,
     devices: state.devices,
     apiConnections: state.apiConnections,
     apiFormOpen: state.apiFormOpen,
@@ -3866,6 +3945,24 @@ function attachWorkspaceInteractions(sendMessage: (text: string) => Promise<void
       await refreshTools();
     };
 
+    const openPathInTerminal = async (path: string): Promise<void> => {
+      const trimmed = path.trim();
+      if (!trimmed) return;
+      const normalized = trimmed.replace(/\\/g, "/");
+      const targetDir = normalized.includes(".")
+        ? normalized.slice(0, normalized.lastIndexOf("/")) || normalized
+        : normalized;
+      await ensureTerminalSession();
+      const sessionId = state.activeTerminalSessionId;
+      if (!sessionId || !clientRef) return;
+      await clientRef.sendTerminalInput({
+        correlationId: nextCorrelationId(),
+        sessionId,
+        input: `cd "${targetDir.replaceAll('"', '\\"')}"\n`
+      });
+      state.workspaceTab = "terminal";
+    };
+
     const workspaceToolDeps = {
       flow: {
         refreshRuns: refreshFlowRuns,
@@ -3887,7 +3984,13 @@ function attachWorkspaceInteractions(sendMessage: (text: string) => Promise<void
         saveActiveFilesTabAs: workspaceToolsRuntime.saveActiveFilesTabAs,
         saveAllFilesTabs: workspaceToolsRuntime.saveAllFilesTabs,
         createNewFilesFile: workspaceToolsRuntime.createNewFilesFile,
-        duplicateActiveFilesTab: workspaceToolsRuntime.duplicateActiveFilesTab
+        createNewFilesFolder: workspaceToolsRuntime.createNewFilesFolder,
+        duplicateActiveFilesTab: workspaceToolsRuntime.duplicateActiveFilesTab,
+        deleteFilesPath: workspaceToolsRuntime.deleteFilesPath,
+        renameFilesPath: workspaceToolsRuntime.renameFilesPath,
+        pasteFilesClipboard: workspaceToolsRuntime.pasteFilesClipboard,
+        undoLastFilesDelete: workspaceToolsRuntime.undoLastFilesDelete,
+        openPathInTerminal
       },
       web: {
         runWebSearch: workspaceToolsRuntime.runWebSearch,
@@ -3913,10 +4016,38 @@ function attachWorkspaceInteractions(sendMessage: (text: string) => Promise<void
       }
     };
     workspacePane.onclick = async (event) => {
+      const rawTarget = event.target as HTMLElement | null;
+      if (
+        state.filesContextMenuOpen &&
+        rawTarget &&
+        !rawTarget.closest(".files-context-menu")
+      ) {
+        state.filesContextMenuOpen = false;
+        renderAndBind(sendMessage);
+        return;
+      }
       const target = (event.target as HTMLElement | null)?.closest<HTMLElement>(
         WORKSPACE_TOOL_TARGET_SELECTOR
       );
-      if (!target) return;
+      if (!target) {
+        const clickedInsideFiles = Boolean(rawTarget?.closest(".files-tool"));
+        if (clickedInsideFiles) {
+          const clickedInteractiveFilesElement = Boolean(
+            rawTarget?.closest(
+              '[data-files-action], .files-tool-grid-row, .files-tool-tree-row, .files-findbar, .files-editor-panel, .files-editor-input'
+            )
+          );
+          if (!clickedInteractiveFilesElement) {
+            state.filesSelectedEntryPath = null;
+            state.filesSelectedPaths = [];
+            state.filesSelectionAnchorPath = null;
+            state.filesSelectionGesture = null;
+            renderAndBind(sendMessage);
+            return;
+          }
+        }
+        return;
+      }
 
       const nextWorkspaceTab = target.getAttribute(WORKSPACE_DATA_ATTR.tab);
       if (nextWorkspaceTab && isWorkspaceTab(nextWorkspaceTab)) {
@@ -4087,6 +4218,20 @@ function attachWorkspaceInteractions(sendMessage: (text: string) => Promise<void
       );
       if (!target) return;
       dispatchWorkspaceToolPointerDown(event, target, state);
+    };
+    workspacePane.oncontextmenu = (event) => {
+      const target = event.target as HTMLElement | null;
+      if (!target) return;
+      if (dispatchWorkspaceToolContextMenu(event, target, state)) {
+        renderAndBind(sendMessage);
+      }
+    };
+    workspacePane.onmousemove = (event) => {
+      const target = event.target as HTMLElement | null;
+      if (!target) return;
+      if (dispatchWorkspaceToolMouseMove(target, state)) {
+        renderAndBind(sendMessage);
+      }
     };
     workspacePane.onchange = async (event) => {
       const toggle = (event.target as HTMLElement | null)?.closest<HTMLInputElement>(
@@ -4502,7 +4647,7 @@ async function bootstrap(): Promise<void> {
     renderAndBind(sendMessage);
   });
 
-  async function sendMessage(text: string): Promise<void> {
+  async function sendMessage(text: string, attachments?: ChatAttachment[]): Promise<void> {
     if (!clientRef) return;
 
     const correlationId = nextCorrelationId();
@@ -4515,12 +4660,18 @@ async function bootstrap(): Promise<void> {
     renderAndBind(sendMessage);
 
     try {
-      const requestPayload = {
+      const requestPayloadBase = {
         conversationId: state.conversationId,
         userMessage: normalizedUserText,
         correlationId,
         thinkingEnabled: state.chatThinkingEnabled
       } as const;
+      const requestPayload = attachments?.length
+        ? {
+            ...requestPayloadBase,
+            attachments
+          }
+        : requestPayloadBase;
       const response = await clientRef.sendMessage(
         state.llamaRuntimeMaxTokens === null
           ? requestPayload

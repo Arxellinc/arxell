@@ -1,4 +1,5 @@
 import type {
+  ChatAttachment,
   ApiConnectionRecord,
   ApiConnectionType,
   ConversationSummaryRecord,
@@ -6,6 +7,7 @@ import type {
   ModelManagerHfCandidate,
   ModelManagerInstalledModel
 } from "../contracts";
+import type { ChatModelCapabilities } from "../modelCapabilities";
 import type { IconName } from "../icons";
 
 export type SidebarTab =
@@ -96,6 +98,9 @@ export interface PrimaryPanelRenderState {
   chatDraft: string;
   chatAttachedFileName: string | null;
   chatAttachedFileContent: string | null;
+  chatActiveModelId: string;
+  chatActiveModelLabel: string;
+  chatActiveModelCapabilities: ChatModelCapabilities;
   devices: DevicesState;
   apiConnections: ApiConnectionRecord[];
   apiFormOpen: boolean;
@@ -154,7 +159,7 @@ export interface PrimaryPanelDefinition {
 }
 
 export interface PrimaryPanelBindings {
-  onSendMessage: (text: string) => Promise<void>;
+  onSendMessage: (text: string, attachments?: ChatAttachment[]) => Promise<void>;
   onUpdateChatDraft: (text: string) => void;
   onSetChatAttachment: (fileName: string, content: string) => void;
   onClearChatAttachment: () => void;

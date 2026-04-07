@@ -70,6 +70,7 @@ async fn main() {
         correlation_id: "demo-001".to_string(),
         thinking_enabled: Some(true),
         max_tokens: None,
+        attachments: None,
     };
 
     let result = app.ipc.chat.send_message(request).await;

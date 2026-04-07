@@ -57,6 +57,21 @@ export interface FilesExplorerViewState {
   replaceQuery?: string;
   findCaseSensitive?: boolean;
   lineWrap?: boolean;
+  selectedPaths?: string[];
+  contextMenuOpen?: boolean;
+  contextMenuX?: number;
+  contextMenuY?: number;
+  contextMenuTargetPath?: string | null;
+  contextMenuTargetIsDir?: boolean;
+  clipboardMode?: "copy" | "cut" | null;
+  clipboardPaths?: string[];
+  undoDeleteAvailable?: boolean;
+  conflictModalOpen?: boolean;
+  conflictModalName?: string;
+  selectionAnchorPath?: string | null;
+  selectionDragActive?: boolean;
+  selectionJustDragged?: boolean;
+  selectionGesture?: "single" | "toggle" | "range" | null;
   error: string | null;
 }
 
@@ -115,6 +130,15 @@ export function renderFilesToolActions(view: FilesExplorerViewState): string {
         }
       },
       {
+        id: "files-undo-delete",
+        title: "Undo Delete (Ctrl/Cmd+Z)",
+        icon: "history",
+        disabled: view.undoDeleteAvailable !== true,
+        buttonAttrs: {
+          [FILES_DATA_ATTR.action]: "undo-delete"
+        }
+      },
+      {
         id: "files-open",
         title: "Open File",
         icon: "folder-open",
@@ -137,6 +161,14 @@ export function renderFilesToolActions(view: FilesExplorerViewState): string {
         icon: "file-plus",
         buttonAttrs: {
           [FILES_DATA_ATTR.action]: "new-file"
+        }
+      },
+      {
+        id: "files-new-folder",
+        title: "New Folder",
+        icon: "folder",
+        buttonAttrs: {
+          [FILES_DATA_ATTR.action]: "new-folder"
         }
       },
       {
@@ -176,6 +208,7 @@ export function renderFilesToolBody(view: FilesExplorerViewState): string {
   const activePath = view.activeTabPath;
   const selectedEntryPath = view.selectedEntryPath ?? null;
   const rightEntries = selected ? view.entriesByPath[selected] ?? [] : [];
+  const selectedPaths = new Set(view.selectedPaths ?? []);
   const leftTree = renderTree(view, activeRoot);
   const selectedLabel = activePath || selected || "No folder selected";
   const widths = normalizeColumnWidths(view.columnWidths);
@@ -254,14 +287,14 @@ export function renderFilesToolBody(view: FilesExplorerViewState): string {
         ${
           rightEntries.length
             ? rightEntries
-                .map((entry) => {
+                .map((entry, index) => {
                   const type = formatType(entry);
                   const icon = entry.isDir ? "folder" : "file-badge";
                   const selectedClass =
-                    !entry.isDir && selectedEntryPath === entry.path
+                    selectedEntryPath === entry.path || selectedPaths.has(entry.path)
                       ? " is-selected-file"
                       : "";
-                  return `<button type="button" class="files-tool-grid-row ${entry.isDir ? "is-dir" : ""}${selectedClass}" ${FILES_DATA_ATTR.action}="select-entry" ${FILES_DATA_ATTR.path}="${escapeHtml(entry.path)}" ${FILES_DATA_ATTR.isDir}="${entry.isDir ? "true" : "false"}" title="${escapeHtml(entry.path)}">
+                  return `<button type="button" class="files-tool-grid-row ${entry.isDir ? "is-dir" : ""}${selectedClass}" ${FILES_DATA_ATTR.action}="select-entry" ${FILES_DATA_ATTR.path}="${escapeHtml(entry.path)}" ${FILES_DATA_ATTR.isDir}="${entry.isDir ? "true" : "false"}" data-files-row-index="${index}" title="${escapeHtml(entry.path)}">
                     <span class="files-tool-name-cell">${iconHtml(icon, { size: 16, tone: "dark" })}<span>${escapeHtml(entry.name)}</span></span>
                     <span>${type}</span>
                     <span>${entry.isDir ? "" : formatSize(entry.sizeBytes)}</span>
@@ -274,6 +307,66 @@ export function renderFilesToolBody(view: FilesExplorerViewState): string {
       </div>
       ${view.error ? `<div class="files-tool-error">${escapeHtml(view.error)}</div>` : ""}
     </section>
+    ${renderContextMenu(view)}
+    ${renderConflictModal(view)}
+  </div>`;
+}
+
+function renderContextMenu(view: FilesExplorerViewState): string {
+  if (!view.contextMenuOpen) return "";
+  const targetPath = view.contextMenuTargetPath?.trim() || "";
+  const onFile = Boolean(targetPath) && view.contextMenuTargetIsDir !== true;
+  const onFolder = Boolean(targetPath) && view.contextMenuTargetIsDir === true;
+  const x = Math.max(8, Math.round(view.contextMenuX ?? 16));
+  const y = Math.max(8, Math.round(view.contextMenuY ?? 16));
+  const clipboardLabel =
+    view.clipboardMode && (view.clipboardPaths?.length ?? 0) > 0
+      ? `${view.clipboardMode}: ${(view.clipboardPaths || []).length} item(s)`
+      : "clipboard: empty";
+  return `<div class="files-context-menu" style="left:${x}px;top:${y}px;" ${FILES_DATA_ATTR.action}="context-menu-shell">
+    <button type="button" class="files-context-item" ${FILES_DATA_ATTR.action}="new-file">New File</button>
+    <button type="button" class="files-context-item" ${FILES_DATA_ATTR.action}="new-folder">New Folder</button>
+    <button type="button" class="files-context-item" ${FILES_DATA_ATTR.action}="open-with"${targetPath ? "" : " disabled"}>Open With</button>
+    <button type="button" class="files-context-item" ${FILES_DATA_ATTR.action}="copy-path"${targetPath ? "" : " disabled"}>Copy Path</button>
+    <button type="button" class="files-context-item" ${FILES_DATA_ATTR.action}="open-in-terminal">Open in Terminal</button>
+    <button type="button" class="files-context-item" ${FILES_DATA_ATTR.action}="select-all">Select All</button>
+    <button type="button" class="files-context-item" ${FILES_DATA_ATTR.action}="paste">Paste</button>
+    <div class="files-context-meta">${escapeHtml(clipboardLabel)}</div>
+    ${
+      onFile || onFolder
+        ? `<div class="files-context-divider"></div>
+    ${
+      onFile || onFolder
+        ? `
+    <button type="button" class="files-context-item" ${FILES_DATA_ATTR.action}="cut" ${FILES_DATA_ATTR.path}="${escapeHtml(targetPath)}">${onFolder ? "Cut Folder" : "Cut"}</button>
+    <button type="button" class="files-context-item" ${FILES_DATA_ATTR.action}="copy" ${FILES_DATA_ATTR.path}="${escapeHtml(targetPath)}">${onFolder ? "Copy Folder" : "Copy"}</button>
+    `
+        : ""
+    }
+    <button type="button" class="files-context-item danger" ${FILES_DATA_ATTR.action}="delete-path" ${FILES_DATA_ATTR.path}="${escapeHtml(targetPath)}">${onFolder ? "Delete Folder" : "Delete"}</button>
+    <button type="button" class="files-context-item" ${FILES_DATA_ATTR.action}="rename-path" ${FILES_DATA_ATTR.path}="${escapeHtml(targetPath)}">${onFolder ? "Rename Folder" : "Rename"}</button>`
+        : ""
+    }
+  </div>`;
+}
+
+function renderConflictModal(view: FilesExplorerViewState): string {
+  if (!view.conflictModalOpen) return "";
+  const name = view.conflictModalName?.trim() || "item";
+  return `<div class="files-conflict-backdrop">
+    <div class="files-conflict-modal">
+      <div class="files-conflict-title">Name Conflict</div>
+      <div class="files-conflict-body">'${escapeHtml(
+        name
+      )}' already exists. What do you want to do?</div>
+      <div class="files-conflict-actions">
+        <button type="button" class="files-context-item" ${FILES_DATA_ATTR.action}="conflict-choice-replace">Replace</button>
+        <button type="button" class="files-context-item" ${FILES_DATA_ATTR.action}="conflict-choice-copy">Create Copy</button>
+        <button type="button" class="files-context-item" ${FILES_DATA_ATTR.action}="conflict-choice-replace-all">Replace All</button>
+        <button type="button" class="files-context-item" ${FILES_DATA_ATTR.action}="conflict-choice-copy-all">Create Copy All</button>
+        <button type="button" class="files-context-item" ${FILES_DATA_ATTR.action}="conflict-choice-cancel">Cancel</button>
+      </div>
+    </div>
   </div>`;
 }
 
@@ -359,7 +452,7 @@ function renderRootPickerNode(
         <span class="files-root-tree-chevron">${chevron}</span>
       </button>
       <button type="button" class="files-root-tree-hit" ${FILES_DATA_ATTR.action}="root-tree-select" ${FILES_DATA_ATTR.path}="${escapeHtml(path)}" title="${escapeHtml(path)}"${isLocked ? ' disabled aria-disabled="true"' : ""}>
-        <span class="files-root-tree-icon">${iconHtml("folder", { size: 14, tone: "dark" })}</span>
+        <span class="files-root-tree-icon">${iconHtml("folder", { size: 16, tone: "dark" })}</span>
         <span class="files-root-tree-label">${escapeHtml(label)}</span>
       </button>
       ${isLocked ? '<span class="files-root-tree-lock" title="Read-only folder">🔒</span>' : ""}

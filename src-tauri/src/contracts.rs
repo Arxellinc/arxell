@@ -9,6 +9,16 @@ pub struct ChatSendRequest {
     pub correlation_id: String,
     pub thinking_enabled: Option<bool>,
     pub max_tokens: Option<u32>,
+    pub attachments: Option<Vec<ChatAttachment>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChatAttachment {
+    pub kind: String,
+    pub file_name: String,
+    pub mime_type: String,
+    pub data_base64: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -441,6 +451,22 @@ pub struct FilesDeletePathResponse {
     pub correlation_id: String,
     pub path: String,
     pub deleted: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FilesCreateDirectoryRequest {
+    pub correlation_id: String,
+    pub path: String,
+    pub recursive: Option<bool>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FilesCreateDirectoryResponse {
+    pub correlation_id: String,
+    pub path: String,
+    pub created: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
