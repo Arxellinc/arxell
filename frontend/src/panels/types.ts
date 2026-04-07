@@ -17,7 +17,8 @@ export type SidebarTab =
   | "tts"
   | "stt"
   | "llama_cpp"
-  | "model_manager";
+  | "model_manager"
+  | "settings";
 
 export interface DevicesState {
   microphonePermission: "not_enabled" | "enabled" | "no_device";
@@ -81,6 +82,8 @@ export interface ApiConnectionDraft {
 }
 
 export interface PrimaryPanelRenderState {
+  displayMode: "dark" | "light" | "terminal";
+  displayModePreference: "dark" | "light" | "system" | "terminal";
   conversationId: string;
   messages: UiMessage[];
   chatReasoningByCorrelation: Record<string, string>;
@@ -91,6 +94,8 @@ export interface PrimaryPanelRenderState {
   chatStreamCompleteByCorrelation: Record<string, boolean>;
   chatStreaming: boolean;
   chatDraft: string;
+  chatAttachedFileName: string | null;
+  chatAttachedFileContent: string | null;
   devices: DevicesState;
   apiConnections: ApiConnectionRecord[];
   apiFormOpen: boolean;
@@ -151,6 +156,8 @@ export interface PrimaryPanelDefinition {
 export interface PrimaryPanelBindings {
   onSendMessage: (text: string) => Promise<void>;
   onUpdateChatDraft: (text: string) => void;
+  onSetChatAttachment: (fileName: string, content: string) => void;
+  onClearChatAttachment: () => void;
   onStopCurrentResponse: () => Promise<void>;
   onToggleThinkingPanel: (correlationId: string) => Promise<void>;
   onCreateConversation: () => Promise<void>;
@@ -213,4 +220,6 @@ export interface PrimaryPanelBindings {
     "vadMinUtteranceMs" |
     "vadMaxUtteranceS" |
     "vadForceFlushS">, value: number) => Promise<void>;
+  onSetDisplayMode: (mode: "dark" | "light" | "terminal") => Promise<void>;
+  onSetDisplayModePreference: (mode: "dark" | "light" | "system" | "terminal") => Promise<void>;
 }

@@ -38,6 +38,7 @@ import { escapeHtml } from "./panels/utils";
 import { TerminalManager, renderTerminalToolbar, renderTerminalWorkspace } from "./tools/terminal/index";
 import type { TerminalShellProfile } from "./tools/terminal/types";
 import {
+  CONSOLE_DATA_ATTR,
   MANAGER_DATA_ATTR,
   MANAGER_UI_ID,
   TERMINAL_DATA_ATTR,
@@ -46,6 +47,7 @@ import {
   WORKSPACE_DATA_ATTR
 } from "./tools/ui/constants";
 import { renderWorkspaceToolsActions, renderWorkspaceToolsBody } from "./tools/manager/index";
+import { renderToolToolbar } from "./tools/ui/toolbar";
 import {
   filterFlowEvents,
   normalizeFlowRun as normalizeFlowRunView
@@ -77,7 +79,11 @@ import {
 import type { WebSearchHistoryItem, WebTabState } from "./tools/webSearch/state";
 import { loadPersistedTasksById } from "./tools/tasks/actions";
 import type { TaskFolder, TaskSortDirection, TaskSortKey, TaskRecord } from "./tools/tasks/state";
-import { DEFAULT_CREATE_TOOL_SPEC } from "./tools/createTool/state";
+import {
+  DEFAULT_CREATE_TOOL_SPEC,
+  DEFAULT_CREATE_TOOL_UI_PREVIEW_HTML,
+  type CreateToolModelOption
+} from "./tools/createTool/state";
 import { getAllToolManifests } from "./tools/registry";
 import { renderChatMessages } from "./panels/chatPanel";
 import { APP_BUILD_VERSION, normalizeVersionLabel } from "./version";
@@ -92,10 +98,48 @@ const MAX_CONSOLE_ENTRIES = 600;
 const LLAMA_MODEL_PATH_STORAGE_KEY = "arxell.llama.modelPath";
 const LLAMA_MAX_TOKENS_STORAGE_KEY = "arxell.llama.maxTokens";
 const MIC_PERMISSION_BUBBLE_DISMISSED_KEY = "arxell.micPermissionBubbleDismissed";
+const CREATE_TOOL_DRAFT_STORAGE_KEY = "arxell.createTool.draft.v1";
 const CHAT_ID_ALPHANUM = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
 let chatStreamDomUpdateScheduled = false;
 let chatThinkingDelegationInstalled = false;
+let customToolBridgeInstalled = false;
 const FALLBACK_APP_VERSION = normalizeVersionLabel(APP_BUILD_VERSION);
+type ConsoleView = "all" | "errors-warnings" | "security-events";
+type DisplayModePreference = DisplayMode | "system" | "terminal";
+
+const CREATE_TOOL_LAYOUT_MODIFIERS = new Set([
+  "modal-focused",
+  "secondary-toolbar",
+  "chat-sidecar",
+  "bottom-console",
+  "wizard-steps",
+  "map-canvas",
+  "split-main-detail",
+  "triple-panel",
+  "timeline-console",
+  "dashboard-cards",
+  "tabbed-workbench",
+  "command-palette-first"
+]);
+
+interface PersistedCreateToolDraft {
+  createToolStage: "meta" | "prd" | "build" | "fix";
+  createToolSelectedModelId: string;
+  createToolPrdUiPreset: "left-sidebar" | "right-sidebar" | "both-sidebars" | "no-sidebar";
+  createToolLayoutModifiers: string[];
+  createToolPrdUiNotes: string;
+  createToolPrdInputs: string;
+  createToolPrdProcess: string;
+  createToolPrdConnections: string;
+  createToolPrdDependencies: string;
+  createToolPrdExpectedBehavior: string;
+  createToolPrdOutputs: string;
+  createToolPrdMarkdownDoc: string;
+  createToolDevPlan: string;
+  createToolBuildViewMode: "code" | "preview";
+  createToolFixNotes: string;
+  createToolSpec: typeof DEFAULT_CREATE_TOOL_SPEC;
+}
 
 function generateChatConversationId(): string {
   let suffix = "";
@@ -173,6 +217,148 @@ function persistMicBubbleDismissed(dismissed: boolean): void {
   }
 }
 
+function resolveSystemDisplayMode(): DisplayMode {
+  try {
+    if (window.matchMedia && window.matchMedia("(prefers-color-scheme: light)").matches) {
+      return "light";
+    }
+  } catch {
+    // Ignore and fall back to dark.
+  }
+  return "dark";
+}
+
+function loadPersistedCreateToolDraft(): PersistedCreateToolDraft | null {
+  try {
+    const raw = window.localStorage.getItem(CREATE_TOOL_DRAFT_STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Partial<PersistedCreateToolDraft>;
+    if (!parsed || typeof parsed !== "object") return null;
+
+    const stage =
+      parsed.createToolStage === "meta" ||
+      parsed.createToolStage === "prd" ||
+      parsed.createToolStage === "build" ||
+      parsed.createToolStage === "fix"
+        ? parsed.createToolStage
+        : "meta";
+    const uiPreset =
+      parsed.createToolPrdUiPreset === "left-sidebar" ||
+      parsed.createToolPrdUiPreset === "right-sidebar" ||
+      parsed.createToolPrdUiPreset === "both-sidebars" ||
+      parsed.createToolPrdUiPreset === "no-sidebar"
+        ? parsed.createToolPrdUiPreset
+        : "left-sidebar";
+    const buildViewMode =
+      parsed.createToolBuildViewMode === "preview" ? "preview" : "code";
+
+    const persistedSpec = parsed.createToolSpec;
+    const nextSpec = {
+      ...DEFAULT_CREATE_TOOL_SPEC,
+      ...(persistedSpec && typeof persistedSpec === "object" ? persistedSpec : {}),
+      guardrails: {
+        ...DEFAULT_CREATE_TOOL_SPEC.guardrails,
+        ...(persistedSpec &&
+        typeof persistedSpec === "object" &&
+        persistedSpec.guardrails &&
+        typeof persistedSpec.guardrails === "object"
+          ? persistedSpec.guardrails
+          : {})
+      }
+    };
+
+    return {
+      createToolStage: stage,
+      createToolSelectedModelId:
+        typeof parsed.createToolSelectedModelId === "string" && parsed.createToolSelectedModelId.trim()
+          ? parsed.createToolSelectedModelId.trim()
+          : "primary-agent",
+      createToolPrdUiPreset: uiPreset,
+      createToolLayoutModifiers: Array.isArray(parsed.createToolLayoutModifiers)
+        ? parsed.createToolLayoutModifiers.filter((item) => CREATE_TOOL_LAYOUT_MODIFIERS.has(item))
+        : [],
+      createToolPrdUiNotes:
+        typeof parsed.createToolPrdUiNotes === "string" ? parsed.createToolPrdUiNotes : "",
+      createToolPrdInputs: typeof parsed.createToolPrdInputs === "string" ? parsed.createToolPrdInputs : "",
+      createToolPrdProcess:
+        typeof parsed.createToolPrdProcess === "string" ? parsed.createToolPrdProcess : "",
+      createToolPrdConnections:
+        typeof parsed.createToolPrdConnections === "string" ? parsed.createToolPrdConnections : "",
+      createToolPrdDependencies:
+        typeof parsed.createToolPrdDependencies === "string" ? parsed.createToolPrdDependencies : "",
+      createToolPrdExpectedBehavior:
+        typeof parsed.createToolPrdExpectedBehavior === "string"
+          ? parsed.createToolPrdExpectedBehavior
+          : "",
+      createToolPrdOutputs:
+        typeof parsed.createToolPrdOutputs === "string" ? parsed.createToolPrdOutputs : "",
+      createToolPrdMarkdownDoc:
+        typeof parsed.createToolPrdMarkdownDoc === "string" ? parsed.createToolPrdMarkdownDoc : "",
+      createToolDevPlan: typeof parsed.createToolDevPlan === "string" ? parsed.createToolDevPlan : "",
+      createToolBuildViewMode: buildViewMode,
+      createToolFixNotes: typeof parsed.createToolFixNotes === "string" ? parsed.createToolFixNotes : "",
+      createToolSpec: nextSpec
+    };
+  } catch {
+    return null;
+  }
+}
+
+function persistCreateToolDraft(slice: {
+  createToolStage: "meta" | "prd" | "build" | "fix";
+  createToolSelectedModelId: string;
+  createToolPrdUiPreset: "left-sidebar" | "right-sidebar" | "both-sidebars" | "no-sidebar";
+  createToolLayoutModifiers: string[];
+  createToolPrdUiNotes: string;
+  createToolPrdInputs: string;
+  createToolPrdProcess: string;
+  createToolPrdConnections: string;
+  createToolPrdDependencies: string;
+  createToolPrdExpectedBehavior: string;
+  createToolPrdOutputs: string;
+  createToolPreviewFiles: Record<string, string>;
+  createToolDevPlan: string;
+  createToolBuildViewMode: "code" | "preview";
+  createToolFixNotes: string;
+  createToolSpec: typeof DEFAULT_CREATE_TOOL_SPEC;
+}): void {
+  try {
+    const payload: PersistedCreateToolDraft = {
+      createToolStage: slice.createToolStage,
+      createToolSelectedModelId: slice.createToolSelectedModelId || "primary-agent",
+      createToolPrdUiPreset: slice.createToolPrdUiPreset,
+      createToolLayoutModifiers: slice.createToolLayoutModifiers.filter((item) =>
+        CREATE_TOOL_LAYOUT_MODIFIERS.has(item)
+      ),
+      createToolPrdUiNotes: slice.createToolPrdUiNotes,
+      createToolPrdInputs: slice.createToolPrdInputs,
+      createToolPrdProcess: slice.createToolPrdProcess,
+      createToolPrdConnections: slice.createToolPrdConnections,
+      createToolPrdDependencies: slice.createToolPrdDependencies,
+      createToolPrdExpectedBehavior: slice.createToolPrdExpectedBehavior,
+      createToolPrdOutputs: slice.createToolPrdOutputs,
+      createToolPrdMarkdownDoc:
+        typeof slice.createToolPreviewFiles["PRD.md"] === "string"
+          ? slice.createToolPreviewFiles["PRD.md"]
+          : "",
+      createToolDevPlan: slice.createToolDevPlan,
+      createToolBuildViewMode: slice.createToolBuildViewMode,
+      createToolFixNotes: slice.createToolFixNotes,
+      createToolSpec: {
+        ...DEFAULT_CREATE_TOOL_SPEC,
+        ...slice.createToolSpec,
+        guardrails: {
+          ...DEFAULT_CREATE_TOOL_SPEC.guardrails,
+          ...(slice.createToolSpec?.guardrails || {})
+        }
+      }
+    };
+    window.localStorage.setItem(CREATE_TOOL_DRAFT_STORAGE_KEY, JSON.stringify(payload));
+  } catch {
+    // Ignore local storage failures.
+  }
+}
+
 function defaultDevicesState(): DevicesState {
   return {
     microphonePermission: "not_enabled",
@@ -200,6 +386,9 @@ function defaultApiConnectionDraft(): ApiConnectionDraft {
   };
 }
 
+const persistedCreateToolDraft = loadPersistedCreateToolDraft();
+const persistedCreateToolPrdMarkdownDoc = persistedCreateToolDraft?.createToolPrdMarkdownDoc ?? "";
+
 const state: {
   conversationId: string;
   messages: UiMessage[];
@@ -214,6 +403,8 @@ const state: {
   chatFirstReasoningChunkMsByCorrelation: Record<string, number>;
   chatStreaming: boolean;
   chatDraft: string;
+  chatAttachedFileName: string | null;
+  chatAttachedFileContent: string | null;
   activeChatCorrelationId: string | null;
   devices: DevicesState;
   apiConnections: ApiConnectionRecord[];
@@ -229,7 +420,7 @@ const state: {
     source: "browser" | "app";
     message: string;
   }>;
-  consoleLegacyWrappersOnly: boolean;
+  consoleView: ConsoleView;
   runtimeMode: "tauri" | "mock" | "unknown";
   chatPanePercent: number;
   portraitWorkspacePercent: number;
@@ -252,6 +443,8 @@ const state: {
   webSetupMessage: string | null;
   webSetupBusy: boolean;
   filesRootPath: string | null;
+  filesScopeRootPath: string | null;
+  filesRootSelectorOpen: boolean;
   filesSelectedPath: string | null;
   filesSelectedEntryPath: string | null;
   filesOpenTabs: string[];
@@ -287,6 +480,39 @@ const state: {
   tasksSortDirection: TaskSortDirection;
   tasksDetailsCollapsed: boolean;
   tasksJsonDraft: string;
+  createToolStage: "meta" | "prd" | "build" | "fix";
+  createToolModelOptions: CreateToolModelOption[];
+  createToolSelectedModelId: string;
+  createToolPrdUiPreset: "left-sidebar" | "right-sidebar" | "both-sidebars" | "no-sidebar";
+  createToolLayoutModifiers: Array<
+    | "modal-focused"
+    | "secondary-toolbar"
+    | "chat-sidecar"
+    | "bottom-console"
+    | "wizard-steps"
+    | "map-canvas"
+    | "split-main-detail"
+    | "triple-panel"
+    | "timeline-console"
+    | "dashboard-cards"
+    | "tabbed-workbench"
+    | "command-palette-first"
+  >;
+  createToolPrdUiNotes: string;
+  createToolPrdInputs: string;
+  createToolPrdProcess: string;
+  createToolPrdConnections: string;
+  createToolPrdDependencies: string;
+  createToolPrdExpectedBehavior: string;
+  createToolPrdOutputs: string;
+  createToolDevPlan: string;
+  createToolBuildViewMode: "code" | "preview";
+  createToolUiPreviewHtml: string;
+  createToolFixNotes: string;
+  createToolIconBrowserOpen: boolean;
+  createToolIconBrowserQuery: string;
+  createToolIconBrowserAppliedQuery: string;
+  createToolIconLibrary: Array<{ name: string; svg: string }>;
   createToolSpec: typeof DEFAULT_CREATE_TOOL_SPEC;
   createToolWorkspaceRoot: string;
   createToolPreviewFiles: Record<string, string>;
@@ -296,6 +522,24 @@ const state: {
   createToolValidationWarnings: string[];
   createToolStatusMessage: string | null;
   createToolLastResultJson: string;
+  createToolPrdGeneratingSection:
+    | "UI"
+    | "INPUTS"
+    | "PROCESS"
+    | "CONNECTIONS"
+    | "DEPENDENCIES"
+    | "EXPECTED_BEHAVIOR"
+    | "OUTPUTS"
+    | null;
+  createToolPrdGeneratingAll: boolean;
+  createToolPrdReviewBusy: boolean;
+  createToolPrdReviewFindings: Array<{
+    severity: "critical" | "high" | "medium";
+    section: "INPUTS" | "PROCESS" | "CONNECTIONS" | "DEPENDENCIES" | "EXPECTED_BEHAVIOR" | "OUTPUTS";
+    title: string;
+    detail: string;
+    suggestion: string;
+  }>;
   createToolBusy: boolean;
   flowRuns: FlowRunView[];
   flowActiveRunId: string | null;
@@ -315,6 +559,7 @@ const state: {
   flowMessage: string | null;
   flowBusy: boolean;
   displayMode: DisplayMode;
+  displayModePreference: DisplayModePreference;
   appVersion: string;
   chatThinkingEnabled: boolean;
   llamaRuntime: LlamaRuntimeStatusResponse | null;
@@ -389,6 +634,8 @@ const state: {
   chatFirstReasoningChunkMsByCorrelation: {},
   chatStreaming: false,
   chatDraft: "",
+  chatAttachedFileName: null,
+  chatAttachedFileContent: null,
   activeChatCorrelationId: null,
   devices: defaultDevicesState(),
   apiConnections: [],
@@ -399,7 +646,7 @@ const state: {
   micPermissionBubbleDismissed: loadMicBubbleDismissed(),
   events: [],
   consoleEntries: [],
-  consoleLegacyWrappersOnly: false,
+  consoleView: "all",
   runtimeMode: "unknown",
   chatPanePercent: 35,
   portraitWorkspacePercent: 46,
@@ -422,6 +669,8 @@ const state: {
   webSetupMessage: null,
   webSetupBusy: false,
   filesRootPath: null,
+  filesScopeRootPath: null,
+  filesRootSelectorOpen: false,
   filesSelectedPath: null,
   filesSelectedEntryPath: null,
   filesOpenTabs: [],
@@ -457,15 +706,45 @@ const state: {
   tasksSortDirection: "desc",
   tasksDetailsCollapsed: false,
   tasksJsonDraft: "",
-  createToolSpec: { ...DEFAULT_CREATE_TOOL_SPEC },
+  createToolStage: persistedCreateToolDraft?.createToolStage ?? "meta",
+  createToolModelOptions: [],
+  createToolSelectedModelId: persistedCreateToolDraft?.createToolSelectedModelId ?? "primary-agent",
+  createToolPrdUiPreset: persistedCreateToolDraft?.createToolPrdUiPreset ?? "left-sidebar",
+  createToolLayoutModifiers: persistedCreateToolDraft?.createToolLayoutModifiers ?? [],
+  createToolPrdUiNotes: persistedCreateToolDraft?.createToolPrdUiNotes ?? "",
+  createToolPrdInputs: persistedCreateToolDraft?.createToolPrdInputs ?? "",
+  createToolPrdProcess: persistedCreateToolDraft?.createToolPrdProcess ?? "",
+  createToolPrdConnections: persistedCreateToolDraft?.createToolPrdConnections ?? "",
+  createToolPrdDependencies: persistedCreateToolDraft?.createToolPrdDependencies ?? "",
+  createToolPrdExpectedBehavior: persistedCreateToolDraft?.createToolPrdExpectedBehavior ?? "",
+  createToolPrdOutputs: persistedCreateToolDraft?.createToolPrdOutputs ?? "",
+  createToolDevPlan: persistedCreateToolDraft?.createToolDevPlan ?? "",
+  createToolBuildViewMode: persistedCreateToolDraft?.createToolBuildViewMode ?? "code",
+  createToolUiPreviewHtml: DEFAULT_CREATE_TOOL_UI_PREVIEW_HTML,
+  createToolFixNotes: persistedCreateToolDraft?.createToolFixNotes ?? "",
+  createToolIconBrowserOpen: false,
+  createToolIconBrowserQuery: "",
+  createToolIconBrowserAppliedQuery: "",
+  createToolIconLibrary: [],
+  createToolSpec: {
+    ...(persistedCreateToolDraft?.createToolSpec || DEFAULT_CREATE_TOOL_SPEC)
+  },
   createToolWorkspaceRoot: "",
-  createToolPreviewFiles: {},
-  createToolPreviewOrder: [],
-  createToolSelectedPreviewPath: "",
+  createToolPreviewFiles: persistedCreateToolPrdMarkdownDoc
+    ? {
+        "PRD.md": persistedCreateToolPrdMarkdownDoc
+      }
+    : {},
+  createToolPreviewOrder: persistedCreateToolPrdMarkdownDoc ? ["PRD.md"] : [],
+  createToolSelectedPreviewPath: persistedCreateToolPrdMarkdownDoc ? "PRD.md" : "",
   createToolValidationErrors: [],
   createToolValidationWarnings: [],
   createToolStatusMessage: null,
   createToolLastResultJson: "",
+  createToolPrdGeneratingSection: null,
+  createToolPrdGeneratingAll: false,
+  createToolPrdReviewBusy: false,
+  createToolPrdReviewFindings: [],
   createToolBusy: false,
   flowRuns: [],
   flowActiveRunId: null,
@@ -484,7 +763,8 @@ const state: {
   flowValidationResults: [],
   flowMessage: null,
   flowBusy: false,
-  displayMode: "dark",
+  displayMode: "terminal",
+  displayModePreference: "terminal",
   appVersion: FALLBACK_APP_VERSION,
   chatThinkingEnabled: false,
   llamaRuntime: null,
@@ -548,6 +828,12 @@ function nextCorrelationId(): string {
 
 function formatLastUpdated(ts: number): string {
   return `Updated ${new Date(ts).toLocaleTimeString()}`;
+}
+
+function nextDisplayMode(mode: DisplayMode): DisplayMode {
+  if (mode === "terminal") return "dark";
+  if (mode === "dark") return "light";
+  return "terminal";
 }
 
 async function detectMicrophonePermission(): Promise<DevicesState["microphonePermission"]> {
@@ -873,10 +1159,7 @@ function render(): void {
   const visibleConsoleEntries = getVisibleConsoleEntries();
   const consoleText = visibleConsoleEntries.length
     ? visibleConsoleEntries
-        .map((entry) => {
-          const time = new Date(entry.timestampMs).toLocaleTimeString();
-          return `${time} [${entry.source}] ${entry.level.toUpperCase()} ${entry.message}`;
-        })
+        .map((entry) => formatConsoleEntryLine(entry))
         .join("\n")
     : "No console output yet.";
   const consoleHtml = `
@@ -887,9 +1170,7 @@ function render(): void {
     </div>
   `;
   const consoleActionsHtml = `
-    <button type="button" class="tool-action-btn ${state.consoleLegacyWrappersOnly ? "active" : ""}" id="legacyWrapperFilterBtn" aria-label="Toggle legacy wrapper event filter" title="Show only cmd.legacy_wrapper.used events">Legacy Wrappers</button>
-    <button type="button" class="tool-action-btn" id="copyConsoleBtn" aria-label="Copy console output" title="Copy all console lines to clipboard">Copy</button>
-    <button type="button" class="tool-action-btn" id="saveConsoleBtn" aria-label="Save console output to text file" title="Save all console lines to a .txt file">Save .txt</button>
+    ${renderConsoleToolbar()}
   `;
 
   const terminalUiHtml = renderTerminalWorkspace(
@@ -919,6 +1200,8 @@ function render(): void {
     webSetupMessage: state.webSetupMessage,
     webSetupBusy: state.webSetupBusy,
     filesRootPath: state.filesRootPath,
+    filesScopeRootPath: state.filesScopeRootPath,
+    filesRootSelectorOpen: state.filesRootSelectorOpen,
     filesSelectedPath: state.filesSelectedPath,
     filesSelectedEntryPath: state.filesSelectedEntryPath,
     filesOpenTabs: state.filesOpenTabs,
@@ -948,6 +1231,26 @@ function render(): void {
     tasksSortDirection: state.tasksSortDirection,
     tasksDetailsCollapsed: state.tasksDetailsCollapsed,
     tasksJsonDraft: state.tasksJsonDraft,
+    createToolStage: state.createToolStage,
+    createToolModelOptions: state.createToolModelOptions,
+    createToolSelectedModelId: state.createToolSelectedModelId,
+    createToolPrdUiPreset: state.createToolPrdUiPreset,
+    createToolLayoutModifiers: state.createToolLayoutModifiers,
+    createToolPrdUiNotes: state.createToolPrdUiNotes,
+    createToolPrdInputs: state.createToolPrdInputs,
+    createToolPrdProcess: state.createToolPrdProcess,
+    createToolPrdConnections: state.createToolPrdConnections,
+    createToolPrdDependencies: state.createToolPrdDependencies,
+    createToolPrdExpectedBehavior: state.createToolPrdExpectedBehavior,
+    createToolPrdOutputs: state.createToolPrdOutputs,
+    createToolDevPlan: state.createToolDevPlan,
+    createToolBuildViewMode: state.createToolBuildViewMode,
+    createToolUiPreviewHtml: state.createToolUiPreviewHtml,
+    createToolFixNotes: state.createToolFixNotes,
+    createToolIconBrowserOpen: state.createToolIconBrowserOpen,
+    createToolIconBrowserQuery: state.createToolIconBrowserQuery,
+    createToolIconBrowserAppliedQuery: state.createToolIconBrowserAppliedQuery,
+    createToolIconLibrary: state.createToolIconLibrary,
     createToolSpec: state.createToolSpec,
     createToolWorkspaceRoot: state.createToolWorkspaceRoot,
     createToolPreviewFiles: state.createToolPreviewFiles,
@@ -957,6 +1260,10 @@ function render(): void {
     createToolValidationWarnings: state.createToolValidationWarnings,
     createToolStatusMessage: state.createToolStatusMessage,
     createToolLastResultJson: state.createToolLastResultJson,
+    createToolPrdGeneratingSection: state.createToolPrdGeneratingSection,
+    createToolPrdGeneratingAll: state.createToolPrdGeneratingAll,
+    createToolPrdReviewBusy: state.createToolPrdReviewBusy,
+    createToolPrdReviewFindings: state.createToolPrdReviewFindings,
     createToolBusy: state.createToolBusy,
     flowRuns: state.flowRuns,
     flowActiveRunId: state.flowActiveRunId,
@@ -988,6 +1295,8 @@ function render(): void {
     chatStreamCompleteByCorrelation: state.chatStreamCompleteByCorrelation,
     chatStreaming: state.chatStreaming,
     chatDraft: state.chatDraft,
+    chatAttachedFileName: state.chatAttachedFileName,
+    chatAttachedFileContent: state.chatAttachedFileContent,
     devices: state.devices,
     apiConnections: state.apiConnections,
     apiFormOpen: state.apiFormOpen,
@@ -1121,19 +1430,88 @@ function getVisibleConsoleEntries(): Array<{
   source: "browser" | "app";
   message: string;
 }> {
-  if (!state.consoleLegacyWrappersOnly) {
-    return state.consoleEntries;
+  let visible = state.consoleEntries;
+  if (state.consoleView === "errors-warnings") {
+    visible = visible.filter((entry) => entry.level === "warn" || entry.level === "error");
+  } else if (state.consoleView === "security-events") {
+    visible = visible.filter((entry) => isSecurityConsoleEntry(entry.message));
   }
-  return state.consoleEntries.filter((entry) => entry.message.includes("cmd.legacy_wrapper.used"));
+  return visible;
+}
+
+function renderConsoleToolbar(): string {
+  return renderToolToolbar({
+    tabsMode: "static",
+    tabs: [
+      {
+        id: "console-all",
+        label: "Console",
+        active: state.consoleView === "all",
+        buttonAttrs: {
+          [CONSOLE_DATA_ATTR.view]: "all"
+        }
+      },
+      {
+        id: "console-errors",
+        label: "Errors & Warnings",
+        active: state.consoleView === "errors-warnings",
+        buttonAttrs: {
+          [CONSOLE_DATA_ATTR.view]: "errors-warnings"
+        }
+      },
+      {
+        id: "console-security",
+        label: "Security Events",
+        active: state.consoleView === "security-events",
+        buttonAttrs: {
+          [CONSOLE_DATA_ATTR.view]: "security-events"
+        }
+      }
+    ],
+    actions: [
+      {
+        id: "console-copy",
+        title: "Copy all visible console lines",
+        icon: "copy",
+        label: "Copy",
+        className: "is-text is-compact",
+        buttonAttrs: {
+          [CONSOLE_DATA_ATTR.action]: "copy"
+        }
+      },
+      {
+        id: "console-save",
+        title: "Save all visible console lines to a .txt file",
+        icon: "save",
+        label: "Save .txt",
+        className: "is-text is-compact",
+        buttonAttrs: {
+          [CONSOLE_DATA_ATTR.action]: "save"
+        }
+      }
+    ]
+  });
+}
+
+function isSecurityConsoleEntry(message: string): boolean {
+  return /(security|auth|permission|credential|token|secret|oauth|forbidden|denied|unauthorized|tls|ssl|csrf|xss|csp|injection)/i.test(
+    message
+  );
+}
+
+function formatConsoleEntryLine(entry: {
+  timestampMs: number;
+  level: "log" | "info" | "warn" | "error" | "debug";
+  source: "browser" | "app";
+  message: string;
+}): string {
+  const time = new Date(entry.timestampMs).toLocaleTimeString();
+  const legacyTag = entry.message.includes("cmd.legacy_wrapper.used") ? " [Legacy]" : "";
+  return `${time} [${entry.source}] ${entry.level.toUpperCase()}${legacyTag} ${entry.message}`;
 }
 
 function buildConsoleCopyText(): string {
-  return getVisibleConsoleEntries()
-    .map((entry) => {
-      const time = new Date(entry.timestampMs).toLocaleTimeString();
-      return `${time} [${entry.source}] ${entry.level.toUpperCase()} ${entry.message}`;
-    })
-    .join("\n");
+  return getVisibleConsoleEntries().map((entry) => formatConsoleEntryLine(entry)).join("\n");
 }
 
 function buildConsoleFilename(): string {
@@ -1219,6 +1597,9 @@ function syncThinkingPlacement(correlationId: string): void {
 
 function resetCurrentConversationUiState(): void {
   state.messages = [];
+  state.chatDraft = "";
+  state.chatAttachedFileName = null;
+  state.chatAttachedFileContent = null;
   state.chatReasoningByCorrelation = {};
   state.chatThinkingPlacementByCorrelation = {};
   state.chatThinkingExpandedByCorrelation = {};
@@ -1576,18 +1957,19 @@ async function refreshTools(): Promise<void> {
   const byId = new Map(response.tools.map((tool) => [tool.toolId, tool]));
   for (const manifest of getAllToolManifests()) {
     if (byId.has(manifest.id)) continue;
-    byId.set(manifest.id, {
-      toolId: manifest.id,
-      title: manifest.title,
-      description: manifest.description,
-      category: manifest.category,
+      byId.set(manifest.id, {
+        toolId: manifest.id,
+        title: manifest.title,
+        description: manifest.description,
+        category: manifest.category,
       core: manifest.core,
       optional: !manifest.core,
       version: manifest.version,
-      source: manifest.source,
-      enabled: manifest.defaultEnabled,
-      status: manifest.defaultEnabled ? "ready" : "disabled"
-    });
+        source: manifest.source,
+        enabled: manifest.defaultEnabled,
+        status: manifest.defaultEnabled ? "ready" : "disabled",
+        entry: null
+      });
   }
   state.workspaceTools = Array.from(byId.values()).sort((a, b) => a.toolId.localeCompare(b.toolId));
 }
@@ -1604,6 +1986,68 @@ async function refreshApiConnections(): Promise<void> {
   if (!clientRef) return;
   const response = await clientRef.listApiConnections({ correlationId: nextCorrelationId() });
   state.apiConnections = response.connections;
+  refreshCreateToolModelOptions();
+}
+
+function refreshCreateToolModelOptions(): void {
+  const options: CreateToolModelOption[] = [
+    {
+      id: "primary-agent",
+      label: "Primary Agent",
+      source: "primary",
+      detail: "default routing"
+    }
+  ];
+  const seen = new Set<string>(["primary-agent"]);
+
+  for (const connection of state.apiConnections) {
+    if (connection.apiType !== "llm") continue;
+    if (connection.status !== "verified" && connection.status !== "warning") continue;
+    const modelName = (connection.modelName || "").trim();
+    const display = modelName || connection.name || "LLM Connection";
+    const key = `api:${connection.id}:${display.toLowerCase()}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    options.push({
+      id: key,
+      label: display,
+      source: "api",
+      detail: connection.name || connection.apiUrl
+    });
+  }
+
+  for (const model of state.modelManagerInstalled) {
+    const name = model.name.trim() || model.id.trim();
+    if (!name) continue;
+    const key = `mm:${name.toLowerCase()}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    options.push({
+      id: key,
+      label: name,
+      source: "model-manager",
+      detail: "installed"
+    });
+  }
+
+  for (const row of state.modelManagerUnslothUdCatalog) {
+    const name = row.modelName.trim();
+    if (!name) continue;
+    const key = `mm:${name.toLowerCase()}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    options.push({
+      id: key,
+      label: name,
+      source: "model-manager",
+      detail: "catalog"
+    });
+  }
+
+  state.createToolModelOptions = options;
+  if (!options.some((item) => item.id === state.createToolSelectedModelId)) {
+    state.createToolSelectedModelId = "primary-agent";
+  }
 }
 
 const workspaceToolsRuntime = createWorkspaceToolsRuntime(state, {
@@ -1622,6 +2066,7 @@ async function refreshModelManagerInstalled(): Promise<void> {
     correlationId: nextCorrelationId()
   });
   state.modelManagerInstalled = response.models;
+  refreshCreateToolModelOptions();
 }
 
 async function refreshModelManagerUnslothUdCatalog(): Promise<void> {
@@ -1688,6 +2133,7 @@ async function refreshModelManagerUnslothUdCatalog(): Promise<void> {
     state.modelManagerMessage = "Failed to load UD CSV catalog.";
   }
   state.modelManagerUnslothUdLoading = false;
+  refreshCreateToolModelOptions();
 }
 
 async function refreshLlamaRuntime(): Promise<void> {
@@ -1874,16 +2320,26 @@ async function autoStartLlamaRuntimeIfConfigured(): Promise<void> {
 }
 
 function renderAndBind(sendMessage: (text: string) => Promise<void>): void {
+  persistCreateToolDraft(state);
   render();
   scrollConsoleToBottom();
   attachDividerResize();
   attachTopbarInteractions(sendMessage);
   attachSidebarInteractions(sendMessage);
   attachWorkspaceInteractions(sendMessage);
+  bindCustomToolIframes();
   attachPrimaryPanelInteractions(state.sidebarTab, state, {
     onSendMessage: sendMessage,
     onUpdateChatDraft: (text: string) => {
       state.chatDraft = text;
+    },
+    onSetChatAttachment: (fileName: string, content: string) => {
+      state.chatAttachedFileName = fileName;
+      state.chatAttachedFileContent = content;
+    },
+    onClearChatAttachment: () => {
+      state.chatAttachedFileName = null;
+      state.chatAttachedFileContent = null;
     },
     onStopCurrentResponse: async () => {
       if (!clientRef || !state.activeChatCorrelationId) return;
@@ -2540,8 +2996,156 @@ function renderAndBind(sendMessage: (text: string) => Promise<void>): void {
       if (key === "vadForceFlushS") normalized = clampSttSetting(value, 0.25, 30, 3);
       state.stt[key] = normalized;
       renderAndBind(sendMessage);
+    },
+    onSetDisplayMode: async (mode) => {
+      state.displayMode = mode;
+      state.displayModePreference = mode;
+      terminalManager.setDisplayMode(state.displayMode);
+      renderAndBind(sendMessage);
+    },
+    onSetDisplayModePreference: async (mode) => {
+      state.displayModePreference = mode;
+      state.displayMode = mode === "system" ? resolveSystemDisplayMode() : mode;
+      terminalManager.setDisplayMode(state.displayMode);
+      renderAndBind(sendMessage);
     }
   });
+}
+
+function bindCustomToolIframes(): void {
+  const iframes = document.querySelectorAll<HTMLIFrameElement>(
+    ".tool-custom-tool-iframe, .tool-plugin-iframe"
+  );
+  iframes.forEach((frame) => {
+    if (frame.dataset.bridgeBound === "true") return;
+    frame.dataset.bridgeBound = "true";
+    frame.addEventListener("load", () => {
+      postCustomToolInit(frame);
+    });
+    postCustomToolInit(frame);
+  });
+}
+
+function getCustomToolIdFromFrame(frame: HTMLIFrameElement): string {
+  return (
+    frame.getAttribute("data-custom-tool-id")?.trim() ||
+    frame.getAttribute("data-plugin-tool-id")?.trim() ||
+    ""
+  );
+}
+
+function postCustomToolInit(frame: HTMLIFrameElement): void {
+  const customToolId = getCustomToolIdFromFrame(frame);
+  if (!customToolId || !frame.contentWindow) return;
+  frame.contentWindow.postMessage(
+    {
+      type: "customTool.init",
+      customToolId,
+      pluginId: customToolId,
+      hostVersion: state.appVersion,
+      timestampMs: Date.now()
+    },
+    "*"
+  );
+  frame.contentWindow.postMessage(
+    {
+      type: "plugin.init",
+      customToolId,
+      pluginId: customToolId,
+      hostVersion: state.appVersion,
+      timestampMs: Date.now()
+    },
+    "*"
+  );
+}
+
+function installCustomToolBridge(sendMessage: (text: string) => Promise<void>): void {
+  if (customToolBridgeInstalled) return;
+  customToolBridgeInstalled = true;
+  window.addEventListener("message", (event) => {
+    void handleCustomToolBridgeMessage(event, sendMessage);
+  });
+}
+
+async function handleCustomToolBridgeMessage(
+  event: MessageEvent<unknown>,
+  sendMessage: (text: string) => Promise<void>
+): Promise<void> {
+  const frame = resolveCustomToolIframeFromSource(event.source);
+  if (!frame) return;
+  const customToolId = getCustomToolIdFromFrame(frame);
+  if (!customToolId) return;
+  if (!event.data || typeof event.data !== "object") return;
+
+  const message = event.data as Record<string, unknown>;
+  const type = typeof message.type === "string" ? message.type : "";
+  if (!type) return;
+
+  if (type === "plugin.ready" || type === "customTool.ready") {
+    postCustomToolInit(frame);
+    return;
+  }
+
+  if (type === "plugin.log" || type === "customTool.log") {
+    const level = typeof message.level === "string" ? message.level : "info";
+    const text = typeof message.message === "string" ? message.message : "";
+    if (text) {
+      pushConsoleEntry(
+        level === "error" ? "error" : "info",
+        "app",
+        `[custom-tool:${customToolId}] ${text}`
+      );
+      renderAndBind(sendMessage);
+    }
+    return;
+  }
+
+  if (type !== "capability.invoke") return;
+  if (!clientRef) return;
+
+  const requestId = typeof message.requestId === "string" ? message.requestId : nextCorrelationId();
+  const capability = typeof message.capability === "string" ? message.capability : "";
+  const payload =
+    message.payload && typeof message.payload === "object"
+      ? (message.payload as Record<string, unknown>)
+      : {};
+  if (!capability) return;
+
+  const response = await clientRef.customToolCapabilityInvoke({
+    correlationId: nextCorrelationId(),
+    customToolId,
+    requestId,
+    capability,
+    payload
+  });
+
+  const sourceWindow = event.source as WindowProxy | null;
+  if (!sourceWindow) return;
+  sourceWindow.postMessage(
+    {
+      type: "capability.result",
+      requestId: response.requestId,
+      customToolId: response.customToolId,
+      pluginId: response.customToolId,
+      capability: response.capability,
+      ok: response.ok,
+      data: response.data ?? {},
+      error: response.error ?? null,
+      code: response.code ?? null
+    },
+    "*"
+  );
+}
+
+function resolveCustomToolIframeFromSource(source: MessageEventSource | null): HTMLIFrameElement | null {
+  if (!source || typeof source !== "object") return null;
+  const iframes = document.querySelectorAll<HTMLIFrameElement>(
+    ".tool-custom-tool-iframe, .tool-plugin-iframe"
+  );
+  for (const frame of iframes) {
+    if (frame.contentWindow === source) return frame;
+  }
+  return null;
 }
 
 // Global state for STT audio capture
@@ -2908,6 +3512,8 @@ function stopSttAudioCapture(): void {
 
 function currentPrimaryPanelRenderState() {
   return {
+    displayMode: state.displayMode,
+    displayModePreference: state.displayModePreference,
     conversationId: state.conversationId,
     messages: state.messages,
     chatReasoningByCorrelation: state.chatReasoningByCorrelation,
@@ -2918,6 +3524,8 @@ function currentPrimaryPanelRenderState() {
     chatStreamCompleteByCorrelation: state.chatStreamCompleteByCorrelation,
     chatStreaming: state.chatStreaming,
     chatDraft: state.chatDraft,
+    chatAttachedFileName: state.chatAttachedFileName,
+    chatAttachedFileContent: state.chatAttachedFileContent,
     devices: state.devices,
     apiConnections: state.apiConnections,
     apiFormOpen: state.apiFormOpen,
@@ -3022,7 +3630,8 @@ function attachTopbarInteractions(sendMessage: (text: string) => Promise<void>):
   const toggle = document.querySelector<HTMLButtonElement>("#displayModeToggle");
   if (toggle) {
     toggle.onclick = () => {
-      state.displayMode = state.displayMode === "dark" ? "light" : "dark";
+      state.displayMode = nextDisplayMode(state.displayMode);
+      state.displayModePreference = state.displayMode;
       terminalManager.setDisplayMode(state.displayMode);
       renderAndBind(sendMessage);
     };
@@ -3079,6 +3688,184 @@ function attachWorkspaceInteractions(sendMessage: (text: string) => Promise<void
   const workspacePane = document.querySelector<HTMLElement>(".workspace-pane");
   const shellPopover = document.querySelector<HTMLElement>(`#${TERMINAL_UI_ID.shellPopover}`);
   if (workspacePane) {
+    const protectedToolIds = new Set([
+      "terminal",
+      "files",
+      "webSearch",
+      "flow",
+      "tasks",
+      "createTool",
+      "memory",
+      "skills"
+    ]);
+    const isSystemTool = (toolId: string): boolean => protectedToolIds.has(toolId);
+
+    const toolInvokeOrThrow = async (
+      toolId: string,
+      action: string,
+      payload: Record<string, unknown>
+    ): Promise<Record<string, unknown>> => {
+      if (!clientRef) throw new Error("IPC client unavailable.");
+      const response = await clientRef.toolInvoke({
+        correlationId: nextCorrelationId(),
+        toolId,
+        action,
+        mode: "sandbox",
+        payload
+      });
+      if (!response.ok) throw new Error(response.error || `${toolId}.${action} failed`);
+      return response.data as Record<string, unknown>;
+    };
+
+    const readWorkspaceFile = async (path: string): Promise<string> => {
+      const correlationId = nextCorrelationId();
+      const data = await toolInvokeOrThrow("files", "read-file", {
+        correlationId,
+        path
+      });
+      return String(data.content ?? "");
+    };
+
+    const writeWorkspaceFile = async (path: string, content: string): Promise<void> => {
+      const correlationId = nextCorrelationId();
+      await toolInvokeOrThrow("files", "write-file", {
+        correlationId,
+        path,
+        content
+      });
+    };
+
+    const deleteWorkspacePath = async (path: string, recursive = false): Promise<void> => {
+      const correlationId = nextCorrelationId();
+      await toolInvokeOrThrow("files", "delete-path", {
+        correlationId,
+        path,
+        recursive
+      });
+    };
+
+    const resolveWorkspaceRootPath = async (): Promise<string> => {
+      const correlationId = nextCorrelationId();
+      const data = await toolInvokeOrThrow("files", "list-directory", {
+        correlationId
+      });
+      const rootPath = String(data.rootPath ?? "").trim();
+      if (!rootPath) {
+        throw new Error("Unable to resolve workspace root.");
+      }
+      return rootPath;
+    };
+
+    const stripGeneratedToolWiring = (
+      source: string,
+      toolId: string,
+      markerPrefix: string
+    ): string => {
+      const escapedToolId = toolId.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const escapedMarker = markerPrefix.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const blockRegex = new RegExp(
+        `\\n?\\s*\\/\\/\\s*${escapedMarker}:${escapedToolId}[\\s\\S]*?(?=\\n\\s{4}[a-zA-Z_]+:\\s*\\{|\\n\\s*}\\s*,?\\s*$|$)`,
+        "g"
+      );
+      const lineRegex = new RegExp(
+        `^.*${escapedMarker}:${escapedToolId}.*\\n?`,
+        "gm"
+      );
+      return source.replace(blockRegex, "\n").replace(lineRegex, "");
+    };
+
+    const exportSingleTool = async (toolId: string): Promise<void> => {
+      if (isSystemTool(toolId)) return;
+      const root = await resolveWorkspaceRootPath();
+      const row = state.workspaceTools.find((item) => item.toolId === toolId) || null;
+      const entryPath = String(row?.entry ?? "").replace(/\\/g, "/");
+      const pluginDirFromEntry = entryPath.includes("/dist/")
+        ? entryPath.slice(0, entryPath.indexOf("/dist/"))
+        : "";
+      const toolDir =
+        row?.source === "custom"
+          ? pluginDirFromEntry || `${root}/plugins/${toolId}`
+          : `${root}/frontend/src/tools/${toolId}`;
+
+      const collectFiles = async (path: string): Promise<Array<{ fullPath: string; relativePath: string }>> => {
+        const correlationId = nextCorrelationId();
+        const listing = await toolInvokeOrThrow("files", "list-directory", {
+          correlationId,
+          path
+        });
+        const entries =
+          (listing.entries as Array<{ name?: string; isDir?: boolean; path?: string }>) || [];
+        const out: Array<{ fullPath: string; relativePath: string }> = [];
+        for (const entry of entries) {
+          const fullPath = String(entry.path ?? "");
+          if (!fullPath) continue;
+          if (entry.isDir) {
+            const nested = await collectFiles(fullPath);
+            out.push(...nested);
+            continue;
+          }
+          const relativePath = fullPath.startsWith(`${toolDir}/`)
+            ? fullPath.slice(toolDir.length + 1)
+            : fullPath;
+          out.push({ fullPath, relativePath });
+        }
+        return out;
+      };
+
+      const fileEntries = await collectFiles(toolDir);
+      const files: Record<string, string> = {};
+      for (const entry of fileEntries) {
+        const content = await readWorkspaceFile(entry.fullPath);
+        files[entry.relativePath] = content;
+      }
+      const payload = {
+        toolId,
+        source: row?.source || "unknown",
+        exportedAt: new Date().toISOString(),
+        files
+      };
+      const blob = new Blob([JSON.stringify(payload, null, 2)], {
+        type: "application/json;charset=utf-8"
+      });
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = `${toolId}-tool-export.json`;
+      document.body.appendChild(anchor);
+      anchor.click();
+      document.body.removeChild(anchor);
+      URL.revokeObjectURL(url);
+      pushConsoleEntry("info", "browser", `Exported tool bundle for ${toolId}.`);
+    };
+
+    const deleteSingleTool = async (toolId: string): Promise<void> => {
+      if (isSystemTool(toolId)) {
+        pushConsoleEntry("warn", "browser", `System tool '${toolId}' cannot be deleted.`);
+        return;
+      }
+      const confirmed = window.confirm(
+        `Delete tool '${toolId}'?\n\nThis will remove its files and generated wiring.\nConsider exporting first to keep a backup.`
+      );
+      if (!confirmed) return;
+
+      const root = await resolveWorkspaceRootPath();
+      const pluginDir = `${root}/plugins/${toolId}`;
+      const legacyToolDir = `${root}/frontend/src/tools/${toolId}`;
+
+      await deleteWorkspacePath(pluginDir, true).catch(() => undefined);
+      await deleteWorkspacePath(legacyToolDir, true).catch(() => undefined);
+      state.workspaceTools = state.workspaceTools.filter((tool) => tool.toolId !== toolId);
+      if (state.workspaceTab === (`${toolId}-tool` as WorkspaceTab)) {
+        state.workspaceTab = "manager-tool";
+      }
+      pushConsoleEntry(
+        "info",
+        "browser",
+        `Removed tool '${toolId}' without modifying core host source files.`
+      );
+      await refreshTools();
+    };
+
     const workspaceToolDeps = {
       flow: {
         refreshRuns: refreshFlowRuns,
@@ -3112,6 +3899,16 @@ function attachWorkspaceInteractions(sendMessage: (text: string) => Promise<void
       },
       createTool: {
         createScaffold: workspaceToolsRuntime.createToolScaffold,
+        browseIcons: workspaceToolsRuntime.browseCreateToolIcons,
+        generatePrd: workspaceToolsRuntime.generateCreateToolPrd,
+        generatePrdSection: async (section, onUpdate) => {
+          await workspaceToolsRuntime.generateCreateToolPrdSection(section, () => {
+            onUpdate?.();
+            renderAndBind(sendMessage);
+          });
+        },
+        runPrdReview: workspaceToolsRuntime.runCreateToolPrdReview,
+        generateDevPlan: workspaceToolsRuntime.generateCreateToolDevPlan,
         registerTool: workspaceToolsRuntime.registerCreateToolInWorkspace
       }
     };
@@ -3149,6 +3946,24 @@ function attachWorkspaceInteractions(sendMessage: (text: string) => Promise<void
 
       if (target.id === MANAGER_UI_ID.refreshToolsButton) {
         await refreshTools();
+        renderAndBind(sendMessage);
+        return;
+      }
+
+      const managerAction = target.getAttribute(MANAGER_DATA_ATTR.action);
+      const managerActionToolId = target.getAttribute(MANAGER_DATA_ATTR.actionToolId) ?? "";
+      if (managerAction && managerActionToolId) {
+        try {
+          if (managerAction === "export-tool") {
+            await exportSingleTool(managerActionToolId);
+          }
+          if (managerAction === "delete-tool") {
+            await deleteSingleTool(managerActionToolId);
+          }
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          pushConsoleEntry("error", "browser", `Tool manager action failed: ${message}`);
+        }
         renderAndBind(sendMessage);
         return;
       }
@@ -3308,6 +4123,9 @@ function attachWorkspaceInteractions(sendMessage: (text: string) => Promise<void
         state,
         workspaceToolDeps
       );
+      if (toolInput.handled) {
+        persistCreateToolDraft(state);
+      }
       if (toolInput.handled && toolInput.rerender) {
         rerenderForFlow = true;
       }
@@ -3348,70 +4166,75 @@ function attachWorkspaceInteractions(sendMessage: (text: string) => Promise<void
     }
   }
 
-  const legacyWrapperFilterBtn =
-    document.querySelector<HTMLButtonElement>("#legacyWrapperFilterBtn");
-  if (legacyWrapperFilterBtn) {
-    legacyWrapperFilterBtn.onclick = () => {
-      state.consoleLegacyWrappersOnly = !state.consoleLegacyWrappersOnly;
+  const consoleTabButtons = document.querySelectorAll<HTMLButtonElement>(`[${CONSOLE_DATA_ATTR.view}]`);
+  for (const button of consoleTabButtons) {
+    button.onclick = () => {
+      const view = button.getAttribute(CONSOLE_DATA_ATTR.view);
+      if (view !== "all" && view !== "errors-warnings" && view !== "security-events") return;
+      if (state.consoleView === view) return;
+      state.consoleView = view;
       renderAndBind(sendMessage);
     };
   }
 
-  const copyConsoleBtn = document.querySelector<HTMLButtonElement>("#copyConsoleBtn");
-  if (copyConsoleBtn) {
-    copyConsoleBtn.onclick = async () => {
-      const text = buildConsoleCopyText();
-      const visibleCount = getVisibleConsoleEntries().length;
-      if (!text) {
-        pushConsoleEntry("info", "browser", "Console is empty; nothing copied.");
-        renderAndBind(sendMessage);
-        return;
-      }
-      try {
-        await navigator.clipboard.writeText(text);
-        pushConsoleEntry("info", "browser", `Copied ${visibleCount} console lines.`);
-      } catch {
-        const textarea = document.createElement("textarea");
-        textarea.value = text;
-        textarea.setAttribute("readonly", "true");
-        textarea.style.position = "fixed";
-        textarea.style.opacity = "0";
-        document.body.appendChild(textarea);
-        textarea.focus();
-        textarea.select();
-        const ok = document.execCommand("copy");
-        document.body.removeChild(textarea);
-        if (!ok) {
-          pushConsoleEntry("error", "browser", "Failed to copy console output.");
-        } else {
-          pushConsoleEntry("info", "browser", `Copied ${visibleCount} console lines.`);
+  const consoleActionButtons = document.querySelectorAll<HTMLButtonElement>(
+    `[${CONSOLE_DATA_ATTR.action}]`
+  );
+  for (const button of consoleActionButtons) {
+    button.onclick = async () => {
+      const action = button.getAttribute(CONSOLE_DATA_ATTR.action);
+      if (!action) return;
+      if (action === "copy") {
+        const text = buildConsoleCopyText();
+        const visibleCount = getVisibleConsoleEntries().length;
+        if (!text) {
+          pushConsoleEntry("info", "browser", "Console is empty; nothing copied.");
+          renderAndBind(sendMessage);
+          return;
         }
-      }
-      renderAndBind(sendMessage);
-    };
-  }
-
-  const saveConsoleBtn = document.querySelector<HTMLButtonElement>("#saveConsoleBtn");
-  if (saveConsoleBtn) {
-    saveConsoleBtn.onclick = () => {
-      const text = buildConsoleCopyText();
-      const visibleCount = getVisibleConsoleEntries().length;
-      if (!text) {
-        pushConsoleEntry("info", "browser", "Console is empty; nothing to save.");
+        try {
+          await navigator.clipboard.writeText(text);
+          pushConsoleEntry("info", "browser", `Copied ${visibleCount} console lines.`);
+        } catch {
+          const textarea = document.createElement("textarea");
+          textarea.value = text;
+          textarea.setAttribute("readonly", "true");
+          textarea.style.position = "fixed";
+          textarea.style.opacity = "0";
+          document.body.appendChild(textarea);
+          textarea.focus();
+          textarea.select();
+          const ok = document.execCommand("copy");
+          document.body.removeChild(textarea);
+          if (!ok) {
+            pushConsoleEntry("error", "browser", "Failed to copy console output.");
+          } else {
+            pushConsoleEntry("info", "browser", `Copied ${visibleCount} console lines.`);
+          }
+        }
         renderAndBind(sendMessage);
         return;
       }
-      const blob = new Blob([text], { type: "text/plain;charset=utf-8" });
-      const url = URL.createObjectURL(blob);
-      const anchor = document.createElement("a");
-      anchor.href = url;
-      anchor.download = buildConsoleFilename();
-      document.body.appendChild(anchor);
-      anchor.click();
-      document.body.removeChild(anchor);
-      URL.revokeObjectURL(url);
-      pushConsoleEntry("info", "browser", `Saved ${visibleCount} console lines as .txt.`);
-      renderAndBind(sendMessage);
+      if (action === "save") {
+        const text = buildConsoleCopyText();
+        const visibleCount = getVisibleConsoleEntries().length;
+        if (!text) {
+          pushConsoleEntry("info", "browser", "Console is empty; nothing to save.");
+          renderAndBind(sendMessage);
+          return;
+        }
+        const blob = new Blob([text], { type: "text/plain;charset=utf-8" });
+        const url = URL.createObjectURL(blob);
+        const anchor = document.createElement("a");
+        anchor.href = url;
+        anchor.download = buildConsoleFilename();
+        document.body.appendChild(anchor);
+        anchor.click();
+        document.body.removeChild(anchor);
+        URL.revokeObjectURL(url);
+        pushConsoleEntry("info", "browser", `Saved ${visibleCount} console lines as .txt.`);
+        renderAndBind(sendMessage);
+      }
     };
   }
 
@@ -3750,6 +4573,7 @@ async function bootstrap(): Promise<void> {
     }
   }
 
+  installCustomToolBridge(sendMessage);
   renderAndBind(sendMessage);
   installThinkingToggleDelegation(sendMessage);
 }

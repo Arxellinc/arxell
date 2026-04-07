@@ -227,6 +227,14 @@ export class TerminalManager {
         selectionBackground: "#dbe7fb"
       };
     }
+    if (mode === "dark") {
+      return {
+        background: "#181818",
+        foreground: "#d4d4d4",
+        cursor: "#569cd6",
+        selectionBackground: "#264f78"
+      };
+    }
     return {
       background: "#0d1115",
       foreground: "#c7d2d3",

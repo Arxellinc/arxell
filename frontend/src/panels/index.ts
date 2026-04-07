@@ -10,6 +10,7 @@ import {
   renderModelManagerBody
 } from "./modelManagerPanel";
 import { renderSttActions, renderSttBody } from "./sttPanel";
+import { renderSettingsActions, renderSettingsBody } from "./settingsPanel";
 import type {
   PrimaryPanelBindings,
   PrimaryPanelDefinition,
@@ -104,6 +105,15 @@ export function getPanelDefinition(
     };
   }
 
+  if (tab === "settings") {
+    return {
+      title: "Settings",
+      icon: APP_ICON.sidebar.settings,
+      renderBody: () => renderSettingsBody(state),
+      renderActions: renderSettingsActions
+    };
+  }
+
   return {
     title: "Workspace",
     icon: APP_ICON.sidebar.workspace,
@@ -121,9 +131,17 @@ export function attachPrimaryPanelInteractions(
     bindChatPanel(
       bindings.onSendMessage,
       bindings.onUpdateChatDraft,
+      bindings.onSetChatAttachment,
+      bindings.onClearChatAttachment,
       bindings.onStopCurrentResponse,
       bindings.onToggleStt,
-      state.chatStreaming
+      state.chatStreaming,
+      state.chatAttachedFileName
+        ? {
+            name: state.chatAttachedFileName,
+            content: state.chatAttachedFileContent ?? ""
+          }
+        : null
     );
     const newBtn = document.querySelector<HTMLButtonElement>("#chatNewBtn");
     if (newBtn) {
@@ -245,5 +263,17 @@ export function attachPrimaryPanelInteractions(
         await bindings.onUpdateSttVadSetting(input.key, parsed);
       };
     }
+  }
+
+  if (tab === "settings") {
+    const themeButtons = document.querySelectorAll<HTMLButtonElement>("[data-settings-theme]");
+    for (const button of themeButtons) {
+      button.onclick = async () => {
+        const mode = button.getAttribute("data-settings-theme");
+        if (mode !== "dark" && mode !== "light" && mode !== "system" && mode !== "terminal") return;
+        await bindings.onSetDisplayModePreference(mode);
+      };
+    }
+    return;
   }
 }
