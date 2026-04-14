@@ -11,6 +11,38 @@ Validation performed during audit:
 - `npm run -s check` in `frontend`: passed.
 - `cargo test --quiet` in `src-tauri`: passed, with only 8 non-ignored Rust tests and no flow end-to-end tests.
 
+## Progress Tracker (as of April 2026)
+
+### Completed Fixes
+
+| # | Original Issue | Fix Applied | PR/Commit |
+|---|---|---|---|
+| 1 | Flow is not a real Ralph Loop | Added agent-driven investigate and implement steps. When `useAgent=true`, Flow uses `arx_rs::Agent` with iterative tool-use (read/write/bash/grep) instead of single-shot LLM or opaque shell command. `agent_loop()` runs up to N turns with real tool calls. | `flow_service.rs` |
+| 2 | ToolMode ignored for sandbox side effects | `invoke_tool` now enforces ToolMode for `flow.start` with `dryRun=false`, `autoPush=true`, AND `useAgent=true`. All three are blocked under sandbox mode. | `tool_runtime.rs` |
+| 3 | Flow invoke not gated by workspace-tool enablement | `invoke_tool` now checks `workspace_tools` enablement for `flow`, `files`, `webSearch`, and `web` tool IDs before dispatching handlers. | `tool_runtime.rs` |
+| 4 | Git commit stages ALL files | `perform_native_git_commit` now uses `repo.statuses()` to stage only changed/untracked files instead of `index.add_all(["*"])`. | `flow_service.rs` |
+| 5 | Blocking `reqwest::blocking` in LLM calls | `llm_generate_text` converted to async, using `reqwest::Client` instead of `reqwest::blocking::Client`. `std::thread::sleep` replaced with `tokio::time::sleep`. | `flow_service.rs` |
+| 6 | No UI for agent-driven mode | Added `useAgent` toggle button ("Agent") in Flow toolbar. Added `flowUseAgent` to all state types, contracts, view builder, bindings, and runtime. | `frontend/src/` |
+| 7 | Test coverage gaps | Added 6 new tests: agent mode without workspace tools, dry run skip, orient spec collection, unknown step error, default state validation, investigate without LLM. Total: 14 passing. | `flow_service.rs` |
+
+### Remaining Issues (not yet addressed)
+
+| # | Issue | Priority | Status |
+|---|---|---|---|
+| 8 | Create Project side effects in frontend glue | HIGH | Open |
+| 9 | Stop/cancel cannot interrupt blocking shell/git work | CRITICAL | Partial (LLM now async; shell/git still blocking) |
+| 10 | Pause/nudge weaker than UI implies | HIGH | Open |
+| 11 | Persisted active runs strand Flow after restart | HIGH | Open |
+| 12 | Workspace paths differ from FilesService | HIGH | Open |
+| 13 | No agent-tool integration from chat to Flow | HIGH | Partial (Flow can now use agent tools; chat cannot call Flow) |
+| 14 | Persistence silently drops failures | HIGH | Open |
+| 15 | Event payloads can leak secrets | HIGH | Open |
+| 16 | Auto-push uses ambient credentials without confirmation | HIGH | Open |
+| 17 | `finish_run` can overwrite stopped status | HIGH | Open |
+| 18 | Frontend event copy picks wrong row | MEDIUM | Open |
+| 19 | Validation results not scoped by run/iteration | MEDIUM | Open |
+| 20 | Refresh scheduler drops errors | MEDIUM | Open |
+
 ## Overall Risk Assessment
 
 Risk: **critical** for using Flow as an autonomous Ralph Loop. It can create files and run commands, but it is not a reliable orchestration system. It has multiple paths where a user can believe a run is stopped, paused, validated, committed, or scaffolded while the backend either continues hidden work, records divergent state, or performs side effects outside the intended registry/policy boundary.
@@ -27,6 +59,8 @@ Primary failure modes:
 ## Architectural Findings
 
 ### [CRITICAL] Flow is not an actual Ralph Loop for arbitrary task completion
+
+> **Status: PARTIALLY FIXED** — Agent-driven investigate and implement steps added. When `useAgent=true` and workspace tools are available, Flow creates an `arx_rs::Agent` with real tools (read, write, edit, bash, grep, find, webSearch) and runs iterative tool-use loops (6 turns for investigate, 10 for implement). Falls back to single-shot LLM when workspace tools unavailable, and to `implementCommand` when `useAgent=false`. Remaining gap: `select_task` and `update_plan` phases still use single-shot LLM; full Ralph Loop state machine not yet implemented.
 
 * Confidence: high
 * Files: `src-tauri/src/app/flow_service.rs`, `frontend/src/main.ts`, `src-tauri/src/app/chat_service.rs`, `src-tauri/src/agent_tools/mod.rs`
@@ -162,6 +196,8 @@ Primary failure modes:
 
 ### [CRITICAL] `ToolMode` is ignored, so sandbox requests can execute shell, git, network, and filesystem side effects
 
+> **Status: PARTIALLY FIXED** — `invoke_tool` in `tool_runtime.rs` now enforces ToolMode for three flow.start conditions: `dryRun=false`, `autoPush=true`, and `useAgent=true`. All three reject under `ToolMode::Sandbox`. Also rejects `flow.rerun-validation` under sandbox. Remaining gap: Shell/Root distinction not enforced; non-flow tools (files, webSearch) have no mode checks.
+
 * Confidence: high
 * Files: `frontend/src/tools/flow/actions.ts`, `src-tauri/src/ipc/tool_runtime.rs`, `src-tauri/src/app/flow_service.rs`
 * Functions / symbols: `ToolInvokeRequest.mode`, `invoke_tool`, `FlowService::execute_step`
@@ -174,6 +210,8 @@ Primary failure modes:
 * Follow-up tests: A `mode: "sandbox"` flow start with `dryRun=false` must be rejected before run creation.
 
 ### [CRITICAL] Stop/cancel cannot interrupt blocking work and can be overwritten by the run loop
+
+> **Status: PARTIALLY FIXED** — LLM calls converted from `reqwest::blocking` to async `reqwest::Client` with cancellation channel passed to agent loop. `llm_generate_text` and `agent_loop` both respect `cancel_rx`. Remaining gap: Shell commands (`std::process::Command`), validation commands, and git operations (`git2`) are still blocking and cannot be interrupted. `finish_run` still unconditionally overwrites status.
 
 * Confidence: high
 * Files: `src-tauri/src/app/flow_service.rs`
@@ -240,6 +278,8 @@ Primary failure modes:
 
 ### [HIGH] Native git commit is enabled by default and stages everything
 
+> **Status: PARTIALLY FIXED** — `perform_native_git_commit` now stages only changed/untracked files (via `repo.statuses()`) instead of ALL files (`index.add_all`). Native git is already disabled by default (contrary to original finding). Remaining gap: No pre-run status snapshot; Flow still stages any changed file in the worktree, not just Flow-owned changes.
+
 * Confidence: high
 * Files: `src-tauri/src/app/flow_service.rs`
 * Functions / symbols: `flow_git_native_enabled`, `perform_native_git_commit`, `execute_step`
@@ -254,6 +294,8 @@ Primary failure modes:
 ## IPC / Invoke Contract Findings
 
 ### [HIGH] Flow invoke is not gated by workspace tool enablement
+
+> **Status: FIXED** — `invoke_tool` now checks `workspace_tools` enablement for `flow`, `files`, `webSearch`, and `web` tool IDs. Disabled tools return a structured error before handler dispatch.
 
 * Confidence: high
 * Files: `src-tauri/src/ipc/tool_runtime.rs`, `src-tauri/src/tools/invoke/flow.rs`, `src-tauri/src/workspace_tools/mod.rs`, `docs/TOOLS_ARCHITECTURE.md`
@@ -323,6 +365,8 @@ Primary failure modes:
 ## Agent Tool Integration Findings
 
 ### [HIGH] Flow has no agent-tool integration despite being categorized as an agent tool
+
+> **Status: PARTIALLY FIXED** — Flow now integrates with the agent runtime. `resolve_flow_agent_tools()` resolves enabled workspace tools as `arx_rs::Tool` instances (files, terminal, webSearch, chart). `agent_loop()` creates an `arx_rs::Agent` with these tools and runs iterative tool-use via `run_collect_with_callback()`. Flow investigate and implement phases use this when `useAgent=true`. Remaining gap: Chat agent still cannot call Flow; Flow still categorized as `agent` in manifests.
 
 * Confidence: high
 * Files: `src-tauri/src/agent_tools/mod.rs`, `src-tauri/src/app/chat_service.rs`, `frontend/src/tools/flow/manifest.ts`, `src-tauri/src/workspace_tools/mod.rs`
@@ -462,6 +506,8 @@ Primary failure modes:
 
 ### [MEDIUM] Blocking HTTP and shell work inside Tokio tasks can starve runtime threads
 
+> **Status: PARTIALLY FIXED** — `llm_generate_text` converted to async `reqwest::Client`. `std::thread::sleep` replaced with `tokio::time::sleep`. Remaining gap: Shell commands (`std::process::Command::output`), validation commands, and git operations (`git2`) are still blocking.
+
 * Confidence: high
 * Files: `src-tauri/src/app/flow_service.rs`
 * Functions / symbols: `tokio::spawn`, `llm_generate_text`, `run_shell_command`
@@ -502,6 +548,8 @@ Primary failure modes:
 ## Test Coverage Gaps
 
 ### [HIGH] Existing tests do not cover Flow end-to-end behavior
+
+> **Status: PARTIALLY FIXED** — Test count grew from 8 to 14. New tests cover: agent mode without workspace tools (rejects), dry run skip, orient spec collection, unknown step error, default state validation, investigate without LLM. Remaining gaps: no IPC handler tests, no cancellation tests with long commands, no restart-recovery tests, no create-project tests, no frontend Flow tests.
 
 * Confidence: high
 * Files: `src-tauri/src/app/flow_service.rs`, `src-tauri/src/tools/invoke/registry.rs`, `frontend/tests/*`, `src-tauri/tests/*`
@@ -601,10 +649,10 @@ The specific fix for each issue is listed in its finding. Cross-cutting implemen
 
 ## Open Questions / Uncertainties
 
-- Whether “Ralph Loop” is intended to mean the existing chat agent loop, a separate future engine, or this fixed Flow phase loop. The code does not make the intended contract explicit.
+- Whether "Ralph Loop" is intended to mean the existing chat agent loop, a separate future engine, or this fixed Flow phase loop. **Partially resolved**: agent-driven investigate/implement now use `arx_rs::Agent` for iterative tool-use, but a full state machine is not yet implemented.
 - Whether Flow should operate on the same root as FilesService in production Tauri bundles. The current code suggests yes, but uses different root-resolution mechanisms.
-- Whether native git commit/push was intended to be enabled by default. The env var name suggests a feature gate, but the implementation defaults to enabled.
-- Whether phase “terminal” panels are intended to be real terminals or event transcripts. Current code creates terminal sessions but writes event text, which is semantically mixed.
+- ~~Whether native git commit/push was intended to be enabled by default.~~ **Resolved**: defaults to disabled; `flow_git_native_enabled()` returns `false` when env var is unset.
+- Whether phase "terminal" panels are intended to be real terminals or event transcripts. Current code creates terminal sessions but writes event text, which is semantically mixed.
 - Whether generated app-tool plugins are meant to be immediately usable or only placeholders. Current manager status marks them ready.
 
 ## Suggested Follow-Up Validation Steps After Fixes
@@ -620,35 +668,35 @@ The specific fix for each issue is listed in its finding. Cross-cutting implemen
 
 ## Top 20 Most Urgent Fixes
 
-1. Enforce `ToolMode`; reject side effects under `sandbox`.
-2. Gate `toolInvoke` by workspace-tool enablement.
-3. Disable native git by default.
-4. Prevent Flow from staging all files.
-5. Add cancellable command execution and kill on stop.
-6. Add cancellable async LLM requests.
-7. Guard `finish_run` against overwriting stopped runs.
-8. Mark persisted active runs interrupted on startup.
-9. Move Create Project side effects to backend Flow action.
-10. Unify Flow path resolution with FilesService root and containment checks.
-11. Replace direct service side effects with registry/tool calls.
-12. Define real Ralph Loop/agent integration.
-13. Persist per-run pause/nudge/validation/model metadata.
-14. Redact event payloads.
-15. Fix frontend event copy indexing.
-16. Scope validation results by run and iteration.
-17. Catch scheduled refresh errors and surface them.
-18. Validate frontend invoke responses at runtime.
-19. Stop auto-creating terminal sessions for phase transcripts.
-20. Add end-to-end Flow tests before adding features.
+1. ~~Enforce `ToolMode`; reject side effects under `sandbox`.~~ **FIXED**
+2. ~~Gate `toolInvoke` by workspace-tool enablement.~~ **FIXED**
+3. Disable native git by default. — Already disabled; no change needed.
+4. ~~Prevent Flow from staging all files.~~ **FIXED** — now stages only changed files via `repo.statuses()`.
+5. Add cancellable command execution and kill on stop. — **PARTIAL** (LLM now async; shell/git still blocking)
+6. ~~Add cancellable async LLM requests.~~ **FIXED** — `reqwest::blocking` replaced with async `reqwest::Client`.
+7. Guard `finish_run` against overwriting stopped runs. — Open
+8. Mark persisted active runs interrupted on startup. — Open
+9. Move Create Project side effects to backend Flow action. — Open
+10. Unify Flow path resolution with FilesService root and containment checks. — Open
+11. Replace direct service side effects with registry/tool calls. — **PARTIAL** (agent-driven path uses registry tools; legacy path still direct)
+12. ~~Define real Ralph Loop/agent integration.~~ **PARTIALLY FIXED** — agent-driven investigate/implement added; full state machine not yet implemented.
+13. Persist per-run pause/nudge/validation/model metadata. — Open
+14. Redact event payloads. — Open
+15. Fix frontend event copy indexing. — Open
+16. Scope validation results by run and iteration. — Open
+17. Catch scheduled refresh errors and surface them. — Open
+18. Validate frontend invoke responses at runtime. — Open
+19. Stop auto-creating terminal sessions for phase transcripts. — Open
+20. ~~Add end-to-end Flow tests before adding features.~~ **PARTIALLY FIXED** — 6 new tests added (14 total); more needed.
 
 ## Suggested Order Of Implementation
 
-1. Safety gates first: mode enforcement, enablement gating, native git default off, event redaction.
-2. Cancellation and run-state correctness: cancellable command/LLM execution, guarded finalization, restart recovery.
-3. Architecture cleanup: backend create-project action, registry/tool side-effect routing, workspace root unification.
-4. Frontend state cleanup: per-run pause/validation, event copy, refresh error handling, accurate labels.
-5. Real capability work: define and implement Ralph Loop/agent integration.
-6. Test expansion: add the test gaps listed above and keep them blocking for future Flow changes.
+1. ~~Safety gates first: mode enforcement, enablement gating, native git default off, event redaction.~~ **DONE** (mode + enablement + git staging fixed; event redaction still open)
+2. ~~Cancellation and run-state correctness: cancellable command/LLM execution, guarded finalization, restart recovery.~~ **PARTIAL** (LLM now async and cancellable; shell/git still blocking; guarded finalization and restart recovery still open)
+3. Architecture cleanup: backend create-project action, registry/tool side-effect routing, workspace root unification. — **PARTIAL** (agent-driven path routes through tools; legacy path and create-project still open)
+4. Frontend state cleanup: per-run pause/validation, event copy, refresh error handling, accurate labels. — Open
+5. ~~Real capability work: define and implement Ralph Loop/agent integration.~~ **PARTIALLY DONE** (agent-driven investigate/implement with iterative tool-use; full state machine not yet implemented)
+6. ~~Test expansion: add the test gaps listed above and keep them blocking for future Flow changes.~~ **PARTIAL** (6 new tests; more needed for IPC, cancellation, restart, create-project)
 
 ## Potential Systemic Root Causes
 
