@@ -4,9 +4,15 @@ import type { ApiConnectionStatus, ApiConnectionType } from "../contracts";
 import { escapeHtml } from "./utils";
 import type { PrimaryPanelBindings, PrimaryPanelRenderState } from "./types";
 
+let apiUrlProbeTimer: number | null = null;
+
 export function renderApisActions(): string {
   return `
     <div class="llama-actions">
+      <button type="button" class="tool-action-btn" id="apiConnectionsImportJsonBtn">Import JSON</button>
+      <button type="button" class="tool-action-btn" id="apiConnectionsImportCsvBtn">Import CSV</button>
+      <button type="button" class="tool-action-btn" id="apiConnectionsExportJsonBtn">Export JSON</button>
+      <button type="button" class="tool-action-btn" id="apiConnectionsExportCsvBtn">Export CSV</button>
       <button type="button" class="topbar-icon-btn" id="apiConnectionsRefreshBtn" aria-label="Refresh APIs" data-title="Refresh APIs" title="Refresh APIs">↻</button>
     </div>
   `;
@@ -27,6 +33,9 @@ export function renderApisBody(state: PrimaryPanelRenderState): string {
                 <span class="api-provider-url" title="${escapeHtml(connection.apiUrl)}">${escapeHtml(endpointUrl)}</span>
               </div>
               <div class="api-col api-col-key">${escapeHtml(connection.apiKeyMasked)}</div>
+              <div class="api-col api-col-models" title="${escapeHtml(connection.modelName || "")}">
+                ${escapeHtml((connection.modelName || "").trim() || "-")}
+              </div>
               <div class="api-col api-col-actions">
                 <span class="api-action-icon" data-api-edit-id="${escapeHtml(connection.id)}" title="Edit">
                   ${iconHtml("edit", { size: 16, tone: "dark" })}
@@ -34,10 +43,9 @@ export function renderApisBody(state: PrimaryPanelRenderState): string {
                 <span class="api-action-icon delete" data-api-delete-id="${escapeHtml(connection.id)}" title="Delete">
                   ${iconHtml("trash-2", { size: 16, tone: "dark" })}
                 </span>
-                ${connection.status === "warning"
-                  ? `<span class="api-status-icon ${statusClass(connection.status)}">${iconHtml("triangle-alert", { size: 16 })}</span>`
-                  : `<span class="api-status-icon ${statusClass(connection.status)}">${statusGlyph(connection.status)}</span>`
-                }
+                <span class="api-status-icon ${statusClass(connection.status, connection.statusMessage)}">
+                  ${iconHtml(statusIcon(connection.status, connection.statusMessage), { size: 16, tone: "dark" })}
+                </span>
               </div>
             </div>
           `;
@@ -62,6 +70,13 @@ export function renderApisBody(state: PrimaryPanelRenderState): string {
           <label class="api-form-field api-form-wide">
             <span>API URL</span>
             <input id="apiUrlInput" class="llama-input" value="${escapeHtml(state.apiDraft.apiUrl)}" placeholder="https://api.example.com/v1/models" />
+            <div class="api-url-probe-bar ${state.apiProbeStatus ? `is-${state.apiProbeStatus}` : ""}">
+              ${escapeHtml(
+                state.apiProbeBusy
+                  ? "Testing endpoint..."
+                  : state.apiProbeMessage ?? "Enter API URL to auto-detect endpoint standard and available models."
+              )}
+            </div>
           </label>
           <label class="api-form-field api-form-wide">
             <span>API Standard Path (optional)</span>
@@ -73,7 +88,12 @@ export function renderApisBody(state: PrimaryPanelRenderState): string {
           </label>
           <label class="api-form-field api-form-half">
             <span>Model Name</span>
-            <input id="apiModelNameInput" class="llama-input" value="${escapeHtml(state.apiDraft.modelName ?? "")}" placeholder="Optional" />
+            <input id="apiModelNameInput" list="apiModelNameOptions" class="llama-input" value="${escapeHtml(state.apiDraft.modelName ?? "")}" placeholder="Optional" />
+            <datalist id="apiModelNameOptions">
+              ${state.apiDetectedModels
+                .map((model) => `<option value="${escapeHtml(model)}"></option>`)
+                .join("")}
+            </datalist>
           </label>
           <label class="api-form-field api-form-half">
             <span>Cost / Month (USD)</span>
@@ -99,6 +119,7 @@ export function renderApisBody(state: PrimaryPanelRenderState): string {
           <span>Type</span>
           <span>Provider</span>
           <span class="api-header-key">Key</span>
+          <span>Models</span>
           <span class="api-header-actions">Actions</span>
         </div>
         ${rows}
@@ -123,6 +144,30 @@ export function bindApisPanel(bindings: PrimaryPanelBindings): void {
   if (refreshBtn) {
     refreshBtn.onclick = async () => {
       await bindings.onApiConnectionsRefresh();
+    };
+  }
+  const exportJsonBtn = document.querySelector<HTMLButtonElement>("#apiConnectionsExportJsonBtn");
+  if (exportJsonBtn) {
+    exportJsonBtn.onclick = async () => {
+      await bindings.onApiConnectionsExportJson();
+    };
+  }
+  const exportCsvBtn = document.querySelector<HTMLButtonElement>("#apiConnectionsExportCsvBtn");
+  if (exportCsvBtn) {
+    exportCsvBtn.onclick = async () => {
+      await bindings.onApiConnectionsExportCsv();
+    };
+  }
+  const importJsonBtn = document.querySelector<HTMLButtonElement>("#apiConnectionsImportJsonBtn");
+  if (importJsonBtn) {
+    importJsonBtn.onclick = async () => {
+      await bindings.onApiConnectionsImportJson();
+    };
+  }
+  const importCsvBtn = document.querySelector<HTMLButtonElement>("#apiConnectionsImportCsvBtn");
+  if (importCsvBtn) {
+    importCsvBtn.onclick = async () => {
+      await bindings.onApiConnectionsImportCsv();
     };
   }
 
@@ -151,6 +196,19 @@ export function bindApisPanel(bindings: PrimaryPanelBindings): void {
   if (urlInput) {
     urlInput.oninput = async () => {
       await bindings.onApiConnectionDraftChange({ apiUrl: urlInput.value });
+      if (apiUrlProbeTimer !== null) {
+        window.clearTimeout(apiUrlProbeTimer);
+      }
+      apiUrlProbeTimer = window.setTimeout(() => {
+        void bindings.onApiConnectionProbe();
+      }, 500);
+    };
+    urlInput.onblur = async () => {
+      if (apiUrlProbeTimer !== null) {
+        window.clearTimeout(apiUrlProbeTimer);
+        apiUrlProbeTimer = null;
+      }
+      await bindings.onApiConnectionProbe();
     };
   }
 
@@ -243,16 +301,32 @@ function typeLabel(apiType: ApiConnectionType): string {
   return "Other";
 }
 
-function statusClass(status: ApiConnectionStatus): string {
+function statusClass(status: ApiConnectionStatus, statusMessage: string): string {
   if (status === "verified") return "is-verified";
-  if (status === "warning") return "is-warning";
-  return "is-pending";
+  if (isExhaustedLimitWarning(status, statusMessage)) return "is-limit";
+  return "is-warning";
 }
 
-function statusGlyph(status: ApiConnectionStatus): string {
-  if (status === "verified") return "✓";
-  if (status === "warning") return "";
-  return "…";
+function statusIcon(status: ApiConnectionStatus, statusMessage: string): IconName {
+  if (status === "verified") return "circle-check-big";
+  if (isExhaustedLimitWarning(status, statusMessage)) return "octagon-pause";
+  return "triangle-alert";
+}
+
+function isExhaustedLimitWarning(status: ApiConnectionStatus, statusMessage: string): boolean {
+  if (status !== "warning") return false;
+  const lower = statusMessage.toLowerCase();
+  const hasLimitContext =
+    lower.includes("rate") ||
+    lower.includes("quota") ||
+    lower.includes("limit") ||
+    lower.includes("429");
+  const hasExhaustedContext =
+    lower.includes("exhaust") ||
+    lower.includes("reached") ||
+    lower.includes("remaining=0") ||
+    lower.includes("blocked");
+  return hasLimitContext && hasExhaustedContext;
 }
 
 function statusLabel(status: ApiConnectionStatus): string {
@@ -276,13 +350,15 @@ function buildVerificationCommand(draft: PrimaryPanelRenderState["apiDraft"]): s
             { role: "system", content: "You are a helpful AI assistant." },
             { role: "user", content: "Hello, please introduce yourself." }
           ],
-          stream: false
+          temperature: 1.0,
+          stream: true
         });
   const keyLine = `API_KEY=${shellQuote(apiKey)}`;
   return `${keyLine}
 curl -sS -X POST ${shellQuote(endpoint)} \\
   -H "Authorization: Bearer $API_KEY" \\
   -H "x-api-key: $API_KEY" \\
+  -H "Accept-Language: en-US,en" \\
   -H "Content-Type: application/json" \\
   -d ${shellQuote(payload)}`;
 }

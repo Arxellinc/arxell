@@ -48,6 +48,7 @@ export function renderWorkspaceToolsBody(tools: WorkspaceToolRecord[]): string {
     <div class="tool-header-cell tool-header-status">Status</div>
     <div class="tool-header-cell tool-header-enabled">Enabled</div>
     <div class="tool-header-cell tool-header-agent">Agent</div>
+    <div class="tool-header-cell tool-header-icon-toggle">Icon</div>
     <div class="tool-header-cell tool-header-actions">Actions</div>
   </div>`;
 
@@ -96,6 +97,9 @@ export function renderWorkspaceToolsBody(tools: WorkspaceToolRecord[]): string {
         </div>
         <div class="tool-cell tool-cell-agent">
           ${isAgent ? `<input type="checkbox" class="tool-agent-checkbox" ${MANAGER_DATA_ATTR.toggleToolId}="${escapeHtml(tool.toolId)}" data-workspace-tool-enable="true" ${tool.enabled ? "checked" : ""} aria-label="Enable agent tool">` : ''}
+        </div>
+        <div class="tool-cell tool-cell-icon-toggle">
+          <input type="checkbox" class="tool-icon-checkbox" ${MANAGER_DATA_ATTR.toggleToolIconId}="${escapeHtml(tool.toolId)}" data-workspace-tool-icon="true" ${tool.icon !== false ? "checked" : ""} aria-label="Show tool icon in top toolbar">
         </div>
         <div class="tool-cell tool-cell-actions">
           ${showActions ? `${exportButton}${deleteButton}` : ""}

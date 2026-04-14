@@ -1,7 +1,5 @@
 # App Foundation
 
-This directory contains a clean architecture foundation for the new desktop AI app.
-
 ## Structure
 - `docs/ARCHITECTURE.md`: strict layering and boundary rules.
 - `docs/GUARDRAILS.md`: implementation and safety guardrails.
@@ -10,6 +8,7 @@ This directory contains a clean architecture foundation for the new desktop AI a
 - `docs/CONTRACT_VERSION.md`: pinned contract version and compatibility rules.
 - `docs/SMOKE_TEST.md`: automated and manual smoke-test flow.
 - `docs/TAURI_INTEGRATION.md`: Tauri runtime bridge setup notes.
+- `docs/TTS_ENGINE_PANEL_BEHAVIOR.md`: current TTS engine-specific panel/reset/file-layout behavior.
 - `src-tauri/`: Rust foundation for IPC -> service -> registry -> tools + memory.
 - `frontend/`: Plain TypeScript + custom CSS chat shell with troubleshooting event console.
 
@@ -35,7 +34,8 @@ This directory contains a clean architecture foundation for the new desktop AI a
 - `./scripts/smoke-chat-foundation.sh` validates stream trace markers in demo mode.
 
 ## Run Full UI
-- `./scripts/start-full-ui.sh` starts frontend (`frontend`) + desktop runtime (`src-tauri`) together.
+- `./scripts/start.sh` starts frontend (`frontend`) + desktop runtime (`src-tauri`) together.
+- `./scripts/restart.sh` closes everything and restarts frontend (`frontend`) + desktop runtime (`src-tauri`) together.
 
 ## Icon Allowlist Sync
 - Add new icon imports in `frontend/src/icons/index.ts`.

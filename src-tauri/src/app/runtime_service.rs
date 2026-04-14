@@ -664,28 +664,6 @@ impl LlamaRuntimeService {
             payload,
         ));
     }
-
-    /// Acquires the runtime state lock, handling poison gracefully.
-    /// Returns None if the lock is poisoned (thread panicked while holding it).
-    fn try_lock_state(&self) -> Option<std::sync::MutexGuard<'_, RuntimeState>> {
-        match self.state.lock() {
-            Ok(guard) => Some(guard),
-            Err(_) => {
-                // Lock was poisoned - a previous thread panicked while holding the lock.
-                // Log this condition but don't panic - allow the application to continue.
-                eprintln!("Warning: llama runtime state lock was poisoned; resetting to idle");
-                None
-            }
-        }
-    }
-
-    /// Acquires the runtime state lock with a descriptive error.
-    /// Use this when you need to propagate errors rather than recover silently.
-    fn lock_state(&self) -> Result<std::sync::MutexGuard<'_, RuntimeState>, String> {
-        self.state
-            .lock()
-            .map_err(|_| "llama runtime state lock poisoned".to_string())
-    }
 }
 
 impl Drop for LlamaRuntimeService {

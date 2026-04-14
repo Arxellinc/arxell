@@ -83,9 +83,12 @@ impl SqliteConversationRepository {
         if let Ok(raw) = std::env::var("FOUNDATION_CONVERSATION_DB_PATH") {
             return PathBuf::from(raw);
         }
-        std::env::temp_dir()
-            .join("arxell-lite")
-            .join("conversations.sqlite3")
+        let path = conversation_data_root().join("conversations.sqlite3");
+        migrate_legacy_conversation_file(
+            legacy_conversation_root().join("conversations.sqlite3"),
+            path.as_path(),
+        );
+        path
     }
 
     fn open_connection(&self) -> Result<Connection, String> {
@@ -385,9 +388,12 @@ impl FileConversationRepository {
         if let Ok(raw) = std::env::var("FOUNDATION_CONVERSATION_LOG_PATH") {
             return PathBuf::from(raw);
         }
-        std::env::temp_dir()
-            .join("arxell-lite")
-            .join("conversations.jsonl")
+        let path = conversation_data_root().join("conversations.jsonl");
+        migrate_legacy_conversation_file(
+            legacy_conversation_root().join("conversations.jsonl"),
+            path.as_path(),
+        );
+        path
     }
 
     pub fn path(&self) -> &Path {
@@ -616,4 +622,48 @@ fn seed_model_family_preferences(conn: &Connection) -> Result<(), rusqlite::Erro
 
 fn normalize_model_family(input: &str) -> String {
     input.trim().to_ascii_lowercase()
+}
+
+fn conversation_data_root() -> PathBuf {
+    if let Ok(raw) = std::env::var("XDG_DATA_HOME") {
+        let trimmed = raw.trim();
+        if !trimmed.is_empty() {
+            return PathBuf::from(trimmed).join("com.arxell.lite");
+        }
+    }
+    if let Ok(raw) = std::env::var("APPDATA") {
+        let trimmed = raw.trim();
+        if !trimmed.is_empty() {
+            return PathBuf::from(trimmed).join("com.arxell.lite");
+        }
+    }
+    if let Ok(raw) = std::env::var("HOME") {
+        let home = PathBuf::from(raw.trim());
+        #[cfg(target_os = "macos")]
+        {
+            return home
+                .join("Library")
+                .join("Application Support")
+                .join("com.arxell.lite");
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            return home.join(".local").join("share").join("com.arxell.lite");
+        }
+    }
+    std::env::temp_dir().join("arxell-lite")
+}
+
+fn legacy_conversation_root() -> PathBuf {
+    std::env::temp_dir().join("arxell-lite")
+}
+
+fn migrate_legacy_conversation_file(legacy: PathBuf, destination: &Path) {
+    if destination.exists() || !legacy.exists() {
+        return;
+    }
+    if let Some(parent) = destination.parent() {
+        let _ = fs::create_dir_all(parent);
+    }
+    let _ = fs::copy(legacy, destination);
 }

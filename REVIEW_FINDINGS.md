@@ -1,230 +1,202 @@
-# Code Review Findings
+# Voice Feature & TTS Panel Review Findings
 
-This document contains the findings from a thorough code review of the arxell-lite application.
-
----
-
-## Overview
-
-The project is a Tauri-based desktop application with a Rust backend and TypeScript frontend. The application provides a chat interface with integrated llama.cpp runtime, terminal functionality, and model management capabilities.
+**Date:** 2026-04-14  
+**Reviewer:** Code Review  
+**Scope:** Voice/TTS feature, TTS panel UI, voice download flow, model resources, gitignore
 
 ---
 
-## Critical Issues
+## 1. Architecture Overview
 
-### 1. App Name Mismatch in tauri.conf.json
+### Backend (TTS State Machine)
+- **Location:** [`src-tauri/src/tts/mod.rs`](src-tauri/src/tts/mod.rs)
+- **State:** `TTSState` holds `Arc<Mutex<HashMap<String, SherpaEngine>>` — engine is cached by engine key
+- **Engines supported:** Kokoro, Piper, Matcha, Kitten (via `TtsEngine` enum at line 142)
+- **Default:** Kokoro (line 28: `DEFAULT_ENGINE`)
+- **Engine selection:** `TtsEngine::from_str()` at line 150, mapping UI strings to internal enum
+- **Engine keys:** `"kokoro"`, `"piper"`, `"matcha"`, `"kitten"` (used for multi-engine settings isolation)
+- **Engine IDs:** `"sherpa-kokoro"`, `"sherpa-piper"`, `"sherpa-matcha"`, `"sherpa-kitten"` (for UI/responses)
 
-**File:** `src-tauri/tauri.conf.json`
-
-The product name is set to "Refactor AI" but the project appears to be named "arxell-lite":
-- `productName: "Refactor AI"` - line 3
-- `identifier: "com.refactor.ai"` - line 5
-
-This inconsistency could cause confusion during branding and distribution.
+### Frontend Panel
+- **Location:** [`frontend/src/panels/ttsPanel.ts`](frontend/src/panels/ttsPanel.ts)
+- **Engine rules/metadata:** [`frontend/src/tts/engineRules.ts`](frontend/src/tts/engineRules.ts)
+- **State type:** `PrimaryPanelRenderState.tts` (from [`frontend/src/panels/types.ts`](frontend/src/panels/types.ts))
 
 ---
 
-## Potential Issues
+## 2. Voice Download / Model Fetching Flow
 
-### 2. TauriChatIpcClient Not Initialized Properly
+### Kokoro Download (lines 1381-1477 in `src-tauri/src/tts/mod.rs`)
 
-**File:** `frontend/src/ipcClient.ts`
+1. User selects Kokoro engine, clicks download button in TTS panel
+2. Frontend calls `TtsDownloadModelRequest` with URL from `KOKORO_BUNDLE_OPTIONS` (two presets: v1.1 Multi-Lang ~109 MB, v0.19 English ~128 MB)
+3. Backend `download_model()` (line 1381):
+   - Validates engine is Kokoro (line 1397) — **returns graceful error for non-Kokoro**
+   - Uses `reqwest::blocking::Client` to download `.tar.bz2` archive (line 1419-1427)
+   - Writes to `kokoro_dir/model-download.tar.bz2` (line 1415)
+   - Decompresses with `BzDecoder` and untars to `kokoro_dir` (lines 1434-1440)
+   - Deletes archive after extraction (line 1442)
+   - Shuts down engine, calls `ensure_assets()` to re-resolve paths
+   - Returns resolved paths (model, voices, tokens, data_dir)
 
-The `TauriChatIpcClient` class has an `initialize()` method that must be called before use, but in the factory function `createTauriChatIpcClient()`, the client is returned without ensuring `initialize()` has completed:
+### Asset Resolution (`ensure_assets()` at line 726)
+1. Creates `kokoro_dir` in app data directory
+2. If bundled resources exist at `resources/voice` or `voice`, copies them to `kokoro_dir`
+3. Loads persisted TTS settings
+4. Calls `resolve_paths_for_settings()` to auto-detect model/voices/tokens/data_dir
 
-```typescript
-const client = new TauriChatIpcClient(...);
-await client.initialize();  // This is called
-return client;
+### Path Resolution Strategy (complex, lines 401-519)
+The system has a sophisticated multi-tier fallback chain:
+- **User-configured paths** (highest priority, from settings)
+- **Companion files in model directory** (`model_parent_dir()` looks alongside the model file)
+- **kokoro_dir defaults** (kokoro-v0_19.int8.onnx, model.int8.onnx, voices.bin, tokens.txt, espeak-ng-data)
+- **Recursive search** (up to 4 levels deep for voices.bin, tokens.txt via `recursive_find_file_named`)
+
+**Version detection:** Uses `voices.bin` file size to detect v0.19 vs v1.1 bundles — v0.19 voices < 15 MB, v1.1 voices > 20 MB (line 443-447)
+
+### Non-Kokoro Engines (Piper, Matcha, Kitten)
+- **No built-in download flow** — only "Open Trusted Source" link shown
+- User must manually download from k2-fsa.org and browse to select files
+- `download_model()` returns `ok: false` with message at line 1401
+
+---
+
+## 3. Voice Panel UI Analysis
+
+### What's Good
+- **Compatibility hints** (`resolveTtsCompatHint()` line 6-25) provide user-friendly error messages for common failure cases:
+  - Missing `sample_rate` metadata (wrong Kokoro ONNX variant)
+  - Incompatible bundle (model/voices mismatch)
+  - Missing `tokens.txt` or `espeak-ng-data`
+  - Invalid model file path
+- **Bundle label display** (`bundleLabelFromModelPath()` line 27-34) shows parent folder + filename for clarity
+- **Engine-specific UI hints** via `getTtsEngineUiConfig()` at line 78 — each engine shows expected file layout
+- **Kokoro one-click download** with two preset bundle options (line 108-114)
+- **Secondary path support** for engines that need it (Matcha vocoder, Kitten voices)
+
+### Issues Found
+
+#### Issue 1: Voice List Shows Hardcoded Kokoro Voices (CRITICAL)
+- At line 930-931 in `src-tauri/src/tts/mod.rs`:
+  ```rust
+  let mut voices = if matches!(signature.engine, TtsEngine::Kokoro) {
+      known_kokoro_voices()
+  } else {
+      vec!["speaker_0".to_string()]
+  };
+  ```
+- Kokoro always gets the full 55 hardcoded voice list from `known_kokoro_voices()` (lines 625-683)
+- **Actual available voices are engine-determined, not voice file determined**
+- If user provides a custom voice pack with different voices, UI will show wrong voices
+- For other engines, only `speaker_0` is shown regardless of actual model
+
+#### Issue 2: No Download Progress Feedback
+- `download_model()` in backend (line 1381) has **no progress events emitted**
+- User sees no download progress indicator — just waits
+- HTTP client has no timeout configured (line 1419-1421)
+- Large files (109-128 MB) could appear frozen
+
+#### Issue 3: Mixed-up UI Labels for Secondary Path
+- `secondaryPath` field in state is used for **both** voices_path (Kokoro/Kitten) **and** vocoder (Matcha)
+- `secondaryLabel` changes based on engine ("Voices Path" vs "Vocoder Path" vs "Lexicon Path")
+- But the state field name `secondaryPath` is confusing — no semantic indication of what it contains
+- `voicesPath` and `secondaryPath` both point to voices for Kokoro (line 1138-1140, 1142-1148)
+
+#### Issue 4: Engine Settings Are Not Fully Isolated
+- `PersistedEnginePaths` stores paths per engine key (line 582-597)
+- But `settings_set()` at line 1167 mirrors to legacy fields (`settings.model_path`, etc.)
+- The legacy field mirroring means switching engines could retain paths from previous engine
+- Settings file format (`tts-settings.json`) has both legacy fields and `engine_settings` map
+
+#### Issue 5: lexicon Disabled (line 864)
+- Lexicon is hard-disabled with comment: "some bundles contain tokens that are incompatible with the selected tokens.txt"
+- This is a workaround for a crash, but no way for user to enable or diagnose
+
+---
+
+## 4. Model Sizes in Resources
+
+| File | Size | Purpose |
+|------|------|---------|
+| `voice/kitten/model.fp16.onnx` | 23 MB | KittenTTS acoustic model |
+| `voice/kitten/voices.bin` | 8 KB | Kitten voice definitions |
+| `voice/matcha/model.onnx` | 71 MB | Matcha acoustic model |
+| `voice/matcha/vocoder.onnx` | 52 MB | Matcha neural vocoder |
+| `voice/piper/model.onnx` | 75 MB | Piper (VITS) model |
+| `voice/espeak-ng-data/` | 19 MB | Pronunciation data (shared across all engines) |
+| `whisper/ggml-base-q8_0.bin` | 78 MB | Whisper base (quantized) |
+| `whisper/ggml-tiny.en-q8_0.bin` | 42 MB | Whisper tiny English (quantized) |
+| `whisper-server/whisper-server-linux-x86_64` | 2 MB | Whisper server binary |
+| **Total voice resources** | **~220 MB** | All bundled TTS models + espeak-ng-data |
+| **Total whisper resources** | **~122 MB** | Whisper models + server |
+
+**Note:** The `espeak-ng-data/` directory (19 MB) is shared and required by Kokoro, Piper, and likely Kitten. It is bundled but not shown in download options — it's auto-copied from `resources/voice/espeak-ng-data` to app data on first run.
+
+---
+
+## 5. .gitignore Analysis
+
+Current `.gitignore` entries relevant to voice/TTS:
 ```
-
-**Status:** Actually appears correct - the `await client.initialize()` is present. No issue.
-
----
-
-### 3. Missing Error Handling in MockChatIpcClient
-
-**File:** `frontend/src/ipcClient.ts`
-
-The `MockChatIpcClient.probeMicrophoneDevice()` method has inconsistent return structure with an extra indentation level (lines 683-689):
-
-```typescript
-      return {
-        correlationId: request.correlationId,
-        status: "enabled",
-        message: "Mock microphone probe succeeded",
-      inputDeviceCount: audioInputs.length,  // indentation issue
-      defaultInputName: audioInputs[0]?.label || null
-    };
+agent/target/
 ```
+**Missing entries that should be added:**
+- `src-tauri/resources/voice/*.onnx` — large binary model files
+- `src-tauri/resources/voice/*/model*.onnx`
+- `src-tauri/resources/voice/*/*.onnx`  
+- `src-tauri/resources/whisper/*.bin`
+- `src-tauri/resources/whisper-server/*` (binary + .inuse marker)
+- `src-tauri/resources/llama-runtime/` (LLM runtime binaries)
+- `frontend/node_modules/` (already present but good)
+- `src-tauri/target/` (already present — Rust build)
 
-This is a cosmetic/formatting issue that may cause confusion but doesn't affect functionality.
-
----
-
-### 4. Unused Dependencies
-
-**File:** `src-tauri/Cargo.toml`
-
-The following dependencies appear to be declared but may not be fully utilized:
-- `cpal` (line 23) - Audio library imported in Cargo.toml but STT/TTS services may not be implemented
-- `portable-pty` (line 17) - Used for terminal functionality - **CONFIRMED IN USE**
-
-The `cpal` dependency suggests audio functionality was planned but may not be fully integrated.
+**Currently ignored but shouldn't be:**
+- None identified — the espeak-ng-data is small enough (19 MB) to keep in git, but the ONNX models total ~150 MB which is too large for a repo.
 
 ---
 
-### 5. stt_service.rs and tts_service.rs Referenced But Not Found
+## 6. STT Panel Comparison
 
-The Cargo.toml and module structure reference `stt_service.rs` and `tts_service.rs`, but these files were not found in the main src directory:
-- `src-tauri/src/app/stt_service.rs` - Referenced in environment_details but not in main codebase
-- `src-tauri/src/app/tts_service.rs` - Referenced in environment_details but not in main codebase
+The STT panel ([`frontend/src/panels/sttPanel.ts`](frontend/src/panels/sttPanel.ts)) has a cleaner model download UX:
+- Model download buttons are inside an `<details>` collapsible section (line 154)
+- Each model shows its **name** (human-readable) and **filename** being downloaded
+- Download progress is shown via `<progress>` element (line 171-181)
+- Error state is displayed below the table (line 183-191)
+- Backend `stt_download_model()` returns progress implicitly via state updates
 
-These may be in a different location or the import paths are incorrect.
-
----
-
-### 6. Possible Panic on Lock Poisoning
-
-**File:** `src-tauri/src/app/runtime_service.rs`, `src-tauri/src/app/terminal_service.rs`, `src-tauri/src/persistence/mod.rs`
-
-Multiple locations use `.expect()` with hardcoded messages on mutex locks:
-
-```rust
-let state = self.state.lock().expect("llama runtime lock poisoned");
-```
-
-While this is a common pattern, it will panic the entire application if a thread panics while holding the lock. Consider using `match` or `if let` for graceful error handling.
+**TTS could learn from this:** Move Kokoro download buttons into an collapsible section, show download progress, and display named presets rather than raw URLs.
 
 ---
 
-## Configuration Concerns
+## 7. Summary of Issues
 
-### 7. CSP Disabled
-
-**File:** `src-tauri/tauri.conf.json`
-
-```json
-"security": {
-  "csp": null
-}
-```
-
-Content Security Policy is disabled. This is acceptable for a local desktop app but would be a security concern if the app were ever hosted on the web.
+| Severity | Issue | Location |
+|----------|-------|----------|
+| **High** | Voice list is hardcoded for Kokoro, doesn't reflect actual voice file | [`src-tauri/src/tts/mod.rs:930`](src-tauri/src/tts/mod.rs:930) |
+| **High** | No progress feedback for model downloads | [`src-tauri/src/tts/mod.rs:1381`](src-tauri/src/tts/mod.rs:1381) |
+| **Medium** | Non-Kokoro engines have no download flow, only external link | [`ttsPanel.ts:115`](frontend/src/panels/ttsPanel.ts:115) |
+| **Medium** | Large ONNX models (~150 MB) not in .gitignore | [`.gitignore`](.gitignore) |
+| **Medium** | `lexicon` hard-disabled with no user diagnostic | [`src-tauri/src/tts/mod.rs:864`](src-tauri/src/tts/mod.rs:864) |
+| **Low** | `secondaryPath` field name is ambiguous across engines | [`frontend/src/panels/ttsPanel.ts:56`](frontend/src/panels/ttsPanel.ts:56) |
+| **Low** | Model download uses blocking HTTP client with no timeout | [`src-tauri/src/tts/mod.rs:1419`](src-tauri/src/tts/mod.rs:1419) |
 
 ---
 
-### 8. Bundle Active Set to False
+## 8. Recommendations
 
-**File:** `src-tauri/tauri.conf.json`
+1. **Voice list should reflect actual available voices** — For Kokoro, either read voices from `voices.bin` metadata or expose which voice pack is active. Consider parsing voice names from the bundle rather than hardcoding 55 voices.
 
-```json
-"bundle": {
-  "active": false,
-  ...
-}
-```
+2. **Add download progress events** — Emit periodic events during the download so the UI can show progress. Consider adding a `TtsDownloadProgress` event type.
 
-Bundle generation is disabled. This means the app cannot be packaged into a distributable format (MSI, DMG, AppImage, etc.) without modification.
+3. **Add .gitignore entries** for large binary model files:
+   ```
+   src-tauri/resources/voice/*.onnx
+   src-tauri/resources/voice/*/*.onnx
+   src-tauri/resources/whisper/*.bin
+   src-tauri/resources/whisper-server/*
+   src-tauri/resources/llama-runtime/**
+   ```
 
----
+4. **Consider collapsible download section** like STT panel has — cleaner UI when there are multiple bundle options.
 
-### 9. Frontend Build Configuration
-
-**File:** `frontend/vite.config.ts`
-
-The Vite configuration is minimal:
-```typescript
-export default defineConfig({
-  define: {
-    __APP_VERSION__: JSON.stringify(packageJson.version)
-  }
-});
-```
-
-No explicit dev server proxy is configured. If the Tauri backend API calls need proxying during development, this may need to be added.
-
----
-
-## Code Quality Observations
-
-### 10. EventHub Cloning Pattern
-
-**File:** `src-tauri/src/observability.rs` (implied)
-
-The codebase uses an EventHub pattern with cloning for broadcasting. This is a reasonable approach but could benefit from documentation about ownership semantics.
-
----
-
-### 11. Model Family Inference
-
-**File:** `src-tauri/src/app/chat_service.rs` (lines 1083-1108)
-
-The `infer_model_family()` function uses simple string contains checks:
-```rust
-if lower.contains("qwen") {
-    return "qwen".to_string();
-}
-```
-
-This could produce unexpected results for models with similar names. Consider using more precise matching or a curated list of known models.
-
----
-
-### 12. Error Message Exposure
-
-**File:** `src-tauri/src/app/chat_service.rs`
-
-Error messages from LLM responses are truncated and logged. This is good for security but could be improved by normalizing error responses before display to users.
-
----
-
-## TypeScript/Frontend Notes
-
-### 13. No Null Check on Event Payload in main.ts
-
-**File:** `frontend/src/main.ts`
-
-The event handling code checks for object type but doesn't validate all required fields before processing:
-```typescript
-function parseStreamChunk(payload: AppEvent["payload"]): ChatStreamChunkPayload | null {
-  if (!payload || typeof payload !== "object") return null;
-  // ... processes payload without full validation
-}
-```
-
-This could lead to runtime errors if malformed events are received. The code does use type guards, which provides some protection.
-
----
-
-### 14. Hardcoded Values
-
-**File:** `frontend/src/main.ts`
-
-Several values are hardcoded:
-- `MAX_CONSOLE_ENTRIES = 600` (line 39)
-- Default values for runtime configuration
-
-These should ideally be in a constants file or configuration.
-
----
-
-## Summary
-
-| Category | Count |
-|----------|-------|
-| Critical Issues | 1 |
-| Potential Issues | 5 |
-| Configuration Concerns | 3 |
-| Code Quality Observations | 4 |
-
-### Recommended Actions
-
-1. **High Priority:** Align product name and identifier in tauri.conf.json
-2. **Medium Priority:** Enable bundle generation for distribution
-3. **Low Priority:** Consider adding null-safe error handling for mutex operations
-4. **Low Priority:** Document the EventHub pattern for future maintainers
-
----
-
-*Review completed on: 2026-03-27*
+5. **Add timeout to HTTP client** — A 60-90 second timeout would prevent hung downloads from appearing frozen.

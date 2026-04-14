@@ -8,4 +8,6 @@ pub mod observability;
 pub mod persistence;
 pub mod stt;
 pub mod tools;
+#[cfg(feature = "tauri-runtime")]
+pub mod tts;
 pub mod workspace_tools;

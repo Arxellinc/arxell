@@ -1,4 +1,4 @@
-export { renderGlobalBottombar } from "./bottombar";
+export { BOTTOMBAR_RESOURCE_IDS, renderGlobalBottombar } from "./bottombar";
 export { renderSidebarRail } from "./sidebarRail";
 export { renderGlobalTopbar } from "./topbar";
 export type { DisplayMode, LayoutOrientation } from "./topbar";

@@ -43,6 +43,7 @@ const PREFERRED_TOOL_ORDER = [
   "terminal",
   "files",
   "webSearch",
+  "chart",
   "flow",
   "tasks",
   "createTool",

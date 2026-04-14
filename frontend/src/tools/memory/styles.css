@@ -1,0 +1,181 @@
+/* Memory Tool Styles */
+
+.memory-tool-body {
+  display: flex;
+  flex-direction: column;
+  gap: 1.2rem;
+  padding: 0.5rem;
+}
+
+.memory-section {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.memory-section-title {
+  margin: 0;
+  font-size: 0.9rem;
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.memory-section-desc {
+  margin: 0;
+  font-size: 0.72rem;
+  color: var(--muted);
+}
+
+.memory-table {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-strong);
+  overflow: hidden;
+}
+
+.memory-header {
+  display: grid;
+  grid-template-columns: minmax(80px, 0.8fr) minmax(120px, 1.2fr) minmax(200px, 2fr);
+  gap: 0;
+  padding: 0.5rem 0.62rem;
+  border-bottom: 1px solid var(--line);
+  font-size: 0.66rem;
+  text-transform: uppercase;
+  color: var(--muted);
+  letter-spacing: 0.05em;
+}
+
+.memory-header-chat {
+  grid-template-columns: minmax(90px, 0.9fr) minmax(180px, 1.8fr) minmax(70px, 0.7fr) auto;
+}
+
+.memory-header-persistent {
+  grid-template-columns: minmax(80px, 0.8fr) minmax(120px, 1.2fr) minmax(200px, 2fr) auto;
+}
+
+.memory-header-actions {
+  text-align: right;
+}
+
+.memory-row {
+  display: grid;
+  grid-template-columns: minmax(80px, 0.8fr) minmax(120px, 1.2fr) minmax(200px, 2fr);
+  gap: 0;
+  padding: 0.5rem 0.62rem;
+  border-bottom: 1px solid var(--line);
+  align-items: center;
+}
+
+.memory-row:last-child {
+  border-bottom: none;
+}
+
+.memory-row-chat {
+  grid-template-columns: minmax(90px, 0.9fr) minmax(180px, 1.8fr) minmax(70px, 0.7fr) auto;
+}
+
+.memory-row-persistent {
+  grid-template-columns: minmax(80px, 0.8fr) minmax(120px, 1.2fr) minmax(200px, 2fr) auto;
+}
+
+.memory-row-chat[role="button"] {
+  cursor: pointer;
+  transition: background-color 0.15s ease;
+}
+
+.memory-row-chat[role="button"]:hover {
+  background-color: var(--surface-soft);
+}
+
+.memory-row-chat[role="button"]:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.memory-col {
+  min-width: 0;
+  font-size: 0.74rem;
+  color: var(--muted);
+  display: inline-flex;
+  align-items: center;
+}
+
+.memory-col-type {
+  gap: 0.35rem;
+  justify-content: flex-start;
+}
+
+.memory-type-icon {
+  width: 18px;
+  height: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.memory-type-label {
+  white-space: nowrap;
+}
+
+.memory-col-key {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.memory-col-value {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.memory-col-time {
+  font-size: 0.72rem;
+}
+
+.memory-col-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.memory-col-messages {
+  font-size: 0.72rem;
+}
+
+.memory-col-actions {
+  gap: 0.5rem;
+  justify-content: center;
+}
+
+.memory-empty {
+  padding: 1.5rem;
+  text-align: center;
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.memory-loading {
+  padding: 1.5rem;
+  text-align: center;
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.memory-error {
+  padding: 0.75rem;
+  background: rgba(255, 58, 58, 0.1);
+  border: 1px solid rgba(255, 58, 58, 0.3);
+  border-radius: 6px;
+  color: var(--error);
+  font-size: 0.78rem;
+  margin-bottom: 0.5rem;
+}
+
+.memory-action-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+}

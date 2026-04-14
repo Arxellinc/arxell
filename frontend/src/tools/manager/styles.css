@@ -9,7 +9,7 @@
 
 .tool-header {
   display: grid;
-  grid-template-columns: 32px minmax(60px, 0.52fr) minmax(260px, 2.2fr) minmax(150px, 1.1fr) 92px 64px 64px 92px;
+  grid-template-columns: 32px minmax(60px, 0.5fr) minmax(220px, 2fr) minmax(140px, 1fr) 92px 64px 64px 64px 92px;
   align-items: center;
   gap: 0.6rem;
   padding: 0.45rem 0.55rem;
@@ -28,7 +28,7 @@
 
 .tool-row {
   display: grid;
-  grid-template-columns: 32px minmax(60px, 0.52fr) minmax(260px, 2.2fr) minmax(150px, 1.1fr) 92px 64px 64px 92px;
+  grid-template-columns: 32px minmax(60px, 0.5fr) minmax(220px, 2fr) minmax(140px, 1fr) 92px 64px 64px 64px 92px;
   align-items: center;
   gap: 0.6rem;
   padding: 0.35rem 0.55rem;
@@ -176,8 +176,17 @@
   justify-content: center;
 }
 
+.tool-cell-icon-toggle {
+  min-width: 40px;
+  max-width: 80px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
 .tool-enabled-checkbox,
-.tool-agent-checkbox {
+.tool-agent-checkbox,
+.tool-icon-checkbox {
   width: 16px;
   height: 16px;
   cursor: pointer;

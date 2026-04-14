@@ -8,6 +8,9 @@ pub struct ChatSendRequest {
     pub user_message: String,
     pub correlation_id: String,
     pub thinking_enabled: Option<bool>,
+    pub chat_mode: Option<String>,
+    pub model_id: Option<String>,
+    pub model_name: Option<String>,
     pub max_tokens: Option<u32>,
     pub attachments: Option<Vec<ChatAttachment>>,
 }
@@ -249,6 +252,7 @@ pub struct WorkspaceToolRecord {
     pub version: String,
     pub source: String,
     pub enabled: bool,
+    pub icon: bool,
     pub status: String,
     pub entry: Option<String>,
 }
@@ -280,6 +284,22 @@ pub struct WorkspaceToolSetEnabledResponse {
     pub correlation_id: String,
     pub tool_id: String,
     pub enabled: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceToolSetIconRequest {
+    pub correlation_id: String,
+    pub tool_id: String,
+    pub icon: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceToolSetIconResponse {
+    pub correlation_id: String,
+    pub tool_id: String,
+    pub icon: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -504,6 +524,8 @@ pub struct ApiConnectionRecord {
     pub last_checked_ms: Option<i64>,
     pub created_ms: i64,
     pub api_standard_path: Option<String>,
+    #[serde(default)]
+    pub available_models: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -528,6 +550,34 @@ pub struct ApiConnectionsListRequest {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ApiConnectionsListResponse {
+    pub correlation_id: String,
+    pub connections: Vec<ApiConnectionRecord>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ApiConnectionsExportRequest {
+    pub correlation_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ApiConnectionsExportResponse {
+    pub correlation_id: String,
+    pub file_name: String,
+    pub payload_json: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ApiConnectionsImportRequest {
+    pub correlation_id: String,
+    pub payload_json: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ApiConnectionsImportResponse {
     pub correlation_id: String,
     pub connections: Vec<ApiConnectionRecord>,
 }
@@ -582,6 +632,29 @@ pub struct ApiConnectionCreateRequest {
 pub struct ApiConnectionCreateResponse {
     pub correlation_id: String,
     pub connection: ApiConnectionRecord,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ApiConnectionProbeRequest {
+    pub correlation_id: String,
+    pub api_url: String,
+    pub api_type: Option<ApiConnectionType>,
+    pub api_key: Option<String>,
+    pub api_standard_path: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ApiConnectionProbeResponse {
+    pub correlation_id: String,
+    pub detected_api_type: ApiConnectionType,
+    pub api_standard_path: Option<String>,
+    pub verify_url: String,
+    pub models: Vec<String>,
+    pub selected_model: Option<String>,
+    pub status: ApiConnectionStatus,
+    pub status_message: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -861,6 +934,22 @@ pub struct AppVersionResponse {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AppResourceUsageRequest {
+    pub correlation_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AppResourceUsageResponse {
+    pub correlation_id: String,
+    pub cpu_percent: Option<f32>,
+    pub memory_bytes: Option<u64>,
+    pub network_rx_bytes_per_sec: Option<u64>,
+    pub network_tx_bytes_per_sec: Option<u64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum FlowMode {
     Plan,
@@ -893,6 +982,7 @@ pub struct FlowStartRequest {
     pub specs_glob: Option<String>,
     pub backpressure_commands: Option<Vec<String>>,
     pub implement_command: Option<String>,
+    pub phase_models: Option<std::collections::HashMap<String, String>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -916,6 +1006,39 @@ pub struct FlowStopResponse {
     pub correlation_id: String,
     pub run_id: String,
     pub stopped: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FlowPauseRequest {
+    pub correlation_id: String,
+    pub run_id: String,
+    pub paused: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FlowPauseResponse {
+    pub correlation_id: String,
+    pub run_id: String,
+    pub paused: bool,
+    pub updated: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FlowNudgeRequest {
+    pub correlation_id: String,
+    pub run_id: String,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FlowNudgeResponse {
+    pub correlation_id: String,
+    pub run_id: String,
+    pub accepted: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1011,6 +1134,8 @@ pub struct FlowRunRecord {
     pub backpressure_commands: Vec<String>,
     #[serde(default)]
     pub implement_command: String,
+    #[serde(default)]
+    pub phase_models: std::collections::HashMap<String, String>,
     pub summary: Option<String>,
     pub iterations: Vec<FlowIterationStatus>,
 }
@@ -1027,6 +1152,165 @@ pub struct FlowStatusResponse {
 pub struct FlowListRunsResponse {
     pub correlation_id: String,
     pub runs: Vec<FlowRunRecord>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TtsStatusRequest {
+    pub correlation_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TtsStatusResponse {
+    pub correlation_id: String,
+    pub engine_id: String,
+    pub engine: String,
+    pub ready: bool,
+    pub message: String,
+    pub model_path: String,
+    pub secondary_path: String,
+    pub voices_path: String,
+    pub tokens_path: String,
+    pub data_dir: String,
+    pub python_path: String,
+    pub script_path: String,
+    pub runtime_archive_present: bool,
+    pub available_model_paths: Vec<String>,
+    pub available_voices: Vec<String>,
+    pub selected_voice: String,
+    pub speed: f32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TtsListVoicesRequest {
+    pub correlation_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TtsListVoicesResponse {
+    pub correlation_id: String,
+    pub voices: Vec<String>,
+    pub selected_voice: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TtsSpeakRequest {
+    pub correlation_id: String,
+    pub text: String,
+    pub voice: Option<String>,
+    pub speed: Option<f32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TtsSpeakResponse {
+    pub correlation_id: String,
+    pub engine_id: String,
+    pub voice: String,
+    pub speed: f32,
+    pub sample_rate: u32,
+    pub duration_ms: u32,
+    pub audio_bytes: Vec<u8>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TtsStopRequest {
+    pub correlation_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TtsStopResponse {
+    pub correlation_id: String,
+    pub stopped: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TtsSelfTestRequest {
+    pub correlation_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TtsSelfTestResponse {
+    pub correlation_id: String,
+    pub ok: bool,
+    pub message: String,
+    pub bytes: u64,
+    pub sample_rate: u32,
+    pub duration_ms: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TtsSettingsGetRequest {
+    pub correlation_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TtsSettingsGetResponse {
+    pub correlation_id: String,
+    pub engine_id: String,
+    pub engine: String,
+    pub voice: String,
+    pub speed: f32,
+    pub model_path: String,
+    pub secondary_path: String,
+    pub voices_path: String,
+    pub tokens_path: String,
+    pub data_dir: String,
+    pub python_path: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TtsSettingsSetRequest {
+    pub correlation_id: String,
+    pub engine: Option<String>,
+    pub voice: Option<String>,
+    pub speed: Option<f32>,
+    pub model_path: Option<String>,
+    pub secondary_path: Option<String>,
+    pub voices_path: Option<String>,
+    pub tokens_path: Option<String>,
+    pub data_dir: Option<String>,
+    pub python_path: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TtsSettingsSetResponse {
+    pub correlation_id: String,
+    pub ok: bool,
+    pub engine: String,
+    pub voice: String,
+    pub speed: f32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TtsDownloadModelRequest {
+    pub correlation_id: String,
+    pub url: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TtsDownloadModelResponse {
+    pub correlation_id: String,
+    pub ok: bool,
+    pub message: String,
+    pub model_path: String,
+    pub voices_path: String,
+    pub tokens_path: String,
+    pub data_dir: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

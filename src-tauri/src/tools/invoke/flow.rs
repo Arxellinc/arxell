@@ -1,8 +1,8 @@
 #![cfg(feature = "tauri-runtime")]
 
 use crate::contracts::{
-    FlowListRunsRequest, FlowRerunValidationRequest, FlowStartRequest, FlowStatusRequest,
-    FlowStopRequest,
+    FlowListRunsRequest, FlowNudgeRequest, FlowPauseRequest, FlowRerunValidationRequest,
+    FlowStartRequest, FlowStatusRequest, FlowStopRequest,
 };
 use crate::ipc::tauri_bridge::TauriBridgeState;
 use crate::tools::invoke::registry::{decode_payload, InvokeRegistry, ToolInvokeFuture};
@@ -12,6 +12,12 @@ pub fn register(registry: &mut InvokeRegistry) {
     registry.register("flow", &["start"], invoke_start);
     registry.register("flow", &["stop"], invoke_stop);
     registry.register("flow", &["status"], invoke_status);
+    registry.register("flow", &["pause", "set-paused", "setPaused"], invoke_pause);
+    registry.register(
+        "flow",
+        &["nudge", "redirect", "redirect-task"],
+        invoke_nudge,
+    );
     registry.register("flow", &["list-runs", "listRuns"], invoke_list_runs);
     registry.register(
         "flow",
@@ -47,6 +53,26 @@ fn invoke_status(state: &TauriBridgeState, payload: Value) -> ToolInvokeFuture {
         let result = flow_handler.status(req).await?;
         serde_json::to_value(result)
             .map_err(|e| format!("failed serializing flow status response: {e}"))
+    })
+}
+
+fn invoke_pause(state: &TauriBridgeState, payload: Value) -> ToolInvokeFuture {
+    let flow_handler = state.flow_handler.clone();
+    Box::pin(async move {
+        let req: FlowPauseRequest = decode_payload(payload)?;
+        let result = flow_handler.pause(req).await?;
+        serde_json::to_value(result)
+            .map_err(|e| format!("failed serializing flow pause response: {e}"))
+    })
+}
+
+fn invoke_nudge(state: &TauriBridgeState, payload: Value) -> ToolInvokeFuture {
+    let flow_handler = state.flow_handler.clone();
+    Box::pin(async move {
+        let req: FlowNudgeRequest = decode_payload(payload)?;
+        let result = flow_handler.nudge(req).await?;
+        serde_json::to_value(result)
+            .map_err(|e| format!("failed serializing flow nudge response: {e}"))
     })
 }
 

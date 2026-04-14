@@ -51,6 +51,7 @@ export interface ChatToolEventRow {
 export interface SttState {
   status: "idle" | "starting" | "running" | "error";
   message: string | null;
+  backend: "whisper_cpp" | "sherpa_onnx";
   isListening: boolean;
   isSpeaking: boolean;
   lastTranscript: string | null;
@@ -64,6 +65,44 @@ export interface SttState {
   vadMinUtteranceMs: number;
   vadMaxUtteranceS: number;
   vadForceFlushS: number;
+  // Model settings
+  selectedModel: string;
+  availableModels: string[];
+  language: string;
+  threads: number;
+  showAdvancedSettings: boolean;
+  modelDownloadProgress: number | null;
+  modelDownloadError: string | null;
+}
+
+export interface SttModelDownload {
+  name: string;
+  url: string;
+  fileName: string;
+}
+
+export interface TtsState {
+  status: "idle" | "ready" | "busy" | "error";
+  message: string | null;
+  engineId: string;
+  engine: "kokoro" | "piper" | "matcha" | "kitten" | "pocket";
+  ready: boolean;
+  runtimeArchivePresent: boolean;
+  availableModelPaths: string[];
+  modelPath: string;
+  secondaryPath: string;
+  voicesPath: string;
+  tokensPath: string;
+  dataDir: string;
+  pythonPath: string;
+  scriptPath: string;
+  voices: string[];
+  selectedVoice: string;
+  speed: number;
+  testText: string;
+  lastDurationMs: number | null;
+  lastBytes: number | null;
+  lastSampleRate: number | null;
 }
 
 export interface ConsoleEntry {
@@ -86,6 +125,15 @@ export interface ApiConnectionDraft {
 export interface PrimaryPanelRenderState {
   displayMode: "dark" | "light" | "terminal";
   displayModePreference: "dark" | "light" | "system" | "terminal";
+  chatRoutePreference: "auto" | "agent" | "legacy";
+  showAppResourceCpu: boolean;
+  showAppResourceMemory: boolean;
+  showAppResourceNetwork: boolean;
+  showBottomEngine: boolean;
+  showBottomModel: boolean;
+  showBottomContext: boolean;
+  showBottomSpeed: boolean;
+  showBottomTtsLatency: boolean;
   conversationId: string;
   messages: UiMessage[];
   chatReasoningByCorrelation: Record<string, string>;
@@ -101,12 +149,18 @@ export interface PrimaryPanelRenderState {
   chatActiveModelId: string;
   chatActiveModelLabel: string;
   chatActiveModelCapabilities: ChatModelCapabilities;
+  chatTtsEnabled: boolean;
+  chatTtsPlaying: boolean;
   devices: DevicesState;
   apiConnections: ApiConnectionRecord[];
   apiFormOpen: boolean;
   apiDraft: ApiConnectionDraft;
   apiEditingId: string | null;
   apiMessage: string | null;
+  apiProbeBusy: boolean;
+  apiProbeStatus: "verified" | "warning" | "pending" | null;
+  apiProbeMessage: string | null;
+  apiDetectedModels: string[];
   conversations: ConversationSummaryRecord[];
   chatThinkingEnabled: boolean;
   llamaRuntime: LlamaRuntimeStatusResponse | null;
@@ -148,6 +202,7 @@ export interface PrimaryPanelRenderState {
   }>;
   modelManagerUnslothUdLoading: boolean;
   stt: SttState;
+  tts: TtsState;
   consoleEntries: ConsoleEntry[];
 }
 
@@ -164,6 +219,8 @@ export interface PrimaryPanelBindings {
   onSetChatAttachment: (fileName: string, content: string) => void;
   onClearChatAttachment: () => void;
   onStopCurrentResponse: () => Promise<void>;
+  onSpeakLatestAssistantTts: () => Promise<void>;
+  onToggleVoiceMode: () => Promise<void>;
   onToggleThinkingPanel: (correlationId: string) => Promise<void>;
   onCreateConversation: () => Promise<void>;
   onClearChat: () => Promise<void>;
@@ -172,8 +229,13 @@ export interface PrimaryPanelBindings {
   onRequestMicrophoneAccess: () => Promise<void>;
   onRequestSpeakerAccess: () => Promise<void>;
   onApiConnectionsRefresh: () => Promise<void>;
+  onApiConnectionsExportJson: () => Promise<void>;
+  onApiConnectionsExportCsv: () => Promise<void>;
+  onApiConnectionsImportJson: () => Promise<void>;
+  onApiConnectionsImportCsv: () => Promise<void>;
   onApiConnectionsSetFormOpen: (open: boolean) => Promise<void>;
   onApiConnectionDraftChange: (patch: Partial<ApiConnectionDraft>) => Promise<void>;
+  onApiConnectionProbe: () => Promise<void>;
   onApiConnectionSave: () => Promise<void>;
   onApiConnectionEdit: (id: string) => Promise<void>;
   onApiConnectionReverify: (id: string) => Promise<void>;
@@ -215,6 +277,26 @@ export interface PrimaryPanelBindings {
   onModelManagerEjectActive: () => Promise<void>;
   onModelManagerDeleteInstalled: (modelId: string) => Promise<void>;
   onToggleStt: () => Promise<void>;
+  onSetSttBackend: (backend: "whisper_cpp" | "sherpa_onnx") => Promise<void>;
+  onSetSttModel: (model: string) => Promise<void>;
+  onSetSttLanguage: (language: string) => Promise<void>;
+  onSetSttThreads: (threads: number) => Promise<void>;
+  onToggleSttAdvancedSettings: () => Promise<void>;
+  onDownloadSttModel: (fileName: string) => Promise<void>;
+  onTtsStart: () => Promise<void>;
+  onTtsRefresh: () => Promise<void>;
+  onTtsSetVoice: (voice: string) => Promise<void>;
+  onTtsSetEngine: (engine: "kokoro" | "piper" | "matcha" | "kitten" | "pocket") => Promise<void>;
+  onTtsSetModelBundle: (modelPath: string) => Promise<void>;
+  onTtsSetSpeed: (speed: number) => Promise<void>;
+  onTtsSetTestText: (text: string) => Promise<void>;
+  onTtsBrowseModelPath: () => Promise<void>;
+  onTtsBrowseSecondaryPath: () => Promise<void>;
+  onTtsDownloadModel: () => Promise<void>;
+  onTtsDownloadModelWithUrl: (url: string) => Promise<void>;
+  onTtsSpeakTest: () => Promise<void>;
+  onTtsStop: () => Promise<void>;
+  onTtsSelfTest: () => Promise<void>;
   onUpdateSttVadSetting: (key: keyof Pick<SttState,
     "vadBaseThreshold" |
     "vadStartFrames" |
@@ -227,4 +309,13 @@ export interface PrimaryPanelBindings {
     "vadForceFlushS">, value: number) => Promise<void>;
   onSetDisplayMode: (mode: "dark" | "light" | "terminal") => Promise<void>;
   onSetDisplayModePreference: (mode: "dark" | "light" | "system" | "terminal") => Promise<void>;
+  onSetChatRoutePreference: (mode: "auto" | "agent" | "legacy") => Promise<void>;
+  onSetShowAppResourceCpu: (value: boolean) => Promise<void>;
+  onSetShowAppResourceMemory: (value: boolean) => Promise<void>;
+  onSetShowAppResourceNetwork: (value: boolean) => Promise<void>;
+  onSetShowBottomEngine: (value: boolean) => Promise<void>;
+  onSetShowBottomModel: (value: boolean) => Promise<void>;
+  onSetShowBottomContext: (value: boolean) => Promise<void>;
+  onSetShowBottomSpeed: (value: boolean) => Promise<void>;
+  onSetShowBottomTtsLatency: (value: boolean) => Promise<void>;
 }

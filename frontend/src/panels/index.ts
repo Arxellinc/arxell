@@ -73,7 +73,7 @@ export function getPanelDefinition(
     return {
       title: "TTS",
       icon: APP_ICON.sidebar.tts,
-      renderBody: renderTtsBody,
+      renderBody: () => renderTtsBody(state),
       renderActions: renderTtsActions
     };
   }
@@ -135,7 +135,7 @@ export function attachPrimaryPanelInteractions(
       bindings.onClearChatAttachment,
       bindings.onStopCurrentResponse,
       bindings.onToggleStt,
-      state.chatStreaming,
+      state.chatStreaming || state.chatTtsPlaying,
       state.chatAttachedFileName
         ? {
             name: state.chatAttachedFileName,
@@ -163,17 +163,16 @@ export function attachPrimaryPanelInteractions(
         await bindings.onToggleChatThinking();
       };
     }
-    const chatSttBtn = document.querySelector<HTMLButtonElement>("#chatSttBtn");
-    if (chatSttBtn) {
-      chatSttBtn.onclick = async () => {
-        await bindings.onToggleStt();
+    const chatSpeechBtn = document.querySelector<HTMLButtonElement>("#chatSpeechBtn");
+    if (chatSpeechBtn) {
+      chatSpeechBtn.onclick = async () => {
+        await bindings.onToggleVoiceMode();
       };
     }
-    const chatTtsBtn = document.querySelector<HTMLButtonElement>("#chatTtsBtn");
-    if (chatTtsBtn) {
-      chatTtsBtn.onclick = async () => {
-        // TTS not yet implemented - show a toast or alert
-        console.log("TTS not yet implemented");
+    const chatSpeakBtn = document.querySelector<HTMLButtonElement>("#chatSpeakBtn");
+    if (chatSpeakBtn) {
+      chatSpeakBtn.onclick = async () => {
+        await bindings.onSpeakLatestAssistantTts();
       };
     }
     return;
@@ -216,6 +215,106 @@ export function attachPrimaryPanelInteractions(
     return;
   }
 
+  if (tab === "tts") {
+    const startBtn = document.querySelector<HTMLButtonElement>("#ttsStartBtn");
+    if (startBtn) {
+      startBtn.onclick = async () => {
+        await bindings.onTtsStart();
+      };
+    }
+    const downloadBtn = document.querySelector<HTMLButtonElement>("#ttsDownloadModelBtn");
+    if (downloadBtn) {
+      downloadBtn.onclick = async () => {
+        await bindings.onTtsDownloadModel();
+      };
+    }
+    // Bind Kokoro bundle download buttons (rendered dynamically when Kokoro is selected and model not ready)
+    const kokoroBundleBtns = document.querySelectorAll<HTMLButtonElement>(".kokoro-bundle-btn");
+    kokoroBundleBtns.forEach((btn) => {
+      btn.onclick = async () => {
+        const url = btn.dataset.url;
+        if (url) {
+          await bindings.onTtsDownloadModelWithUrl(url);
+        }
+      };
+    });
+    const refreshBtn = document.querySelector<HTMLButtonElement>("#ttsRefreshBtn");
+    if (refreshBtn) {
+      refreshBtn.onclick = async () => {
+        await bindings.onTtsRefresh();
+      };
+    }
+    const voiceSelect = document.querySelector<HTMLSelectElement>("#ttsVoiceSelect");
+    if (voiceSelect) {
+      voiceSelect.onchange = async () => {
+        await bindings.onTtsSetVoice(voiceSelect.value);
+      };
+    }
+    const engineSelect = document.querySelector<HTMLSelectElement>("#ttsEngineSelect");
+    if (engineSelect) {
+      engineSelect.onchange = async () => {
+        const engine = engineSelect.value;
+        if (engine !== "kokoro" && engine !== "piper" && engine !== "matcha" && engine !== "kitten" && engine !== "pocket") {
+          return;
+        }
+        await bindings.onTtsSetEngine(engine);
+      };
+    }
+    const bundleSelect = document.querySelector<HTMLSelectElement>("#ttsBundleSelect");
+    if (bundleSelect) {
+      bundleSelect.onchange = async () => {
+        const modelPath = bundleSelect.value.trim();
+        if (!modelPath) return;
+        await bindings.onTtsSetModelBundle(modelPath);
+      };
+    }
+    const speedInput = document.querySelector<HTMLInputElement>("#ttsSpeedInput");
+    if (speedInput) {
+      speedInput.onchange = async () => {
+        const value = Number.parseFloat(speedInput.value);
+        if (!Number.isFinite(value)) return;
+        await bindings.onTtsSetSpeed(value);
+      };
+    }
+    const testText = document.querySelector<HTMLTextAreaElement>("#ttsTestTextInput");
+    if (testText) {
+      testText.onchange = async () => {
+        await bindings.onTtsSetTestText(testText.value);
+      };
+    }
+    const browseModelBtn = document.querySelector<HTMLButtonElement>("#ttsModelBrowseBtn");
+    if (browseModelBtn) {
+      browseModelBtn.onclick = async () => {
+        await bindings.onTtsBrowseModelPath();
+      };
+    }
+    const browseSecondaryBtn = document.querySelector<HTMLButtonElement>("#ttsSecondaryBrowseBtn");
+    if (browseSecondaryBtn) {
+      browseSecondaryBtn.onclick = async () => {
+        await bindings.onTtsBrowseSecondaryPath();
+      };
+    }
+    const speakBtn = document.querySelector<HTMLButtonElement>("#ttsSpeakBtn");
+    if (speakBtn) {
+      speakBtn.onclick = async () => {
+        await bindings.onTtsSpeakTest();
+      };
+    }
+    const stopBtn = document.querySelector<HTMLButtonElement>("#ttsStopBtn");
+    if (stopBtn) {
+      stopBtn.onclick = async () => {
+        await bindings.onTtsStop();
+      };
+    }
+    const selfTestBtn = document.querySelector<HTMLButtonElement>("#ttsSelfTestBtn");
+    if (selfTestBtn) {
+      selfTestBtn.onclick = async () => {
+        await bindings.onTtsSelfTest();
+      };
+    }
+    return;
+  }
+
   if (tab === "llama_cpp") {
     bindLlamaCppPanel(bindings);
     return;
@@ -241,6 +340,50 @@ export function attachPrimaryPanelInteractions(
         if (renderAndBind) {
           renderAndBind();
         }
+      };
+    }
+    const backendSelect = document.querySelector<HTMLSelectElement>("#sttBackendSelect");
+    if (backendSelect) {
+      backendSelect.onchange = async () => {
+        const next = backendSelect.value;
+        if (next !== "whisper_cpp" && next !== "sherpa_onnx") return;
+        await bindings.onSetSttBackend(next);
+      };
+    }
+    const modelSelect = document.querySelector<HTMLSelectElement>("#sttModelSelect");
+    if (modelSelect) {
+      modelSelect.onchange = async () => {
+        const next = modelSelect.value;
+        await bindings.onSetSttModel(next);
+      };
+    }
+    const languageSelect = document.querySelector<HTMLSelectElement>("#sttLanguageSelect");
+    if (languageSelect) {
+      languageSelect.onchange = async () => {
+        const next = languageSelect.value;
+        await bindings.onSetSttLanguage(next);
+      };
+    }
+    const threadsSelect = document.querySelector<HTMLSelectElement>("#sttThreadsSelect");
+    if (threadsSelect) {
+      threadsSelect.onchange = async () => {
+        const next = Number.parseInt(threadsSelect.value, 10);
+        if (!Number.isFinite(next) || next < 1) return;
+        await bindings.onSetSttThreads(next);
+      };
+    }
+    const advancedToggleBtn = document.querySelector<HTMLButtonElement>("#sttAdvancedToggleBtn");
+    if (advancedToggleBtn) {
+      advancedToggleBtn.onclick = async () => {
+        await bindings.onToggleSttAdvancedSettings();
+      };
+    }
+    const modelDownloadButtons = document.querySelectorAll<HTMLButtonElement>("[data-stt-model-download]");
+    for (const button of modelDownloadButtons) {
+      button.onclick = async () => {
+        const fileName = button.getAttribute("data-stt-model-download");
+        if (!fileName) return;
+        await bindings.onDownloadSttModel(fileName);
       };
     }
 
@@ -274,6 +417,62 @@ export function attachPrimaryPanelInteractions(
         const mode = button.getAttribute("data-settings-theme");
         if (mode !== "dark" && mode !== "light" && mode !== "system" && mode !== "terminal") return;
         await bindings.onSetDisplayModePreference(mode);
+      };
+    }
+    const chatRouteSelect = document.querySelector<HTMLSelectElement>("#settingsChatRouteSelect");
+    if (chatRouteSelect) {
+      chatRouteSelect.onchange = async () => {
+        const mode = chatRouteSelect.value;
+        if (mode !== "auto" && mode !== "agent" && mode !== "legacy") return;
+        await bindings.onSetChatRoutePreference(mode);
+      };
+    }
+    const appResourcesCpuToggle = document.querySelector<HTMLInputElement>("#settingsShowAppResourcesCpuToggle");
+    if (appResourcesCpuToggle) {
+      appResourcesCpuToggle.onchange = async () => {
+        await bindings.onSetShowAppResourceCpu(appResourcesCpuToggle.checked);
+      };
+    }
+    const appResourcesMemoryToggle = document.querySelector<HTMLInputElement>("#settingsShowAppResourcesMemoryToggle");
+    if (appResourcesMemoryToggle) {
+      appResourcesMemoryToggle.onchange = async () => {
+        await bindings.onSetShowAppResourceMemory(appResourcesMemoryToggle.checked);
+      };
+    }
+    const appResourcesNetworkToggle = document.querySelector<HTMLInputElement>("#settingsShowAppResourcesNetworkToggle");
+    if (appResourcesNetworkToggle) {
+      appResourcesNetworkToggle.onchange = async () => {
+        await bindings.onSetShowAppResourceNetwork(appResourcesNetworkToggle.checked);
+      };
+    }
+    const showBottomEngineToggle = document.querySelector<HTMLInputElement>("#settingsShowBottomEngineToggle");
+    if (showBottomEngineToggle) {
+      showBottomEngineToggle.onchange = async () => {
+        await bindings.onSetShowBottomEngine(showBottomEngineToggle.checked);
+      };
+    }
+    const showBottomModelToggle = document.querySelector<HTMLInputElement>("#settingsShowBottomModelToggle");
+    if (showBottomModelToggle) {
+      showBottomModelToggle.onchange = async () => {
+        await bindings.onSetShowBottomModel(showBottomModelToggle.checked);
+      };
+    }
+    const showBottomContextToggle = document.querySelector<HTMLInputElement>("#settingsShowBottomContextToggle");
+    if (showBottomContextToggle) {
+      showBottomContextToggle.onchange = async () => {
+        await bindings.onSetShowBottomContext(showBottomContextToggle.checked);
+      };
+    }
+    const showBottomSpeedToggle = document.querySelector<HTMLInputElement>("#settingsShowBottomSpeedToggle");
+    if (showBottomSpeedToggle) {
+      showBottomSpeedToggle.onchange = async () => {
+        await bindings.onSetShowBottomSpeed(showBottomSpeedToggle.checked);
+      };
+    }
+    const showBottomTtsLatencyToggle = document.querySelector<HTMLInputElement>("#settingsShowBottomTtsLatencyToggle");
+    if (showBottomTtsLatencyToggle) {
+      showBottomTtsLatencyToggle.onchange = async () => {
+        await bindings.onSetShowBottomTtsLatency(showBottomTtsLatencyToggle.checked);
       };
     }
     return;

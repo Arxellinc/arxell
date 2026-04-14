@@ -567,7 +567,7 @@ function renderEditorPane(input: {
   return `<div class="files-editor-panel ${input.wrap ? "is-wrap" : ""}">
     <div class="files-editor-scroll">
       <pre class="files-editor-lines">${escapeHtml(lineNumbers)}</pre>
-      <div class="files-editor-code-wrap">
+      <div class="files-editor-code-wrap" style="--files-editor-height:${editorHeight}px;">
         <pre class="files-editor-highlight">${highlighted}</pre>
         <textarea class="files-editor-input" ${FILES_DATA_ATTR.action}="editor-input" ${FILES_DATA_ATTR.path}="${escapeHtml(
           input.activePath

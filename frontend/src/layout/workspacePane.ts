@@ -78,7 +78,7 @@ function renderWorkspaceTopbar(activeTab: WorkspaceTab, workspaceTools: Workspac
     },
     {
       tabId: "manager-tool",
-      icon: APP_ICON.sidebar.tools,
+      icon: APP_ICON.bottom.tools,
       title: "Tool Manager"
     }
   ] satisfies Array<{ tabId: WorkspacePrimaryTab; icon: IconName; title: string }>;
@@ -118,7 +118,7 @@ function renderWorkspaceToolButtons(activeTab: WorkspaceTab, workspaceTools: Wor
   const toolOrderIndex = new Map<string, number>();
   TOOL_ORDER.forEach((toolId, index) => toolOrderIndex.set(toolId, index));
   return workspaceTools
-    .filter((tool) => tool.enabled)
+    .filter((tool) => tool.enabled && tool.icon !== false)
     .filter((tool) => tool.toolId !== "terminal")
     .filter((tool) => {
       if (seenToolIds.has(tool.toolId)) return false;

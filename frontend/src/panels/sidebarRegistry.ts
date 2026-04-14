@@ -6,7 +6,7 @@ export interface SidebarPanelEntry {
   tab: SidebarTab;
   title: string;
   icon: IconName;
-  statusSignal?: "stt" | "llama";
+  statusSignal?: "stt" | "llama" | "tts" | "apis";
 }
 
 export const SIDEBAR_PRIMARY_PANELS: SidebarPanelEntry[] = [
@@ -14,9 +14,9 @@ export const SIDEBAR_PRIMARY_PANELS: SidebarPanelEntry[] = [
   { tab: "history", title: "History", icon: APP_ICON.sidebar.history },
   { tab: "workspace", title: "Workspace", icon: APP_ICON.sidebar.workspace },
   { tab: "devices", title: "Devices", icon: APP_ICON.sidebar.devices },
-  { tab: "tts", title: "TTS", icon: APP_ICON.sidebar.tts },
+  { tab: "tts", title: "TTS", icon: APP_ICON.sidebar.tts, statusSignal: "tts" },
   { tab: "stt", title: "STT", icon: APP_ICON.sidebar.stt, statusSignal: "stt" },
   { tab: "llama_cpp", title: "llama.cpp", icon: APP_ICON.sidebar.llamaCpp, statusSignal: "llama" },
   { tab: "model_manager", title: "Model Manager", icon: APP_ICON.sidebar.modelManager },
-  { tab: "apis", title: "APIs", icon: APP_ICON.sidebar.apis }
+  { tab: "apis", title: "APIs", icon: APP_ICON.sidebar.apis, statusSignal: "apis" }
 ];

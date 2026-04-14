@@ -6,6 +6,15 @@ export function renderSettingsActions(): string {
 
 export function renderSettingsBody(state: PrimaryPanelRenderState): string {
   const preference = state.displayModePreference ?? state.displayMode;
+  const chatRoute = state.chatRoutePreference ?? "auto";
+  const showAppResourceCpu = state.showAppResourceCpu === true;
+  const showAppResourceMemory = state.showAppResourceMemory === true;
+  const showAppResourceNetwork = state.showAppResourceNetwork === true;
+  const showBottomEngine = state.showBottomEngine === true;
+  const showBottomModel = state.showBottomModel === true;
+  const showBottomContext = state.showBottomContext === true;
+  const showBottomSpeed = state.showBottomSpeed === true;
+  const showBottomTtsLatency = state.showBottomTtsLatency === true;
   return `
     <div class="primary-pane-body">
       <h3>Appearance</h3>
@@ -28,6 +37,67 @@ export function renderSettingsBody(state: PrimaryPanelRenderState): string {
             <span>System</span>
           </button>
         </div>
+      </div>
+      <h3>Chat behavior</h3>
+      <div class="settings-chat-row">
+        <label class="settings-inline-label" for="settingsChatRouteSelect">Response route</label>
+        <select id="settingsChatRouteSelect" class="settings-select" aria-label="Chat response route">
+          <option value="auto" ${chatRoute === "auto" ? "selected" : ""}>Auto (recommended)</option>
+          <option value="agent" ${chatRoute === "agent" ? "selected" : ""}>Agent only</option>
+          <option value="legacy" ${chatRoute === "legacy" ? "selected" : ""}>Direct only</option>
+        </select>
+        <p class="settings-theme-note">
+          Auto prefers the agent route and allows fallback to the direct route when needed.
+        </p>
+      </div>
+      <h3>Status bar</h3>
+      <div class="settings-chat-row">
+        <label class="llama-checkbox-inline">
+          <input id="settingsShowAppResourcesCpuToggle" type="checkbox" ${showAppResourceCpu ? "checked" : ""} />
+          <span>Show CPU usage in bottom bar</span>
+        </label>
+      </div>
+      <div class="settings-chat-row">
+        <label class="llama-checkbox-inline">
+          <input id="settingsShowAppResourcesMemoryToggle" type="checkbox" ${showAppResourceMemory ? "checked" : ""} />
+          <span>Show memory usage in bottom bar</span>
+        </label>
+      </div>
+      <div class="settings-chat-row">
+        <label class="llama-checkbox-inline">
+          <input id="settingsShowAppResourcesNetworkToggle" type="checkbox" ${showAppResourceNetwork ? "checked" : ""} />
+          <span>Show network activity in bottom bar</span>
+        </label>
+      </div>
+      <div class="settings-chat-row">
+        <label class="llama-checkbox-inline">
+          <input id="settingsShowBottomEngineToggle" type="checkbox" ${showBottomEngine ? "checked" : ""} />
+          <span>Show engine in bottom bar</span>
+        </label>
+      </div>
+      <div class="settings-chat-row">
+        <label class="llama-checkbox-inline">
+          <input id="settingsShowBottomModelToggle" type="checkbox" ${showBottomModel ? "checked" : ""} />
+          <span>Show model in bottom bar</span>
+        </label>
+      </div>
+      <div class="settings-chat-row">
+        <label class="llama-checkbox-inline">
+          <input id="settingsShowBottomContextToggle" type="checkbox" ${showBottomContext ? "checked" : ""} />
+          <span>Show context in bottom bar</span>
+        </label>
+      </div>
+      <div class="settings-chat-row">
+        <label class="llama-checkbox-inline">
+          <input id="settingsShowBottomSpeedToggle" type="checkbox" ${showBottomSpeed ? "checked" : ""} />
+          <span>Show speed in bottom bar</span>
+        </label>
+      </div>
+      <div class="settings-chat-row">
+        <label class="llama-checkbox-inline">
+          <input id="settingsShowBottomTtsLatencyToggle" type="checkbox" ${showBottomTtsLatency ? "checked" : ""} />
+          <span>Show TTS latency in bottom bar</span>
+        </label>
       </div>
     </div>
   `;

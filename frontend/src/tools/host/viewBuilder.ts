@@ -1,11 +1,12 @@
 import type { AppEvent, FilesListDirectoryEntry, FlowRerunValidationResult } from "../../contracts";
 import { renderFilesToolActions, renderFilesToolBody } from "../files";
 import type { FilesColumnWidths } from "../files/index";
-import { renderFlowToolActions, renderFlowToolBody } from "../flow";
-import type { FlowRunView } from "../flow/state";
-import { renderMemoryToolActions, renderMemoryToolBody } from "../memory";
+import { renderFlowToolActions, renderFlowToolBody, type FlowTerminalSessionView } from "../flow";
+import type { FlowPhaseTranscriptEntry, FlowRunView } from "../flow/state";
+import { renderMemoryToolActions, renderMemoryToolBody, type MemoryToolState } from "../memory";
 import { renderSkillsToolActions, renderSkillsToolBody } from "../skills";
 import { renderCreateToolActions, renderCreateToolBody } from "../createTool";
+import { renderChartToolActions, renderChartToolBody } from "../chart";
 import type { CreateToolRuntimeSlice } from "../createTool/state";
 import { renderTasksToolActions, renderTasksToolBody } from "../tasks";
 import type { TaskFolder, TaskSortDirection, TaskSortKey, TaskRecord } from "../tasks/state";
@@ -18,6 +19,9 @@ export interface ToolViewHtml {
 }
 
 export interface WorkspaceToolViewInput {
+  chartSource: string;
+  chartRenderSource: string;
+  chartError: string | null;
   activeWebTab: WebTabState | null;
   webTabs: WebTabState[];
   activeWebTabId: string;
@@ -126,13 +130,91 @@ export interface WorkspaceToolViewInput {
   flowValidationResults: FlowRerunValidationResult[];
   flowBusy: boolean;
   flowMessage: string | null;
+  flowAdvancedOpen: boolean;
+  flowBottomPanel: "terminal" | "validate" | "events";
+  flowWorkspaceSplit: number;
+  flowActiveTerminalPhase: string;
+  flowPhaseSessionByName: Record<string, string>;
+  flowTerminalPhases: string[];
+  flowAutoFocusPhaseTerminal: boolean;
+  flowPhaseTranscriptsByRun: Record<string, Record<string, FlowPhaseTranscriptEntry[]>>;
+  flowProjectSetupOpen: boolean;
+  flowProjectNameDraft: string;
+  flowProjectTypeDraft: string;
+  flowProjectDescriptionDraft: string;
+  flowPhaseModels: Record<string, string>;
+  flowAvailableModels: Array<{ id: string; label: string }>;
+  flowPaused: boolean;
+  flowModelUnavailableOpen: boolean;
+  flowModelUnavailablePhase: string;
+  flowModelUnavailableModel: string;
+  flowModelUnavailableFallbackModel: string;
+  flowModelUnavailableReason: string;
+  flowModelUnavailableAttempt: number;
+  flowModelUnavailableMaxAttempts: number;
+  flowModelUnavailableStatus: string;
+  terminalSessions: FlowTerminalSessionView[];
   filteredFlowEvents: AppEvent[];
 }
 
 export function buildWorkspaceToolViews(input: WorkspaceToolViewInput): Record<string, ToolViewHtml> {
   const activeFlowRunId = input.flowActiveRunId ?? input.flowRuns[0]?.runId ?? null;
+  const activePhaseTranscript =
+    (activeFlowRunId
+      ? input.flowPhaseTranscriptsByRun[activeFlowRunId]?.[input.flowActiveTerminalPhase]
+      : null) ?? [];
+  const filesBodyHtml = renderFilesToolBody({
+    rootPath: input.filesRootPath,
+    scopeRootPath: input.filesScopeRootPath,
+    rootSelectorOpen: input.filesRootSelectorOpen,
+    selectedPath: input.filesSelectedPath,
+    selectedEntryPath: input.filesSelectedEntryPath,
+    openTabs: input.filesOpenTabs,
+    activeTabPath: input.filesActiveTabPath,
+    contentByPath: input.filesContentByPath,
+    dirtyByPath: input.filesDirtyByPath,
+    loadingFileByPath: input.filesLoadingFileByPath,
+    savingFileByPath: input.filesSavingFileByPath,
+    readOnlyByPath: input.filesReadOnlyByPath,
+    sizeByPath: input.filesSizeByPath,
+    expandedByPath: input.filesExpandedByPath,
+    entriesByPath: input.filesEntriesByPath,
+    loadingByPath: input.filesLoadingByPath,
+    columnWidths: input.filesColumnWidths,
+    sidebarWidth: input.filesSidebarWidth,
+    sidebarCollapsed: input.filesSidebarCollapsed,
+    findOpen: input.filesFindOpen,
+    findQuery: input.filesFindQuery,
+    replaceQuery: input.filesReplaceQuery,
+    findCaseSensitive: input.filesFindCaseSensitive,
+    lineWrap: input.filesLineWrap,
+    selectedPaths: input.filesSelectedPaths,
+    contextMenuOpen: input.filesContextMenuOpen,
+    contextMenuX: input.filesContextMenuX,
+    contextMenuY: input.filesContextMenuY,
+    contextMenuTargetPath: input.filesContextMenuTargetPath,
+    contextMenuTargetIsDir: input.filesContextMenuTargetIsDir,
+    clipboardMode: input.filesClipboardMode,
+    clipboardPaths: input.filesClipboardPaths,
+    undoDeleteAvailable: input.filesUndoDeleteAvailable,
+    conflictModalOpen: input.filesConflictModalOpen,
+    conflictModalName: input.filesConflictName,
+    selectionAnchorPath: input.filesSelectionAnchorPath,
+    selectionDragActive: input.filesSelectionDragActive,
+    selectionJustDragged: input.filesSelectionJustDragged,
+    selectionGesture: input.filesSelectionGesture,
+    error: input.filesError
+  });
 
   return {
+    chart: {
+      actionsHtml: renderChartToolActions(),
+      bodyHtml: renderChartToolBody({
+        source: input.chartSource,
+        renderSource: input.chartRenderSource,
+        error: input.chartError
+      })
+    },
     webSearch: {
       actionsHtml: renderWebToolActions(
         input.webTabs.map((tab) => ({
@@ -207,48 +289,7 @@ export function buildWorkspaceToolViews(input: WorkspaceToolViewInput): Record<s
         selectionGesture: input.filesSelectionGesture,
         error: input.filesError
       }),
-      bodyHtml: renderFilesToolBody({
-        rootPath: input.filesRootPath,
-        scopeRootPath: input.filesScopeRootPath,
-        rootSelectorOpen: input.filesRootSelectorOpen,
-        selectedPath: input.filesSelectedPath,
-        selectedEntryPath: input.filesSelectedEntryPath,
-        openTabs: input.filesOpenTabs,
-        activeTabPath: input.filesActiveTabPath,
-        contentByPath: input.filesContentByPath,
-        dirtyByPath: input.filesDirtyByPath,
-        loadingFileByPath: input.filesLoadingFileByPath,
-        savingFileByPath: input.filesSavingFileByPath,
-        readOnlyByPath: input.filesReadOnlyByPath,
-        sizeByPath: input.filesSizeByPath,
-        expandedByPath: input.filesExpandedByPath,
-        entriesByPath: input.filesEntriesByPath,
-        loadingByPath: input.filesLoadingByPath,
-        columnWidths: input.filesColumnWidths,
-        sidebarWidth: input.filesSidebarWidth,
-        sidebarCollapsed: input.filesSidebarCollapsed,
-        findOpen: input.filesFindOpen,
-        findQuery: input.filesFindQuery,
-        replaceQuery: input.filesReplaceQuery,
-        findCaseSensitive: input.filesFindCaseSensitive,
-        lineWrap: input.filesLineWrap,
-        selectedPaths: input.filesSelectedPaths,
-        contextMenuOpen: input.filesContextMenuOpen,
-        contextMenuX: input.filesContextMenuX,
-        contextMenuY: input.filesContextMenuY,
-        contextMenuTargetPath: input.filesContextMenuTargetPath,
-        contextMenuTargetIsDir: input.filesContextMenuTargetIsDir,
-        clipboardMode: input.filesClipboardMode,
-        clipboardPaths: input.filesClipboardPaths,
-        undoDeleteAvailable: input.filesUndoDeleteAvailable,
-        conflictModalOpen: input.filesConflictModalOpen,
-        conflictModalName: input.filesConflictName,
-        selectionAnchorPath: input.filesSelectionAnchorPath,
-        selectionDragActive: input.filesSelectionDragActive,
-        selectionJustDragged: input.filesSelectionJustDragged,
-        selectionGesture: input.filesSelectionGesture,
-        error: input.filesError
-      })
+      bodyHtml: filesBodyHtml
     },
     flow: {
       actionsHtml: renderFlowToolActions({
@@ -268,7 +309,32 @@ export function buildWorkspaceToolViews(input: WorkspaceToolViewInput): Record<s
         filteredEvents: input.filteredFlowEvents,
         validationResults: input.flowValidationResults,
         busy: input.flowBusy,
-        message: input.flowMessage
+        message: input.flowMessage,
+        advancedOpen: input.flowAdvancedOpen,
+        bottomPanel: input.flowBottomPanel,
+        workspaceSplit: input.flowWorkspaceSplit,
+        activeTerminalPhase: input.flowActiveTerminalPhase,
+        terminalPhases: input.flowTerminalPhases,
+        phaseSessionByName: input.flowPhaseSessionByName,
+        terminalSessions: input.terminalSessions,
+        autoFocusPhaseTerminal: input.flowAutoFocusPhaseTerminal,
+        activePhaseTranscript,
+        projectSetupOpen: input.flowProjectSetupOpen,
+        projectNameDraft: input.flowProjectNameDraft,
+        projectTypeDraft: input.flowProjectTypeDraft,
+        projectDescriptionDraft: input.flowProjectDescriptionDraft,
+        phaseModels: input.flowPhaseModels,
+        availableModels: input.flowAvailableModels,
+        paused: input.flowPaused,
+        modelUnavailableOpen: input.flowModelUnavailableOpen,
+        modelUnavailablePhase: input.flowModelUnavailablePhase,
+        modelUnavailableModel: input.flowModelUnavailableModel,
+        modelUnavailableFallbackModel: input.flowModelUnavailableFallbackModel,
+        modelUnavailableReason: input.flowModelUnavailableReason,
+        modelUnavailableAttempt: input.flowModelUnavailableAttempt,
+        modelUnavailableMaxAttempts: input.flowModelUnavailableMaxAttempts,
+        modelUnavailableStatus: input.flowModelUnavailableStatus,
+        embeddedFilesHtml: filesBodyHtml
       }),
       bodyHtml: renderFlowToolBody({
         runs: input.flowRuns,
@@ -287,7 +353,32 @@ export function buildWorkspaceToolViews(input: WorkspaceToolViewInput): Record<s
         filteredEvents: input.filteredFlowEvents,
         validationResults: input.flowValidationResults,
         busy: input.flowBusy,
-        message: input.flowMessage
+        message: input.flowMessage,
+        advancedOpen: input.flowAdvancedOpen,
+        bottomPanel: input.flowBottomPanel,
+        workspaceSplit: input.flowWorkspaceSplit,
+        activeTerminalPhase: input.flowActiveTerminalPhase,
+        terminalPhases: input.flowTerminalPhases,
+        phaseSessionByName: input.flowPhaseSessionByName,
+        terminalSessions: input.terminalSessions,
+        autoFocusPhaseTerminal: input.flowAutoFocusPhaseTerminal,
+        activePhaseTranscript,
+        projectSetupOpen: input.flowProjectSetupOpen,
+        projectNameDraft: input.flowProjectNameDraft,
+        projectTypeDraft: input.flowProjectTypeDraft,
+        projectDescriptionDraft: input.flowProjectDescriptionDraft,
+        phaseModels: input.flowPhaseModels,
+        availableModels: input.flowAvailableModels,
+        paused: input.flowPaused,
+        modelUnavailableOpen: input.flowModelUnavailableOpen,
+        modelUnavailablePhase: input.flowModelUnavailablePhase,
+        modelUnavailableModel: input.flowModelUnavailableModel,
+        modelUnavailableFallbackModel: input.flowModelUnavailableFallbackModel,
+        modelUnavailableReason: input.flowModelUnavailableReason,
+        modelUnavailableAttempt: input.flowModelUnavailableAttempt,
+        modelUnavailableMaxAttempts: input.flowModelUnavailableMaxAttempts,
+        modelUnavailableStatus: input.flowModelUnavailableStatus,
+        embeddedFilesHtml: filesBodyHtml
       })
     },
     tasks: {
@@ -386,7 +477,13 @@ export function buildWorkspaceToolViews(input: WorkspaceToolViewInput): Record<s
     },
     memory: {
       actionsHtml: renderMemoryToolActions(),
-      bodyHtml: renderMemoryToolBody()
+      bodyHtml: renderMemoryToolBody({
+        contextItems: [],
+        chatHistory: [],
+        persistentItems: [],
+        loading: false,
+        error: null
+      })
     },
     skills: {
       actionsHtml: renderSkillsToolActions(),

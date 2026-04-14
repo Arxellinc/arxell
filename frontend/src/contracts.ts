@@ -22,6 +22,9 @@ export interface ChatSendRequest {
   userMessage: string;
   correlationId: string;
   thinkingEnabled?: boolean;
+  chatMode?: "auto" | "agent" | "legacy";
+  modelId?: string;
+  modelName?: string;
   maxTokens?: number;
   attachments?: ChatAttachment[];
 }
@@ -158,6 +161,7 @@ export interface WorkspaceToolRecord {
   version: string;
   source: string;
   enabled: boolean;
+  icon: boolean;
   status: string;
   entry?: string | null;
 }
@@ -181,6 +185,18 @@ export interface WorkspaceToolSetEnabledResponse {
   correlationId: string;
   toolId: string;
   enabled: boolean;
+}
+
+export interface WorkspaceToolSetIconRequest {
+  correlationId: string;
+  toolId: string;
+  icon: boolean;
+}
+
+export interface WorkspaceToolSetIconResponse {
+  correlationId: string;
+  toolId: string;
+  icon: boolean;
 }
 
 export interface WorkspaceToolsExportRequest {
@@ -331,6 +347,7 @@ export interface ApiConnectionRecord {
   lastCheckedMs: number | null;
   createdMs: number;
   apiStandardPath: string | null;
+  availableModels: string[];
 }
 
 export interface ApiConnectionsListRequest {
@@ -338,6 +355,26 @@ export interface ApiConnectionsListRequest {
 }
 
 export interface ApiConnectionsListResponse {
+  correlationId: string;
+  connections: ApiConnectionRecord[];
+}
+
+export interface ApiConnectionsExportRequest {
+  correlationId: string;
+}
+
+export interface ApiConnectionsExportResponse {
+  correlationId: string;
+  fileName: string;
+  payloadJson: string;
+}
+
+export interface ApiConnectionsImportRequest {
+  correlationId: string;
+  payloadJson: string;
+}
+
+export interface ApiConnectionsImportResponse {
   correlationId: string;
   connections: ApiConnectionRecord[];
 }
@@ -380,6 +417,25 @@ export interface ApiConnectionCreateRequest {
 export interface ApiConnectionCreateResponse {
   correlationId: string;
   connection: ApiConnectionRecord;
+}
+
+export interface ApiConnectionProbeRequest {
+  correlationId: string;
+  apiUrl: string;
+  apiType?: ApiConnectionType;
+  apiKey?: string;
+  apiStandardPath?: string;
+}
+
+export interface ApiConnectionProbeResponse {
+  correlationId: string;
+  detectedApiType: ApiConnectionType;
+  apiStandardPath: string | null;
+  verifyUrl: string;
+  models: string[];
+  selectedModel: string | null;
+  status: ApiConnectionStatus;
+  statusMessage: string;
 }
 
 export interface ApiConnectionUpdateRequest {
@@ -590,8 +646,147 @@ export interface DevicesProbeMicrophoneResponse {
   defaultInputName: string | null;
 }
 
+export interface TtsStatusRequest {
+  correlationId: string;
+}
+
+export interface TtsStatusResponse {
+  correlationId: string;
+  engineId: string;
+  engine: string;
+  ready: boolean;
+  message: string;
+  modelPath: string;
+  secondaryPath: string;
+  voicesPath: string;
+  tokensPath: string;
+  dataDir: string;
+  pythonPath: string;
+  scriptPath: string;
+  runtimeArchivePresent: boolean;
+  availableModelPaths: string[];
+  availableVoices: string[];
+  selectedVoice: string;
+  speed: number;
+}
+
+export interface TtsListVoicesRequest {
+  correlationId: string;
+}
+
+export interface TtsListVoicesResponse {
+  correlationId: string;
+  voices: string[];
+  selectedVoice: string;
+}
+
+export interface TtsSpeakRequest {
+  correlationId: string;
+  text: string;
+  voice?: string;
+  speed?: number;
+}
+
+export interface TtsSpeakResponse {
+  correlationId: string;
+  engineId: string;
+  voice: string;
+  speed: number;
+  sampleRate: number;
+  durationMs: number;
+  audioBytes: number[];
+}
+
+export interface TtsStopRequest {
+  correlationId: string;
+}
+
+export interface TtsStopResponse {
+  correlationId: string;
+  stopped: boolean;
+}
+
+export interface TtsSelfTestRequest {
+  correlationId: string;
+}
+
+export interface TtsSelfTestResponse {
+  correlationId: string;
+  ok: boolean;
+  message: string;
+  bytes: number;
+  sampleRate: number;
+  durationMs: number;
+}
+
+export interface TtsSettingsGetRequest {
+  correlationId: string;
+}
+
+export interface TtsSettingsGetResponse {
+  correlationId: string;
+  engineId: string;
+  engine: string;
+  voice: string;
+  speed: number;
+  modelPath: string;
+  secondaryPath: string;
+  voicesPath: string;
+  tokensPath: string;
+  dataDir: string;
+  pythonPath: string;
+}
+
+export interface TtsSettingsSetRequest {
+  correlationId: string;
+  engine?: string;
+  voice?: string;
+  speed?: number;
+  modelPath?: string;
+  secondaryPath?: string;
+  voicesPath?: string;
+  tokensPath?: string;
+  dataDir?: string;
+  pythonPath?: string;
+}
+
+export interface TtsSettingsSetResponse {
+  correlationId: string;
+  ok: boolean;
+  engine: string;
+  voice: string;
+  speed: number;
+}
+
+export interface TtsDownloadModelRequest {
+  correlationId: string;
+  url?: string;
+}
+
+export interface TtsDownloadModelResponse {
+  correlationId: string;
+  ok: boolean;
+  message: string;
+  modelPath: string;
+  voicesPath: string;
+  tokensPath: string;
+  dataDir: string;
+}
+
 export interface AppVersionResponse {
   version: string;
+}
+
+export interface AppResourceUsageRequest {
+  correlationId: string;
+}
+
+export interface AppResourceUsageResponse {
+  correlationId: string;
+  cpuPercent: number | null;
+  memoryBytes: number | null;
+  networkRxBytesPerSec: number | null;
+  networkTxBytesPerSec: number | null;
 }
 
 export type FlowMode = "plan" | "build";
@@ -610,6 +805,7 @@ export interface FlowStartRequest {
   specsGlob?: string;
   backpressureCommands?: string[];
   implementCommand?: string;
+  phaseModels?: Record<string, string>;
 }
 
 export interface FlowStartResponse {
@@ -627,6 +823,31 @@ export interface FlowStopResponse {
   correlationId: string;
   runId: string;
   stopped: boolean;
+}
+
+export interface FlowPauseRequest {
+  correlationId: string;
+  runId: string;
+  paused: boolean;
+}
+
+export interface FlowPauseResponse {
+  correlationId: string;
+  runId: string;
+  paused: boolean;
+  updated: boolean;
+}
+
+export interface FlowNudgeRequest {
+  correlationId: string;
+  runId: string;
+  message: string;
+}
+
+export interface FlowNudgeResponse {
+  correlationId: string;
+  runId: string;
+  accepted: boolean;
 }
 
 export interface FlowStatusRequest {
@@ -695,6 +916,7 @@ export interface FlowRunRecord {
   specsGlob: string;
   backpressureCommands: string[];
   implementCommand: string;
+  phaseModels?: Record<string, string>;
   summary: string | null;
   iterations: FlowIterationStatus[];
 }

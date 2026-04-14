@@ -1,5 +1,6 @@
 import bot from "./bot.svg?raw";
 import brain from "./brain.svg?raw";
+import circleCheckBig from "./circle-check-big.svg?raw";
 import chevronLeft from "./chevron-left.svg?raw";
 import columns2 from "./columns-2.svg?raw";
 import edit from "./edit.svg?raw";
@@ -15,9 +16,11 @@ import menu from "./menu.svg?raw";
 import messageSquare from "./message-square.svg?raw";
 import messagesSquare from "./messages-square.svg?raw";
 import mic from "./mic.svg?raw";
+import minus from "./minus.svg?raw";
 import monitor from "./monitor.svg?raw";
 import moon from "./moon.svg?raw";
 import newIcon from "./new.svg?raw";
+import octagonPause from "./octagon-pause.svg?raw";
 import packageSearch from "./package-search.svg?raw";
 import play from "./play.svg?raw";
 import plug from "./plug.svg?raw";
@@ -31,6 +34,8 @@ import sun from "./sun.svg?raw";
 import trash2 from "./trash-2.svg?raw";
 import triangleAlert from "./triangle-alert.svg?raw";
 import volume2 from "./volume-2.svg?raw";
+import speech from "./speech.svg?raw";
+import square from "./square.svg?raw";
 import wrench from "./wrench.svg?raw";
 import cpu from "./cpu.svg?raw";
 import audioLines from "./audio-lines.svg?raw";
@@ -50,6 +55,7 @@ import replace from "./replace.svg?raw";
 const ICON_SVGS = {
   bot,
   brain,
+  "circle-check-big": circleCheckBig,
   "chevron-left": chevronLeft,
   "columns-2": columns2,
   edit,
@@ -65,9 +71,11 @@ const ICON_SVGS = {
   "message-square": messageSquare,
   "messages-square": messagesSquare,
   mic,
+  minus,
   monitor,
   moon,
   new: newIcon,
+  "octagon-pause": octagonPause,
   "package-search": packageSearch,
   play,
   plug,
@@ -92,6 +100,8 @@ const ICON_SVGS = {
   "trash-2": trash2,
   "triangle-alert": triangleAlert,
   "volume-2": volume2,
+  speech,
+  square,
   cpu,
   wrench,
   audioLines,

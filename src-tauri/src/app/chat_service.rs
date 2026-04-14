@@ -1,12 +1,13 @@
+use crate::agent_tools::chart::ChartTool;
 use crate::agent_tools::web_search::WebSearchTool;
 use crate::api_registry::ApiRegistryService;
 use crate::app::web_search_service::WebSearchService;
 use crate::contracts::{
-    ApiConnectionType, ChatCancelResponse, ChatDeleteConversationResponse, ChatGetMessagesRequest,
-    ChatGetMessagesResponse, ChatListConversationsRequest, ChatListConversationsResponse,
-    ChatSendRequest, ChatSendResponse, ChatStreamChunkPayload, ChatStreamCompletePayload,
-    ChatStreamReasoningChunkPayload, ChatStreamStartPayload, ConversationMessageRecord,
-    EventSeverity, EventStage, MessageRole, Subsystem, ChatAttachment,
+    ApiConnectionType, ChatAttachment, ChatCancelResponse, ChatDeleteConversationResponse,
+    ChatGetMessagesRequest, ChatGetMessagesResponse, ChatListConversationsRequest,
+    ChatListConversationsResponse, ChatSendRequest, ChatSendResponse, ChatStreamChunkPayload,
+    ChatStreamCompletePayload, ChatStreamReasoningChunkPayload, ChatStreamStartPayload,
+    ConversationMessageRecord, EventSeverity, EventStage, MessageRole, Subsystem,
 };
 use crate::memory::MemoryManager;
 use crate::observability::EventHub;
@@ -39,12 +40,33 @@ pub struct ChatService {
     cancelled_correlations: Arc<Mutex<HashSet<String>>>,
 }
 
-struct AgentToolBinding {
-    workspace_tool_id: &'static str,
-    bind: fn(&ChatService, &mut Vec<Box<dyn AgentTool>>),
+#[derive(Debug, Clone, Copy)]
+enum ChatRouteMode {
+    Auto,
+    Agent,
+    Legacy,
 }
 
-fn bind_files_tools(_chat: &ChatService, resolved: &mut Vec<Box<dyn AgentTool>>) {
+impl ChatRouteMode {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Auto => "auto",
+            Self::Agent => "agent",
+            Self::Legacy => "legacy",
+        }
+    }
+}
+
+struct AgentToolBinding {
+    workspace_tool_id: &'static str,
+    bind: fn(&ChatService, &mut Vec<Box<dyn AgentTool>>, &str),
+}
+
+fn bind_files_tools(
+    _chat: &ChatService,
+    resolved: &mut Vec<Box<dyn AgentTool>>,
+    _correlation_id: &str,
+) {
     resolved.extend(arx_rs::tools::default_tools().into_iter().filter(|tool| {
         matches!(
             tool.name(),
@@ -53,7 +75,11 @@ fn bind_files_tools(_chat: &ChatService, resolved: &mut Vec<Box<dyn AgentTool>>)
     }));
 }
 
-fn bind_terminal_tools(_chat: &ChatService, resolved: &mut Vec<Box<dyn AgentTool>>) {
+fn bind_terminal_tools(
+    _chat: &ChatService,
+    resolved: &mut Vec<Box<dyn AgentTool>>,
+    _correlation_id: &str,
+) {
     resolved.extend(
         arx_rs::tools::default_tools()
             .into_iter()
@@ -61,8 +87,23 @@ fn bind_terminal_tools(_chat: &ChatService, resolved: &mut Vec<Box<dyn AgentTool
     );
 }
 
-fn bind_web_tools(chat: &ChatService, resolved: &mut Vec<Box<dyn AgentTool>>) {
+fn bind_web_tools(
+    chat: &ChatService,
+    resolved: &mut Vec<Box<dyn AgentTool>>,
+    _correlation_id: &str,
+) {
     resolved.push(Box::new(WebSearchTool::new(Arc::clone(&chat.web_search))));
+}
+
+fn bind_chart_tools(
+    chat: &ChatService,
+    resolved: &mut Vec<Box<dyn AgentTool>>,
+    correlation_id: &str,
+) {
+    resolved.push(Box::new(ChartTool::new(
+        chat.hub.clone(),
+        correlation_id.to_string(),
+    )));
 }
 
 fn agent_tool_bindings() -> &'static [AgentToolBinding] {
@@ -78,6 +119,10 @@ fn agent_tool_bindings() -> &'static [AgentToolBinding] {
         AgentToolBinding {
             workspace_tool_id: "webSearch",
             bind: bind_web_tools,
+        },
+        AgentToolBinding {
+            workspace_tool_id: "chart",
+            bind: bind_chart_tools,
         },
     ]
 }
@@ -126,35 +171,113 @@ impl ChatService {
             },
         )?;
 
-        let llm_response = self
-            .request_agent_response(
-                &req.conversation_id,
+        let thinking_enabled = req.thinking_enabled.unwrap_or(false);
+        let route_mode = resolve_chat_route_mode(req.chat_mode.as_deref());
+        self.hub.emit(self.hub.make_event(
+            &req.correlation_id,
+            Subsystem::Service,
+            "chat.route.selected",
+            EventStage::Progress,
+            EventSeverity::Info,
+            json!({
+                "mode": route_mode.as_str(),
+                "attachmentCount": req.attachments.as_ref().map(|items| items.len()).unwrap_or(0)
+            }),
+        ));
+
+        let llm_response = match route_mode {
+            ChatRouteMode::Agent => {
+                self.request_agent_response(
+                    &req.conversation_id,
+                    &req.correlation_id,
+                    &req.user_message,
+                    req.attachments.as_deref(),
+                    thinking_enabled,
+                    req.model_id.as_deref(),
+                    req.model_name.as_deref(),
+                    req.max_tokens,
+                )
+                .await
+            }
+            ChatRouteMode::Legacy => {
+                self.request_local_llama_response(
+                    &req.conversation_id,
+                    &req.correlation_id,
+                    thinking_enabled,
+                    req.max_tokens,
+                )
+                .await
+            }
+            ChatRouteMode::Auto => {
+                match self
+                    .request_agent_response(
+                        &req.conversation_id,
+                        &req.correlation_id,
+                        &req.user_message,
+                        req.attachments.as_deref(),
+                        thinking_enabled,
+                        req.model_id.as_deref(),
+                        req.model_name.as_deref(),
+                        req.max_tokens,
+                    )
+                    .await
+                {
+                    Ok(response) => Ok(response),
+                    Err(agent_err) => {
+                        if self.is_cancelled(req.correlation_id.as_str()) {
+                            Err(agent_err)
+                        } else {
+                            self.hub.emit(self.hub.make_event(
+                                &req.correlation_id,
+                                Subsystem::Service,
+                                "chat.route.fallback",
+                                EventStage::Progress,
+                                EventSeverity::Warn,
+                                json!({
+                                    "from": "agent",
+                                    "to": "legacy",
+                                    "reason": truncate_for_error(agent_err.as_str())
+                                }),
+                            ));
+                            match self
+                                .request_local_llama_response(
+                                    &req.conversation_id,
+                                    &req.correlation_id,
+                                    thinking_enabled,
+                                    req.max_tokens,
+                                )
+                                .await
+                            {
+                                Ok(response) => Ok(response),
+                                Err(legacy_err) => Err(format!(
+                                    "agent route failed: {}; legacy fallback failed: {}",
+                                    agent_err, legacy_err
+                                )),
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        .map_err(|err| {
+            self.hub.emit(self.hub.make_event(
                 &req.correlation_id,
-                &req.user_message,
-                req.attachments.as_deref(),
-                req.thinking_enabled.unwrap_or(false),
-                req.max_tokens,
-            )
-            .await
-            .map_err(|err| {
-                self.hub.emit(self.hub.make_event(
-                    &req.correlation_id,
-                    Subsystem::Service,
-                    "chat.stream.error",
-                    EventStage::Error,
-                    EventSeverity::Error,
-                    json!({"message": err}),
-                ));
-                self.hub.emit(self.hub.make_event(
-                    &req.correlation_id,
-                    Subsystem::Service,
-                    "chat.send_message",
-                    EventStage::Error,
-                    EventSeverity::Error,
-                    json!({"error": err}),
-                ));
-                err
-            })?;
+                Subsystem::Service,
+                "chat.stream.error",
+                EventStage::Error,
+                EventSeverity::Error,
+                json!({"message": err}),
+            ));
+            self.hub.emit(self.hub.make_event(
+                &req.correlation_id,
+                Subsystem::Service,
+                "chat.send_message",
+                EventStage::Error,
+                EventSeverity::Error,
+                json!({"error": err}),
+            ));
+            err
+        })?;
 
         let response = ChatSendResponse {
             conversation_id: req.conversation_id,
@@ -264,10 +387,16 @@ impl ChatService {
         user_message: &str,
         attachments: Option<&[ChatAttachment]>,
         thinking_enabled: bool,
+        requested_model_id: Option<&str>,
+        requested_model_name: Option<&str>,
         requested_max_tokens: Option<u32>,
     ) -> Result<LocalLlamaResponse, String> {
-        let provider_config =
-            self.resolve_agent_provider_config(thinking_enabled, requested_max_tokens);
+        let provider_config = self.resolve_agent_provider_config(
+            thinking_enabled,
+            requested_model_id,
+            requested_model_name,
+            requested_max_tokens,
+        );
 
         self.hub.emit(self.hub.make_event(
             correlation_id,
@@ -312,7 +441,7 @@ impl ChatService {
         )?;
 
         let provider = OpenAiCompatibleProvider::new(provider_config);
-        let agent_tools = self.resolve_enabled_agent_tools();
+        let agent_tools = self.resolve_enabled_agent_tools(correlation_id);
         let enabled_tool_names: Vec<String> = agent_tools
             .iter()
             .map(|tool| tool.name().to_string())
@@ -340,6 +469,7 @@ impl ChatService {
             Some(cwd),
         )
         .map_err(|e| format!("failed creating agent runtime: {e}"))?;
+        apply_tool_routing_hints(&mut agent.system_prompt, &enabled_tool_names);
 
         let (cancel_tx, cancel_rx) = watch::channel(false);
         let cancelled_set = Arc::clone(&self.cancelled_correlations);
@@ -362,6 +492,7 @@ impl ChatService {
         let mut reasoning = String::new();
         let mut assistant_from_turn_end: Option<String> = None;
         let mut agent_error: Option<String> = None;
+        let mut assistant_delta_emitted = false;
 
         let image_payloads = attachments
             .map(|items| {
@@ -374,10 +505,16 @@ impl ChatService {
             .filter(|items| !items.is_empty());
 
         let _events = agent
-            .run_collect_with_callback(user_message.to_string(), image_payloads, Some(cancel_rx), |event| {
-                match event {
+            .run_collect_with_callback(
+                user_message.to_string(),
+                image_payloads,
+                Some(cancel_rx),
+                |event| match event {
                     AgentEvent::TextDelta { delta } => {
                         assistant.push_str(delta.as_str());
+                        if !delta.is_empty() {
+                            assistant_delta_emitted = true;
+                        }
                         self.hub.emit(
                             self.hub.make_event(
                                 correlation_id,
@@ -489,8 +626,8 @@ impl ChatService {
                         agent_error = Some(error.clone());
                     }
                     _ => {}
-                }
-            })
+                },
+            )
             .await;
         cancel_task.abort();
 
@@ -506,6 +643,23 @@ impl ChatService {
                 "agent produced no assistant text and no recoverable fallback".to_string()
             });
             return Err(message);
+        }
+        if !assistant_delta_emitted {
+            self.hub.emit(
+                self.hub.make_event(
+                    correlation_id,
+                    Subsystem::Service,
+                    "chat.stream.chunk",
+                    EventStage::Progress,
+                    EventSeverity::Info,
+                    serde_json::to_value(ChatStreamChunkPayload {
+                        conversation_id: conversation_id.to_string(),
+                        delta: assistant.clone(),
+                        done: false,
+                    })
+                    .unwrap_or_else(|_| json!({})),
+                ),
+            );
         }
 
         self.hub.emit(
@@ -589,14 +743,10 @@ impl ChatService {
     fn resolve_agent_provider_config(
         &self,
         thinking_enabled: bool,
+        requested_model_id: Option<&str>,
+        requested_model_name: Option<&str>,
         requested_max_tokens: Option<u32>,
     ) -> ProviderConfig {
-        let verified_llm = self
-            .api_registry
-            .verified_for_agent()
-            .into_iter()
-            .find(|record| matches!(record.api_type, ApiConnectionType::Llm));
-
         let env_endpoint =
             std::env::var("FOUNDATION_LLM_ENDPOINT").unwrap_or_else(|_| "".to_string());
         let env_model =
@@ -607,21 +757,88 @@ impl ChatService {
             env_endpoint
         };
         let max_tokens = resolve_chat_max_tokens(requested_max_tokens).unwrap_or(8192) as i64;
+        let selected_name = requested_model_name
+            .map(str::trim)
+            .filter(|v| !v.is_empty())
+            .map(ToOwned::to_owned);
+
+        if let Some(model_id) = requested_model_id.map(str::trim).filter(|v| !v.is_empty()) {
+            if let Some(rest) = model_id.strip_prefix("api:") {
+                let id = rest.split(':').next().unwrap_or("").trim();
+                if !id.is_empty() {
+                    if let Some(conn) =
+                        self.api_registry
+                            .verified_for_agent()
+                            .into_iter()
+                            .find(|record| {
+                                record.id == id && matches!(record.api_type, ApiConnectionType::Llm)
+                            })
+                    {
+                        let endpoint = resolve_chat_endpoint(
+                            conn.api_url.as_str(),
+                            conn.api_standard_path.as_deref(),
+                        );
+                        return ProviderConfig {
+                            api_key: Some(conn.api_key),
+                            base_url: Some(endpoint),
+                            model: selected_name
+                                .clone()
+                                .or(conn.model_name)
+                                .unwrap_or(env_model.clone()),
+                            max_tokens,
+                            temperature: Some(0.7),
+                            thinking_level: if thinking_enabled {
+                                "medium".to_string()
+                            } else {
+                                "none".to_string()
+                            },
+                            provider: Some("openai-compatible".to_string()),
+                        };
+                    }
+                }
+            }
+
+            if model_id.starts_with("local:") {
+                return ProviderConfig {
+                    api_key: std::env::var("OPENAI_API_KEY").ok(),
+                    base_url: Some(default_base.clone()),
+                    model: selected_name.clone().unwrap_or(env_model.clone()),
+                    max_tokens,
+                    temperature: Some(0.7),
+                    thinking_level: if thinking_enabled {
+                        "medium".to_string()
+                    } else {
+                        "none".to_string()
+                    },
+                    provider: Some("openai-compatible".to_string()),
+                };
+            }
+        }
+
+        let verified_llm = self
+            .api_registry
+            .verified_for_agent()
+            .into_iter()
+            .find(|record| matches!(record.api_type, ApiConnectionType::Llm));
 
         match verified_llm {
-            Some(conn) => ProviderConfig {
-                api_key: Some(conn.api_key),
-                base_url: Some(conn.api_url),
-                model: conn.model_name.unwrap_or(env_model),
-                max_tokens,
-                temperature: Some(0.7),
-                thinking_level: if thinking_enabled {
-                    "medium".to_string()
-                } else {
-                    "none".to_string()
-                },
-                provider: Some("openai-compatible".to_string()),
-            },
+            Some(conn) => {
+                let endpoint =
+                    resolve_chat_endpoint(conn.api_url.as_str(), conn.api_standard_path.as_deref());
+                ProviderConfig {
+                    api_key: Some(conn.api_key),
+                    base_url: Some(endpoint),
+                    model: selected_name.or(conn.model_name).unwrap_or(env_model),
+                    max_tokens,
+                    temperature: Some(0.7),
+                    thinking_level: if thinking_enabled {
+                        "medium".to_string()
+                    } else {
+                        "none".to_string()
+                    },
+                    provider: Some("openai-compatible".to_string()),
+                }
+            }
             None => ProviderConfig {
                 api_key: std::env::var("OPENAI_API_KEY").ok(),
                 base_url: Some(default_base),
@@ -638,7 +855,7 @@ impl ChatService {
         }
     }
 
-    fn resolve_enabled_agent_tools(&self) -> Vec<Box<dyn AgentTool>> {
+    fn resolve_enabled_agent_tools(&self, correlation_id: &str) -> Vec<Box<dyn AgentTool>> {
         let enabled_ids: HashSet<String> = self
             .workspace_tools
             .list()
@@ -650,7 +867,7 @@ impl ChatService {
         let mut resolved = Vec::<Box<dyn AgentTool>>::new();
         for binding in agent_tool_bindings() {
             if enabled_ids.contains(binding.workspace_tool_id) {
-                (binding.bind)(self, &mut resolved);
+                (binding.bind)(self, &mut resolved, correlation_id);
             }
         }
         resolved
@@ -1492,6 +1709,48 @@ impl ChatService {
             ));
         }
         Some(lines.join("\n"))
+    }
+}
+
+fn apply_tool_routing_hints(system_prompt: &mut String, enabled_tool_names: &[String]) {
+    if enabled_tool_names.iter().any(|name| name == "chart_set") {
+        system_prompt.push_str(
+            "\n\nTool routing hint:\n- If the user asks for a flowchart, diagram, architecture map, process map, or system overview, use `chart_set` with a valid Mermaid definition and present the result in the Chart workspace tool.\n- For Mermaid flowcharts, start with `flowchart TD` or `flowchart LR`. Use edge labels like `A -->|label| B`, `A -- text --> B`, or dotted arrows like `A -.->|label| B`. Do not use invalid dotted-label forms such as `A -.|label|-. B`.",
+        );
+    }
+}
+
+fn resolve_chat_endpoint(api_url: &str, api_standard_path: Option<&str>) -> String {
+    let base = api_url.trim().trim_end_matches('/');
+    let path = api_standard_path
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("/chat/completions");
+    if path.starts_with("http://") || path.starts_with("https://") {
+        return path.to_string();
+    }
+    let lower = base.to_ascii_lowercase();
+    if lower.ends_with("/chat/completions") {
+        return base.to_string();
+    }
+    if path.starts_with('/') {
+        format!("{base}{path}")
+    } else {
+        format!("{base}/{path}")
+    }
+}
+
+fn resolve_chat_route_mode(requested: Option<&str>) -> ChatRouteMode {
+    let value = requested
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+        .map(ToOwned::to_owned)
+        .or_else(|| std::env::var("FOUNDATION_CHAT_MODE").ok())
+        .unwrap_or_else(|| "auto".to_string());
+    match value.trim().to_ascii_lowercase().as_str() {
+        "agent" => ChatRouteMode::Agent,
+        "legacy" | "direct" | "llama" | "local" => ChatRouteMode::Legacy,
+        _ => ChatRouteMode::Auto,
     }
 }
 

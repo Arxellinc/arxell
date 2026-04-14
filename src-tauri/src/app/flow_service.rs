@@ -1,14 +1,17 @@
+use crate::api_registry::ApiRegistryService;
 use crate::contracts::{
-    EventSeverity, EventStage, FlowIterationStatus, FlowListRunsRequest, FlowListRunsResponse,
-    FlowMode, FlowRerunValidationRequest, FlowRerunValidationResponse, FlowRerunValidationResult,
-    FlowRunRecord, FlowRunStatus, FlowStartRequest, FlowStartResponse, FlowStatusRequest,
-    FlowStatusResponse, FlowStepState, FlowStepStatus, FlowStopRequest, FlowStopResponse,
-    Subsystem,
+    ApiConnectionType, EventSeverity, EventStage, FlowIterationStatus, FlowListRunsRequest,
+    FlowListRunsResponse, FlowMode, FlowNudgeRequest, FlowNudgeResponse, FlowPauseRequest,
+    FlowPauseResponse, FlowRerunValidationRequest, FlowRerunValidationResponse,
+    FlowRerunValidationResult, FlowRunRecord, FlowRunStatus, FlowStartRequest, FlowStartResponse,
+    FlowStatusRequest, FlowStatusResponse, FlowStepState, FlowStepStatus, FlowStopRequest,
+    FlowStopResponse, Subsystem,
 };
 use crate::observability::EventHub;
+use git2::{Cred, IndexAddOption, PushOptions, RemoteCallbacks, Repository, Signature};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::{Arc, Mutex};
@@ -45,6 +48,8 @@ struct FlowRuntimeState {
     runs: Vec<FlowRunRecord>,
     active_run_id: Option<String>,
     cancel_senders: HashMap<String, watch::Sender<bool>>,
+    paused_run_ids: HashSet<String>,
+    nudges_by_run: HashMap<String, Vec<String>>,
 }
 
 #[derive(Debug, Clone)]
@@ -60,12 +65,35 @@ pub struct ValidationExecutionResult {
 #[derive(Clone)]
 pub struct FlowService {
     hub: EventHub,
+    api_registry: Option<Arc<ApiRegistryService>>,
     state: Arc<Mutex<FlowRuntimeState>>,
     persist_path: PathBuf,
 }
 
+const FLOW_GIT_NATIVE_V1_ENV: &str = "FLOW_GIT_NATIVE_V1";
+const FLOW_LLM_ENABLED_ENV: &str = "FLOW_LLM_ENABLED";
+
+#[derive(Debug, Clone, Serialize)]
+struct FlowOpenAiMessage {
+    role: String,
+    content: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct FlowOpenAiRequest {
+    model: String,
+    messages: Vec<FlowOpenAiMessage>,
+    stream: bool,
+    max_tokens: Option<u32>,
+    temperature: Option<f32>,
+}
+
 impl FlowService {
     pub fn new(hub: EventHub) -> Self {
+        Self::new_with_registry(hub, None)
+    }
+
+    pub fn new_with_registry(hub: EventHub, api_registry: Option<Arc<ApiRegistryService>>) -> Self {
         let persist_path = default_persist_path();
         let runs = load_runs(&persist_path);
         let active_run_id = runs
@@ -74,10 +102,13 @@ impl FlowService {
             .map(|run| run.run_id.clone());
         Self {
             hub,
+            api_registry,
             state: Arc::new(Mutex::new(FlowRuntimeState {
                 runs,
                 active_run_id,
                 cancel_senders: HashMap::new(),
+                paused_run_ids: HashSet::new(),
+                nudges_by_run: HashMap::new(),
             })),
             persist_path,
         }
@@ -111,6 +142,7 @@ impl FlowService {
             .unwrap_or_else(|| "specs/*.md".to_string());
         let backpressure_commands = request.backpressure_commands.clone().unwrap_or_default();
         let implement_command = request.implement_command.clone().unwrap_or_default();
+        let phase_models = request.phase_models.clone().unwrap_or_default();
 
         let mut state = self
             .state
@@ -140,6 +172,7 @@ impl FlowService {
             specs_glob,
             backpressure_commands,
             implement_command,
+            phase_models,
             summary: None,
             iterations: vec![],
         };
@@ -234,6 +267,77 @@ impl FlowService {
             correlation_id: request.correlation_id,
             run_id: request.run_id,
             stopped,
+        })
+    }
+
+    pub fn pause(&self, request: FlowPauseRequest) -> Result<FlowPauseResponse, String> {
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| "flow runtime state lock poisoned".to_string())?;
+        let exists = state.runs.iter().any(|run| run.run_id == request.run_id);
+        if !exists {
+            return Err(format!("flow run not found: {}", request.run_id));
+        }
+        if request.paused {
+            state.paused_run_ids.insert(request.run_id.clone());
+        } else {
+            state.paused_run_ids.remove(request.run_id.as_str());
+        }
+        drop(state);
+        self.hub.emit(self.hub.make_event(
+            request.correlation_id.as_str(),
+            Subsystem::Service,
+            "flow.run.paused",
+            EventStage::Progress,
+            EventSeverity::Info,
+            json!({
+                "runId": request.run_id,
+                "paused": request.paused
+            }),
+        ));
+        Ok(FlowPauseResponse {
+            correlation_id: request.correlation_id,
+            run_id: request.run_id,
+            paused: request.paused,
+            updated: true,
+        })
+    }
+
+    pub fn nudge(&self, request: FlowNudgeRequest) -> Result<FlowNudgeResponse, String> {
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| "flow runtime state lock poisoned".to_string())?;
+        let exists = state.runs.iter().any(|run| run.run_id == request.run_id);
+        if !exists {
+            return Err(format!("flow run not found: {}", request.run_id));
+        }
+        let item = state
+            .nudges_by_run
+            .entry(request.run_id.clone())
+            .or_insert_with(Vec::new);
+        item.push(request.message.clone());
+        if item.len() > 20 {
+            let overflow = item.len() - 20;
+            item.drain(0..overflow);
+        }
+        drop(state);
+        self.hub.emit(self.hub.make_event(
+            request.correlation_id.as_str(),
+            Subsystem::Service,
+            "flow.run.nudge",
+            EventStage::Progress,
+            EventSeverity::Info,
+            json!({
+                "runId": request.run_id,
+                "message": request.message
+            }),
+        ));
+        Ok(FlowNudgeResponse {
+            correlation_id: request.correlation_id,
+            run_id: request.run_id,
+            accepted: true,
         })
     }
 
@@ -394,6 +498,15 @@ impl FlowService {
 
         let max_iterations = run.max_iterations.unwrap_or(1).max(1);
         for iteration in 1..=max_iterations {
+            if self.wait_if_paused(run_id.as_str(), &cancel_rx).await {
+                self.finish_run(
+                    correlation_id.as_str(),
+                    run_id.as_str(),
+                    FlowRunStatus::Stopped,
+                    Some("Stopped by user".to_string()),
+                );
+                return;
+            }
             if *cancel_rx.borrow() {
                 self.finish_run(
                     correlation_id.as_str(),
@@ -413,6 +526,15 @@ impl FlowService {
 
             let mut selected_task: Option<String> = None;
             for step in steps {
+                if self.wait_if_paused(run_id.as_str(), &cancel_rx).await {
+                    self.finish_run(
+                        correlation_id.as_str(),
+                        run_id.as_str(),
+                        FlowRunStatus::Stopped,
+                        Some("Stopped by user".to_string()),
+                    );
+                    return;
+                }
                 if *cancel_rx.borrow() {
                     self.finish_run(
                         correlation_id.as_str(),
@@ -593,9 +715,32 @@ impl FlowService {
             "select_task" => {
                 let plan_path = resolve_workspace_path(run.plan_path.as_str());
                 let task = select_next_plan_task(plan_path.as_path())?;
+                if !flow_llm_enabled() {
+                    return Ok(task);
+                }
+                if let Some(candidate) =
+                    self.llm_select_task(plan_path.as_path(), run, iteration, correlation_id)?
+                {
+                    return Ok(Some(candidate));
+                }
                 Ok(task)
             }
-            "investigate" => Ok(Some("Investigation completed".to_string())),
+            "investigate" => {
+                if !flow_llm_enabled() {
+                    return Ok(Some("Investigation completed".to_string()));
+                }
+                let plan_path = resolve_workspace_path(run.plan_path.as_str());
+                let specs = collect_spec_files(run.specs_glob.as_str())?;
+                let strategy = self.llm_investigate(
+                    run,
+                    iteration,
+                    selected_task.as_deref(),
+                    plan_path.as_path(),
+                    specs.as_slice(),
+                    correlation_id,
+                )?;
+                Ok(Some(strategy))
+            }
             "implement" => {
                 if run.dry_run {
                     Ok(Some("Dry run: implementation skipped".to_string()))
@@ -715,7 +860,13 @@ impl FlowService {
             "update_plan" => {
                 if matches!(run.mode, FlowMode::Plan) {
                     let plan_path = resolve_workspace_path(run.plan_path.as_str());
-                    if !plan_path.exists() {
+                    if flow_llm_enabled() {
+                        let specs = collect_spec_files(run.specs_glob.as_str())?;
+                        let generated =
+                            self.llm_generate_plan_seed(run, specs.as_slice(), correlation_id)?;
+                        std::fs::write(plan_path.as_path(), generated)
+                            .map_err(|e| format!("failed writing plan file: {e}"))?;
+                    } else if !plan_path.exists() {
                         std::fs::write(
                             plan_path.as_path(),
                             "# Implementation Plan\n\n- [ ] Seed first task from specs\n",
@@ -745,10 +896,46 @@ impl FlowService {
             "commit" => {
                 if run.dry_run {
                     Ok(Some("Dry run: commit skipped".to_string()))
-                } else {
+                } else if !flow_git_native_enabled() {
                     Ok(Some(
-                        "Commit hook ready (disabled in v1 for safety)".to_string(),
+                        "Native git disabled (set FLOW_GIT_NATIVE_V1=1 to enable)".to_string(),
                     ))
+                } else {
+                    self.emit_git_event(
+                        correlation_id,
+                        "flow.git.commit.start",
+                        EventStage::Start,
+                        EventSeverity::Info,
+                        run.run_id.as_str(),
+                        iteration,
+                        json!({ "step": step }),
+                    );
+                    match perform_native_git_commit(run.run_id.as_str(), iteration) {
+                        Ok(summary) => {
+                            self.emit_git_event(
+                                correlation_id,
+                                "flow.git.commit.complete",
+                                EventStage::Complete,
+                                EventSeverity::Info,
+                                run.run_id.as_str(),
+                                iteration,
+                                json!({ "step": step, "result": summary }),
+                            );
+                            Ok(Some(summary))
+                        }
+                        Err(error) => {
+                            self.emit_git_event(
+                                correlation_id,
+                                "flow.git.commit.error",
+                                EventStage::Error,
+                                EventSeverity::Error,
+                                run.run_id.as_str(),
+                                iteration,
+                                json!({ "step": step, "error": error }),
+                            );
+                            Err(error)
+                        }
+                    }
                 }
             }
             "push" => {
@@ -756,10 +943,46 @@ impl FlowService {
                     Ok(Some("Auto-push disabled".to_string()))
                 } else if run.dry_run {
                     Ok(Some("Dry run: push skipped".to_string()))
-                } else {
+                } else if !flow_git_native_enabled() {
                     Ok(Some(
-                        "Push hook ready (disabled in v1 for safety)".to_string(),
+                        "Native git disabled (set FLOW_GIT_NATIVE_V1=1 to enable)".to_string(),
                     ))
+                } else {
+                    self.emit_git_event(
+                        correlation_id,
+                        "flow.git.push.start",
+                        EventStage::Start,
+                        EventSeverity::Info,
+                        run.run_id.as_str(),
+                        iteration,
+                        json!({ "step": step }),
+                    );
+                    match perform_native_git_push() {
+                        Ok(summary) => {
+                            self.emit_git_event(
+                                correlation_id,
+                                "flow.git.push.complete",
+                                EventStage::Complete,
+                                EventSeverity::Info,
+                                run.run_id.as_str(),
+                                iteration,
+                                json!({ "step": step, "result": summary }),
+                            );
+                            Ok(Some(summary))
+                        }
+                        Err(error) => {
+                            self.emit_git_event(
+                                correlation_id,
+                                "flow.git.push.error",
+                                EventStage::Error,
+                                EventSeverity::Error,
+                                run.run_id.as_str(),
+                                iteration,
+                                json!({ "step": step, "error": error }),
+                            );
+                            Err(error)
+                        }
+                    }
                 }
             }
             _ => Err(format!("unknown flow step: {step}")),
@@ -957,6 +1180,449 @@ impl FlowService {
         ));
     }
 
+    fn emit_git_event(
+        &self,
+        correlation_id: &str,
+        action: &str,
+        stage: EventStage,
+        severity: EventSeverity,
+        run_id: &str,
+        iteration: u32,
+        payload: serde_json::Value,
+    ) {
+        let mut envelope = Map::<String, Value>::new();
+        envelope.insert("runId".to_string(), Value::String(run_id.to_string()));
+        envelope.insert(
+            "iteration".to_string(),
+            Value::Number(serde_json::Number::from(iteration)),
+        );
+        if let Value::Object(map) = payload {
+            for (key, value) in map {
+                envelope.insert(key, value);
+            }
+        } else {
+            envelope.insert("detail".to_string(), payload);
+        }
+        self.hub.emit(self.hub.make_event(
+            correlation_id,
+            Subsystem::Service,
+            action,
+            stage,
+            severity,
+            Value::Object(envelope),
+        ));
+    }
+
+    async fn wait_if_paused(&self, run_id: &str, cancel_rx: &watch::Receiver<bool>) -> bool {
+        loop {
+            if *cancel_rx.borrow() {
+                return true;
+            }
+            let paused = match self.state.lock() {
+                Ok(state) => state.paused_run_ids.contains(run_id),
+                Err(_) => false,
+            };
+            if !paused {
+                return false;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+        }
+    }
+
+    fn recent_nudges(&self, run_id: &str) -> Vec<String> {
+        let state = match self.state.lock() {
+            Ok(value) => value,
+            Err(_) => return vec![],
+        };
+        state
+            .nudges_by_run
+            .get(run_id)
+            .map(|items| items.iter().rev().take(5).cloned().collect::<Vec<_>>())
+            .unwrap_or_default()
+    }
+
+    fn resolve_phase_model_override(&self, phase: &str) -> Option<String> {
+        let state = self.state.lock().ok()?;
+        let run_id = state.active_run_id.as_ref()?;
+        let run = state.runs.iter().find(|run| &run.run_id == run_id)?;
+        run.phase_models
+            .get(phase)
+            .map(|value| normalize_phase_model_value(value.trim()))
+            .filter(|value| !value.is_empty() && value != "auto")
+    }
+
+    fn llm_select_task(
+        &self,
+        plan_path: &Path,
+        run: &FlowRunRecord,
+        iteration: u32,
+        correlation_id: &str,
+    ) -> Result<Option<String>, String> {
+        let plan = std::fs::read_to_string(plan_path).unwrap_or_default();
+        let open_tasks: Vec<String> = plan
+            .lines()
+            .map(str::trim)
+            .filter(|line| line.starts_with("- [ ]"))
+            .map(|line| line.trim_start_matches("- [ ]").trim().to_string())
+            .filter(|line| !line.is_empty())
+            .collect();
+        if open_tasks.is_empty() {
+            return Ok(None);
+        }
+        let prompt = format!(
+            "You are selecting the next implementation task.\nRun: {}\nMode: {:?}\nIteration: {}\nRecent nudges:\n{}\nOpen tasks:\n{}\n\nReturn ONLY the exact task text of the best next task.",
+            run.run_id,
+            run.mode,
+            iteration,
+            {
+                let nudges = self.recent_nudges(run.run_id.as_str());
+                if nudges.is_empty() {
+                    "(none)".to_string()
+                } else {
+                    nudges.join(" | ")
+                }
+            },
+            open_tasks
+                .iter()
+                .enumerate()
+                .map(|(idx, task)| format!("{}. {}", idx + 1, task))
+                .collect::<Vec<_>>()
+                .join("\n")
+        );
+        let text = self.llm_generate_text(
+            run.run_id.as_str(),
+            correlation_id,
+            "Select the single best next task from the list. Output task text only.",
+            prompt.as_str(),
+            Some("select_task"),
+            Some(220),
+            Some(0.2),
+        )?;
+        let selected = text.lines().next().unwrap_or("").trim().to_string();
+        if selected.is_empty() {
+            return Ok(None);
+        }
+        if open_tasks.iter().any(|task| task == &selected) {
+            return Ok(Some(selected));
+        }
+        let normalized = selected.to_lowercase();
+        if let Some(matched) = open_tasks
+            .iter()
+            .find(|task| task.to_lowercase().contains(normalized.as_str()))
+        {
+            return Ok(Some(matched.clone()));
+        }
+        Ok(None)
+    }
+
+    fn llm_investigate(
+        &self,
+        run: &FlowRunRecord,
+        iteration: u32,
+        selected_task: Option<&str>,
+        plan_path: &Path,
+        specs: &[PathBuf],
+        correlation_id: &str,
+    ) -> Result<String, String> {
+        let plan_excerpt = std::fs::read_to_string(plan_path)
+            .unwrap_or_default()
+            .lines()
+            .take(80)
+            .collect::<Vec<_>>()
+            .join("\n");
+        let spec_preview = specs
+            .iter()
+            .take(6)
+            .map(|p| p.to_string_lossy().to_string())
+            .collect::<Vec<_>>()
+            .join(", ");
+        let prompt = format!(
+            "Run: {}\nMode: {:?}\nIteration: {}\nSelected task: {}\nRecent nudges: {}\nPlan excerpt:\n{}\nSpecs: {}\n\nProduce a concise investigation outcome with:\n1) assumptions\n2) implementation approach\n3) risks\n4) validation focus",
+            run.run_id,
+            run.mode,
+            iteration,
+            selected_task.unwrap_or("(none)"),
+            {
+                let nudges = self.recent_nudges(run.run_id.as_str());
+                if nudges.is_empty() {
+                    "(none)".to_string()
+                } else {
+                    nudges.join(" | ")
+                }
+            },
+            plan_excerpt,
+            if spec_preview.is_empty() { "(none)" } else { spec_preview.as_str() }
+        );
+        self.llm_generate_text(
+            run.run_id.as_str(),
+            correlation_id,
+            "You are a pragmatic staff engineer. Return concise, high-signal execution guidance.",
+            prompt.as_str(),
+            Some("investigate"),
+            Some(700),
+            Some(0.25),
+        )
+    }
+
+    fn llm_generate_plan_seed(
+        &self,
+        run: &FlowRunRecord,
+        specs: &[PathBuf],
+        correlation_id: &str,
+    ) -> Result<String, String> {
+        let prompt_path = resolve_workspace_path(run.prompt_plan_path.as_str());
+        let prompt_seed = std::fs::read_to_string(prompt_path).unwrap_or_default();
+        let spec_list = specs
+            .iter()
+            .take(10)
+            .map(|path| path.to_string_lossy().to_string())
+            .collect::<Vec<_>>()
+            .join("\n- ");
+        let user_prompt = format!(
+            "Create an actionable IMPLEMENTATION_PLAN.md for this project.\nSpecs files:\n- {}\n\nCustom planning prompt:\n{}\n\nRequirements:\n- Markdown\n- Checklist format '- [ ] task'\n- 5-12 tasks\n- Tasks should be testable and sequenced",
+            if spec_list.is_empty() {
+                "(none)".to_string()
+            } else {
+                spec_list
+            },
+            prompt_seed
+        );
+        self.llm_generate_text(
+            run.run_id.as_str(),
+            correlation_id,
+            "You are generating implementation plans for iterative software delivery.",
+            user_prompt.as_str(),
+            Some("update_plan"),
+            Some(900),
+            Some(0.2),
+        )
+    }
+
+    fn llm_generate_text(
+        &self,
+        run_id: &str,
+        correlation_id: &str,
+        system_prompt: &str,
+        user_prompt: &str,
+        phase: Option<&str>,
+        max_tokens: Option<u32>,
+        temperature: Option<f32>,
+    ) -> Result<String, String> {
+        let (endpoint, mut model, api_key) = resolve_flow_provider(self.api_registry.as_ref())?;
+        if let Some(phase_name) = phase {
+            if let Some(override_model) = self.resolve_phase_model_override(phase_name) {
+                model = override_model;
+            }
+        }
+        let payload = FlowOpenAiRequest {
+            model: model.clone(),
+            messages: vec![
+                FlowOpenAiMessage {
+                    role: "system".to_string(),
+                    content: system_prompt.to_string(),
+                },
+                FlowOpenAiMessage {
+                    role: "user".to_string(),
+                    content: user_prompt.to_string(),
+                },
+            ],
+            stream: false,
+            max_tokens: max_tokens.or(Some(900)),
+            temperature,
+        };
+        let client = reqwest::blocking::Client::builder()
+            .connect_timeout(std::time::Duration::from_secs(8))
+            .timeout(std::time::Duration::from_secs(70))
+            .build()
+            .map_err(|e| format!("failed creating LLM client: {e}"))?;
+        let mut req = client
+            .post(endpoint.as_str())
+            .header("Content-Type", "application/json")
+            .header("User-Agent", "arxell-lite/flow");
+        if let Some(key) = api_key {
+            req = req
+                .header("Authorization", format!("Bearer {key}"))
+                .header("x-api-key", key);
+        }
+        let request_once = |model_name: &str| -> Result<String, String> {
+            let mut request_payload = payload.clone();
+            request_payload.model = model_name.to_string();
+            let response = req
+                .try_clone()
+                .ok_or_else(|| "failed cloning flow LLM request".to_string())?
+                .json(&request_payload)
+                .send()
+                .map_err(|e| format!("flow LLM request failed: {e}"))?;
+            if !response.status().is_success() {
+                let status = response.status();
+                let body = response
+                    .text()
+                    .unwrap_or_else(|_| "<unreadable body>".to_string());
+                return Err(format!(
+                    "flow LLM request failed (HTTP {}): {}",
+                    status.as_u16(),
+                    body.chars().take(260).collect::<String>()
+                ));
+            }
+            let body = response
+                .json::<Value>()
+                .map_err(|e| format!("failed parsing flow LLM response: {e}"))?;
+            let text = extract_generated_text_from_value(&body);
+            if text.trim().is_empty() {
+                return Err("flow LLM response was empty".to_string());
+            }
+            Ok(text.trim().to_string())
+        };
+
+        let max_retries = 2u32;
+        let phase_name = phase.unwrap_or("unknown");
+        let mut last_error: Option<String> = None;
+        for attempt in 0..=max_retries {
+            match request_once(model.as_str()) {
+                Ok(text) => return Ok(text),
+                Err(error) => {
+                    if !is_model_unavailable_error(error.as_str()) {
+                        return Err(error);
+                    }
+                    last_error = Some(error.clone());
+                    self.emit_model_recovery_event(
+                        correlation_id,
+                        run_id,
+                        phase_name,
+                        model.as_str(),
+                        None,
+                        error.as_str(),
+                        attempt + 1,
+                        max_retries,
+                        "retrying",
+                    );
+                    if attempt < max_retries {
+                        std::thread::sleep(std::time::Duration::from_millis(1000));
+                    }
+                }
+            }
+        }
+
+        if self.is_run_paused(run_id) {
+            self.emit_model_recovery_event(
+                correlation_id,
+                run_id,
+                phase_name,
+                model.as_str(),
+                None,
+                "Paused by user before fallback switch",
+                max_retries,
+                max_retries,
+                "paused",
+            );
+            return Err(
+                last_error.unwrap_or_else(|| "flow LLM unavailable while paused".to_string())
+            );
+        }
+
+        if let Some(fallback_model) = self.select_fallback_model(model.as_str(), phase) {
+            if fallback_model != model {
+                self.emit_model_recovery_event(
+                    correlation_id,
+                    run_id,
+                    phase_name,
+                    model.as_str(),
+                    Some(fallback_model.as_str()),
+                    "Switching to fallback model",
+                    max_retries,
+                    max_retries,
+                    "switching",
+                );
+                if let Some(phase_value) = phase {
+                    self.set_phase_model_override(run_id, phase_value, fallback_model.as_str());
+                }
+                let text = request_once(fallback_model.as_str())?;
+                self.emit_model_recovery_event(
+                    correlation_id,
+                    run_id,
+                    phase_name,
+                    model.as_str(),
+                    Some(fallback_model.as_str()),
+                    "Fallback model active",
+                    max_retries,
+                    max_retries,
+                    "switched",
+                );
+                return Ok(text);
+            }
+        }
+
+        Err(last_error.unwrap_or_else(|| "flow LLM request failed".to_string()))
+    }
+
+    fn set_phase_model_override(&self, run_id: &str, phase: &str, model: &str) {
+        let mut state = match self.state.lock() {
+            Ok(value) => value,
+            Err(_) => return,
+        };
+        if let Some(run) = state.runs.iter_mut().find(|run| run.run_id == run_id) {
+            run.phase_models
+                .insert(phase.to_string(), model.to_string());
+            persist_runs(&self.persist_path, &state.runs);
+        }
+    }
+
+    fn is_run_paused(&self, run_id: &str) -> bool {
+        match self.state.lock() {
+            Ok(state) => state.paused_run_ids.contains(run_id),
+            Err(_) => false,
+        }
+    }
+
+    fn select_fallback_model(&self, current_model: &str, phase: Option<&str>) -> Option<String> {
+        let phase_override =
+            phase.and_then(|phase_name| self.resolve_phase_model_override(phase_name));
+        if let Some(value) = phase_override {
+            let normalized = normalize_phase_model_value(value.as_str());
+            if !normalized.is_empty() && normalized != current_model {
+                return Some(normalized);
+            }
+        }
+        fallback_model_candidates(self.api_registry.as_ref(), current_model)
+            .into_iter()
+            .next()
+    }
+
+    fn emit_model_recovery_event(
+        &self,
+        correlation_id: &str,
+        run_id: &str,
+        phase: &str,
+        model: &str,
+        fallback_model: Option<&str>,
+        reason: &str,
+        attempt: u32,
+        max_attempts: u32,
+        status: &str,
+    ) {
+        self.hub.emit(self.hub.make_event(
+            correlation_id,
+            Subsystem::Service,
+            "flow.model.unavailable",
+            EventStage::Progress,
+            if status == "paused" {
+                EventSeverity::Warn
+            } else {
+                EventSeverity::Info
+            },
+            json!({
+                "runId": run_id,
+                "phase": phase,
+                "model": model,
+                "fallbackModel": fallback_model,
+                "reason": reason,
+                "attempt": attempt,
+                "maxAttempts": max_attempts,
+                "status": status,
+            }),
+        ));
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn update_step_state(
         &self,
@@ -1030,7 +1696,12 @@ impl Default for FlowService {
 }
 
 fn default_persist_path() -> PathBuf {
-    std::env::temp_dir().join("arxell-lite-flow-runs.json")
+    let path = flow_state_root().join("flow-runs.json");
+    migrate_legacy_flow_file(
+        std::env::temp_dir().join("arxell-lite-flow-runs.json"),
+        path.as_path(),
+    );
+    path
 }
 
 fn load_runs(path: &Path) -> Vec<FlowRunRecord> {
@@ -1052,6 +1723,46 @@ fn persist_runs(path: &Path, runs: &[FlowRunRecord]) {
     if let Ok(json) = serde_json::to_string_pretty(&payload) {
         let _ = std::fs::write(path, json);
     }
+}
+
+fn flow_state_root() -> PathBuf {
+    if let Ok(raw) = std::env::var("XDG_STATE_HOME") {
+        let trimmed = raw.trim();
+        if !trimmed.is_empty() {
+            return PathBuf::from(trimmed).join("arxell-lite");
+        }
+    }
+    if let Ok(raw) = std::env::var("APPDATA") {
+        let trimmed = raw.trim();
+        if !trimmed.is_empty() {
+            return PathBuf::from(trimmed).join("arxell-lite");
+        }
+    }
+    if let Ok(raw) = std::env::var("HOME") {
+        let home = PathBuf::from(raw.trim());
+        #[cfg(target_os = "macos")]
+        {
+            return home
+                .join("Library")
+                .join("Application Support")
+                .join("arxell-lite");
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            return home.join(".local").join("state").join("arxell-lite");
+        }
+    }
+    std::env::temp_dir()
+}
+
+fn migrate_legacy_flow_file(legacy: PathBuf, destination: &Path) {
+    if destination.exists() || !legacy.exists() {
+        return;
+    }
+    if let Some(parent) = destination.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let _ = std::fs::copy(legacy, destination);
 }
 
 fn now_ms() -> i64 {
@@ -1237,6 +1948,286 @@ fn execute_validation_command(command: &str) -> Result<ValidationExecutionResult
     })
 }
 
+fn flow_git_native_enabled() -> bool {
+    match std::env::var(FLOW_GIT_NATIVE_V1_ENV) {
+        Ok(value) => {
+            let normalized = value.trim().to_lowercase();
+            !matches!(normalized.as_str(), "0" | "false" | "no" | "off")
+        }
+        Err(_) => true,
+    }
+}
+
+fn flow_llm_enabled() -> bool {
+    match std::env::var(FLOW_LLM_ENABLED_ENV) {
+        Ok(value) => {
+            let normalized = value.trim().to_lowercase();
+            !matches!(normalized.as_str(), "0" | "false" | "no" | "off")
+        }
+        Err(_) => true,
+    }
+}
+
+fn resolve_flow_provider(
+    api_registry: Option<&Arc<ApiRegistryService>>,
+) -> Result<(String, String, Option<String>), String> {
+    if let Some(registry) = api_registry {
+        if let Some(record) = registry
+            .verified_for_agent()
+            .into_iter()
+            .find(|record| matches!(record.api_type, ApiConnectionType::Llm))
+        {
+            let endpoint = resolve_flow_chat_endpoint(
+                record.api_url.as_str(),
+                record.api_standard_path.as_deref(),
+            );
+            let model = record
+                .model_name
+                .unwrap_or_else(|| fallback_flow_model_name());
+            return Ok((endpoint, model, Some(record.api_key)));
+        }
+    }
+    Ok((
+        fallback_flow_endpoint(),
+        fallback_flow_model_name(),
+        std::env::var("OPENAI_API_KEY").ok(),
+    ))
+}
+
+fn fallback_model_candidates(
+    api_registry: Option<&Arc<ApiRegistryService>>,
+    current_model: &str,
+) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    if let Some(registry) = api_registry {
+        for record in registry
+            .verified_for_agent()
+            .into_iter()
+            .filter(|record| matches!(record.api_type, ApiConnectionType::Llm))
+        {
+            if let Some(model) = record.model_name {
+                let candidate = normalize_phase_model_value(model.as_str());
+                if !candidate.is_empty()
+                    && candidate != current_model
+                    && !out.iter().any(|item| item == &candidate)
+                {
+                    out.push(candidate);
+                }
+            }
+        }
+    }
+    let env_model = normalize_phase_model_value(fallback_flow_model_name().as_str());
+    if !env_model.is_empty()
+        && env_model != current_model
+        && !out.iter().any(|item| item == &env_model)
+    {
+        out.push(env_model);
+    }
+    out
+}
+
+fn normalize_phase_model_value(value: &str) -> String {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return String::new();
+    }
+    if let Some(rest) = trimmed.strip_prefix("api:") {
+        if let Some(idx) = rest.rfind(':') {
+            let model = rest[(idx + 1)..].trim();
+            if !model.is_empty() {
+                return model.to_string();
+            }
+        }
+    }
+    if trimmed == "local:runtime" {
+        return fallback_flow_model_name();
+    }
+    trimmed.to_string()
+}
+
+fn is_model_unavailable_error(error: &str) -> bool {
+    let lower = error.to_lowercase();
+    [
+        "http 429",
+        "http 500",
+        "http 502",
+        "http 503",
+        "http 504",
+        "unavailable",
+        "overloaded",
+        "rate limit",
+        "quota",
+        "token",
+        "timeout",
+        "temporar",
+        "connection refused",
+        "model not found",
+    ]
+    .iter()
+    .any(|needle| lower.contains(needle))
+}
+
+fn resolve_flow_chat_endpoint(api_url: &str, api_standard_path: Option<&str>) -> String {
+    let base = api_url.trim().trim_end_matches('/');
+    let path = api_standard_path
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("/chat/completions");
+    let normalized_path = if path.starts_with('/') {
+        path.to_string()
+    } else {
+        format!("/{path}")
+    };
+    let lower = base.to_ascii_lowercase();
+    if lower.ends_with("/chat/completions") {
+        return base.to_string();
+    }
+    if lower.ends_with("/v1") {
+        return format!("{base}{normalized_path}");
+    }
+    format!("{base}/v1{}", normalized_path)
+}
+
+fn fallback_flow_endpoint() -> String {
+    std::env::var("FOUNDATION_LLM_BASE_URL")
+        .unwrap_or_else(|_| "http://127.0.0.1:1420/v1/chat/completions".to_string())
+}
+
+fn fallback_flow_model_name() -> String {
+    std::env::var("FOUNDATION_LLM_MODEL").unwrap_or_else(|_| "local-model".to_string())
+}
+
+fn extract_generated_text_from_value(body: &Value) -> String {
+    body.get("choices")
+        .and_then(|choices| choices.as_array())
+        .and_then(|choices| choices.first())
+        .and_then(|choice| {
+            choice
+                .get("message")
+                .and_then(|message| message.get("content"))
+                .and_then(|content| content.as_str())
+                .map(str::to_string)
+        })
+        .or_else(|| {
+            body.get("choices")
+                .and_then(|choices| choices.as_array())
+                .and_then(|choices| choices.first())
+                .and_then(|choice| choice.get("text"))
+                .and_then(|text| text.as_str())
+                .map(str::to_string)
+        })
+        .unwrap_or_default()
+}
+
+fn open_repo_from_workspace() -> Result<Repository, String> {
+    let cwd = resolve_workspace_path(".");
+    Repository::discover(cwd).map_err(|e| format!("failed opening git repo: {e}"))
+}
+
+fn default_git_signature(repo: &Repository) -> Result<Signature<'_>, String> {
+    match repo.signature() {
+        Ok(sig) => Ok(sig),
+        Err(_) => Signature::now("arxell-flow", "flow@local")
+            .map_err(|e| format!("failed creating git signature: {e}")),
+    }
+}
+
+fn perform_native_git_commit(run_id: &str, iteration: u32) -> Result<String, String> {
+    let repo = open_repo_from_workspace()?;
+    let mut index = repo
+        .index()
+        .map_err(|e| format!("failed loading git index: {e}"))?;
+    index
+        .add_all(["*"], IndexAddOption::DEFAULT, None)
+        .map_err(|e| format!("failed staging files: {e}"))?;
+    index
+        .write()
+        .map_err(|e| format!("failed writing git index: {e}"))?;
+    let tree_id = index
+        .write_tree()
+        .map_err(|e| format!("failed writing git tree: {e}"))?;
+    let tree = repo
+        .find_tree(tree_id)
+        .map_err(|e| format!("failed loading git tree: {e}"))?;
+
+    let parent_commit = repo
+        .head()
+        .ok()
+        .and_then(|head| head.target())
+        .and_then(|oid| repo.find_commit(oid).ok());
+    let mut commit_message = format!("flow: run {} iteration {}", run_id, iteration);
+    if let Ok(statuses) = repo.statuses(None) {
+        let changed_count = statuses.len();
+        commit_message = format!("{commit_message} ({changed_count} changed)");
+    }
+    let author = default_git_signature(&repo)?;
+    let committer = default_git_signature(&repo)?;
+
+    let commit_id = if let Some(parent) = parent_commit.as_ref() {
+        repo.commit(
+            Some("HEAD"),
+            &author,
+            &committer,
+            commit_message.as_str(),
+            &tree,
+            &[parent],
+        )
+        .map_err(|e| format!("failed creating git commit: {e}"))?
+    } else {
+        repo.commit(
+            Some("HEAD"),
+            &author,
+            &committer,
+            commit_message.as_str(),
+            &tree,
+            &[],
+        )
+        .map_err(|e| format!("failed creating initial git commit: {e}"))?
+    };
+
+    Ok(format!("Native git commit created: {}", commit_id))
+}
+
+fn perform_native_git_push() -> Result<String, String> {
+    let repo = open_repo_from_workspace()?;
+    let head = repo
+        .head()
+        .map_err(|e| format!("failed resolving HEAD: {e}"))?;
+    let branch = head
+        .shorthand()
+        .ok_or_else(|| "failed resolving current branch name".to_string())?
+        .to_string();
+
+    let mut remote = repo
+        .find_remote("origin")
+        .map_err(|e| format!("failed resolving remote 'origin': {e}"))?;
+
+    let mut callbacks = RemoteCallbacks::new();
+    callbacks.credentials(|_url, username_from_url, allowed_types| {
+        let user = username_from_url.unwrap_or("git");
+        if allowed_types.is_ssh_key() {
+            if let Ok(cred) = Cred::ssh_key_from_agent(user) {
+                return Ok(cred);
+            }
+        }
+        if allowed_types.is_user_pass_plaintext() {
+            if let Ok(token) = std::env::var("GIT_TOKEN") {
+                return Cred::userpass_plaintext(user, token.as_str());
+            }
+        }
+        Cred::default()
+    });
+
+    let mut push_options = PushOptions::new();
+    push_options.remote_callbacks(callbacks);
+    let refspec = format!("refs/heads/{branch}:refs/heads/{branch}");
+    remote
+        .push(&[refspec.as_str()], Some(&mut push_options))
+        .map_err(|e| format!("failed pushing to origin/{branch}: {e}"))?;
+
+    Ok(format!("Native git push complete: origin/{branch}"))
+}
+
 fn count_changed_files() -> Result<usize, String> {
     let output = Command::new("bash")
         .arg("-lc")
@@ -1333,6 +2324,7 @@ mod tests {
             specs_glob: "specs/*.md".to_string(),
             backpressure_commands: vec!["echo ok".to_string()],
             implement_command: String::new(),
+            phase_models: HashMap::new(),
             summary: None,
             iterations: vec![],
         };

@@ -1,52 +1,69 @@
 #[cfg(not(feature = "tauri-runtime"))]
-use app_foundation::app::AppContext;
+use arxell_lite::app::AppContext;
 #[cfg(not(feature = "tauri-runtime"))]
-use app_foundation::contracts::ChatSendRequest;
+use arxell_lite::contracts::ChatSendRequest;
 
 #[cfg(feature = "tauri-runtime")]
-use app_foundation::app::AppContext;
+use arxell_lite::app::AppContext;
 #[cfg(feature = "tauri-runtime")]
-use app_foundation::contracts::{
+use arxell_lite::contracts::{
     ApiConnectionCreateRequest, ApiConnectionCreateResponse, ApiConnectionDeleteRequest,
     ApiConnectionDeleteResponse, ApiConnectionGetSecretRequest, ApiConnectionGetSecretResponse,
-    ApiConnectionReverifyRequest, ApiConnectionReverifyResponse, ApiConnectionUpdateRequest,
-    ApiConnectionUpdateResponse, ApiConnectionsListRequest, ApiConnectionsListResponse,
-    AppVersionResponse, ChatCancelRequest, ChatCancelResponse, ChatDeleteConversationRequest,
-    ChatDeleteConversationResponse, ChatGetMessagesRequest, ChatGetMessagesResponse,
-    ChatListConversationsRequest, ChatListConversationsResponse, ChatSendRequest, ChatSendResponse,
-    DevicesProbeMicrophoneRequest, DevicesProbeMicrophoneResponse, EventSeverity, EventStage,
-    FilesListDirectoryRequest, FilesListDirectoryResponse, FlowListRunsRequest, FlowListRunsResponse,
+    ApiConnectionProbeRequest, ApiConnectionProbeResponse, ApiConnectionReverifyRequest,
+    ApiConnectionReverifyResponse, ApiConnectionStatus, ApiConnectionType,
+    ApiConnectionUpdateRequest, ApiConnectionUpdateResponse, ApiConnectionsExportRequest,
+    ApiConnectionsExportResponse, ApiConnectionsImportRequest, ApiConnectionsImportResponse,
+    ApiConnectionsListRequest, ApiConnectionsListResponse, AppResourceUsageRequest,
+    AppResourceUsageResponse, AppVersionResponse, ChatCancelRequest, ChatCancelResponse,
+    ChatDeleteConversationRequest, ChatDeleteConversationResponse, ChatGetMessagesRequest,
+    ChatGetMessagesResponse, ChatListConversationsRequest, ChatListConversationsResponse,
+    ChatSendRequest, ChatSendResponse, CreateToolGenerateTextRequest,
+    CreateToolGenerateTextResponse, CustomToolCapabilityInvokeRequest,
+    CustomToolCapabilityInvokeResponse, DevicesProbeMicrophoneRequest,
+    DevicesProbeMicrophoneResponse, EventSeverity, EventStage, FilesListDirectoryRequest,
+    FilesListDirectoryResponse, FlowListRunsRequest, FlowListRunsResponse,
     FlowRerunValidationRequest, FlowRerunValidationResponse, FlowStartRequest, FlowStartResponse,
     FlowStatusRequest, FlowStatusResponse, FlowStopRequest, FlowStopResponse,
-    CreateToolGenerateTextRequest, CreateToolGenerateTextResponse, LlamaRuntimeInstallRequest, LlamaRuntimeInstallResponse,
-    LlamaRuntimeStartRequest, LlamaRuntimeStartResponse, LlamaRuntimeStatusRequest,
-    LlamaRuntimeStatusResponse, LlamaRuntimeStopRequest, LlamaRuntimeStopResponse,
-    ModelManagerDeleteInstalledRequest, ModelManagerDeleteInstalledResponse,
-    ModelManagerDownloadHfRequest, ModelManagerDownloadHfResponse,
-    ModelManagerListCatalogCsvRequest, ModelManagerListCatalogCsvResponse,
-    ModelManagerListInstalledRequest, ModelManagerListInstalledResponse,
-    ModelManagerSearchHfRequest, ModelManagerSearchHfResponse,
-    CustomToolCapabilityInvokeRequest, CustomToolCapabilityInvokeResponse,
-    PluginCapabilityInvokeRequest, PluginCapabilityInvokeResponse, ApiConnectionStatus, ApiConnectionType, Subsystem, TerminalCloseSessionRequest,
-    TerminalCloseSessionResponse, TerminalInputRequest, TerminalInputResponse,
-    TerminalOpenSessionRequest, TerminalOpenSessionResponse, TerminalResizeRequest,
-    TerminalResizeResponse, ToolInvokeRequest, ToolInvokeResponse, WebSearchRequest,
+    LlamaRuntimeInstallRequest, LlamaRuntimeInstallResponse, LlamaRuntimeStartRequest,
+    LlamaRuntimeStartResponse, LlamaRuntimeStatusRequest, LlamaRuntimeStatusResponse,
+    LlamaRuntimeStopRequest, LlamaRuntimeStopResponse, ModelManagerDeleteInstalledRequest,
+    ModelManagerDeleteInstalledResponse, ModelManagerDownloadHfRequest,
+    ModelManagerDownloadHfResponse, ModelManagerListCatalogCsvRequest,
+    ModelManagerListCatalogCsvResponse, ModelManagerListInstalledRequest,
+    ModelManagerListInstalledResponse, ModelManagerSearchHfRequest, ModelManagerSearchHfResponse,
+    PluginCapabilityInvokeRequest, PluginCapabilityInvokeResponse, Subsystem,
+    TerminalCloseSessionRequest, TerminalCloseSessionResponse, TerminalInputRequest,
+    TerminalInputResponse, TerminalOpenSessionRequest, TerminalOpenSessionResponse,
+    TerminalResizeRequest, TerminalResizeResponse, ToolInvokeRequest, ToolInvokeResponse,
+    TtsDownloadModelRequest, TtsDownloadModelResponse, TtsListVoicesRequest, TtsListVoicesResponse,
+    TtsSelfTestRequest, TtsSelfTestResponse, TtsSettingsGetRequest, TtsSettingsGetResponse,
+    TtsSettingsSetRequest, TtsSettingsSetResponse, TtsSpeakRequest, TtsSpeakResponse,
+    TtsStatusRequest, TtsStatusResponse, TtsStopRequest, TtsStopResponse, WebSearchRequest,
     WebSearchResponse, WorkspaceToolSetEnabledRequest, WorkspaceToolSetEnabledResponse,
-    WorkspaceToolsExportRequest, WorkspaceToolsExportResponse, WorkspaceToolsImportRequest,
-    WorkspaceToolsImportResponse, WorkspaceToolsListRequest, WorkspaceToolsListResponse,
+    WorkspaceToolSetIconRequest, WorkspaceToolSetIconResponse, WorkspaceToolsExportRequest,
+    WorkspaceToolsExportResponse, WorkspaceToolsImportRequest, WorkspaceToolsImportResponse,
+    WorkspaceToolsListRequest, WorkspaceToolsListResponse,
 };
 #[cfg(feature = "tauri-runtime")]
-use app_foundation::ipc::tauri_bridge::{attach_event_forwarder, TauriBridgeState};
+use arxell_lite::ipc::tauri_bridge::{attach_event_forwarder, TauriBridgeState};
 #[cfg(feature = "tauri-runtime")]
-use app_foundation::ipc::tool_runtime::{invoke_legacy_tool_command, invoke_tool};
+use arxell_lite::ipc::tool_runtime::{invoke_legacy_tool_command, invoke_tool};
 #[cfg(feature = "tauri-runtime")]
-use app_foundation::stt::STTState;
+use arxell_lite::stt::STTState;
+#[cfg(feature = "tauri-runtime")]
+use arxell_lite::tts::TTSState;
 #[cfg(feature = "tauri-runtime")]
 use serde::{Deserialize, Serialize};
 #[cfg(feature = "tauri-runtime")]
 use serde_json::{json, Value};
 #[cfg(feature = "tauri-runtime")]
 use std::path::PathBuf;
+#[cfg(feature = "tauri-runtime")]
+use std::sync::Mutex;
+#[cfg(feature = "tauri-runtime")]
+use std::time::Instant;
+#[cfg(feature = "tauri-runtime")]
+use sysinfo::{Networks, ProcessRefreshKind, ProcessesToUpdate, System};
 #[cfg(feature = "tauri-runtime")]
 use tauri::{Manager, State, WindowEvent};
 
@@ -69,6 +86,9 @@ async fn main() {
         user_message: "Hello foundation".to_string(),
         correlation_id: "demo-001".to_string(),
         thinking_enabled: Some(true),
+        chat_mode: None,
+        model_id: None,
+        model_name: None,
         max_tokens: None,
         attachments: None,
     };
@@ -80,6 +100,31 @@ async fn main() {
         }
         Err(err) => {
             eprintln!("error: {err}");
+        }
+    }
+}
+
+#[cfg(feature = "tauri-runtime")]
+struct AppResourceUsageSampler {
+    system: System,
+    networks: Networks,
+    last_network_sample: Option<(Instant, u64, u64)>,
+}
+
+#[cfg(feature = "tauri-runtime")]
+struct AppResourceUsageState {
+    inner: Mutex<AppResourceUsageSampler>,
+}
+
+#[cfg(feature = "tauri-runtime")]
+impl AppResourceUsageState {
+    fn new() -> Self {
+        Self {
+            inner: Mutex::new(AppResourceUsageSampler {
+                system: System::new(),
+                networks: Networks::new_with_refreshed_list(),
+                last_network_sample: None,
+            }),
         }
     }
 }
@@ -143,6 +188,9 @@ fn main() {
                         if let Some(state) = window.try_state::<TauriBridgeState>() {
                             state.runtime.shutdown("app-window-close");
                         }
+                        if let Some(tts_state) = window.try_state::<TTSState>() {
+                            tts_state.shutdown();
+                        }
                     }
                     persist_window_state(window);
                 }
@@ -150,7 +198,9 @@ fn main() {
             }
         })
         .manage(state)
+        .manage(AppResourceUsageState::new())
         .manage(STTState::new())
+        .manage(TTSState::new())
         .invoke_handler(tauri::generate_handler![
             cmd_chat_send_message,
             cmd_chat_cancel_message,
@@ -163,10 +213,14 @@ fn main() {
             cmd_terminal_close_session,
             cmd_workspace_tools_list,
             cmd_workspace_tool_set_enabled,
+            cmd_workspace_tool_set_icon,
             cmd_workspace_tools_export,
             cmd_workspace_tools_import,
             cmd_api_connections_list,
+            cmd_api_connections_export,
+            cmd_api_connections_import,
             cmd_api_connection_create,
+            cmd_api_connection_probe,
             cmd_api_connection_update,
             cmd_api_connection_reverify,
             cmd_api_connection_delete,
@@ -174,6 +228,7 @@ fn main() {
             cmd_web_search,
             cmd_devices_probe_microphone,
             cmd_app_version,
+            cmd_app_resource_usage,
             cmd_llama_runtime_status,
             cmd_llama_runtime_install_engine,
             cmd_llama_runtime_start,
@@ -196,7 +251,25 @@ fn main() {
             start_stt,
             stop_stt,
             stt_status,
-            transcribe_chunk
+            stt_set_backend,
+            stt_get_backend,
+            stt_set_model,
+            stt_set_language,
+            stt_set_threads,
+            stt_download_model,
+            stt_list_models,
+            transcribe_chunk,
+            transcribe_partial_chunk,
+            stt_stream_reset,
+            stt_stream_ingest,
+            cmd_tts_status,
+            cmd_tts_list_voices,
+            cmd_tts_speak,
+            cmd_tts_stop,
+            cmd_tts_self_test,
+            cmd_tts_settings_get,
+            cmd_tts_settings_set,
+            cmd_tts_download_model
         ])
         .run(tauri::generate_context!())
         .expect("failed to run tauri app");
@@ -205,52 +278,149 @@ fn main() {
 #[cfg(feature = "tauri-runtime")]
 #[tauri::command]
 async fn start_stt(app: tauri::AppHandle, state: tauri::State<'_, STTState>) -> Result<(), String> {
-    use log::info;
-    use tauri::Emitter;
-
-    info!("Starting STT service");
-    let supervisor = state.supervisor.lock().await;
-    supervisor.start(&app).await
+    arxell_lite::stt::start_stt(app, state).await
 }
 
 #[cfg(feature = "tauri-runtime")]
 #[tauri::command]
 async fn stop_stt(state: tauri::State<'_, STTState>) -> Result<(), String> {
-    use log::info;
-
-    info!("Stopping STT service");
-    let supervisor = state.supervisor.lock().await;
-    supervisor.stop().await
+    arxell_lite::stt::stop_stt(state).await
 }
 
 #[cfg(feature = "tauri-runtime")]
 #[tauri::command]
 async fn stt_status(
     state: tauri::State<'_, STTState>,
-) -> Result<app_foundation::stt::events::STTStatusPayload, String> {
-    use app_foundation::stt::supervisor::SupervisorStatus;
+) -> Result<arxell_lite::stt::events::STTStatusPayload, String> {
+    arxell_lite::stt::stt_status(state).await
+}
 
-    let supervisor = state.supervisor.lock().await;
-    let status = supervisor.status().await;
+#[cfg(feature = "tauri-runtime")]
+#[tauri::command]
+async fn stt_set_backend(
+    state: tauri::State<'_, STTState>,
+    backend: String,
+) -> Result<String, String> {
+    arxell_lite::stt::stt_set_backend(state, backend).await
+}
 
-    match status {
-        SupervisorStatus::Starting => Ok(app_foundation::stt::events::STTStatusPayload {
-            status: "starting".to_string(),
-            message: None,
-        }),
-        SupervisorStatus::Running => Ok(app_foundation::stt::events::STTStatusPayload {
-            status: "running".to_string(),
-            message: None,
-        }),
-        SupervisorStatus::Stopped => Ok(app_foundation::stt::events::STTStatusPayload {
-            status: "stopped".to_string(),
-            message: None,
-        }),
-        SupervisorStatus::Error(msg) => Ok(app_foundation::stt::events::STTStatusPayload {
-            status: "error".to_string(),
-            message: Some(msg),
-        }),
-    }
+#[cfg(feature = "tauri-runtime")]
+#[tauri::command]
+async fn stt_get_backend(state: tauri::State<'_, STTState>) -> Result<String, String> {
+    arxell_lite::stt::stt_get_backend(state).await
+}
+
+#[cfg(feature = "tauri-runtime")]
+#[tauri::command]
+async fn stt_download_model(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, STTState>,
+    file_name: String,
+) -> Result<String, String> {
+    arxell_lite::stt::stt_download_model(app, state, file_name).await
+}
+
+#[cfg(feature = "tauri-runtime")]
+#[tauri::command]
+async fn stt_list_models(app: tauri::AppHandle) -> Result<Vec<String>, String> {
+    arxell_lite::stt::stt_list_models(app).await
+}
+
+#[cfg(feature = "tauri-runtime")]
+#[tauri::command]
+async fn stt_set_model(state: tauri::State<'_, STTState>, model: String) -> Result<String, String> {
+    arxell_lite::stt::stt_set_model(state, model).await
+}
+
+#[cfg(feature = "tauri-runtime")]
+#[tauri::command]
+async fn stt_set_language(
+    state: tauri::State<'_, STTState>,
+    language: String,
+) -> Result<String, String> {
+    arxell_lite::stt::stt_set_language(state, language).await
+}
+
+#[cfg(feature = "tauri-runtime")]
+#[tauri::command]
+async fn stt_set_threads(state: tauri::State<'_, STTState>, threads: i32) -> Result<i32, String> {
+    arxell_lite::stt::stt_set_threads(state, threads).await
+}
+
+#[cfg(feature = "tauri-runtime")]
+#[tauri::command]
+async fn cmd_tts_status(
+    app: tauri::AppHandle,
+    request: TtsStatusRequest,
+) -> Result<TtsStatusResponse, String> {
+    arxell_lite::tts::status(&app, request)
+}
+
+#[cfg(feature = "tauri-runtime")]
+#[tauri::command]
+async fn cmd_tts_list_voices(
+    app: tauri::AppHandle,
+    request: TtsListVoicesRequest,
+) -> Result<TtsListVoicesResponse, String> {
+    arxell_lite::tts::list_voices(&app, request)
+}
+
+#[cfg(feature = "tauri-runtime")]
+#[tauri::command]
+async fn cmd_tts_speak(
+    app: tauri::AppHandle,
+    tts_state: tauri::State<'_, TTSState>,
+    request: TtsSpeakRequest,
+) -> Result<TtsSpeakResponse, String> {
+    arxell_lite::tts::speak(&app, request, &tts_state).await
+}
+
+#[cfg(feature = "tauri-runtime")]
+#[tauri::command]
+async fn cmd_tts_stop(
+    tts_state: tauri::State<'_, TTSState>,
+    request: TtsStopRequest,
+) -> Result<TtsStopResponse, String> {
+    arxell_lite::tts::stop(request, &tts_state)
+}
+
+#[cfg(feature = "tauri-runtime")]
+#[tauri::command]
+async fn cmd_tts_self_test(
+    app: tauri::AppHandle,
+    tts_state: tauri::State<'_, TTSState>,
+    request: TtsSelfTestRequest,
+) -> Result<TtsSelfTestResponse, String> {
+    arxell_lite::tts::self_test(&app, request, &tts_state).await
+}
+
+#[cfg(feature = "tauri-runtime")]
+#[tauri::command]
+async fn cmd_tts_settings_get(
+    app: tauri::AppHandle,
+    request: TtsSettingsGetRequest,
+) -> Result<TtsSettingsGetResponse, String> {
+    arxell_lite::tts::settings_get(&app, request)
+}
+
+#[cfg(feature = "tauri-runtime")]
+#[tauri::command]
+async fn cmd_tts_settings_set(
+    app: tauri::AppHandle,
+    tts_state: tauri::State<'_, TTSState>,
+    request: TtsSettingsSetRequest,
+) -> Result<TtsSettingsSetResponse, String> {
+    arxell_lite::tts::settings_set(&app, &tts_state, request)
+}
+
+#[cfg(feature = "tauri-runtime")]
+#[tauri::command]
+async fn cmd_tts_download_model(
+    app: tauri::AppHandle,
+    tts_state: tauri::State<'_, TTSState>,
+    request: TtsDownloadModelRequest,
+) -> Result<TtsDownloadModelResponse, String> {
+    arxell_lite::tts::download_model(&app, request, &tts_state).await
 }
 
 #[cfg(feature = "tauri-runtime")]
@@ -261,69 +431,34 @@ async fn transcribe_chunk(
     pcm_samples: Vec<f32>,
     utterance_id: String,
 ) -> Result<(), String> {
-    use log::{error, info};
-    use tauri::Emitter;
+    arxell_lite::stt::transcribe_chunk(app, state, pcm_samples, utterance_id).await
+}
 
-    let supervisor = state.supervisor.lock().await;
+#[cfg(feature = "tauri-runtime")]
+#[tauri::command]
+async fn transcribe_partial_chunk(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, STTState>,
+    pcm_samples: Vec<f32>,
+    utterance_id: String,
+) -> Result<(), String> {
+    arxell_lite::stt::transcribe_partial_chunk(app, state, pcm_samples, utterance_id).await
+}
 
-    // Get endpoint
-    let endpoint = match supervisor.endpoint().await {
-        Some(e) => e,
-        None => {
-            let err = "STT service not running".to_string();
-            let _ = app.emit(
-                "pipeline://error",
-                app_foundation::stt::events::PipelineErrorPayload {
-                    source: "stt".to_string(),
-                    message: err.clone(),
-                    details: None,
-                },
-            );
-            return Err(err);
-        }
-    };
+#[cfg(feature = "tauri-runtime")]
+#[tauri::command]
+async fn stt_stream_reset() -> Result<(), String> {
+    arxell_lite::stt::stt_stream_reset().await
+}
 
-    // Extract port from endpoint
-    let port = endpoint
-        .strip_prefix("http://127.0.0.1:")
-        .and_then(|s| s.parse::<u16>().ok())
-        .ok_or_else(|| "Invalid endpoint".to_string())?;
-
-    // Create client and run inference
-    let client = app_foundation::stt::client::WhisperClient::new(port);
-    match client.transcribe(&pcm_samples).await {
-        Ok(transcript) => {
-            info!("Transcription complete: {} chars", transcript.len());
-
-            // Emit transcript event
-            let _ = app.emit(
-                "stt://transcript",
-                app_foundation::stt::events::TranscriptPayload {
-                    text: transcript,
-                    is_final: true,
-                    utterance_id,
-                },
-            );
-
-            Ok(())
-        }
-        Err(e) => {
-            error!("Transcription failed: {}", e);
-
-            // Emit error event but don't restart - transient errors don't need restart
-            let _ = app.emit(
-                "pipeline://error",
-                app_foundation::stt::events::PipelineErrorPayload {
-                    source: "stt".to_string(),
-                    message: format!("Transcription failed: {}", e),
-                    details: None,
-                },
-            );
-
-            // Return error to frontend so it can be handled
-            Err(e)
-        }
-    }
+#[cfg(feature = "tauri-runtime")]
+#[tauri::command]
+async fn stt_stream_ingest(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, STTState>,
+    pcm_samples: Vec<f32>,
+) -> Result<(), String> {
+    arxell_lite::stt::stt_stream_ingest(app, state, pcm_samples).await
 }
 
 #[cfg(feature = "tauri-runtime")]
@@ -438,6 +573,23 @@ async fn cmd_workspace_tool_set_enabled(
 
 #[cfg(feature = "tauri-runtime")]
 #[tauri::command]
+async fn cmd_workspace_tool_set_icon(
+    state: State<'_, TauriBridgeState>,
+    request: WorkspaceToolSetIconRequest,
+) -> Result<WorkspaceToolSetIconResponse, String> {
+    state
+        .workspace_tools
+        .set_icon(request.tool_id.as_str(), request.icon)
+        .map_err(|e| e.to_string())?;
+    Ok(WorkspaceToolSetIconResponse {
+        correlation_id: request.correlation_id,
+        tool_id: request.tool_id,
+        icon: request.icon,
+    })
+}
+
+#[cfg(feature = "tauri-runtime")]
+#[tauri::command]
 async fn cmd_workspace_tools_export(
     state: State<'_, TauriBridgeState>,
     request: WorkspaceToolsExportRequest,
@@ -479,13 +631,42 @@ async fn cmd_api_connections_list(
 
 #[cfg(feature = "tauri-runtime")]
 #[tauri::command]
+async fn cmd_api_connections_export(
+    state: State<'_, TauriBridgeState>,
+    request: ApiConnectionsExportRequest,
+) -> Result<ApiConnectionsExportResponse, String> {
+    let payload_json = state.api_registry.export_portable_snapshot_json()?;
+    Ok(ApiConnectionsExportResponse {
+        correlation_id: request.correlation_id,
+        file_name: "arxell-api-connections.json".to_string(),
+        payload_json,
+    })
+}
+
+#[cfg(feature = "tauri-runtime")]
+#[tauri::command]
+async fn cmd_api_connections_import(
+    state: State<'_, TauriBridgeState>,
+    request: ApiConnectionsImportRequest,
+) -> Result<ApiConnectionsImportResponse, String> {
+    let connections = state
+        .api_registry
+        .import_portable_snapshot_json(request.payload_json.as_str())?;
+    Ok(ApiConnectionsImportResponse {
+        correlation_id: request.correlation_id,
+        connections,
+    })
+}
+
+#[cfg(feature = "tauri-runtime")]
+#[tauri::command]
 async fn cmd_api_connection_create(
     state: State<'_, TauriBridgeState>,
     request: ApiConnectionCreateRequest,
 ) -> Result<ApiConnectionCreateResponse, String> {
     let connection = state
         .api_registry
-        .create_and_verify(app_foundation::api_registry::NewApiConnectionInput {
+        .create_and_verify(arxell_lite::api_registry::NewApiConnectionInput {
             api_type: request.api_type,
             api_url: request.api_url,
             name: request.name,
@@ -498,6 +679,33 @@ async fn cmd_api_connection_create(
     Ok(ApiConnectionCreateResponse {
         correlation_id: request.correlation_id,
         connection,
+    })
+}
+
+#[cfg(feature = "tauri-runtime")]
+#[tauri::command]
+async fn cmd_api_connection_probe(
+    state: State<'_, TauriBridgeState>,
+    request: ApiConnectionProbeRequest,
+) -> Result<ApiConnectionProbeResponse, String> {
+    let probe = state
+        .api_registry
+        .probe_endpoint(
+            request.api_url.as_str(),
+            request.api_type,
+            request.api_key.as_deref(),
+            request.api_standard_path.as_deref(),
+        )
+        .await?;
+    Ok(ApiConnectionProbeResponse {
+        correlation_id: request.correlation_id,
+        detected_api_type: probe.detected_api_type,
+        api_standard_path: probe.api_standard_path,
+        verify_url: probe.verify_url,
+        models: probe.models,
+        selected_model: probe.selected_model,
+        status: probe.status,
+        status_message: probe.status_message,
     })
 }
 
@@ -522,7 +730,7 @@ async fn cmd_api_connection_update(
 ) -> Result<ApiConnectionUpdateResponse, String> {
     let connection = state.api_registry.update(
         request.id.as_str(),
-        app_foundation::api_registry::UpdateApiConnectionInput {
+        arxell_lite::api_registry::UpdateApiConnectionInput {
             api_type: request.api_type,
             api_url: request.api_url,
             name: request.name,
@@ -603,6 +811,65 @@ async fn cmd_devices_probe_microphone(
 async fn cmd_app_version() -> Result<AppVersionResponse, String> {
     Ok(AppVersionResponse {
         version: env!("CARGO_PKG_VERSION").to_string(),
+    })
+}
+
+#[cfg(feature = "tauri-runtime")]
+#[tauri::command]
+async fn cmd_app_resource_usage(
+    request: AppResourceUsageRequest,
+    state: State<'_, AppResourceUsageState>,
+) -> Result<AppResourceUsageResponse, String> {
+    let mut guard = state
+        .inner
+        .lock()
+        .map_err(|_| "app resource usage lock poisoned".to_string())?;
+    let pid = sysinfo::Pid::from_u32(std::process::id());
+
+    guard.system.refresh_processes_specifics(
+        ProcessesToUpdate::Some(&[pid]),
+        true,
+        ProcessRefreshKind::nothing().with_cpu().with_memory(),
+    );
+    guard.networks.refresh(true);
+
+    let process = guard.system.process(pid);
+    let cpu_percent = process.map(|proc| proc.cpu_usage());
+    let memory_bytes = process.map(|proc| proc.memory());
+
+    let total_rx: u64 = guard
+        .networks
+        .values()
+        .map(|entry| entry.total_received())
+        .sum();
+    let total_tx: u64 = guard
+        .networks
+        .values()
+        .map(|entry| entry.total_transmitted())
+        .sum();
+    let now = Instant::now();
+    let (network_rx_bytes_per_sec, network_tx_bytes_per_sec) =
+        if let Some((last_at, last_rx, last_tx)) = guard.last_network_sample {
+            let elapsed_sec = now.saturating_duration_since(last_at).as_secs_f64();
+            if elapsed_sec > 0.0 {
+                (
+                    Some(((total_rx.saturating_sub(last_rx)) as f64 / elapsed_sec) as u64),
+                    Some(((total_tx.saturating_sub(last_tx)) as f64 / elapsed_sec) as u64),
+                )
+            } else {
+                (None, None)
+            }
+        } else {
+            (None, None)
+        };
+    guard.last_network_sample = Some((now, total_rx, total_tx));
+
+    Ok(AppResourceUsageResponse {
+        correlation_id: request.correlation_id,
+        cpu_percent,
+        memory_bytes,
+        network_rx_bytes_per_sec,
+        network_tx_bytes_per_sec,
     })
 }
 
@@ -831,7 +1098,8 @@ async fn cmd_create_tool_generate_text(
     state: State<'_, TauriBridgeState>,
     request: CreateToolGenerateTextRequest,
 ) -> Result<CreateToolGenerateTextResponse, String> {
-    let (endpoint, model, api_key) = resolve_create_tool_provider(&state, request.model_id.as_str())?;
+    let (endpoint, model, api_key) =
+        resolve_create_tool_provider(&state, request.model_id.as_str())?;
     let prompt = request.prompt.trim();
     if prompt.is_empty() {
         return Err("prompt is required".to_string());
@@ -921,11 +1189,11 @@ fn resolve_create_tool_provider(
             .into_iter()
             .find(|record| matches!(record.api_type, ApiConnectionType::Llm));
         if let Some(record) = verified_llm {
-            let endpoint =
-                create_tool_chat_endpoint(record.api_url.as_str(), record.api_standard_path.as_deref());
-            let model = record
-                .model_name
-                .unwrap_or_else(fallback_model_name);
+            let endpoint = create_tool_chat_endpoint(
+                record.api_url.as_str(),
+                record.api_standard_path.as_deref(),
+            );
+            let model = record.model_name.unwrap_or_else(fallback_model_name);
             return Ok((endpoint, model, Some(record.api_key)));
         }
         return Ok((
@@ -949,15 +1217,19 @@ fn resolve_create_tool_provider(
         if !matches!(record.api_type, ApiConnectionType::Llm) {
             return Err(format!("api connection is not an LLM endpoint: {id}"));
         }
-        if !matches!(record.status, ApiConnectionStatus::Verified | ApiConnectionStatus::Warning) {
-            return Err(format!("api connection is not usable (status={:?}): {id}", record.status));
+        if !matches!(
+            record.status,
+            ApiConnectionStatus::Verified | ApiConnectionStatus::Warning
+        ) {
+            return Err(format!(
+                "api connection is not usable (status={:?}): {id}",
+                record.status
+            ));
         }
         let api_key = state.api_registry.get_secret_api_key(id)?;
         let endpoint =
             create_tool_chat_endpoint(record.api_url.as_str(), record.api_standard_path.as_deref());
-        let model = record
-            .model_name
-            .unwrap_or_else(fallback_model_name);
+        let model = record.model_name.unwrap_or_else(fallback_model_name);
         return Ok((endpoint, model, Some(api_key)));
     }
 
@@ -966,7 +1238,11 @@ fn resolve_create_tool_provider(
         if model.is_empty() {
             return Err("invalid model-manager model id".to_string());
         }
-        return Ok((fallback_endpoint(), model.to_string(), std::env::var("OPENAI_API_KEY").ok()));
+        return Ok((
+            fallback_endpoint(),
+            model.to_string(),
+            std::env::var("OPENAI_API_KEY").ok(),
+        ));
     }
 
     Err(format!("unsupported model id: {trimmed}"))
@@ -1387,7 +1663,7 @@ async fn cmd_flow_rerun_validation(
 fn resolve_bundled_engine_binary(app: &tauri::AppHandle, engine_id: &str) -> Option<PathBuf> {
     let os = std::env::consts::OS;
     let arch = std::env::consts::ARCH;
-    let binary_name = app_foundation::app::runtime_service::engine_binary_filename();
+    let binary_name = arxell_lite::app::runtime_service::engine_binary_filename();
     let rel_candidates = [
         format!("llama-runtime/{engine_id}/{binary_name}"),
         format!("resources/llama-runtime/{engine_id}/{binary_name}"),

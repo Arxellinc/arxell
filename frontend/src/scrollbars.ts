@@ -15,6 +15,7 @@ function shouldEnhance(element: HTMLElement): boolean {
   if (element === document.body || element === document.documentElement) return false;
   if (element.closest(".xterm")) return false;
   if (element.closest(".os-scrollbar")) return false;
+  if (element.classList.contains("files-editor-scroll")) return false;
 
   const style = window.getComputedStyle(element);
   if (style.display === "inline") return false;

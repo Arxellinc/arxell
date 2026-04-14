@@ -21,6 +21,7 @@ import {
   handleCreateToolClick,
   handleCreateToolInput
 } from "../createTool/bindings";
+import { handleChartClick, handleChartInput } from "../chart/bindings";
 import { handleTasksChange, handleTasksClick, handleTasksInput } from "../tasks/bindings";
 import {
   FILES_DATA_ATTR,
@@ -61,7 +62,8 @@ export const WORKSPACE_TOOL_TARGET_SELECTOR = [
   "[data-create-tool-field]",
   "[data-create-tool-guard]",
   `[${FLOW_DATA_ATTR.action}]`,
-  `[${FLOW_DATA_ATTR.runId}]`
+  `[${FLOW_DATA_ATTR.runId}]`,
+  "[data-chart-action]"
 ].join(", ");
 
 export interface WorkspaceToolDispatchDeps {
@@ -72,6 +74,11 @@ export interface WorkspaceToolDispatchDeps {
     resumeRun: (run: FlowRunView) => Promise<void>;
     retryRun: (run: FlowRunView) => Promise<void>;
     rerunValidation: (run: FlowRunView) => Promise<void>;
+    openPhaseTerminal: (phase: string) => Promise<void>;
+    closePhaseTerminal: (phase: string) => Promise<void>;
+    createProjectSetup: (name: string, projectType: string, description: string) => Promise<void>;
+    setPaused: (paused: boolean) => Promise<void>;
+    nudgeRun: (message: string) => Promise<void>;
   };
   files: {
     listFilesDirectory: (path?: string) => Promise<void>;
@@ -132,6 +139,9 @@ export async function dispatchWorkspaceToolClick(
   if (await handleCreateToolClick(target, state as any, deps as any)) {
     return true;
   }
+  if (await handleChartClick(target, state as any)) {
+    return true;
+  }
   if (await handleWebClick(target, state as any, deps.web as any)) {
     return true;
   }
@@ -160,18 +170,21 @@ export function dispatchWorkspaceToolInput(
   const createToolResult = handleCreateToolInput(target, state as any);
   const webHandled = handleWebInput(target, state as any, { withActiveWebTab: deps.web.withActiveWebTab as any });
   const flowResult = handleFlowInput(target, state as any);
+  const chartResult = handleChartInput(target, state as any);
   return {
     handled:
       filesResult.handled ||
       tasksHandled ||
       createToolResult.handled ||
       webHandled ||
-      flowResult.handled,
+      flowResult.handled ||
+      chartResult.handled,
     rerender:
       filesResult.rerender ||
       tasksHandled ||
       createToolResult.rerender ||
-      flowResult.rerender
+      flowResult.rerender ||
+      chartResult.rerender
   };
 }
 

@@ -1145,6 +1145,10 @@ function refreshEditorDecorations(textarea: HTMLTextAreaElement, content: string
   const fallback = lineCount * 20 + 20;
   const height = Math.max(220, measuredHeight || fallback);
   textarea.style.height = `${height}px`;
+  textarea.closest<HTMLElement>(".files-editor-code-wrap")?.style.setProperty(
+    "--files-editor-height",
+    `${height}px`
+  );
 }
 
 function createLineNumbers(lineCount: number): string {

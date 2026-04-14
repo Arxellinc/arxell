@@ -14,6 +14,15 @@ pub struct TranscriptPayload {
     pub utterance_id: String,
 }
 
+/// Payload emitted for interim/partial transcription updates.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct PartialTranscriptPayload {
+    /// The interim transcribed text.
+    pub text: String,
+    /// Unique identifier for this utterance (UUID v4).
+    pub utterance_id: String,
+}
+
 /// Payload emitted when VAD state changes.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct VADPayload {

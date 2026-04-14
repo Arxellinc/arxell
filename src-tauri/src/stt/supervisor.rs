@@ -59,6 +59,7 @@ pub struct WhisperSupervisor {
     endpoint: Mutex<Option<String>>,
     child: Mutex<Option<Child>>,
     model_path: Mutex<Option<PathBuf>>,
+    staged_binary_path: Mutex<Option<PathBuf>>,
     shutdown_requested: Arc<AtomicBool>,
     health_check_task: Mutex<Option<JoinHandle<()>>>,
 }
@@ -72,6 +73,7 @@ impl WhisperSupervisor {
             endpoint: Mutex::new(None),
             child: Mutex::new(None),
             model_path: Mutex::new(None),
+            staged_binary_path: Mutex::new(None),
             shutdown_requested: Arc::new(AtomicBool::new(false)),
             health_check_task: Mutex::new(None),
         }
@@ -126,6 +128,8 @@ impl WhisperSupervisor {
 
         // Resolve binary path
         let binary_path = resolve_whisper_binary(app)?;
+        let launch_binary_path = stage_whisper_binary_for_launch(&binary_path)?;
+        *self.staged_binary_path.lock().await = Some(launch_binary_path.clone());
 
         // Resolve model path
         let model_path = resolve_model_path(app)?;
@@ -138,11 +142,11 @@ impl WhisperSupervisor {
         {
             // chmod the binary on Unix
             use std::os::unix::fs::PermissionsExt;
-            if let Ok(meta) = std::fs::metadata(&binary_path) {
+            if let Ok(meta) = std::fs::metadata(&launch_binary_path) {
                 let mut perms = meta.permissions();
                 perms.set_mode(0o755);
-                if let Err(e) = std::fs::set_permissions(&binary_path, perms) {
-                    warn!("Failed to chmod {}: {}", binary_path.display(), e);
+                if let Err(e) = std::fs::set_permissions(&launch_binary_path, perms) {
+                    warn!("Failed to chmod {}: {}", launch_binary_path.display(), e);
                 }
             }
         }
@@ -154,7 +158,7 @@ impl WhisperSupervisor {
                 .args([
                     "-dr",
                     "com.apple.quarantine",
-                    &binary_path.to_string_lossy(),
+                    &launch_binary_path.to_string_lossy(),
                 ])
                 .output();
             if let Err(e) = result {
@@ -168,14 +172,14 @@ impl WhisperSupervisor {
 
         info!(
             "Starting whisper.cpp server: binary={}, port={}, threads={}",
-            binary_path.display(),
+            launch_binary_path.display(),
             port,
             threads
         );
         info!("Model path: {}", model_path.display());
 
         // Spawn the whisper.cpp server
-        let mut child = tokio::process::Command::new(&binary_path)
+        let mut child = tokio::process::Command::new(&launch_binary_path)
             .args([
                 "--host",
                 "127.0.0.1",
@@ -311,6 +315,15 @@ impl WhisperSupervisor {
 
         *self.endpoint.lock().await = None;
         *self.status.lock().await = SupervisorStatus::Stopped;
+        if let Some(path) = self.staged_binary_path.lock().await.take() {
+            if let Err(e) = std::fs::remove_file(&path) {
+                warn!(
+                    "Failed to remove staged whisper binary {}: {}",
+                    path.display(),
+                    e
+                );
+            }
+        }
 
         info!("Whisper.cpp server stopped");
         Ok(())
@@ -359,12 +372,26 @@ fn find_free_port() -> Result<u32, String> {
 
 /// Resolve the path to the whisper.cpp binary.
 fn resolve_whisper_binary(app: &AppHandle) -> Result<PathBuf, String> {
+    let app_data_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("Failed to get app data directory: {}", e))?;
     let resource_dir = app
         .path()
         .resource_dir()
         .map_err(|e| format!("Failed to get resource directory: {}", e))?;
 
     let candidates = [
+        app_data_dir
+            .join("STT")
+            .join("whisper-server")
+            .join(WHISPER_BINARY),
+        app_data_dir.join("STT").join(WHISPER_BINARY),
+        app_data_dir
+            .join("stt")
+            .join("whisper-server")
+            .join(WHISPER_BINARY),
+        app_data_dir.join("stt").join(WHISPER_BINARY),
         resource_dir.join("whisper-server").join(WHISPER_BINARY),
         resource_dir
             .join("resources")
@@ -385,8 +412,57 @@ fn resolve_whisper_binary(app: &AppHandle) -> Result<PathBuf, String> {
     ))
 }
 
+/// Copy the whisper executable into a temp location before spawning.
+/// This avoids ETXTBSY when the resource binary is being updated or scanned.
+fn stage_whisper_binary_for_launch(binary_path: &PathBuf) -> Result<PathBuf, String> {
+    let mut dir = std::env::temp_dir();
+    dir.push("arxell-lite");
+    dir.push("whisper-server");
+    std::fs::create_dir_all(&dir).map_err(|e| {
+        format!(
+            "Failed to create whisper staging dir {}: {}",
+            dir.display(),
+            e
+        )
+    })?;
+
+    let ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|e| format!("Failed to compute timestamp for whisper staging: {}", e))?
+        .as_millis();
+    let pid = std::process::id();
+    let staged_name = format!("{}-{}-{}", WHISPER_BINARY, pid, ts);
+    let staged_path = dir.join(staged_name);
+
+    std::fs::copy(binary_path, &staged_path).map_err(|e| {
+        format!(
+            "Failed to stage whisper binary from {} to {}: {}",
+            binary_path.display(),
+            staged_path.display(),
+            e
+        )
+    })?;
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = std::fs::metadata(&staged_path)
+            .map_err(|e| format!("Failed to read staged whisper metadata: {}", e))?
+            .permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&staged_path, perms)
+            .map_err(|e| format!("Failed to chmod staged whisper binary: {}", e))?;
+    }
+
+    Ok(staged_path)
+}
+
 /// Resolve the path to the Whisper model file.
 fn resolve_model_path(app: &AppHandle) -> Result<PathBuf, String> {
+    let app_data_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("Failed to get app data directory: {}", e))?;
     let resource_dir = app
         .path()
         .resource_dir()
@@ -394,6 +470,24 @@ fn resolve_model_path(app: &AppHandle) -> Result<PathBuf, String> {
 
     // Try different model file naming conventions
     let candidates = [
+        app_data_dir
+            .join("STT")
+            .join("models")
+            .join("ggml-base-q8_0.bin"),
+        app_data_dir
+            .join("STT")
+            .join("models")
+            .join("ggml-base.en-q8_0.bin"),
+        app_data_dir
+            .join("stt")
+            .join("models")
+            .join("ggml-base-q8_0.bin"),
+        app_data_dir
+            .join("stt")
+            .join("models")
+            .join("ggml-base.en-q8_0.bin"),
+        app_data_dir.join("models").join("ggml-base-q8_0.bin"),
+        app_data_dir.join("models").join("ggml-base.en-q8_0.bin"),
         resource_dir.join("whisper").join("ggml-base-q8_0.bin"),
         resource_dir.join("whisper").join("ggml-tiny.en-q8_0.bin"),
         resource_dir.join("whisper").join("ggml-base.en-q8_0.bin"),

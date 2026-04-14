@@ -1,5 +1,5 @@
 [package]
-name = "app-foundation"
+name = "arxell-lite"
 version = "0.1.9"
 edition = "2021"
 
@@ -21,12 +21,16 @@ reqwest = { version = "0.12", default-features = false, features = ["blocking", 
 zip = { version = "2", default-features = false, features = ["deflate"] }
 tar = "0.4"
 flate2 = "1"
+bzip2 = "0.4"
 cpal = "0.15"
 uuid = { version = "1", features = ["v4"] }
 log = "0.4"
 num_cpus = "1"
 libc = "0.2"
+sherpa-onnx = "1.12.34"
 arx_rs = { path = "../agent" }
+sysinfo = "0.37"
+git2 = { version = "0.20", features = ["vendored-libgit2"] }
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }

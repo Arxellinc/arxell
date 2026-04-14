@@ -55,7 +55,7 @@ export function renderCreateToolActions(view: CreateToolRuntimeSlice): string {
       {
         id: "create-tool-plan-generate",
         title: "Generate Dev Plan",
-        icon: "list-checks",
+        icon: "list",
         disabled: stage !== "prd" && stage !== "build",
         buttonAttrs: {
           [DATA_ACTION]: "generate-dev-plan"

@@ -26,6 +26,7 @@ export async function startFlowRun(slice: FlowRuntimeSlice, deps: FlowActionDeps
     }
     const response = invokeResponse.data as unknown as { runId: string };
     slice.flowActiveRunId = response.runId;
+    slice.flowPaused = false;
     slice.flowMessage = `Flow run started: ${response.runId}`;
     await deps.refreshFlowRuns();
   } catch (error) {
@@ -55,9 +56,77 @@ export async function stopFlowRun(slice: FlowRuntimeSlice, deps: FlowActionDeps)
       throw new Error(invokeResponse.error || "Flow stop failed.");
     }
     slice.flowMessage = `Flow run stopped: ${slice.flowActiveRunId}`;
+    slice.flowPaused = false;
     await deps.refreshFlowRuns();
   } catch (error) {
     slice.flowMessage = error instanceof Error ? error.message : "Failed to stop flow run";
+  } finally {
+    slice.flowBusy = false;
+  }
+}
+
+export async function setFlowRunPaused(
+  slice: FlowRuntimeSlice,
+  deps: FlowActionDeps,
+  paused: boolean
+): Promise<void> {
+  if (!deps.client || slice.flowBusy || !slice.flowActiveRunId) return;
+  slice.flowBusy = true;
+  slice.flowMessage = paused ? "Pausing flow run..." : "Resuming flow run...";
+  try {
+    const request = {
+      correlationId: deps.nextCorrelationId(),
+      runId: slice.flowActiveRunId,
+      paused
+    };
+    const invokeResponse = await deps.client.toolInvoke({
+      correlationId: request.correlationId,
+      toolId: "flow",
+      action: "pause",
+      mode: "sandbox",
+      payload: request
+    });
+    if (!invokeResponse.ok) {
+      throw new Error(invokeResponse.error || "Flow pause/resume failed.");
+    }
+    slice.flowPaused = paused;
+    slice.flowMessage = paused ? "Flow run paused." : "Flow run resumed.";
+  } catch (error) {
+    slice.flowMessage = error instanceof Error ? error.message : "Failed to set pause state";
+  } finally {
+    slice.flowBusy = false;
+  }
+}
+
+export async function nudgeFlowRun(
+  slice: FlowRuntimeSlice,
+  deps: FlowActionDeps,
+  message: string
+): Promise<void> {
+  if (!deps.client || slice.flowBusy || !slice.flowActiveRunId) return;
+  const trimmed = message.trim();
+  if (!trimmed) return;
+  slice.flowBusy = true;
+  slice.flowMessage = "Sending nudge...";
+  try {
+    const request = {
+      correlationId: deps.nextCorrelationId(),
+      runId: slice.flowActiveRunId,
+      message: trimmed
+    };
+    const invokeResponse = await deps.client.toolInvoke({
+      correlationId: request.correlationId,
+      toolId: "flow",
+      action: "nudge",
+      mode: "sandbox",
+      payload: request
+    });
+    if (!invokeResponse.ok) {
+      throw new Error(invokeResponse.error || "Flow nudge failed.");
+    }
+    slice.flowMessage = "Nudge sent.";
+  } catch (error) {
+    slice.flowMessage = error instanceof Error ? error.message : "Failed to nudge run";
   } finally {
     slice.flowBusy = false;
   }

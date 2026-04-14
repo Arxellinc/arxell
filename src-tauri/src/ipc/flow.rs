@@ -1,8 +1,9 @@
 use crate::app::flow_service::FlowService;
 use crate::contracts::{
-    EventSeverity, EventStage, FlowListRunsRequest, FlowListRunsResponse,
-    FlowRerunValidationRequest, FlowRerunValidationResponse, FlowStartRequest, FlowStartResponse,
-    FlowStatusRequest, FlowStatusResponse, FlowStopRequest, FlowStopResponse, Subsystem,
+    EventSeverity, EventStage, FlowListRunsRequest, FlowListRunsResponse, FlowNudgeRequest,
+    FlowNudgeResponse, FlowPauseRequest, FlowPauseResponse, FlowRerunValidationRequest,
+    FlowRerunValidationResponse, FlowStartRequest, FlowStartResponse, FlowStatusRequest,
+    FlowStatusResponse, FlowStopRequest, FlowStopResponse, Subsystem,
 };
 use crate::observability::EventHub;
 use serde_json::json;
@@ -189,6 +190,68 @@ impl FlowCommandHandler {
                 &req.correlation_id,
                 Subsystem::Ipc,
                 "cmd.flow.rerun_validation",
+                EventStage::Error,
+                EventSeverity::Error,
+                json!({ "error": error }),
+            )),
+        }
+        result
+    }
+
+    pub async fn pause(&self, req: FlowPauseRequest) -> Result<FlowPauseResponse, String> {
+        self.hub.emit(self.hub.make_event(
+            &req.correlation_id,
+            Subsystem::Ipc,
+            "cmd.flow.pause",
+            EventStage::Start,
+            EventSeverity::Info,
+            json!({ "runId": req.run_id, "paused": req.paused }),
+        ));
+        let result = self.service.pause(req.clone());
+        match &result {
+            Ok(response) => self.hub.emit(self.hub.make_event(
+                &response.correlation_id,
+                Subsystem::Ipc,
+                "cmd.flow.pause",
+                EventStage::Complete,
+                EventSeverity::Info,
+                json!({ "runId": response.run_id, "paused": response.paused, "updated": response.updated }),
+            )),
+            Err(error) => self.hub.emit(self.hub.make_event(
+                &req.correlation_id,
+                Subsystem::Ipc,
+                "cmd.flow.pause",
+                EventStage::Error,
+                EventSeverity::Error,
+                json!({ "error": error }),
+            )),
+        }
+        result
+    }
+
+    pub async fn nudge(&self, req: FlowNudgeRequest) -> Result<FlowNudgeResponse, String> {
+        self.hub.emit(self.hub.make_event(
+            &req.correlation_id,
+            Subsystem::Ipc,
+            "cmd.flow.nudge",
+            EventStage::Start,
+            EventSeverity::Info,
+            json!({ "runId": req.run_id }),
+        ));
+        let result = self.service.nudge(req.clone());
+        match &result {
+            Ok(response) => self.hub.emit(self.hub.make_event(
+                &response.correlation_id,
+                Subsystem::Ipc,
+                "cmd.flow.nudge",
+                EventStage::Complete,
+                EventSeverity::Info,
+                json!({ "runId": response.run_id, "accepted": response.accepted }),
+            )),
+            Err(error) => self.hub.emit(self.hub.make_event(
+                &req.correlation_id,
+                Subsystem::Ipc,
+                "cmd.flow.nudge",
                 EventStage::Error,
                 EventSeverity::Error,
                 json!({ "error": error }),

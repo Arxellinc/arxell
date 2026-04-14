@@ -2,9 +2,9 @@ use crate::contracts::{
     ApiConnectionAgentRecord, ApiConnectionRecord, ApiConnectionStatus, ApiConnectionType,
 };
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::RwLock;
 use tokio::time::Duration;
 use uuid::Uuid;
@@ -49,6 +49,8 @@ struct ApiConnectionSecretRecord {
     last_checked_ms: Option<i64>,
     created_ms: i64,
     api_standard_path: Option<String>,
+    #[serde(default)]
+    available_models: Vec<String>,
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -57,15 +59,48 @@ struct ApiRegistrySnapshot {
     connections: Vec<ApiConnectionSecretRecord>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ApiConnectionPortableRecord {
+    pub id: Option<String>,
+    pub api_type: ApiConnectionType,
+    pub api_url: String,
+    pub name: Option<String>,
+    pub api_key: String,
+    pub model_name: Option<String>,
+    pub cost_per_month_usd: Option<f64>,
+    pub api_standard_path: Option<String>,
+    pub created_ms: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ApiConnectionsPortableSnapshot {
+    pub version: u32,
+    pub exported_at_ms: i64,
+    pub connections: Vec<ApiConnectionPortableRecord>,
+}
+
 pub struct ApiRegistryService {
     connections: RwLock<HashMap<String, ApiConnectionSecretRecord>>,
     registry_path: PathBuf,
 }
 
+#[derive(Debug, Clone)]
+pub struct ApiEndpointProbeResult {
+    pub detected_api_type: ApiConnectionType,
+    pub api_standard_path: Option<String>,
+    pub verify_url: String,
+    pub models: Vec<String>,
+    pub selected_model: Option<String>,
+    pub status: ApiConnectionStatus,
+    pub status_message: String,
+}
+
 impl ApiRegistryService {
     pub fn new() -> Self {
         let registry_path = default_registry_path();
-        let snapshot = read_registry_snapshot(&registry_path);
+        let snapshot = read_registry_snapshot_with_migration(&registry_path);
         let mut connections = HashMap::new();
         for mut record in snapshot.connections {
             if appears_masked_api_key(record.api_key.as_str()) {
@@ -100,7 +135,7 @@ impl ApiRegistryService {
     ) -> Result<ApiConnectionRecord, String> {
         let api_url = normalize_required(input.api_url.as_str(), "apiUrl")?;
         validate_url(api_url.as_str())?;
-        let api_key = normalize_required(input.api_key.as_str(), "apiKey")?;
+        let api_key = normalize_api_key(input.api_key.as_str());
         validate_api_key(api_key.as_str())?;
         let name = normalize_optional(input.name.as_deref());
         let model_name = normalize_optional(input.model_name.as_deref());
@@ -109,10 +144,19 @@ impl ApiRegistryService {
         let (status, status_message) = verify_connection(
             input.api_type.clone(),
             api_url.as_str(),
+            Some(api_key.as_str()),
+            api_standard_path.as_deref(),
+            model_name.as_deref(),
+        )
+        .await;
+        let available_models = discover_available_models(
+            input.api_type.clone(),
+            api_url.as_str(),
             api_key.as_str(),
             api_standard_path.as_deref(),
         )
         .await;
+        let resolved_model_name = model_name.or_else(|| available_models.first().cloned());
 
         let record = ApiConnectionSecretRecord {
             id: format!("api-{}", Uuid::new_v4()),
@@ -120,13 +164,14 @@ impl ApiRegistryService {
             api_url,
             name,
             api_key,
-            model_name,
+            model_name: resolved_model_name,
             cost_per_month_usd: cost,
             status,
             status_message,
             last_checked_ms: Some(now_ms()),
             created_ms: now_ms(),
             api_standard_path,
+            available_models,
         };
 
         {
@@ -153,6 +198,14 @@ impl ApiRegistryService {
         let (status, status_message) = verify_connection(
             existing.api_type.clone(),
             existing.api_url.as_str(),
+            Some(existing.api_key.as_str()),
+            existing.api_standard_path.as_deref(),
+            existing.model_name.as_deref(),
+        )
+        .await;
+        let available_models = discover_available_models(
+            existing.api_type.clone(),
+            existing.api_url.as_str(),
             existing.api_key.as_str(),
             existing.api_standard_path.as_deref(),
         )
@@ -160,6 +213,7 @@ impl ApiRegistryService {
         existing.status = status;
         existing.status_message = status_message;
         existing.last_checked_ms = Some(now_ms());
+        existing.available_models = available_models;
 
         {
             let mut connections = self
@@ -196,7 +250,7 @@ impl ApiRegistryService {
             existing.name = normalize_optional(Some(name.as_str()));
         }
         if let Some(api_key) = input.api_key {
-            let normalized = normalize_required(api_key.as_str(), "apiKey")?;
+            let normalized = normalize_api_key(api_key.as_str());
             validate_api_key(normalized.as_str())?;
             existing.api_key = normalized;
         }
@@ -232,6 +286,102 @@ impl ApiRegistryService {
             .get(id)
             .ok_or_else(|| format!("api connection not found: {id}"))?;
         Ok(record.api_key.clone())
+    }
+
+    pub fn export_portable_snapshot_json(&self) -> Result<String, String> {
+        let connections = self.connections.read().expect("api registry lock poisoned");
+        let mut portable: Vec<_> = connections
+            .values()
+            .map(|record| ApiConnectionPortableRecord {
+                id: Some(record.id.clone()),
+                api_type: record.api_type.clone(),
+                api_url: record.api_url.clone(),
+                name: record.name.clone(),
+                api_key: record.api_key.clone(),
+                model_name: record.model_name.clone(),
+                cost_per_month_usd: record.cost_per_month_usd,
+                api_standard_path: record.api_standard_path.clone(),
+                created_ms: Some(record.created_ms),
+            })
+            .collect();
+        portable.sort_by(|a, b| {
+            b.created_ms
+                .unwrap_or(0)
+                .cmp(&a.created_ms.unwrap_or(0))
+                .then_with(|| a.api_url.cmp(&b.api_url))
+        });
+        let snapshot = ApiConnectionsPortableSnapshot {
+            version: API_REGISTRY_VERSION,
+            exported_at_ms: now_ms(),
+            connections: portable,
+        };
+        let payload = serde_json::to_string_pretty(&snapshot)
+            .map_err(|e| format!("failed serializing api registry export: {e}"))?;
+        Ok(format!("{payload}\n"))
+    }
+
+    pub fn import_portable_snapshot_json(
+        &self,
+        payload_json: &str,
+    ) -> Result<Vec<ApiConnectionRecord>, String> {
+        let imported = parse_portable_import(payload_json)?;
+        if imported.is_empty() {
+            return Ok(self.list());
+        }
+
+        let mut connections = self
+            .connections
+            .write()
+            .expect("api registry lock poisoned");
+        for item in imported {
+            let api_url = normalize_required(item.api_url.as_str(), "apiUrl")?;
+            validate_url(api_url.as_str())?;
+            let api_key = normalize_api_key(item.api_key.as_str());
+            validate_api_key(api_key.as_str())?;
+            let created_ms = item.created_ms.unwrap_or_else(now_ms);
+            let id = item
+                .id
+                .map(|value| value.trim().to_string())
+                .filter(|value| !value.is_empty())
+                .unwrap_or_else(|| format!("api-{}", Uuid::new_v4()));
+
+            let existing = connections.get(&id);
+            let status = existing
+                .map(|record| record.status.clone())
+                .unwrap_or(ApiConnectionStatus::Pending);
+            let status_message = existing
+                .map(|record| record.status_message.clone())
+                .unwrap_or_else(|| "Imported connection. Verify to confirm status.".to_string());
+            let last_checked_ms = existing.and_then(|record| record.last_checked_ms);
+            let available_models = existing
+                .map(|record| record.available_models.clone())
+                .unwrap_or_default();
+
+            let record = ApiConnectionSecretRecord {
+                id: id.clone(),
+                api_type: item.api_type,
+                api_url,
+                name: normalize_optional(item.name.as_deref()),
+                api_key,
+                model_name: normalize_optional(item.model_name.as_deref()),
+                cost_per_month_usd: normalize_cost(item.cost_per_month_usd)?,
+                status,
+                status_message,
+                last_checked_ms,
+                created_ms,
+                api_standard_path: normalize_optional(item.api_standard_path.as_deref()),
+                available_models,
+            };
+            connections.insert(id, record);
+        }
+        self.persist_snapshot(&connections)?;
+        let mut out: Vec<_> = connections.values().map(to_public_record).collect();
+        out.sort_by(|a, b| {
+            b.created_ms
+                .cmp(&a.created_ms)
+                .then_with(|| a.id.cmp(&b.id))
+        });
+        Ok(out)
     }
 
     pub fn delete(&self, id: &str) -> Result<bool, String> {
@@ -321,6 +471,91 @@ impl ApiRegistryService {
             .map_err(|e| format!("failed replacing api registry snapshot: {e}"))?;
         Ok(())
     }
+
+    pub async fn probe_endpoint(
+        &self,
+        api_url: &str,
+        api_type: Option<ApiConnectionType>,
+        api_key: Option<&str>,
+        api_standard_path: Option<&str>,
+    ) -> Result<ApiEndpointProbeResult, String> {
+        let normalized_url = normalize_required(api_url, "apiUrl")?;
+        validate_url(normalized_url.as_str())?;
+        let normalized_key = normalize_api_key(api_key.unwrap_or(""));
+        validate_api_key(normalized_key.as_str())?;
+
+        let requested_type = api_type.unwrap_or(ApiConnectionType::Llm);
+        if matches!(requested_type, ApiConnectionType::Search) {
+            let verify_url = build_verify_url(
+                ApiConnectionType::Search,
+                normalized_url.as_str(),
+                api_standard_path,
+            );
+            let (status, status_message) = verify_connection(
+                ApiConnectionType::Search,
+                normalized_url.as_str(),
+                Some(normalized_key.as_str()),
+                api_standard_path,
+                None,
+            )
+            .await;
+            return Ok(ApiEndpointProbeResult {
+                detected_api_type: ApiConnectionType::Search,
+                api_standard_path: api_standard_path
+                    .map(str::trim)
+                    .filter(|v| !v.is_empty())
+                    .map(ToOwned::to_owned),
+                verify_url,
+                models: Vec::new(),
+                selected_model: None,
+                status,
+                status_message,
+            });
+        }
+
+        let client =
+            build_http_client().map_err(|e| format!("Failed to create HTTP client: {e}"))?;
+        let model_probe = probe_openai_models(
+            &client,
+            normalized_url.as_str(),
+            normalized_key.as_str(),
+            api_standard_path,
+        )
+        .await;
+
+        if let Some(result) = model_probe {
+            return Ok(result);
+        }
+
+        let detected_path = api_standard_path
+            .map(str::trim)
+            .filter(|v| !v.is_empty())
+            .map(ToOwned::to_owned)
+            .or_else(|| detect_chat_path_from_base(normalized_url.as_str()));
+        let verify_url = build_verify_url(
+            ApiConnectionType::Llm,
+            normalized_url.as_str(),
+            detected_path.as_deref(),
+        );
+        let (status, status_message) = verify_connection(
+            ApiConnectionType::Llm,
+            normalized_url.as_str(),
+            Some(normalized_key.as_str()),
+            detected_path.as_deref(),
+            None,
+        )
+        .await;
+
+        Ok(ApiEndpointProbeResult {
+            detected_api_type: ApiConnectionType::Llm,
+            api_standard_path: detected_path,
+            verify_url,
+            models: Vec::new(),
+            selected_model: None,
+            status,
+            status_message,
+        })
+    }
 }
 
 impl Default for ApiRegistryService {
@@ -345,6 +580,7 @@ fn to_public_record(record: &ApiConnectionSecretRecord) -> ApiConnectionRecord {
         last_checked_ms: record.last_checked_ms,
         created_ms: record.created_ms,
         api_standard_path: record.api_standard_path.clone(),
+        available_models: record.available_models.clone(),
     }
 }
 
@@ -361,6 +597,24 @@ fn mask_api_key(api_key: &str) -> String {
     }
 }
 
+async fn discover_available_models(
+    api_type: ApiConnectionType,
+    api_url: &str,
+    api_key: &str,
+    api_standard_path: Option<&str>,
+) -> Vec<String> {
+    if !matches!(api_type, ApiConnectionType::Llm) {
+        return Vec::new();
+    }
+    let Ok(client) = build_http_client() else {
+        return Vec::new();
+    };
+    probe_openai_models(&client, api_url, api_key, api_standard_path)
+        .await
+        .map(|result| result.models)
+        .unwrap_or_default()
+}
+
 fn validate_api_key(api_key: &str) -> Result<(), String> {
     if appears_masked_api_key(api_key) {
         return Err(
@@ -369,6 +623,10 @@ fn validate_api_key(api_key: &str) -> Result<(), String> {
         );
     }
     Ok(())
+}
+
+fn normalize_api_key(value: &str) -> String {
+    value.trim().to_string()
 }
 
 fn normalize_required(value: &str, field: &str) -> Result<String, String> {
@@ -405,9 +663,11 @@ fn validate_url(api_url: &str) -> Result<(), String> {
 async fn verify_connection(
     api_type: ApiConnectionType,
     api_url: &str,
-    api_key: &str,
+    api_key: Option<&str>,
     api_standard_path: Option<&str>,
+    model_name: Option<&str>,
 ) -> (ApiConnectionStatus, String) {
+    let api_key = api_key.unwrap_or("").trim();
     if appears_masked_api_key(api_key) {
         return (
             ApiConnectionStatus::Warning,
@@ -416,11 +676,7 @@ async fn verify_connection(
         );
     }
 
-    let client = match reqwest::Client::builder()
-        .connect_timeout(Duration::from_secs(6))
-        .timeout(Duration::from_secs(12))
-        .build()
-    {
+    let client = match build_http_client() {
         Ok(client) => client,
         Err(error) => {
             return (
@@ -433,43 +689,109 @@ async fn verify_connection(
     let verify_url = build_verify_url(api_type.clone(), api_url, api_standard_path);
 
     let request = match api_type {
-        ApiConnectionType::Search => client
-            .post(&verify_url)
-            .header("Authorization", format!("Bearer {api_key}"))
-            .header("x-api-key", api_key)
-            .header("User-Agent", "arxell-lite/1.0")
-            .header("Content-Type", "application/json")
-            .json(&serde_json::json!({"q":"test","num":1})),
-        _ => client
-            .post(&verify_url)
-            .header("Authorization", format!("Bearer {api_key}"))
-            .header("x-api-key", api_key)
-            .header("User-Agent", "arxell-lite/1.0")
-            .header("Content-Type", "application/json")
-            .json(&serde_json::json!({"model":"glm-4","messages":[{"role":"system","content":"You are a helpful AI assistant."},{"role":"user","content":"Hello, please introduce yourself."}],"stream":false})),
+        ApiConnectionType::Search => with_auth_headers(
+            client
+                .post(&verify_url)
+                .header("User-Agent", "arxell-lite/1.0")
+                .header("Content-Type", "application/json"),
+            api_key,
+        )
+        .json(&serde_json::json!({"q":"test","num":1})),
+        _ => {
+            let selected_model = model_name.map(str::trim).filter(|v| !v.is_empty());
+            let body = if let Some(model) = selected_model {
+                serde_json::json!({
+                    "model": model,
+                    "messages": [
+                        {"role":"system","content":"You are a helpful AI assistant."},
+                        {"role":"user","content":"Hello, please introduce yourself."}
+                    ],
+                    "temperature": 1.0,
+                    "stream": true
+                })
+            } else {
+                serde_json::json!({
+                    "messages": [
+                        {"role":"system","content":"You are a helpful AI assistant."},
+                        {"role":"user","content":"Hello, please introduce yourself."}
+                    ],
+                    "temperature": 1.0,
+                    "stream": true
+                })
+            };
+            with_auth_headers(
+                client
+                    .post(&verify_url)
+                    .header("User-Agent", "arxell-lite/1.0")
+                    .header("Accept-Language", "en-US,en")
+                    .header("Content-Type", "application/json"),
+                api_key,
+            )
+            .json(&body)
+        }
     };
 
     match request.send().await {
         Ok(response) => {
-            if response.status().is_success() {
+            let status = response.status();
+            let status_code = status.as_u16();
+            let headers = response.headers().clone();
+            let body_text = response.text().await.unwrap_or_default();
+            if status.is_success() {
                 (
                     ApiConnectionStatus::Verified,
                     format!(
                         "Verified {} endpoint at {} (HTTP {})",
                         api_type_label(&api_type),
                         verify_url,
-                        response.status().as_u16()
+                        status_code
                     ),
                 )
             } else {
-                (
-                    ApiConnectionStatus::Warning,
-                    format!(
-                        "Connection reachable at {} but verification failed (HTTP {})",
-                        verify_url,
-                        response.status().as_u16()
-                    ),
-                )
+                if status_code == 429 {
+                    let looks_exhausted =
+                        looks_like_exhausted_rate_limit(&headers, body_text.as_str());
+                    let model_list_reachable = if matches!(api_type, ApiConnectionType::Llm) {
+                        probe_openai_models(&client, api_url, api_key, api_standard_path)
+                            .await
+                            .is_some()
+                    } else {
+                        false
+                    };
+                    if looks_exhausted {
+                        (
+                            ApiConnectionStatus::Warning,
+                            format!(
+                                "Connection reachable at {} but verification is blocked by exhausted rate/quota limits (HTTP 429)",
+                                verify_url
+                            ),
+                        )
+                    } else if model_list_reachable {
+                        (
+                            ApiConnectionStatus::Verified,
+                            format!(
+                                "Connection reachable at {}. Chat verify returned HTTP 429, but models/auth probe succeeded.",
+                                verify_url
+                            ),
+                        )
+                    } else {
+                        (
+                            ApiConnectionStatus::Verified,
+                            format!(
+                                "Connection reachable at {} (HTTP 429). Limit policy detected but not confirmed as exhausted.",
+                                verify_url
+                            ),
+                        )
+                    }
+                } else {
+                    (
+                        ApiConnectionStatus::Warning,
+                        format!(
+                            "Connection reachable at {} but verification failed (HTTP {})",
+                            verify_url, status_code
+                        ),
+                    )
+                }
             }
         }
         Err(error) => (
@@ -477,6 +799,202 @@ async fn verify_connection(
             format!("Connection test failed: {error}"),
         ),
     }
+}
+
+fn looks_like_exhausted_rate_limit(headers: &reqwest::header::HeaderMap, body_text: &str) -> bool {
+    let body = body_text.to_ascii_lowercase();
+    let body_has_exhausted_signal = (body.contains("rate limit")
+        || body.contains("ratelimit")
+        || body.contains("quota")
+        || body.contains("insufficient_quota"))
+        && (body.contains("exceed")
+            || body.contains("exhaust")
+            || body.contains("limit reached")
+            || body.contains("too many requests")
+            || body.contains("insufficient_quota"));
+    if body_has_exhausted_signal {
+        return true;
+    }
+
+    let remaining_headers = [
+        "x-ratelimit-remaining",
+        "x-ratelimit-remaining-requests",
+        "x-ratelimit-remaining-tokens",
+    ];
+    for key in remaining_headers {
+        if let Some(value) = headers.get(key).and_then(|v| v.to_str().ok()) {
+            if value.trim() == "0" {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+fn build_http_client() -> Result<reqwest::Client, reqwest::Error> {
+    reqwest::Client::builder()
+        .connect_timeout(Duration::from_secs(6))
+        .timeout(Duration::from_secs(12))
+        .build()
+}
+
+fn with_auth_headers(
+    mut builder: reqwest::RequestBuilder,
+    api_key: &str,
+) -> reqwest::RequestBuilder {
+    let trimmed = api_key.trim();
+    if !trimmed.is_empty() {
+        builder = builder
+            .header("Authorization", format!("Bearer {trimmed}"))
+            .header("x-api-key", trimmed);
+    }
+    builder
+}
+
+async fn probe_openai_models(
+    client: &reqwest::Client,
+    api_url: &str,
+    api_key: &str,
+    api_standard_path: Option<&str>,
+) -> Option<ApiEndpointProbeResult> {
+    let mut candidates = candidate_model_list_urls(api_url);
+    if candidates.is_empty() {
+        return None;
+    }
+    candidates.dedup();
+
+    for models_url in candidates {
+        let request = with_auth_headers(client.get(models_url.as_str()), api_key)
+            .header("User-Agent", "arxell-lite/1.0")
+            .header("Accept", "application/json");
+        let Ok(response) = request.send().await else {
+            continue;
+        };
+        if !response.status().is_success() {
+            continue;
+        }
+        let status_code = response.status().as_u16();
+        let body: serde_json::Value = response
+            .json()
+            .await
+            .unwrap_or_else(|_| serde_json::json!({}));
+        let models = extract_model_ids(body);
+        let selected_model = models.first().cloned();
+        let detected_path = api_standard_path
+            .map(str::trim)
+            .filter(|v| !v.is_empty())
+            .map(ToOwned::to_owned)
+            .or_else(|| detect_chat_path_from_models_url(models_url.as_str()));
+        let verify_url =
+            build_verify_url(ApiConnectionType::Llm, api_url, detected_path.as_deref());
+        let message = if models.is_empty() {
+            format!(
+                "Detected OpenAI-compatible endpoint at {} (HTTP {})",
+                models_url, status_code
+            )
+        } else {
+            format!(
+                "Detected OpenAI-compatible endpoint with {} model(s) at {} (HTTP {})",
+                models.len(),
+                models_url,
+                status_code
+            )
+        };
+        return Some(ApiEndpointProbeResult {
+            detected_api_type: ApiConnectionType::Llm,
+            api_standard_path: detected_path,
+            verify_url,
+            models,
+            selected_model,
+            status: ApiConnectionStatus::Verified,
+            status_message: message,
+        });
+    }
+    None
+}
+
+fn candidate_model_list_urls(api_url: &str) -> Vec<String> {
+    let base = api_url.trim().trim_end_matches('/');
+    if base.is_empty() {
+        return Vec::new();
+    }
+
+    if base.ends_with("/models") {
+        return vec![base.to_string()];
+    }
+
+    if base.ends_with("/v1") {
+        let root = base.trim_end_matches("/v1").trim_end_matches('/');
+        return vec![format!("{base}/models"), format!("{root}/models")];
+    }
+
+    vec![format!("{base}/v1/models"), format!("{base}/models")]
+}
+
+fn detect_chat_path_from_models_url(models_url: &str) -> Option<String> {
+    let lower = models_url.to_ascii_lowercase();
+    if lower.ends_with("/v1/models") {
+        return Some("/v1/chat/completions".to_string());
+    }
+    if lower.ends_with("/models") {
+        return Some("/chat/completions".to_string());
+    }
+    None
+}
+
+fn detect_chat_path_from_base(api_url: &str) -> Option<String> {
+    let base = api_url.trim().trim_end_matches('/').to_ascii_lowercase();
+    if base.ends_with("/v1") {
+        return Some("/chat/completions".to_string());
+    }
+    if base.ends_with("/v1/chat/completions") || base.ends_with("/chat/completions") {
+        return None;
+    }
+    Some("/v1/chat/completions".to_string())
+}
+
+fn extract_model_ids(value: serde_json::Value) -> Vec<String> {
+    let mut models = Vec::new();
+    let mut seen = HashSet::new();
+    if let Some(data) = value.get("data").and_then(|v| v.as_array()) {
+        for item in data {
+            if let Some(id) = item.get("id").and_then(|v| v.as_str()) {
+                let trimmed = id.trim();
+                if !trimmed.is_empty() {
+                    let owned = trimmed.to_string();
+                    if seen.insert(owned.clone()) {
+                        models.push(owned);
+                    }
+                }
+            }
+        }
+    }
+    if models.is_empty() {
+        if let Some(items) = value.get("models").and_then(|v| v.as_array()) {
+            for item in items {
+                if let Some(id) = item.get("id").and_then(|v| v.as_str()) {
+                    let trimmed = id.trim();
+                    if !trimmed.is_empty() {
+                        let owned = trimmed.to_string();
+                        if seen.insert(owned.clone()) {
+                            models.push(owned);
+                        }
+                        continue;
+                    }
+                }
+                if let Some(name) = item.get("name").and_then(|v| v.as_str()) {
+                    let trimmed = name.trim();
+                    if !trimmed.is_empty() {
+                        let owned = trimmed.to_string();
+                        if seen.insert(owned.clone()) {
+                            models.push(owned);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    models
 }
 
 fn build_verify_url(
@@ -552,9 +1070,8 @@ fn default_registry_path() -> PathBuf {
             return PathBuf::from(trimmed);
         }
     }
-    std::env::temp_dir()
-        .join("arxell-lite")
-        .join("api-connections.json")
+    let root = default_app_data_root().unwrap_or_else(|| std::env::temp_dir().join("arxell-lite"));
+    root.join("api-connections.json")
 }
 
 fn read_registry_snapshot(path: &PathBuf) -> ApiRegistrySnapshot {
@@ -571,6 +1088,98 @@ fn read_registry_snapshot(path: &PathBuf) -> ApiRegistrySnapshot {
         };
     };
     parsed
+}
+
+fn parse_portable_import(payload_json: &str) -> Result<Vec<ApiConnectionPortableRecord>, String> {
+    let trimmed = payload_json.trim();
+    if trimmed.is_empty() {
+        return Ok(Vec::new());
+    }
+    if let Ok(snapshot) = serde_json::from_str::<ApiConnectionsPortableSnapshot>(trimmed) {
+        return Ok(snapshot.connections);
+    }
+    if let Ok(connections) = serde_json::from_str::<Vec<ApiConnectionPortableRecord>>(trimmed) {
+        return Ok(connections);
+    }
+    if let Ok(snapshot) = serde_json::from_str::<ApiRegistrySnapshot>(trimmed) {
+        let connections = snapshot
+            .connections
+            .into_iter()
+            .map(|record| ApiConnectionPortableRecord {
+                id: Some(record.id),
+                api_type: record.api_type,
+                api_url: record.api_url,
+                name: record.name,
+                api_key: record.api_key,
+                model_name: record.model_name,
+                cost_per_month_usd: record.cost_per_month_usd,
+                api_standard_path: record.api_standard_path,
+                created_ms: Some(record.created_ms),
+            })
+            .collect();
+        return Ok(connections);
+    }
+    Err("failed parsing API connections import payload".to_string())
+}
+
+fn default_app_data_root() -> Option<PathBuf> {
+    if let Ok(raw) = std::env::var("XDG_DATA_HOME") {
+        let trimmed = raw.trim();
+        if !trimmed.is_empty() {
+            return Some(PathBuf::from(trimmed).join("com.arxell.lite"));
+        }
+    }
+    if let Ok(raw) = std::env::var("APPDATA") {
+        let trimmed = raw.trim();
+        if !trimmed.is_empty() {
+            return Some(PathBuf::from(trimmed).join("com.arxell.lite"));
+        }
+    }
+    if let Ok(raw) = std::env::var("HOME") {
+        let home = PathBuf::from(raw.trim());
+        #[cfg(target_os = "macos")]
+        {
+            return Some(
+                home.join("Library")
+                    .join("Application Support")
+                    .join("com.arxell.lite"),
+            );
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            return Some(home.join(".local").join("share").join("com.arxell.lite"));
+        }
+    }
+    None
+}
+
+fn legacy_temp_registry_path() -> PathBuf {
+    std::env::temp_dir()
+        .join("arxell-lite")
+        .join("api-connections.json")
+}
+
+fn read_registry_snapshot_with_migration(path: &Path) -> ApiRegistrySnapshot {
+    let destination = path.to_path_buf();
+    let snapshot = read_registry_snapshot(&destination);
+    if !snapshot.connections.is_empty() || destination.exists() {
+        return snapshot;
+    }
+    let legacy = legacy_temp_registry_path();
+    if legacy == destination {
+        return snapshot;
+    }
+    let legacy_snapshot = read_registry_snapshot(&legacy);
+    if legacy_snapshot.connections.is_empty() {
+        return snapshot;
+    }
+    if let Some(parent) = destination.parent() {
+        let _ = fs::create_dir_all(parent);
+    }
+    if let Ok(payload) = serde_json::to_string_pretty(&legacy_snapshot) {
+        let _ = fs::write(&destination, format!("{payload}\n"));
+    }
+    legacy_snapshot
 }
 
 fn now_ms() -> i64 {

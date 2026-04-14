@@ -43,6 +43,14 @@ const WORKSPACE_TOOL_MANIFESTS: &[WorkspaceToolManifest] = &[
         default_enabled: true,
     },
     WorkspaceToolManifest {
+        tool_id: "chart",
+        title: "Chart",
+        description: "Mermaid flowcharts and diagrams",
+        category: "agent",
+        core: false,
+        default_enabled: true,
+    },
+    WorkspaceToolManifest {
         tool_id: "flow",
         title: "Flow",
         description: "Node-based workflow orchestration surface",
@@ -87,7 +95,10 @@ const WORKSPACE_TOOL_MANIFESTS: &[WorkspaceToolManifest] = &[
 #[derive(Debug, Default, Serialize, Deserialize)]
 struct ToolRegistrySnapshot {
     version: u32,
+    #[serde(default)]
     enabled: HashMap<String, bool>,
+    #[serde(default)]
+    icon: HashMap<String, bool>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -139,6 +150,7 @@ impl WorkspaceToolsService {
                 .get(manifest.tool_id)
                 .copied()
                 .unwrap_or(manifest.default_enabled);
+            let icon = snapshot.icon.get(manifest.tool_id).copied().unwrap_or(true);
             tools.insert(
                 manifest.tool_id.to_string(),
                 WorkspaceToolRecord {
@@ -151,6 +163,7 @@ impl WorkspaceToolsService {
                     version: "1.0.0".to_string(),
                     source: "builtin".to_string(),
                     enabled,
+                    icon,
                     status: status_for_enabled(enabled).to_string(),
                     entry: None,
                 },
@@ -190,6 +203,18 @@ impl WorkspaceToolsService {
         };
         tool.enabled = enabled;
         tool.status = status_for_enabled(enabled).to_string();
+        self.persist_snapshot(&state.tools)?;
+        Ok(())
+    }
+
+    pub fn set_icon(&self, tool_id: &str, icon: bool) -> Result<(), String> {
+        let mut state = self.state.write().expect("workspace tools lock poisoned");
+        let snapshot = read_registry_snapshot(&self.registry_path);
+        apply_plugins(&mut state, &self.plugins_root, &snapshot);
+        let Some(tool) = state.tools.get_mut(tool_id) else {
+            return Err(format!("workspace tool not found: {tool_id}"));
+        };
+        tool.icon = icon;
         self.persist_snapshot(&state.tools)?;
         Ok(())
     }
@@ -237,9 +262,15 @@ impl WorkspaceToolsService {
             .iter()
             .map(|(tool_id, tool)| (tool_id.clone(), tool.enabled))
             .collect::<HashMap<_, _>>();
+        let icon = state
+            .tools
+            .iter()
+            .map(|(tool_id, tool)| (tool_id.clone(), tool.icon))
+            .collect::<HashMap<_, _>>();
         let snapshot = ToolRegistrySnapshot {
             version: TOOL_REGISTRY_VERSION,
             enabled,
+            icon,
         };
         serde_json::to_string_pretty(&snapshot)
             .map(|payload| format!("{payload}\n"))
@@ -257,6 +288,7 @@ impl WorkspaceToolsService {
             let enabled = parsed.enabled.get(tool_id).copied().unwrap_or(tool.enabled);
             tool.enabled = enabled;
             tool.status = status_for_enabled(enabled).to_string();
+            tool.icon = parsed.icon.get(tool_id).copied().unwrap_or(tool.icon);
         }
         self.persist_snapshot(&state.tools)?;
         let mut records: Vec<_> = state.tools.values().cloned().collect();
@@ -269,9 +301,14 @@ impl WorkspaceToolsService {
             .iter()
             .map(|(tool_id, tool)| (tool_id.clone(), tool.enabled))
             .collect::<HashMap<_, _>>();
+        let icon = tools
+            .iter()
+            .map(|(tool_id, tool)| (tool_id.clone(), tool.icon))
+            .collect::<HashMap<_, _>>();
         let snapshot = ToolRegistrySnapshot {
             version: TOOL_REGISTRY_VERSION,
             enabled,
+            icon,
         };
         let Some(parent) = self.registry_path.parent() else {
             return Err("invalid tool registry path".to_string());
@@ -326,6 +363,11 @@ fn apply_plugins(
             .get(plugin_id.as_str())
             .copied()
             .unwrap_or(true);
+        let icon = snapshot
+            .icon
+            .get(plugin_id.as_str())
+            .copied()
+            .unwrap_or(true);
         let category = normalize_category(plugin.manifest.category.as_deref());
         let capabilities = plugin
             .permissions
@@ -358,6 +400,7 @@ fn apply_plugins(
                 version: plugin.manifest.version,
                 source: "custom".to_string(),
                 enabled,
+                icon,
                 status: status_for_enabled(enabled).to_string(),
                 entry: Some(path_to_string(plugin.entry_path.as_path())),
             },
@@ -506,12 +549,14 @@ fn read_registry_snapshot(path: &PathBuf) -> ToolRegistrySnapshot {
         return ToolRegistrySnapshot {
             version: TOOL_REGISTRY_VERSION,
             enabled: HashMap::new(),
+            icon: HashMap::new(),
         };
     };
     let Ok(parsed) = serde_json::from_str::<ToolRegistrySnapshot>(&raw) else {
         return ToolRegistrySnapshot {
             version: TOOL_REGISTRY_VERSION,
             enabled: HashMap::new(),
+            icon: HashMap::new(),
         };
     };
     parsed

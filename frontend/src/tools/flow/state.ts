@@ -22,6 +22,14 @@ export interface FlowRunView extends Omit<FlowRunRecord, "iterations"> {
   iterations: FlowIterationView[];
 }
 
+export interface FlowPhaseTranscriptEntry {
+  timestampMs: number;
+  runId: string;
+  phase: string;
+  kind: "start" | "progress" | "complete" | "error" | "run";
+  message: string;
+}
+
 export interface FlowRuntimeSlice {
   flowRuns: FlowRunView[];
   flowActiveRunId: string | null;
@@ -40,4 +48,27 @@ export interface FlowRuntimeSlice {
   flowFilteredEvents: AppEvent[];
   flowMessage: string | null;
   flowBusy: boolean;
+  flowAdvancedOpen: boolean;
+  flowBottomPanel: "terminal" | "validate" | "events";
+  flowWorkspaceSplit: number;
+  flowActiveTerminalPhase: string;
+  flowPhaseSessionByName: Record<string, string>;
+  flowAutoFocusPhaseTerminal: boolean;
+  flowPhaseTranscriptsByRun: Record<string, Record<string, FlowPhaseTranscriptEntry[]>>;
+  flowProjectSetupOpen: boolean;
+  flowProjectSetupDismissed: boolean;
+  flowProjectNameDraft: string;
+  flowProjectTypeDraft: string;
+  flowProjectDescriptionDraft: string;
+  flowPhaseModels: Record<string, string>;
+  flowAvailableModels: Array<{ id: string; label: string }>;
+  flowPaused: boolean;
+  flowModelUnavailableOpen: boolean;
+  flowModelUnavailablePhase: string;
+  flowModelUnavailableModel: string;
+  flowModelUnavailableFallbackModel: string;
+  flowModelUnavailableReason: string;
+  flowModelUnavailableAttempt: number;
+  flowModelUnavailableMaxAttempts: number;
+  flowModelUnavailableStatus: string;
 }

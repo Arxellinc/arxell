@@ -31,6 +31,7 @@ function renderVadRow(args: {
 
 export function renderSttBody(state: PrimaryPanelRenderState): string {
   const stt = state.stt;
+  const backendLabel = stt.backend === "sherpa_onnx" ? "sherpa-onnx" : "whisper.cpp";
   const statusClass = stt.status === "error" ? "stt-status-error" : stt.status === "running" ? "stt-status-running" : stt.status === "starting" ? "stt-status-starting" : "stt-status-idle";
   const statusText = stt.status === "idle" ? "Not started" : stt.status === "starting" ? "Starting..." : stt.status === "running" ? "Listening" : `Error: ${stt.message || "Unknown"}`;
 
@@ -48,6 +49,20 @@ export function renderSttBody(state: PrimaryPanelRenderState): string {
         })
         .join("")
     : `<div class="stt-console-empty">No STT console output yet.</div>`;
+
+  const availableModels = stt.availableModels.length > 0 ? stt.availableModels : ["auto"];
+  const languages = ["auto", "en", "es", "fr", "de", "it", "pt", "ru", "zh", "ja", "ko", "ar"];
+  const threadOptions = [1, 2, 4, 6, 8];
+  const sttModels: Array<{name: string; fileName: string}> = [
+    {
+      name: "Sherpa Streaming Zipformer (English)",
+      fileName: "sherpa-onnx-rk3588-streaming-zipformer-en-2023-06-26.tar.bz2"
+    },
+    {
+      name: "Sherpa Moonshine Base (Quantized)",
+      fileName: "sherpa-onnx-moonshine-base-en-quantized-2026-02-27.tar.bz2"
+    }
+  ];
 
   return `
     <div class="primary-pane-body">
@@ -71,21 +86,116 @@ export function renderSttBody(state: PrimaryPanelRenderState): string {
           <span class="config-meta">Ready</span>
         </div>
         <div class="config-row">
+          <span class="config-key">Backend</span>
+          <span class="config-value">
+            <select id="sttBackendSelect" class="control-select">
+              <option value="whisper_cpp"${stt.backend === "whisper_cpp" ? " selected" : ""}>whisper.cpp</option>
+              <option value="sherpa_onnx"${stt.backend === "sherpa_onnx" ? " selected" : ""}>sherpa-onnx</option>
+            </select>
+          </span>
+          <span class="config-meta">${backendLabel}</span>
+        </div>
+        <div class="config-row">
           <span class="config-key">Recognition Model</span>
-          <span class="config-value">whisper-base</span>
+          <span class="config-value">
+            <select id="sttModelSelect" class="control-select">
+              ${availableModels.map(model => `<option value="${model}"${stt.selectedModel === model ? " selected" : ""}>${model}</option>`).join("")}
+            </select>
+          </span>
           <span class="config-meta">Local</span>
         </div>
         <div class="config-row">
           <span class="config-key">Language</span>
-          <span class="config-value">Auto-detect</span>
-          <span class="config-meta">Enabled</span>
+          <span class="config-value">
+            <select id="sttLanguageSelect" class="control-select">
+              ${languages.map(lang => `<option value="${lang}"${stt.language === lang ? " selected" : ""}>${lang === "auto" ? "Auto-detect" : lang.toUpperCase()}</option>`).join("")}
+            </select>
+          </span>
+          <span class="config-meta">Recognition</span>
+        </div>
+        <div class="config-row">
+          <span class="config-key">Threads</span>
+          <span class="config-value">
+            <select id="sttThreadsSelect" class="control-select">
+              ${threadOptions.map(threads => `<option value="${threads}"${stt.threads === threads ? " selected" : ""}>${threads}</option>`).join("")}
+            </select>
+          </span>
+          <span class="config-meta">CPU cores</span>
         </div>
       </div>
+
+      <div class="stt-advanced-toggle">
+        <button type="button" class="stt-advanced-toggle-btn" id="sttAdvancedToggleBtn">
+          <span class="stt-advanced-toggle-icon">${stt.showAdvancedSettings ? "▼" : "▶"}</span>
+          <span class="stt-advanced-toggle-text">Advanced Settings</span>
+        </button>
+      </div>
+
+      ${stt.showAdvancedSettings ? `
+      <section class="stt-advanced-section" aria-label="Advanced STT Settings">
+        <h3 class="stt-advanced-title">Advanced Settings</h3>
+        <div class="config-table">
+          <div class="config-row">
+            <span class="config-key">Sample Rate</span>
+            <span class="config-value">16000 Hz</span>
+            <span class="config-meta">Fixed</span>
+          </div>
+          <div class="config-row">
+            <span class="config-key">Audio Format</span>
+            <span class="config-value">PCM Float32</span>
+            <span class="config-meta">16-bit</span>
+          </div>
+          <div class="config-row">
+            <span class="config-key">Backend</span>
+            <span class="config-value">${backendLabel}</span>
+            <span class="config-meta">Active</span>
+          </div>
+        </div>
+        <details class="stt-model-downloads" style="margin-top: 16px;" open>
+          <summary class="stt-advanced-title">Model Downloads</summary>
+          <table class="config-table" style="width: 100%; margin-top: 8px;">
+            <tbody>
+              ${sttModels.map(model => `
+                <tr class="config-row">
+                  <td class="config-key">${escapeHtml(model.name)}</td>
+                  <td class="config-value" style="text-align: right;">
+                    <button type="button" class="tool-action-btn" data-stt-model-download="${model.fileName}">
+                      Download
+                    </button>
+                  </td>
+                </tr>
+              `).join("")}
+            </tbody>
+          </table>
+        </details>
+        ${stt.modelDownloadProgress !== null ? `
+          <div class="config-table" style="margin-top: 8px;">
+            <div class="config-row">
+              <span class="config-key">Download Progress</span>
+              <span class="config-value">
+                <progress value="${stt.modelDownloadProgress}" max="100" style="width: 100%; height: 8px;"></progress>
+                ${stt.modelDownloadProgress}%
+              </span>
+              <span class="config-meta">Downloading...</span>
+            </div>
+          </div>
+        ` : ""}
+        ${stt.modelDownloadError ? `
+          <div class="config-table" style="margin-top: 8px;">
+            <div class="config-row">
+              <span class="config-key">Error</span>
+              <span class="config-value" style="color: var(--error);">${escapeHtml(stt.modelDownloadError)}</span>
+              <span class="config-meta">Failed</span>
+            </div>
+          </div>
+        ` : ""}
+      </section>
+      ` : ""}
 
       ${stt.lastTranscript ? `
         <div class="stt-transcript">
           <div class="stt-transcript-label">Last Transcript:</div>
-          <div class="stt-transcript-text">${stt.lastTranscript}</div>
+          <div class="stt-transcript-text">${escapeHtml(stt.lastTranscript)}</div>
         </div>
       ` : ""}
 

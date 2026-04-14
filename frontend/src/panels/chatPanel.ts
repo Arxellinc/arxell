@@ -36,12 +36,13 @@ function parseAttachmentMessage(raw: string): ParsedAttachmentMessage {
 
 export function renderChatActions(state: PrimaryPanelRenderState): string {
   const sttRunning = state.stt?.status === "running" || state.stt?.status === "starting";
+  const ttsActive = state.chatTtsEnabled;
+  const voiceModeActive = sttRunning && ttsActive;
   return `
     <div class="chat-actions">
       <button type="button" class="topbar-icon-btn" id="chatNewBtn" aria-label="New chat" data-title="New Chat" title="New Chat">${iconHtml(APP_ICON.action.chatNew, { size: 16, tone: "dark" })}</button>
       <button type="button" class="topbar-icon-btn" id="chatClearBtn" aria-label="Clear chat" data-title="Clear Chat" title="Clear Chat">${iconHtml(APP_ICON.action.chatClear, { size: 16, tone: "dark" })}</button>
-      <button type="button" class="topbar-icon-btn chat-stt-btn ${sttRunning ? "is-active" : ""}" id="chatSttBtn" aria-label="${sttRunning ? "Stop Speech-to-Text" : "Start Speech-to-Text"}" data-title="${sttRunning ? "Stop STT" : "Start STT"}" title="${sttRunning ? "Stop Speech-to-Text" : "Start Speech-to-Text"}">${iconHtml(APP_ICON.sidebar.stt, { size: 16, tone: "dark" })}</button>
-      <button type="button" class="topbar-icon-btn chat-tts-btn" id="chatTtsBtn" aria-label="Text-to-Speech (not available)" data-title="TTS (coming soon)" title="Text-to-Speech (coming soon)">${iconHtml(APP_ICON.sidebar.tts, { size: 16, tone: "dark" })}</button>
+      <button type="button" class="topbar-icon-btn chat-speech-btn ${voiceModeActive ? "is-active" : ""}" id="chatSpeechBtn" aria-label="${voiceModeActive ? "Disable voice mode" : "Enable voice mode"}" data-title="${voiceModeActive ? "Voice Mode On" : "Voice Mode Off"}" title="${voiceModeActive ? "Disable voice mode (STT + TTS)" : "Enable voice mode (STT + TTS)"}">${iconHtml("speech", { size: 16, tone: "dark" })}</button>
     </div>
   `;
 }
@@ -52,6 +53,7 @@ export function renderChatBody(state: PrimaryPanelRenderState): string {
   const attachedFileName = state.chatAttachedFileName?.trim() ?? "";
   const hasAttachedFile = attachedFileName.length > 0;
   const caps = state.chatActiveModelCapabilities;
+  const canStopActiveOutput = state.chatStreaming || state.chatTtsPlaying;
   const capabilitySummary = [
     caps.text ? "text" : null,
     caps.imageUnderstanding ? "image" : null,
@@ -65,7 +67,6 @@ export function renderChatBody(state: PrimaryPanelRenderState): string {
     <div class="messages">${renderChatMessages(state)}</div>
     <form class="composer" id="composer">
       <div class="composer-model-meta" id="chatModelMeta">
-        <span class="composer-model-name" title="${escapeHtml(state.chatActiveModelId)}">${escapeHtml(state.chatActiveModelLabel)}</span>
         <span class="composer-model-caps">${escapeHtml(capabilitySummary || "text")}</span>
       </div>
       <div class="composer-attachment-meta" id="chatAttachmentMeta" ${hasAttachedFile ? "" : "hidden"}>
@@ -86,14 +87,18 @@ export function renderChatBody(state: PrimaryPanelRenderState): string {
         </button>
         <button type="button" class="attach-icon-btn" id="chatAttachBtn" aria-label="Attach document" title="Attach document">
           <span class="attach-icon-glyph" aria-hidden="true">${iconHtml("file-plus", { size: 16, tone: "dark" })}</span>
-          <span class="attach-icon-label">+attach</span>
+          <span class="attach-icon-label">attach</span>
         </button>
         <button type="button" class="mic-icon-btn ${isListening ? "is-active" : ""}" id="chatMicBtn" aria-label="${isListening ? "Stop voice input" : "Start voice input"}" title="${isListening ? "Stop voice input" : "Start voice input"}">
           <span class="mic-icon-glyph" aria-hidden="true">${iconHtml(isSpeaking ? APP_ICON.sidebar.sttSpeaking : APP_ICON.sidebar.stt, { size: 16, tone: "dark" })}</span>
-          <span class="mic-icon-label">voice</span>
+          <span class="mic-icon-label">STT</span>
         </button>
-        <button type="button" class="send-icon-btn" id="chatSubmitBtn" aria-label="${state.chatStreaming ? "Stop response" : "Send message"}" title="${state.chatStreaming ? "Stop response" : "Send message"}">
-          <span class="send-icon-glyph ${state.chatStreaming ? "is-stop" : "is-play"}" aria-hidden="true">${state.chatStreaming ? "◼" : "▶"}</span>
+        <button type="button" class="mic-icon-btn ${state.chatTtsEnabled ? "is-active" : ""}" id="chatSpeakBtn" aria-label="${state.chatTtsEnabled ? "Disable auto-speak" : "Enable auto-speak"}" title="${state.chatTtsEnabled ? "Disable auto-speak" : "Enable auto-speak"}">
+          <span class="mic-icon-glyph" aria-hidden="true">${iconHtml(APP_ICON.sidebar.tts, { size: 16, tone: "dark" })}</span>
+          <span class="mic-icon-label">TTS</span>
+        </button>
+        <button type="button" class="send-icon-btn" id="chatSubmitBtn" aria-label="${canStopActiveOutput ? "Stop response" : "Send message"}" title="${canStopActiveOutput ? "Stop response" : "Send message"}">
+          <span class="send-icon-glyph ${canStopActiveOutput ? "is-stop" : "is-play"}" aria-hidden="true">${canStopActiveOutput ? "◼" : "▶"}</span>
         </button>
       </div>
       <input type="file" id="chatAttachInput" hidden />
@@ -110,8 +115,9 @@ export function renderChatMessages(state: PrimaryPanelRenderState): string {
         const thinkingText = correlationId
           ? (state.chatReasoningByCorrelation[correlationId] ?? "").trim()
           : "";
-        const expanded = correlationId
-          ? state.chatThinkingExpandedByCorrelation[correlationId] === true
+        const thinkingRowId = correlationId ? `thinking-row-${correlationId}` : "";
+        const thinkingExpanded = thinkingRowId
+          ? state.chatToolRowExpandedById[thinkingRowId] === true
           : false;
         const placement = correlationId
           ? state.chatThinkingPlacementByCorrelation[correlationId] ?? "after"
@@ -171,12 +177,17 @@ export function renderChatMessages(state: PrimaryPanelRenderState): string {
           : `<div class="message-text message-text-pending">Running tools...</div>`;
         const thinkingHtml =
           correlationId && thinkingText
-            ? `<section class="message-thinking ${expanded ? "is-open" : ""}" data-thinking-corr="${escapeHtml(correlationId)}">
-                <button type="button" class="message-thinking-toggle" data-thinking-toggle-corr="${escapeHtml(correlationId)}" aria-expanded="${expanded ? "true" : "false"}" title="${expanded ? "Collapse thinking" : "Expand thinking"}">
-                  <span class="message-thinking-label">Thinking...</span>
-                  <span class="message-thinking-icon" aria-hidden="true">${expanded ? "▾" : "▸"}</span>
-                </button>
-                ${expanded ? `<div class="message-thinking-body">${escapeHtml(thinkingText)}</div>` : ""}
+            ? `<section class="message-tool-rows">
+                <article class="message-tool-row ${thinkingExpanded ? "is-open" : ""}">
+                  <button type="button" class="message-tool-row-toggle" data-tool-row-toggle-id="${escapeHtml(thinkingRowId)}" aria-expanded="${thinkingExpanded ? "true" : "false"}" title="${thinkingExpanded ? "Collapse thinking" : "Expand thinking"}">
+                    <span class="message-tool-row-left">
+                      <span class="message-tool-row-icon">${iconHtml(APP_ICON.action.chatThinking, { size: 16, tone: "dark" })}</span>
+                      <span class="message-tool-row-title">Thinking</span>
+                    </span>
+                    <span class="message-tool-row-chevron" aria-hidden="true">${thinkingExpanded ? "▾" : "▸"}</span>
+                  </button>
+                  ${thinkingExpanded ? `<div class="message-tool-row-details">${escapeHtml(thinkingText)}</div>` : ""}
+                </article>
               </section>`
             : "";
         const contentHtml =

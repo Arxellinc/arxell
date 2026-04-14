@@ -40,3 +40,15 @@ Checks performed:
 - Run only frontend dev server in browser.
 - Verify badge shows `runtime: mock`.
 - Send message and confirm simulated streaming still works.
+
+## Manual (TTS engine reset behavior)
+1. Open the `TTS` panel.
+2. Set non-empty paths/voice/speed on one engine (for example `Kokoro`).
+3. Switch engine to `Piper`, then `Matcha`, then back to `Kokoro`.
+4. Verify after each switch:
+- stale model/secondary/tokens/data fields from prior engine are cleared
+- voice/speed defaults are reset for the selected engine
+- only engine-relevant secondary path row is visible:
+  - `Kokoro`/`Kitten`: voices path
+  - `Matcha`: vocoder path
+  - `Piper`: no secondary-path row

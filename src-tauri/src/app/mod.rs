@@ -54,7 +54,10 @@ impl AppContext {
         let permissions = Arc::new(permission_service::PermissionService::new(hub.clone()));
         let model_manager = Arc::new(model_manager_service::ModelManagerService::new(hub.clone()));
         let files = Arc::new(files_service::FilesService::new());
-        let flow = Arc::new(flow_service::FlowService::new(hub.clone()));
+        let flow = Arc::new(flow_service::FlowService::new_with_registry(
+            hub.clone(),
+            Some(Arc::clone(&api_registry)),
+        ));
 
         let ipc = IpcLayer::new(hub, service, terminal, Arc::clone(&flow));
         Self {

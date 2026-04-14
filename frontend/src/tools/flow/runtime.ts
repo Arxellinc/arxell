@@ -122,6 +122,35 @@ function ensureFlowIteration(run: FlowRunView, index: number, timestampMs: numbe
 
 export function applyFlowEvent(slice: FlowRuntimeSlice, event: AppEvent): void {
   if (!event.action.startsWith("flow.")) return;
+  if (event.action === "flow.model.unavailable") {
+    const payload = payloadAsRecord(event.payload);
+    const runId = typeof payload?.runId === "string" ? payload.runId : null;
+    if (!runId) return;
+    const status = typeof payload?.status === "string" ? payload.status : "retrying";
+    const phase = typeof payload?.phase === "string" ? payload.phase : "";
+    const model = typeof payload?.model === "string" ? payload.model : "";
+    const fallbackModel =
+      typeof payload?.fallbackModel === "string" ? payload.fallbackModel : "";
+    const reason = typeof payload?.reason === "string" ? payload.reason : "Model unavailable";
+    const attempt = typeof payload?.attempt === "number" ? payload.attempt : 0;
+    const maxAttempts = typeof payload?.maxAttempts === "number" ? payload.maxAttempts : 0;
+    slice.flowModelUnavailableOpen = status !== "switched";
+    slice.flowModelUnavailablePhase = phase;
+    slice.flowModelUnavailableModel = model;
+    slice.flowModelUnavailableFallbackModel = fallbackModel;
+    slice.flowModelUnavailableReason = reason;
+    slice.flowModelUnavailableAttempt = attempt;
+    slice.flowModelUnavailableMaxAttempts = maxAttempts;
+    slice.flowModelUnavailableStatus = status;
+    if (status === "switched" && phase && fallbackModel) {
+      slice.flowPhaseModels = {
+        ...slice.flowPhaseModels,
+        [phase]: fallbackModel
+      };
+      slice.flowMessage = `Flow switched ${phase} to fallback model ${fallbackModel}.`;
+    }
+    return;
+  }
   const parsed = parseFlowEventPayload(event);
   if (!parsed) return;
 
@@ -156,10 +185,12 @@ export function applyFlowEvent(slice: FlowRuntimeSlice, event: AppEvent): void {
       run.status = parsed.status ?? "succeeded";
       run.completedAtMs = event.timestampMs;
       run.summary = parsed.result ?? run.summary ?? (run.status === "stopped" ? "Stopped" : null);
+      slice.flowModelUnavailableOpen = false;
     } else if (event.action === "flow.run.error") {
       run.status = parsed.status ?? "failed";
       run.completedAtMs = event.timestampMs;
       run.summary = parsed.error ?? "Flow run failed";
+      slice.flowModelUnavailableOpen = false;
     } else if (event.action === "flow.run.progress") {
       run.status = parsed.status ?? "running";
     }
@@ -302,6 +333,7 @@ export function buildFlowStartRequest(
     | "flowSpecsGlob"
     | "flowImplementCommand"
     | "flowBackpressureCommands"
+    | "flowPhaseModels"
   >,
   correlationId: string
 ): FlowStartRequest {
@@ -322,6 +354,7 @@ export function buildFlowStartRequest(
     planPath: slice.flowPlanPath.trim() || "IMPLEMENTATION_PLAN.md",
     specsGlob: slice.flowSpecsGlob.trim() || "specs/*.md",
     backpressureCommands,
+    phaseModels: { ...slice.flowPhaseModels },
     ...(implementCommand ? { implementCommand } : {})
   };
 }
@@ -337,4 +370,5 @@ export function applyFlowRunSettingsFromRecord(slice: FlowRuntimeSlice, run: Flo
   slice.flowSpecsGlob = run.specsGlob;
   slice.flowImplementCommand = run.implementCommand ?? "";
   slice.flowBackpressureCommands = run.backpressureCommands.join("\n");
+  slice.flowPhaseModels = { ...(run.phaseModels ?? {}) };
 }

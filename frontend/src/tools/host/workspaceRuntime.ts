@@ -22,6 +22,8 @@ import {
 } from "../files/actions";
 import type { FilesConflictResolution } from "../files/actions";
 import {
+  nudgeFlowRun,
+  setFlowRunPaused,
   rerunFlowValidation,
   resumeFlowRun,
   retryFlowRun,
@@ -95,6 +97,8 @@ export interface WorkspaceToolsRuntime {
   resumeFlowRun: (baseRun: FlowRunView) => Promise<void>;
   rerunFlowValidation: (baseRun: FlowRunView) => Promise<void>;
   stopFlowRun: () => Promise<void>;
+  setFlowPaused: (paused: boolean) => Promise<void>;
+  nudgeFlowRun: (message: string) => Promise<void>;
   getActiveWebTab: () => WebTabState | null;
   withActiveWebTab: (mutator: (tab: WebTabState) => void) => void;
   ensureWebTabs: () => void;
@@ -179,6 +183,12 @@ export function createWorkspaceToolsRuntime(
     },
     stopFlowRun: async () => {
       await stopFlowRun(state, flowDeps);
+    },
+    setFlowPaused: async (paused) => {
+      await setFlowRunPaused(state, flowDeps, paused);
+    },
+    nudgeFlowRun: async (message) => {
+      await nudgeFlowRun(state, flowDeps, message);
     },
     getActiveWebTab: () => getActiveWebTab(state),
     withActiveWebTab: (mutator) => {
@@ -273,12 +283,16 @@ export function createWorkspaceToolsRuntime(
       });
     },
     generateCreateToolPrdSection: async (section, onUpdate) => {
-      await generateCreateToolPrdSectionFromModel(state, {
+      const createToolDeps = {
         client: deps.getClient(),
         nextCorrelationId: deps.nextCorrelationId,
-        refreshTools: deps.refreshTools,
-        onUpdate
-      }, section);
+        refreshTools: deps.refreshTools
+      } as const;
+      await generateCreateToolPrdSectionFromModel(
+        state,
+        onUpdate ? { ...createToolDeps, onUpdate } : createToolDeps,
+        section
+      );
     },
     runCreateToolPrdReview: async () => {
       await runCreateToolPrdReview(state, {

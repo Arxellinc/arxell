@@ -1,7 +1,9 @@
 import "./styles.css";
 import "xterm/css/xterm.css";
 import type {
+  ApiConnectionProbeRequest,
   ApiConnectionRecord,
+  AppResourceUsageResponse,
   AppEvent,
   ChatAttachment,
   ChatStreamChunkPayload,
@@ -12,6 +14,7 @@ import type {
   LlamaRuntimeStatusResponse,
   ModelManagerHfCandidate,
   ModelManagerInstalledModel,
+  TtsSpeakResponse,
   WorkspaceToolRecord
 } from "./contracts";
 import { iconHtml } from "./icons";
@@ -20,6 +23,7 @@ import { APP_ICON } from "./icons/map";
 import type { ChatIpcClient } from "./ipcClient";
 import { createChatIpcClient } from "./ipcClient";
 import {
+  BOTTOMBAR_RESOURCE_IDS,
   isWorkspaceTab,
   renderGlobalBottombar,
   renderGlobalTopbar,
@@ -41,19 +45,18 @@ import type { TerminalShellProfile } from "./tools/terminal/types";
 import {
   CONSOLE_DATA_ATTR,
   MANAGER_DATA_ATTR,
-  MANAGER_UI_ID,
-  TERMINAL_DATA_ATTR,
   TERMINAL_UI_ID,
-  WEB_UI_ID,
-  WORKSPACE_DATA_ATTR
+  WEB_UI_ID
 } from "./tools/ui/constants";
 import { renderWorkspaceToolsActions, renderWorkspaceToolsBody } from "./tools/manager/index";
 import { renderToolToolbar } from "./tools/ui/toolbar";
+import { DEFAULT_CHART_SOURCE } from "./tools/chart/bindings";
+import { renderMermaidInto } from "./tools/chart/runtime";
 import {
   filterFlowEvents,
   normalizeFlowRun as normalizeFlowRunView
 } from "./tools/flow/runtime";
-import type { FlowRunView } from "./tools/flow/state";
+import type { FlowPhaseTranscriptEntry, FlowRunView } from "./tools/flow/state";
 import { applyFlowRuntimeEvent } from "./tools/host/flowEvents";
 import {
   dispatchWorkspaceToolChange,
@@ -85,8 +88,10 @@ import type { TaskFolder, TaskSortDirection, TaskSortKey, TaskRecord } from "./t
 import {
   DEFAULT_CREATE_TOOL_SPEC,
   DEFAULT_CREATE_TOOL_UI_PREVIEW_HTML,
-  type CreateToolModelOption
+  type CreateToolModelOption,
+  type CreateToolPrdSection
 } from "./tools/createTool/state";
+import { resetTtsStateForEngine, type TtsEngine } from "./tts/engineRules";
 import { getAllToolManifests } from "./tools/registry";
 import { renderChatMessages } from "./panels/chatPanel";
 import { APP_BUILD_VERSION, normalizeVersionLabel } from "./version";
@@ -97,58 +102,130 @@ import {
 } from "./workspace/controller";
 import {
   inferChatModelCapabilities,
-  resolveActiveChatModelProfile,
   type ChatModelCapabilities
 } from "./modelCapabilities";
 import { destroyOverlayScrollbars, syncOverlayScrollbars } from "./scrollbars";
+import {
+  BOTTOM_BAR_PREF_KEYS,
+  FLOW_TERMINAL_PHASES,
+  loadMicBubbleDismissed,
+  loadPersistedBottomItem,
+  loadPersistedChatModelId,
+  loadPersistedChatRoutePreference,
+  loadPersistedCreateToolDraft,
+  loadPersistedFlowActivePhase,
+  loadPersistedFlowAdvancedOpen,
+  loadPersistedFlowAutoFollow,
+  loadPersistedFlowBottomPanel,
+  loadPersistedFlowPhaseSessionMap,
+  loadPersistedFlowSplit,
+  loadPersistedLlamaMaxTokens,
+  loadPersistedLlamaModelPath,
+  loadPersistedShowAppResourcesCpu,
+  loadPersistedShowAppResourcesMemory,
+  loadPersistedShowAppResourcesNetwork,
+  loadPersistedSttBackend,
+  loadPersistedSttLanguage,
+  loadPersistedSttModel,
+  loadPersistedSttThreads,
+  persistBottomItem,
+  persistChatRoutePreference,
+  persistChatModelId,
+  persistCreateToolDraft,
+  persistFlowPhaseSessionMap,
+  persistFlowActivePhase,
+  persistFlowWorkspacePrefs,
+  persistLlamaMaxTokens,
+  persistLlamaModelPath,
+  persistMicBubbleDismissed,
+  persistShowAppResourcesCpu,
+  persistShowAppResourcesMemory,
+  persistShowAppResourcesNetwork,
+  persistSttBackend,
+  persistSttLanguage,
+  persistSttModel,
+  persistSttThreads,
+  resolveSystemDisplayMode,
+  type ChatRoutePreference,
+  type CreateToolLayoutModifier,
+  type PersistedCreateToolDraft,
+  type SttBackend
+} from "./app/persistence";
+import { createAppResourcePolling } from "./app/polling";
+import { runCoreBootstrapSteps } from "./app/bootstrap";
+import { defaultApiConnectionDraft, defaultDevicesState } from "./app/state";
+import {
+  buildBottomStatus,
+  buildConversationMarkdown,
+  composeAppBodyHtml,
+  composeAppFrameHtml,
+  composePrimaryPaneHtml,
+  conversationMarkdownFilename,
+  formatConsoleEntryLine,
+  getVisibleConsoleEntries,
+  modelNameFromPath,
+  renderMicPermissionBubble,
+  renderConsoleToolbar,
+  renderPanelTitleIcon
+} from "./app/render";
+import {
+  handleChatStreamEvent,
+  handleCoreAppEvent,
+  isNoisyChatStreamEvent,
+  isNoisyRuntimeStatusEvent,
+  isNoisyTerminalControlEvent,
+  parseTerminalExit,
+  parseTerminalOutput,
+  payloadAsRecord
+} from "./app/events";
+import { createSendMessageHandler } from "./app/chatSend";
+import { installTauriSttListeners, registerClientEventBridge } from "./app/bootstrapEvents";
+import { createFlowPhaseTerminalEventHandler } from "./app/bootstrapFlowBridge";
+import { syncBootstrapRuntime, type TauriWindowHandle } from "./app/bootstrapRuntime";
+import { initializeSendMessageBinding } from "./app/sendMessageBootstrap";
+import { createWorkspaceToolManagerActions } from "./app/workspaceToolManagerActions";
+import {
+  bindWorkspaceToolDelegatedEvents,
+  bindConsoleInteractions,
+  handleWorkspacePaneClickPrelude,
+  handleManagerAndTerminalClick,
+  mountWorkspaceTerminalHosts
+} from "./app/workspaceInteractions";
 
 const terminalManager = new TerminalManager();
 const MAX_CONSOLE_ENTRIES = 600;
-const LLAMA_MODEL_PATH_STORAGE_KEY = "arxell.llama.modelPath";
-const LLAMA_MAX_TOKENS_STORAGE_KEY = "arxell.llama.maxTokens";
-const MIC_PERMISSION_BUBBLE_DISMISSED_KEY = "arxell.micPermissionBubbleDismissed";
-const CREATE_TOOL_DRAFT_STORAGE_KEY = "arxell.createTool.draft.v1";
 const CHAT_ID_ALPHANUM = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
 let chatStreamDomUpdateScheduled = false;
 let chatThinkingDelegationInstalled = false;
 let customToolBridgeInstalled = false;
+let tauriWindowHandle: TauriWindowHandle | null = null;
 const FALLBACK_APP_VERSION = normalizeVersionLabel(APP_BUILD_VERSION);
+let preferredChatModelId = loadPersistedChatModelId();
 type ConsoleView = "all" | "errors-warnings" | "security-events";
 type DisplayModePreference = DisplayMode | "system" | "terminal";
-
-const CREATE_TOOL_LAYOUT_MODIFIERS = new Set([
-  "modal-focused",
-  "secondary-toolbar",
-  "chat-sidecar",
-  "bottom-console",
-  "wizard-steps",
-  "map-canvas",
-  "split-main-detail",
-  "triple-panel",
-  "timeline-console",
-  "dashboard-cards",
-  "tabbed-workbench",
-  "command-palette-first"
-]);
-
-interface PersistedCreateToolDraft {
-  createToolStage: "meta" | "prd" | "build" | "fix";
-  createToolSelectedModelId: string;
-  createToolPrdUiPreset: "left-sidebar" | "right-sidebar" | "both-sidebars" | "no-sidebar";
-  createToolLayoutModifiers: string[];
-  createToolPrdUiNotes: string;
-  createToolPrdInputs: string;
-  createToolPrdProcess: string;
-  createToolPrdConnections: string;
-  createToolPrdDependencies: string;
-  createToolPrdExpectedBehavior: string;
-  createToolPrdOutputs: string;
-  createToolPrdMarkdownDoc: string;
-  createToolDevPlan: string;
-  createToolBuildViewMode: "code" | "preview";
-  createToolFixNotes: string;
-  createToolSpec: typeof DEFAULT_CREATE_TOOL_SPEC;
-}
+type ChatModelOption = {
+  id: string;
+  label: string;
+  source: "api" | "local";
+  modelName: string;
+  detail: string;
+};
+type ApiConnectionPortableRecord = {
+  id?: string;
+  apiType: "llm" | "search" | "stt" | "tts" | "image" | "other";
+  apiUrl: string;
+  name?: string | null;
+  apiKey: string;
+  modelName?: string | null;
+  costPerMonthUsd?: number | null;
+  apiStandardPath?: string | null;
+  createdMs?: number;
+};
+type ApiConnectionsPortableSnapshot = {
+  version: number;
+  exportedAtMs?: number;
+  connections: ApiConnectionPortableRecord[];
+};
 
 function generateChatConversationId(): string {
   let suffix = "";
@@ -157,244 +234,6 @@ function generateChatConversationId(): string {
   }
   return `C${suffix}`;
 }
-
-function loadPersistedLlamaModelPath(): string {
-  try {
-    const value = window.localStorage.getItem(LLAMA_MODEL_PATH_STORAGE_KEY);
-    return value?.trim() ?? "";
-  } catch {
-    return "";
-  }
-}
-
-function persistLlamaModelPath(modelPath: string): void {
-  try {
-    const normalized = modelPath.trim();
-    if (!normalized) {
-      window.localStorage.removeItem(LLAMA_MODEL_PATH_STORAGE_KEY);
-      return;
-    }
-    window.localStorage.setItem(LLAMA_MODEL_PATH_STORAGE_KEY, normalized);
-  } catch {
-    // Ignore local storage failures (private mode / denied access).
-  }
-}
-
-function loadPersistedLlamaMaxTokens(): number | null {
-  try {
-    const raw = window.localStorage.getItem(LLAMA_MAX_TOKENS_STORAGE_KEY);
-    if (!raw) return null;
-    const parsed = Number.parseInt(raw, 10);
-    if (!Number.isFinite(parsed)) return null;
-    const clamped = Math.max(128, Math.min(4096, parsed));
-    return clamped;
-  } catch {
-    return null;
-  }
-}
-
-function persistLlamaMaxTokens(maxTokens: number | null): void {
-  try {
-    if (maxTokens === null) {
-      window.localStorage.removeItem(LLAMA_MAX_TOKENS_STORAGE_KEY);
-      return;
-    }
-    const clamped = Math.max(128, Math.min(4096, Math.trunc(maxTokens)));
-    window.localStorage.setItem(LLAMA_MAX_TOKENS_STORAGE_KEY, String(clamped));
-  } catch {
-    // Ignore local storage failures.
-  }
-}
-
-function loadMicBubbleDismissed(): boolean {
-  try {
-    return window.localStorage.getItem(MIC_PERMISSION_BUBBLE_DISMISSED_KEY) === "1";
-  } catch {
-    return false;
-  }
-}
-
-function persistMicBubbleDismissed(dismissed: boolean): void {
-  try {
-    if (dismissed) {
-      window.localStorage.setItem(MIC_PERMISSION_BUBBLE_DISMISSED_KEY, "1");
-    } else {
-      window.localStorage.removeItem(MIC_PERMISSION_BUBBLE_DISMISSED_KEY);
-    }
-  } catch {
-    // Ignore local storage failures.
-  }
-}
-
-function resolveSystemDisplayMode(): DisplayMode {
-  try {
-    if (window.matchMedia && window.matchMedia("(prefers-color-scheme: light)").matches) {
-      return "light";
-    }
-  } catch {
-    // Ignore and fall back to dark.
-  }
-  return "dark";
-}
-
-function loadPersistedCreateToolDraft(): PersistedCreateToolDraft | null {
-  try {
-    const raw = window.localStorage.getItem(CREATE_TOOL_DRAFT_STORAGE_KEY);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw) as Partial<PersistedCreateToolDraft>;
-    if (!parsed || typeof parsed !== "object") return null;
-
-    const stage =
-      parsed.createToolStage === "meta" ||
-      parsed.createToolStage === "prd" ||
-      parsed.createToolStage === "build" ||
-      parsed.createToolStage === "fix"
-        ? parsed.createToolStage
-        : "meta";
-    const uiPreset =
-      parsed.createToolPrdUiPreset === "left-sidebar" ||
-      parsed.createToolPrdUiPreset === "right-sidebar" ||
-      parsed.createToolPrdUiPreset === "both-sidebars" ||
-      parsed.createToolPrdUiPreset === "no-sidebar"
-        ? parsed.createToolPrdUiPreset
-        : "left-sidebar";
-    const buildViewMode =
-      parsed.createToolBuildViewMode === "preview" ? "preview" : "code";
-
-    const persistedSpec = parsed.createToolSpec;
-    const nextSpec = {
-      ...DEFAULT_CREATE_TOOL_SPEC,
-      ...(persistedSpec && typeof persistedSpec === "object" ? persistedSpec : {}),
-      guardrails: {
-        ...DEFAULT_CREATE_TOOL_SPEC.guardrails,
-        ...(persistedSpec &&
-        typeof persistedSpec === "object" &&
-        persistedSpec.guardrails &&
-        typeof persistedSpec.guardrails === "object"
-          ? persistedSpec.guardrails
-          : {})
-      }
-    };
-
-    return {
-      createToolStage: stage,
-      createToolSelectedModelId:
-        typeof parsed.createToolSelectedModelId === "string" && parsed.createToolSelectedModelId.trim()
-          ? parsed.createToolSelectedModelId.trim()
-          : "primary-agent",
-      createToolPrdUiPreset: uiPreset,
-      createToolLayoutModifiers: Array.isArray(parsed.createToolLayoutModifiers)
-        ? parsed.createToolLayoutModifiers.filter((item) => CREATE_TOOL_LAYOUT_MODIFIERS.has(item))
-        : [],
-      createToolPrdUiNotes:
-        typeof parsed.createToolPrdUiNotes === "string" ? parsed.createToolPrdUiNotes : "",
-      createToolPrdInputs: typeof parsed.createToolPrdInputs === "string" ? parsed.createToolPrdInputs : "",
-      createToolPrdProcess:
-        typeof parsed.createToolPrdProcess === "string" ? parsed.createToolPrdProcess : "",
-      createToolPrdConnections:
-        typeof parsed.createToolPrdConnections === "string" ? parsed.createToolPrdConnections : "",
-      createToolPrdDependencies:
-        typeof parsed.createToolPrdDependencies === "string" ? parsed.createToolPrdDependencies : "",
-      createToolPrdExpectedBehavior:
-        typeof parsed.createToolPrdExpectedBehavior === "string"
-          ? parsed.createToolPrdExpectedBehavior
-          : "",
-      createToolPrdOutputs:
-        typeof parsed.createToolPrdOutputs === "string" ? parsed.createToolPrdOutputs : "",
-      createToolPrdMarkdownDoc:
-        typeof parsed.createToolPrdMarkdownDoc === "string" ? parsed.createToolPrdMarkdownDoc : "",
-      createToolDevPlan: typeof parsed.createToolDevPlan === "string" ? parsed.createToolDevPlan : "",
-      createToolBuildViewMode: buildViewMode,
-      createToolFixNotes: typeof parsed.createToolFixNotes === "string" ? parsed.createToolFixNotes : "",
-      createToolSpec: nextSpec
-    };
-  } catch {
-    return null;
-  }
-}
-
-function persistCreateToolDraft(slice: {
-  createToolStage: "meta" | "prd" | "build" | "fix";
-  createToolSelectedModelId: string;
-  createToolPrdUiPreset: "left-sidebar" | "right-sidebar" | "both-sidebars" | "no-sidebar";
-  createToolLayoutModifiers: string[];
-  createToolPrdUiNotes: string;
-  createToolPrdInputs: string;
-  createToolPrdProcess: string;
-  createToolPrdConnections: string;
-  createToolPrdDependencies: string;
-  createToolPrdExpectedBehavior: string;
-  createToolPrdOutputs: string;
-  createToolPreviewFiles: Record<string, string>;
-  createToolDevPlan: string;
-  createToolBuildViewMode: "code" | "preview";
-  createToolFixNotes: string;
-  createToolSpec: typeof DEFAULT_CREATE_TOOL_SPEC;
-}): void {
-  try {
-    const payload: PersistedCreateToolDraft = {
-      createToolStage: slice.createToolStage,
-      createToolSelectedModelId: slice.createToolSelectedModelId || "primary-agent",
-      createToolPrdUiPreset: slice.createToolPrdUiPreset,
-      createToolLayoutModifiers: slice.createToolLayoutModifiers.filter((item) =>
-        CREATE_TOOL_LAYOUT_MODIFIERS.has(item)
-      ),
-      createToolPrdUiNotes: slice.createToolPrdUiNotes,
-      createToolPrdInputs: slice.createToolPrdInputs,
-      createToolPrdProcess: slice.createToolPrdProcess,
-      createToolPrdConnections: slice.createToolPrdConnections,
-      createToolPrdDependencies: slice.createToolPrdDependencies,
-      createToolPrdExpectedBehavior: slice.createToolPrdExpectedBehavior,
-      createToolPrdOutputs: slice.createToolPrdOutputs,
-      createToolPrdMarkdownDoc:
-        typeof slice.createToolPreviewFiles["PRD.md"] === "string"
-          ? slice.createToolPreviewFiles["PRD.md"]
-          : "",
-      createToolDevPlan: slice.createToolDevPlan,
-      createToolBuildViewMode: slice.createToolBuildViewMode,
-      createToolFixNotes: slice.createToolFixNotes,
-      createToolSpec: {
-        ...DEFAULT_CREATE_TOOL_SPEC,
-        ...slice.createToolSpec,
-        guardrails: {
-          ...DEFAULT_CREATE_TOOL_SPEC.guardrails,
-          ...(slice.createToolSpec?.guardrails || {})
-        }
-      }
-    };
-    window.localStorage.setItem(CREATE_TOOL_DRAFT_STORAGE_KEY, JSON.stringify(payload));
-  } catch {
-    // Ignore local storage failures.
-  }
-}
-
-function defaultDevicesState(): DevicesState {
-  return {
-    microphonePermission: "not_enabled",
-    speakerPermission: "not_enabled",
-    defaultAudioInput: "Unknown",
-    defaultAudioOutput: "Unknown",
-    audioInputCount: 0,
-    audioOutputCount: 0,
-    webcamCount: 0,
-    keyboardDetected: true,
-    mouseDetected: false,
-    lastUpdatedLabel: "Not checked"
-  };
-}
-
-function defaultApiConnectionDraft(): ApiConnectionDraft {
-  return {
-    apiType: "llm",
-    apiUrl: "",
-    name: "",
-    apiKey: "",
-    modelName: "",
-    costPerMonthUsd: "",
-    apiStandardPath: ""
-  };
-}
-
 const persistedCreateToolDraft = loadPersistedCreateToolDraft();
 const persistedCreateToolPrdMarkdownDoc = persistedCreateToolDraft?.createToolPrdMarkdownDoc ?? "";
 
@@ -410,6 +249,7 @@ const state: {
   chatToolIntentByCorrelation: Record<string, boolean>;
   chatFirstAssistantChunkMsByCorrelation: Record<string, number>;
   chatFirstReasoningChunkMsByCorrelation: Record<string, number>;
+  chatTtsLatencyMs: number | null;
   chatStreaming: boolean;
   chatDraft: string;
   chatAttachedFileName: string | null;
@@ -417,6 +257,9 @@ const state: {
   chatActiveModelId: string;
   chatActiveModelLabel: string;
   chatActiveModelCapabilities: ChatModelCapabilities;
+  chatModelOptions: ChatModelOption[];
+  chatTtsEnabled: boolean;
+  chatTtsPlaying: boolean;
   activeChatCorrelationId: string | null;
   devices: DevicesState;
   apiConnections: ApiConnectionRecord[];
@@ -424,6 +267,10 @@ const state: {
   apiDraft: ApiConnectionDraft;
   apiEditingId: string | null;
   apiMessage: string | null;
+  apiProbeBusy: boolean;
+  apiProbeStatus: "verified" | "warning" | "pending" | null;
+  apiProbeMessage: string | null;
+  apiDetectedModels: string[];
   micPermissionBubbleDismissed: boolean;
   events: AppEvent[];
   consoleEntries: Array<{
@@ -443,6 +290,9 @@ const state: {
   terminalShellProfile: TerminalShellProfile;
   conversations: ConversationSummaryRecord[];
   workspaceTools: WorkspaceToolRecord[];
+  chartSource: string;
+  chartRenderSource: string;
+  chartError: string | null;
   webTabs: WebTabState[];
   activeWebTabId: string;
   nextWebTabIndex: number;
@@ -511,20 +361,7 @@ const state: {
   createToolModelOptions: CreateToolModelOption[];
   createToolSelectedModelId: string;
   createToolPrdUiPreset: "left-sidebar" | "right-sidebar" | "both-sidebars" | "no-sidebar";
-  createToolLayoutModifiers: Array<
-    | "modal-focused"
-    | "secondary-toolbar"
-    | "chat-sidecar"
-    | "bottom-console"
-    | "wizard-steps"
-    | "map-canvas"
-    | "split-main-detail"
-    | "triple-panel"
-    | "timeline-console"
-    | "dashboard-cards"
-    | "tabbed-workbench"
-    | "command-palette-first"
-  >;
+  createToolLayoutModifiers: CreateToolLayoutModifier[];
   createToolPrdUiNotes: string;
   createToolPrdInputs: string;
   createToolPrdProcess: string;
@@ -585,10 +422,46 @@ const state: {
   flowValidationResults: FlowRerunValidationResult[];
   flowMessage: string | null;
   flowBusy: boolean;
+  flowAdvancedOpen: boolean;
+  flowBottomPanel: "terminal" | "validate" | "events";
+  flowWorkspaceSplit: number;
+  flowActiveTerminalPhase: string;
+  flowPhaseSessionByName: Record<string, string>;
+  flowAutoFocusPhaseTerminal: boolean;
+  flowPhaseTranscriptsByRun: Record<string, Record<string, FlowPhaseTranscriptEntry[]>>;
+  flowProjectSetupOpen: boolean;
+  flowProjectSetupDismissed: boolean;
+  flowProjectNameDraft: string;
+  flowProjectTypeDraft: string;
+  flowProjectDescriptionDraft: string;
+  flowPhaseModels: Record<string, string>;
+  flowAvailableModels: Array<{ id: string; label: string }>;
+  flowPaused: boolean;
+  flowModelUnavailableOpen: boolean;
+  flowModelUnavailablePhase: string;
+  flowModelUnavailableModel: string;
+  flowModelUnavailableFallbackModel: string;
+  flowModelUnavailableReason: string;
+  flowModelUnavailableAttempt: number;
+  flowModelUnavailableMaxAttempts: number;
+  flowModelUnavailableStatus: string;
   displayMode: DisplayMode;
   displayModePreference: DisplayModePreference;
   appVersion: string;
   chatThinkingEnabled: boolean;
+  chatRoutePreference: ChatRoutePreference;
+  showAppResourceCpu: boolean;
+  showAppResourceMemory: boolean;
+  showAppResourceNetwork: boolean;
+  showBottomEngine: boolean;
+  showBottomModel: boolean;
+  showBottomContext: boolean;
+  showBottomSpeed: boolean;
+  showBottomTtsLatency: boolean;
+  appResourceCpuPercent: number | null;
+  appResourceMemoryBytes: number | null;
+  appResourceNetworkRxBytesPerSec: number | null;
+  appResourceNetworkTxBytesPerSec: number | null;
   llamaRuntime: LlamaRuntimeStatusResponse | null;
   llamaRuntimeSelectedEngineId: string;
   llamaRuntimeModelPath: string;
@@ -633,6 +506,7 @@ const state: {
   stt: {
     status: "idle" | "starting" | "running" | "error";
     message: string | null;
+    backend: SttBackend;
     isListening: boolean;
     isSpeaking: boolean;
     lastTranscript: string | null;
@@ -646,6 +520,36 @@ const state: {
     vadMinUtteranceMs: number;
     vadMaxUtteranceS: number;
     vadForceFlushS: number;
+    selectedModel: string;
+    availableModels: string[];
+    language: string;
+    threads: number;
+    showAdvancedSettings: boolean;
+    modelDownloadProgress: number | null;
+    modelDownloadError: string | null;
+  };
+  tts: {
+    status: "idle" | "ready" | "busy" | "error";
+    message: string | null;
+    engineId: string;
+    engine: "kokoro" | "piper" | "matcha" | "kitten" | "pocket";
+    ready: boolean;
+    runtimeArchivePresent: boolean;
+    availableModelPaths: string[];
+    modelPath: string;
+    secondaryPath: string;
+    voicesPath: string;
+    tokensPath: string;
+    dataDir: string;
+    pythonPath: string;
+    scriptPath: string;
+    voices: string[];
+    selectedVoice: string;
+    speed: number;
+    testText: string;
+    lastDurationMs: number | null;
+    lastBytes: number | null;
+    lastSampleRate: number | null;
   };
 } = {
   conversationId: generateChatConversationId(),
@@ -659,13 +563,17 @@ const state: {
   chatToolIntentByCorrelation: {},
   chatFirstAssistantChunkMsByCorrelation: {},
   chatFirstReasoningChunkMsByCorrelation: {},
+  chatTtsLatencyMs: null,
   chatStreaming: false,
   chatDraft: "",
   chatAttachedFileName: null,
   chatAttachedFileContent: null,
-  chatActiveModelId: "primary-agent",
+  chatActiveModelId: preferredChatModelId,
   chatActiveModelLabel: "local-model",
   chatActiveModelCapabilities: inferChatModelCapabilities("local-model"),
+  chatModelOptions: [],
+  chatTtsEnabled: false,
+  chatTtsPlaying: false,
   activeChatCorrelationId: null,
   devices: defaultDevicesState(),
   apiConnections: [],
@@ -673,6 +581,10 @@ const state: {
   apiDraft: defaultApiConnectionDraft(),
   apiEditingId: null,
   apiMessage: null,
+  apiProbeBusy: false,
+  apiProbeStatus: null,
+  apiProbeMessage: null,
+  apiDetectedModels: [],
   micPermissionBubbleDismissed: loadMicBubbleDismissed(),
   events: [],
   consoleEntries: [],
@@ -687,6 +599,9 @@ const state: {
   terminalShellProfile: "default",
   conversations: [],
   workspaceTools: [],
+  chartSource: DEFAULT_CHART_SOURCE,
+  chartRenderSource: DEFAULT_CHART_SOURCE,
+  chartError: null,
   webTabs: [createWebTab(1)],
   activeWebTabId: "",
   nextWebTabIndex: 2,
@@ -808,10 +723,46 @@ const state: {
   flowValidationResults: [],
   flowMessage: null,
   flowBusy: false,
-  displayMode: "terminal",
-  displayModePreference: "terminal",
+  flowAdvancedOpen: loadPersistedFlowAdvancedOpen(),
+  flowBottomPanel: loadPersistedFlowBottomPanel(),
+  flowWorkspaceSplit: loadPersistedFlowSplit(),
+  flowActiveTerminalPhase: loadPersistedFlowActivePhase(),
+  flowPhaseSessionByName: loadPersistedFlowPhaseSessionMap(),
+  flowAutoFocusPhaseTerminal: loadPersistedFlowAutoFollow(),
+  flowPhaseTranscriptsByRun: {},
+  flowProjectSetupOpen: false,
+  flowProjectSetupDismissed: false,
+  flowProjectNameDraft: "",
+  flowProjectTypeDraft: "app-tool",
+  flowProjectDescriptionDraft: "",
+  flowPhaseModels: {},
+  flowAvailableModels: [],
+  flowPaused: false,
+  flowModelUnavailableOpen: false,
+  flowModelUnavailablePhase: "",
+  flowModelUnavailableModel: "",
+  flowModelUnavailableFallbackModel: "",
+  flowModelUnavailableReason: "",
+  flowModelUnavailableAttempt: 0,
+  flowModelUnavailableMaxAttempts: 0,
+  flowModelUnavailableStatus: "",
+  displayMode: "dark",
+  displayModePreference: "dark",
   appVersion: FALLBACK_APP_VERSION,
   chatThinkingEnabled: false,
+  chatRoutePreference: loadPersistedChatRoutePreference(),
+  showAppResourceCpu: loadPersistedShowAppResourcesCpu(),
+  showAppResourceMemory: loadPersistedShowAppResourcesMemory(),
+  showAppResourceNetwork: loadPersistedShowAppResourcesNetwork(),
+  showBottomEngine: loadPersistedBottomItem(BOTTOM_BAR_PREF_KEYS.showBottomEngine, true),
+  showBottomModel: loadPersistedBottomItem(BOTTOM_BAR_PREF_KEYS.showBottomModel, true),
+  showBottomContext: loadPersistedBottomItem(BOTTOM_BAR_PREF_KEYS.showBottomContext, true),
+  showBottomSpeed: loadPersistedBottomItem(BOTTOM_BAR_PREF_KEYS.showBottomSpeed, true),
+  showBottomTtsLatency: loadPersistedBottomItem(BOTTOM_BAR_PREF_KEYS.showBottomTtsLatency, true),
+  appResourceCpuPercent: null,
+  appResourceMemoryBytes: null,
+  appResourceNetworkRxBytesPerSec: null,
+  appResourceNetworkTxBytesPerSec: null,
   llamaRuntime: null,
   llamaRuntimeSelectedEngineId: "",
   llamaRuntimeModelPath: loadPersistedLlamaModelPath(),
@@ -846,11 +797,12 @@ const state: {
   stt: {
     status: "idle",
     message: null,
+    backend: loadPersistedSttBackend(),
     isListening: false,
     isSpeaking: false,
     lastTranscript: null,
     microphonePermission: "not_enabled",
-    vadBaseThreshold: 0.005,
+    vadBaseThreshold: 0.0012,
     vadStartFrames: 2,
     vadEndFrames: 8,
     vadDynamicMultiplier: 2.4,
@@ -858,17 +810,869 @@ const state: {
     vadPreSpeechMs: 200,
     vadMinUtteranceMs: 200,
     vadMaxUtteranceS: 30,
-    vadForceFlushS: 3
+    vadForceFlushS: 3,
+    selectedModel: loadPersistedSttModel(),
+    availableModels: [],
+    language: loadPersistedSttLanguage(),
+    threads: loadPersistedSttThreads(),
+    showAdvancedSettings: false,
+    modelDownloadProgress: null,
+    modelDownloadError: null
+  },
+  tts: {
+    status: "idle",
+    message: null,
+    engineId: "kokoro",
+    engine: "kokoro",
+    ready: false,
+    runtimeArchivePresent: false,
+    availableModelPaths: [],
+    modelPath: "",
+    secondaryPath: "",
+    voicesPath: "",
+    tokensPath: "",
+    dataDir: "",
+    pythonPath: "",
+    scriptPath: "",
+    voices: ["af_heart"],
+    selectedVoice: "af_heart",
+    speed: 1,
+    testText: "Hello from Arxell Lite text to speech.",
+    lastDurationMs: null,
+    lastBytes: null,
+    lastSampleRate: null
   }
 };
 state.activeWebTabId = state.webTabs[0]?.id ?? "";
+type AppState = typeof state;
+type VoicePipelineState = "idle" | "user_speaking" | "processing" | "agent_speaking" | "interrupted";
+let voicePipelineState: VoicePipelineState = "idle";
+let lastTranscriptDispatch = { text: "", atMs: 0 };
+let voicePrefillWarmupTimerId: number | null = null;
+let voicePrefillStableSinceMs = 0;
+let voicePrefillLastPartial = "";
+let voicePrefillWarmedPartial = "";
+
+function setVoicePipelineState(next: VoicePipelineState): void {
+  if (voicePipelineState === next) return;
+  voicePipelineState = next;
+  pushConsoleEntry("debug", "browser", `Voice pipeline state=${next}`);
+}
 
 let clientRef: ChatIpcClient | null = null;
+let deferredWorkspaceSelectionRenderTimerId: number | null = null;
 let consoleCaptureInstalled = false;
 let warnedMissingBundleEngineId: string | null = null;
+let flowSplitDragActive = false;
+let ttsActiveAudio: HTMLAudioElement | null = null;
+let ttsActiveAudioUrl: string | null = null;
+let ttsActivePlaybackResolve: (() => void) | null = null;
+let chatTtsStreamAudioContext: AudioContext | null = null;
+let chatTtsStreamNextStartAtSec = 0;
+let chatTtsStreamFinalizeTimerId: number | null = null;
+const chatTtsRequestToChatCorrelation = new Map<string, string | null>();
+const chatTtsStreamSeenByRequest = new Set<string>();
+const chatTtsStreamDoneWaiters = new Map<string, Array<() => void>>();
+type ChatTtsQueueItem = {
+  text: string;
+  correlationId: string | null;
+};
+
+let chatTtsQueue: ChatTtsQueueItem[] = [];
+let chatTtsQueueWaiters: Array<() => void> = [];
+let chatTtsQueueRunning = false;
+let chatTtsStopRequested = false;
+let chatTtsSpeakingSinceMs = 0;
+let chatTtsActiveCorrelationId: string | null = null;
+let chatTtsSawStreamDeltaByCorrelation = new Set<string>();
+let chatTtsLatencyCapturedByCorrelation = new Set<string>();
+let chatTtsWarmSignature = "";
+let chatTtsPrewarmPromise: Promise<void> | null = null;
+let chatTtsStreamBuffer = "";
+let chatTtsPendingTicks = "";
+let chatTtsInInlineCode = false;
+let chatTtsInFencedCode = false;
+let chatTtsFlushTimerId: number | null = null;
+const CHAT_TTS_MIN_SENTENCE_CHARS = 24;
+const CHAT_TTS_FIRST_CHUNK_TARGET = 110;
+const CHAT_TTS_STEADY_CHUNK_TARGET = 260;
+const CHAT_TTS_MIN_FLUSH_CHARS = 90;
+const CHAT_TTS_FLUSH_INTERVAL_MS = 180;
+const CHAT_TTS_MERGE_TARGET = 320;
+const VOICE_BARGE_IN_GRACE_MS = 900;
+const VOICE_BARGE_IN_MIN_RMS = 0.0035;
+const VOICE_BARGE_IN_DYNAMIC_MULTIPLIER = 1.35;
+const VOICE_PREFILL_STABLE_MS = 900;
+const VOICE_PREFILL_MIN_CHARS = 14;
+
+function applyAppResourceUsageSnapshot(snapshot: AppResourceUsageResponse): void {
+  state.appResourceCpuPercent = typeof snapshot.cpuPercent === "number" ? snapshot.cpuPercent : null;
+  state.appResourceMemoryBytes =
+    typeof snapshot.memoryBytes === "number" ? snapshot.memoryBytes : null;
+  state.appResourceNetworkRxBytesPerSec =
+    typeof snapshot.networkRxBytesPerSec === "number" ? snapshot.networkRxBytesPerSec : null;
+  state.appResourceNetworkTxBytesPerSec =
+    typeof snapshot.networkTxBytesPerSec === "number" ? snapshot.networkTxBytesPerSec : null;
+}
+
+function isAnyAppResourceVisible(): boolean {
+  return state.showAppResourceCpu || state.showAppResourceMemory || state.showAppResourceNetwork;
+}
 
 function nextCorrelationId(): string {
   return `corr-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+}
+
+let appResourceRenderSendMessageRef: ((text: string) => Promise<void>) | null = null;
+function updateBottomBarResourceNodesInPlace(): void {
+  const status = currentBottomStatus();
+  const containerNode = document.querySelector<HTMLElement>(`#${BOTTOMBAR_RESOURCE_IDS.container}`);
+  const cpuNode = document.querySelector<HTMLElement>(`#${BOTTOMBAR_RESOURCE_IDS.cpu}`);
+  const memoryNode = document.querySelector<HTMLElement>(`#${BOTTOMBAR_RESOURCE_IDS.memory}`);
+  const networkNode = document.querySelector<HTMLElement>(`#${BOTTOMBAR_RESOURCE_IDS.network}`);
+  if (!containerNode || !cpuNode || !memoryNode || !networkNode) return;
+
+  const setResourceNode = (node: HTMLElement, value: string | null | undefined): void => {
+    const text = value?.trim() ?? "";
+    node.hidden = !text;
+    node.textContent = text;
+  };
+
+  setResourceNode(cpuNode, status.appResourceCpuText);
+  setResourceNode(memoryNode, status.appResourceMemoryText);
+  setResourceNode(networkNode, status.appResourceNetworkText);
+  containerNode.hidden = cpuNode.hidden && memoryNode.hidden && networkNode.hidden;
+}
+
+function isEditableElementActive(active: HTMLElement | null): boolean {
+  if (!active) return false;
+  if (active.isContentEditable) return true;
+  const tag = active.tagName.toLowerCase();
+  if (tag === "textarea" || tag === "select") return true;
+  if (tag === "input") {
+    const input = active as HTMLInputElement;
+    const type = (input.type || "text").toLowerCase();
+    const nonTextLike = new Set([
+      "button",
+      "checkbox",
+      "color",
+      "file",
+      "hidden",
+      "image",
+      "radio",
+      "range",
+      "reset",
+      "submit"
+    ]);
+    return !nonTextLike.has(type);
+  }
+  return Boolean(active.closest('[contenteditable="true"]'));
+}
+
+const appResourcePolling = createAppResourcePolling({
+  getClient: () => clientRef,
+  isRuntimeTauri: () => state.runtimeMode === "tauri",
+  isAnyVisible: () => isAnyAppResourceVisible(),
+  nextCorrelationId: () => nextCorrelationId(),
+  applySnapshot: (snapshot) => {
+    applyAppResourceUsageSnapshot(snapshot);
+  },
+  hasSnapshotChanged: (() => {
+    let prevCpu: number | null = null;
+    let prevMem: number | null = null;
+    let prevRx: number | null = null;
+    let prevTx: number | null = null;
+    return () => {
+      const changed =
+        prevCpu !== state.appResourceCpuPercent ||
+        prevMem !== state.appResourceMemoryBytes ||
+        prevRx !== state.appResourceNetworkRxBytesPerSec ||
+        prevTx !== state.appResourceNetworkTxBytesPerSec;
+      prevCpu = state.appResourceCpuPercent;
+      prevMem = state.appResourceMemoryBytes;
+      prevRx = state.appResourceNetworkRxBytesPerSec;
+      prevTx = state.appResourceNetworkTxBytesPerSec;
+      return changed;
+    };
+  })(),
+  shouldSkipRender: () => {
+    const active = document.activeElement as HTMLElement | null;
+    return isEditableElementActive(active);
+  },
+  onRenderNeeded: () => {
+    updateBottomBarResourceNodesInPlace();
+  }
+});
+
+function formatTtsError(error: unknown): string {
+  const raw = String(error ?? "Unknown TTS error");
+  const text = raw.toLowerCase();
+  if (text.includes("missing required metadata key 'sample_rate'")) {
+    return "Selected ONNX is not sherpa-compatible (missing sample_rate metadata). Use a sherpa Kokoro model bundle.";
+  }
+  if (text.includes("incompatible kokoro bundle")) {
+    return "Model/voices bundle mismatch. Use model, voices.bin, tokens.txt, and espeak-ng-data from the same release.";
+  }
+  if (text.includes("missing tokens.txt") || text.includes("missing espeak-ng-data")) {
+    return "Model bundle incomplete: tokens.txt and espeak-ng-data are required.";
+  }
+  if (text.includes("selected model file does not exist") || text.includes("missing model file")) {
+    return "Selected model file is missing or invalid. Re-select a valid ONNX model file.";
+  }
+  return raw;
+}
+
+function releaseTtsAudioUrl(): void {
+  if (!ttsActiveAudioUrl) return;
+  URL.revokeObjectURL(ttsActiveAudioUrl);
+  ttsActiveAudioUrl = null;
+}
+
+function clearChatTtsFlushTimer(): void {
+  if (chatTtsFlushTimerId === null) return;
+  window.clearTimeout(chatTtsFlushTimerId);
+  chatTtsFlushTimerId = null;
+}
+
+function clearVoicePrefillWarmupTimer(): void {
+  if (voicePrefillWarmupTimerId === null) return;
+  window.clearTimeout(voicePrefillWarmupTimerId);
+  voicePrefillWarmupTimerId = null;
+}
+
+function maybeTriggerVoicePrefillWarmup(partialRaw: string): void {
+  const partial = partialRaw.trim();
+  if (!partial || partial.length < VOICE_PREFILL_MIN_CHARS) return;
+  if (state.chatStreaming || !state.chatTtsEnabled || voicePipelineState !== "user_speaking") return;
+
+  const now = Date.now();
+  if (partial !== voicePrefillLastPartial) {
+    voicePrefillLastPartial = partial;
+    voicePrefillStableSinceMs = now;
+    clearVoicePrefillWarmupTimer();
+  }
+
+  const elapsed = now - voicePrefillStableSinceMs;
+  const remaining = Math.max(0, VOICE_PREFILL_STABLE_MS - elapsed);
+  clearVoicePrefillWarmupTimer();
+  voicePrefillWarmupTimerId = window.setTimeout(() => {
+    if (
+      state.chatStreaming ||
+      !state.chatTtsEnabled ||
+      voicePipelineState !== "user_speaking" ||
+      partial !== voicePrefillLastPartial ||
+      Date.now() - voicePrefillStableSinceMs < VOICE_PREFILL_STABLE_MS
+    ) {
+      return;
+    }
+    if (voicePrefillWarmedPartial === partial) return;
+    voicePrefillWarmedPartial = partial;
+    pushConsoleEntry("debug", "browser", `Voice prefill warmup: stable partial (${partial.length} chars)`);
+    void prewarmChatTtsIfNeeded();
+  }, remaining);
+}
+
+function notifyChatTtsQueueAvailable(): void {
+  if (!chatTtsQueueWaiters.length) return;
+  const waiters = chatTtsQueueWaiters.slice();
+  chatTtsQueueWaiters = [];
+  for (const waiter of waiters) {
+    waiter();
+  }
+}
+
+function stopTtsPlaybackLocal(): void {
+  if (ttsActiveAudio) {
+    try {
+      ttsActiveAudio.pause();
+    } catch {
+      // Ignore pause failures.
+    }
+    ttsActiveAudio.src = "";
+    ttsActiveAudio = null;
+  }
+  if (ttsActivePlaybackResolve) {
+    const resolve = ttsActivePlaybackResolve;
+    ttsActivePlaybackResolve = null;
+    resolve();
+  }
+  releaseTtsAudioUrl();
+  if (chatTtsStreamFinalizeTimerId !== null) {
+    window.clearTimeout(chatTtsStreamFinalizeTimerId);
+    chatTtsStreamFinalizeTimerId = null;
+  }
+  if (chatTtsStreamAudioContext) {
+    void chatTtsStreamAudioContext.close();
+    chatTtsStreamAudioContext = null;
+  }
+  chatTtsStreamNextStartAtSec = 0;
+  for (const [, waiters] of chatTtsStreamDoneWaiters) {
+    for (const resolve of waiters) resolve();
+  }
+  chatTtsStreamDoneWaiters.clear();
+  chatTtsStreamSeenByRequest.clear();
+  chatTtsRequestToChatCorrelation.clear();
+  state.chatTtsPlaying = false;
+  chatTtsSpeakingSinceMs = 0;
+  if (voicePipelineState === "agent_speaking") {
+    setVoicePipelineState("idle");
+  }
+}
+
+let sttBargeInInFlight = false;
+
+function requestVoiceBargeInInterrupt(): void {
+  if (sttBargeInInFlight) return;
+  sttBargeInInFlight = true;
+  const targetCorrelationId = state.activeChatCorrelationId;
+  chatTtsStopRequested = true;
+  resetChatTtsQueue();
+  stopTtsPlaybackLocal();
+  state.chatStreaming = false;
+  state.activeChatCorrelationId = null;
+  setVoicePipelineState("interrupted");
+  void (async () => {
+    try {
+      if (clientRef) {
+        try {
+          await clientRef.ttsStop({ correlationId: nextCorrelationId() });
+        } catch (error) {
+          pushConsoleEntry("warn", "browser", `Barge-in TTS stop failed: ${String(error)}`);
+        }
+        if (targetCorrelationId) {
+          await clientRef.cancelMessage({
+            correlationId: nextCorrelationId(),
+            targetCorrelationId
+          });
+        }
+      }
+      pushConsoleEntry("info", "browser", "Voice barge-in: interrupted agent speech.");
+    } catch (error) {
+      pushConsoleEntry("warn", "browser", `Voice barge-in cancel failed: ${String(error)}`);
+    } finally {
+      sttBargeInInFlight = false;
+    }
+  })();
+}
+
+function resolveChatTtsStreamWaiters(requestCorrelationId: string): void {
+  const waiters = chatTtsStreamDoneWaiters.get(requestCorrelationId);
+  if (!waiters?.length) return;
+  chatTtsStreamDoneWaiters.delete(requestCorrelationId);
+  for (const resolve of waiters) resolve();
+}
+
+function waitForChatTtsStreamDone(requestCorrelationId: string, timeoutMs = 12000): Promise<void> {
+  return new Promise<void>((resolve) => {
+    const timer = window.setTimeout(() => {
+      const waiters = chatTtsStreamDoneWaiters.get(requestCorrelationId) ?? [];
+      chatTtsStreamDoneWaiters.set(
+        requestCorrelationId,
+        waiters.filter((fn) => fn !== onDone)
+      );
+      resolve();
+    }, timeoutMs);
+    const onDone = () => {
+      window.clearTimeout(timer);
+      resolve();
+    };
+    const waiters = chatTtsStreamDoneWaiters.get(requestCorrelationId) ?? [];
+    waiters.push(onDone);
+    chatTtsStreamDoneWaiters.set(requestCorrelationId, waiters);
+  });
+}
+
+function onChatTtsStreamChunkEvent(event: AppEvent): void {
+  if (chatTtsStopRequested) {
+    resolveChatTtsStreamWaiters(event.correlationId);
+    return;
+  }
+  if (!state.chatTtsEnabled || event.action !== "tts.stream.chunk") return;
+  // Chat voice mode currently uses full WAV playback from ttsSpeak responses.
+  // Ignore incremental stream chunks to avoid renderer-side chunk timing dropouts.
+  const payload =
+    event.payload && typeof event.payload === "object"
+      ? (event.payload as Record<string, unknown>)
+      : null;
+  if (payload?.final === true) {
+    resolveChatTtsStreamWaiters(event.correlationId);
+  }
+}
+
+function decodeTtsAudioBytes(audioBytes: unknown): Uint8Array {
+  if (audioBytes instanceof Uint8Array) return audioBytes;
+  if (Array.isArray(audioBytes)) return Uint8Array.from(audioBytes.map((v) => Number(v) || 0));
+  if (audioBytes && typeof audioBytes === "object" && "data" in (audioBytes as Record<string, unknown>)) {
+    const nested = (audioBytes as { data?: unknown }).data;
+    if (Array.isArray(nested)) return Uint8Array.from(nested.map((v) => Number(v) || 0));
+  }
+  return new Uint8Array();
+}
+
+function postprocessSpeakableText(raw: string): string {
+  if (!raw) return "";
+  const withLinkLabels = raw.replace(/\[([^\]]+)\]\([^)]+\)/g, "$1");
+  const withoutUrls = withLinkLabels.replace(/\bhttps?:\/\/\S+/gi, " ");
+  const withoutToolMarkers = withoutUrls.replace(/\[(tool|command|stdout|stderr|result)[^\]]*\]/gi, " ");
+  const withoutEmojiShortcodes = withoutToolMarkers.replace(/:[a-z0-9_+\-]+:/gi, " ");
+  const withoutEmojiGlyphs = withoutEmojiShortcodes
+    .replace(/[\p{Extended_Pictographic}\p{Emoji_Presentation}\uFE0F]/gu, " ");
+  return withoutEmojiGlyphs.replace(/\s+/g, " ").trim();
+}
+
+function resetChatTtsStreamParser(correlationId: string | null): void {
+  clearChatTtsFlushTimer();
+  chatTtsActiveCorrelationId = correlationId;
+  chatTtsStreamBuffer = "";
+  chatTtsPendingTicks = "";
+  chatTtsInInlineCode = false;
+  chatTtsInFencedCode = false;
+}
+
+function resetChatTtsQueue(): void {
+  clearChatTtsFlushTimer();
+  chatTtsQueue = [];
+  notifyChatTtsQueueAvailable();
+  resetChatTtsStreamParser(null);
+}
+
+function extractSpeakableStreamDelta(delta: string): string {
+  if (!delta) return "";
+  let input = `${chatTtsPendingTicks}${delta}`;
+  chatTtsPendingTicks = "";
+  let output = "";
+  let index = 0;
+  while (index < input.length) {
+    const char = input[index];
+    if (char !== "`") {
+      if (!chatTtsInInlineCode && !chatTtsInFencedCode) {
+        output += char;
+      }
+      index += 1;
+      continue;
+    }
+    let run = 1;
+    while (index + run < input.length && input[index + run] === "`") {
+      run += 1;
+    }
+    const atEnd = index + run >= input.length;
+    if (atEnd && !chatTtsInInlineCode && !chatTtsInFencedCode && run < 3) {
+      chatTtsPendingTicks = "`".repeat(run);
+      break;
+    }
+    if (chatTtsInFencedCode) {
+      if (run >= 3) {
+        chatTtsInFencedCode = false;
+      }
+      index += run;
+      continue;
+    }
+    if (chatTtsInInlineCode) {
+      chatTtsInInlineCode = false;
+      index += run;
+      continue;
+    }
+    if (run >= 3) {
+      chatTtsInFencedCode = true;
+      index += run;
+      continue;
+    }
+    chatTtsInInlineCode = true;
+    index += run;
+  }
+  return output;
+}
+
+function nextSpeakableBoundary(text: string, finalFlush = false): number {
+  const trimmedLength = text.trim().length;
+  if (!trimmedLength) return -1;
+  let boundary = -1;
+  for (let i = 0; i < text.length; i += 1) {
+    const ch = text[i];
+    if (ch === "." || ch === "!" || ch === "?" || ch === "\n") {
+      boundary = i;
+    }
+  }
+  if (boundary >= 0 && boundary + 1 >= CHAT_TTS_MIN_SENTENCE_CHARS) {
+    return boundary + 1;
+  }
+  const backlogActive = chatTtsQueueRunning || chatTtsQueue.length > 0 || state.chatTtsPlaying;
+  const eagerTarget = backlogActive ? CHAT_TTS_STEADY_CHUNK_TARGET : CHAT_TTS_FIRST_CHUNK_TARGET;
+  if (!backlogActive && text.length >= 80) {
+    const softSplit = findSafeWordBoundary(text, Math.min(text.length, 120), 55);
+    if (softSplit >= 55) return softSplit;
+  }
+  if (text.length >= eagerTarget) {
+    const split = findSafeWordBoundary(text, eagerTarget - 4, 55);
+    if (split >= 55) return split;
+    if (finalFlush) return text.length;
+    return -1;
+  }
+  if (finalFlush) {
+    return text.length;
+  }
+  return -1;
+}
+
+function findSafeWordBoundary(text: string, target: number, minIndex = 0): number {
+  const clampedTarget = Math.max(minIndex, Math.min(target, text.length));
+  if (!text.length) return -1;
+  const isBoundary = (ch: string): boolean =>
+    ch === " " || ch === "\n" || ch === "\t" || ch === "." || ch === "!" || ch === "?" || ch === "," || ch === ";" || ch === ":";
+
+  for (let i = clampedTarget; i >= minIndex; i -= 1) {
+    const ch = text[i - 1] ?? "";
+    if (isBoundary(ch)) return i;
+  }
+  for (let i = clampedTarget; i < text.length; i += 1) {
+    const ch = text[i] ?? "";
+    if (isBoundary(ch)) return i + 1;
+  }
+  return -1;
+}
+
+function tryLowLatencyBufferFlush(): boolean {
+  if (!chatTtsStreamBuffer.trim()) return false;
+  const speakableCandidate = postprocessSpeakableText(chatTtsStreamBuffer);
+  if (speakableCandidate.length < CHAT_TTS_MIN_FLUSH_CHARS) return false;
+  const backlogActive = chatTtsQueueRunning || chatTtsQueue.length > 0 || state.chatTtsPlaying;
+  const target = backlogActive ? CHAT_TTS_STEADY_CHUNK_TARGET : CHAT_TTS_FIRST_CHUNK_TARGET;
+  const boundary = findSafeWordBoundary(
+    chatTtsStreamBuffer,
+    Math.min(chatTtsStreamBuffer.length, target),
+    55
+  );
+  if (boundary < 55) return false;
+  const part = chatTtsStreamBuffer.slice(0, boundary);
+  chatTtsStreamBuffer = chatTtsStreamBuffer.slice(boundary);
+  const speakable = postprocessSpeakableText(part);
+  if (!speakable) return false;
+  chatTtsQueue.push({ text: speakable, correlationId: chatTtsActiveCorrelationId });
+  notifyChatTtsQueueAvailable();
+  return true;
+}
+
+function scheduleLowLatencyBufferFlush(sendMessage: (text: string) => Promise<void>): void {
+  if (chatTtsFlushTimerId !== null || !state.chatTtsEnabled) return;
+  if (!chatTtsStreamBuffer.trim()) return;
+  chatTtsFlushTimerId = window.setTimeout(() => {
+    chatTtsFlushTimerId = null;
+    if (!state.chatTtsEnabled) return;
+    const flushed = tryLowLatencyBufferFlush();
+    if (flushed) {
+      void runChatTtsQueue(sendMessage);
+    }
+    if (chatTtsStreamBuffer.trim()) {
+      scheduleLowLatencyBufferFlush(sendMessage);
+    }
+  }, CHAT_TTS_FLUSH_INTERVAL_MS);
+}
+
+function enqueueSpeakableChunk(
+  rawChunk: string,
+  finalFlush = false,
+  correlationId: string | null = chatTtsActiveCorrelationId
+): void {
+  if (!rawChunk) {
+    if (!finalFlush) return;
+  }
+  chatTtsStreamBuffer += rawChunk;
+  while (chatTtsStreamBuffer.length > 0) {
+    const boundary = nextSpeakableBoundary(chatTtsStreamBuffer, finalFlush);
+    if (boundary < 0) break;
+    const part = chatTtsStreamBuffer.slice(0, boundary);
+    chatTtsStreamBuffer = chatTtsStreamBuffer.slice(boundary);
+    const speakable = postprocessSpeakableText(part);
+    if (speakable) {
+      chatTtsQueue.push({ text: speakable, correlationId });
+      notifyChatTtsQueueAvailable();
+    }
+    if (!finalFlush) continue;
+    if (!chatTtsStreamBuffer.trim()) {
+      chatTtsStreamBuffer = "";
+      break;
+    }
+  }
+}
+
+async function playTtsAudio(audioBytes: unknown, correlationId: string | null): Promise<void> {
+  const bytes = decodeTtsAudioBytes(audioBytes);
+  if (!bytes.length) {
+    throw new Error("No audio bytes returned from TTS.");
+  }
+  stopTtsPlaybackLocal();
+  const blobBytes = new Uint8Array(bytes);
+  const blob = new Blob([blobBytes], { type: "audio/wav" });
+  const url = URL.createObjectURL(blob);
+  ttsActiveAudioUrl = url;
+  const audio = new Audio(url);
+  ttsActiveAudio = audio;
+  await new Promise<void>((resolve, reject) => {
+    const cleanup = () => {
+      if (ttsActiveAudio === audio) {
+        ttsActiveAudio = null;
+      }
+      ttsActivePlaybackResolve = null;
+      releaseTtsAudioUrl();
+    };
+    ttsActivePlaybackResolve = () => {
+      cleanup();
+      resolve();
+    };
+    audio.onended = () => {
+      cleanup();
+      resolve();
+    };
+    audio.onerror = () => {
+      cleanup();
+      reject(new Error("Failed to play generated TTS audio."));
+    };
+    void audio
+      .play()
+      .then(() => {
+        if (correlationId) {
+          const firstTokenMs = state.chatFirstAssistantChunkMsByCorrelation[correlationId];
+          if (firstTokenMs && !chatTtsLatencyCapturedByCorrelation.has(correlationId)) {
+            state.chatTtsLatencyMs = Math.max(0, Date.now() - firstTokenMs);
+            chatTtsLatencyCapturedByCorrelation.add(correlationId);
+          }
+        }
+      })
+      .catch((error) => {
+        cleanup();
+        reject(error);
+      });
+  });
+}
+
+function shiftChatTtsQueueText(): ChatTtsQueueItem | null {
+  const next = chatTtsQueue.shift();
+  if (!next || typeof next.text !== "string" || next.text.length === 0) return null;
+  let merged = next.text.trim();
+  const correlationId = next.correlationId;
+  while (chatTtsQueue.length > 0 && merged.length < CHAT_TTS_MERGE_TARGET) {
+    const peek = chatTtsQueue[0];
+    if (!peek || typeof peek.text !== "string" || peek.text.trim().length === 0) {
+      chatTtsQueue.shift();
+      continue;
+    }
+    if (peek.correlationId !== correlationId) break;
+    if (/[.!?]\s*$/.test(merged) && merged.length >= CHAT_TTS_FIRST_CHUNK_TARGET) {
+      break;
+    }
+    const tail = chatTtsQueue.shift();
+    if (!tail) break;
+    merged = `${merged} ${tail.text}`.replace(/\s+/g, " ").trim();
+  }
+  return merged ? { text: merged, correlationId } : null;
+}
+
+async function waitForChatTtsQueueText(timeoutMs: number): Promise<ChatTtsQueueItem | null> {
+  const immediate = shiftChatTtsQueueText();
+  if (immediate) return immediate;
+  await new Promise<void>((resolve) => {
+    let settled = false;
+    const timer = window.setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      chatTtsQueueWaiters = chatTtsQueueWaiters.filter((waiter) => waiter !== onReady);
+      resolve();
+    }, timeoutMs);
+    const onReady = () => {
+      if (settled) return;
+      settled = true;
+      window.clearTimeout(timer);
+      resolve();
+    };
+    chatTtsQueueWaiters.push(onReady);
+  });
+  return shiftChatTtsQueueText();
+}
+
+type ChatTtsSynthResult = {
+  requestCorrelationId: string;
+  chatCorrelationId: string | null;
+  response: TtsSpeakResponse;
+};
+
+async function synthesizeChatTtsChunk(
+  text: string,
+  chatCorrelationId: string | null
+): Promise<ChatTtsSynthResult> {
+  if (!clientRef) {
+    throw new Error("TTS backend unavailable.");
+  }
+  const requestCorrelationId = nextCorrelationId();
+  chatTtsRequestToChatCorrelation.set(requestCorrelationId, chatCorrelationId);
+  const startedAt = performance.now();
+  const response = await clientRef.ttsSpeak({
+    correlationId: requestCorrelationId,
+    text,
+    voice: state.tts.selectedVoice,
+    speed: state.tts.speed
+  });
+  const elapsedMs = Math.round(performance.now() - startedAt);
+  pushConsoleEntry(
+    "debug",
+    "browser",
+    `Chat TTS synth ${elapsedMs}ms for ${text.length} chars -> ${response.durationMs}ms audio`
+  );
+  state.tts.status = "ready";
+  state.tts.message = `Reading with ${response.voice}`;
+  state.tts.selectedVoice = response.voice;
+  state.tts.speed = response.speed;
+  state.tts.lastBytes = response.audioBytes.length;
+  state.tts.lastDurationMs = response.durationMs;
+  state.tts.lastSampleRate = response.sampleRate;
+  return {
+    requestCorrelationId,
+    chatCorrelationId,
+    response
+  };
+}
+
+function currentChatTtsSignature(): string {
+  return [
+    state.tts.engine,
+    state.tts.modelPath,
+    state.tts.selectedVoice,
+    state.tts.speed.toFixed(2)
+  ].join("|");
+}
+
+async function prewarmChatTtsIfNeeded(): Promise<void> {
+  if (!clientRef || !state.tts.ready || !state.chatTtsEnabled) return;
+  const signature = currentChatTtsSignature();
+  if (signature === chatTtsWarmSignature) return;
+  if (chatTtsPrewarmPromise) {
+    await chatTtsPrewarmPromise;
+    return;
+  }
+  const startedAt = performance.now();
+  chatTtsPrewarmPromise = (async () => {
+    try {
+      await clientRef.ttsSpeak({
+        correlationId: nextCorrelationId(),
+        text: "Hi there, what would you like to work on?",
+        voice: state.tts.selectedVoice,
+        speed: state.tts.speed
+      });
+      chatTtsWarmSignature = signature;
+      pushConsoleEntry(
+        "debug",
+        "browser",
+        `Chat TTS prewarm ${Math.round(performance.now() - startedAt)}ms`
+      );
+    } catch (error) {
+      pushConsoleEntry("warn", "browser", `Chat TTS prewarm failed: ${String(error)}`);
+    } finally {
+      chatTtsPrewarmPromise = null;
+    }
+  })();
+  await chatTtsPrewarmPromise;
+}
+
+async function runChatTtsQueue(sendMessage: (text: string) => Promise<void>): Promise<void> {
+  if (chatTtsQueueRunning || !clientRef || !state.chatTtsEnabled || chatTtsStopRequested) return;
+  chatTtsQueueRunning = true;
+  try {
+    let nextItem = await waitForChatTtsQueueText(80);
+    if (!nextItem) {
+      return;
+    }
+    let currentItem = nextItem;
+    let currentSynth = await synthesizeChatTtsChunk(currentItem.text, currentItem.correlationId);
+    state.chatTtsPlaying = true;
+    if (!chatTtsSpeakingSinceMs) {
+      chatTtsSpeakingSinceMs = Date.now();
+    }
+    setVoicePipelineState("agent_speaking");
+    state.tts.status = "busy";
+    state.tts.message = "Auto-speaking response...";
+    renderAndBind(sendMessage);
+    while (state.chatTtsEnabled) {
+      const playbackPromise = playTtsAudio(
+        currentSynth.response.audioBytes,
+        currentItem.correlationId
+      );
+      let prefetchedResponsePromise: Promise<ChatTtsSynthResult> | null = null;
+      const queuedItem = shiftChatTtsQueueText();
+      if (queuedItem) {
+        currentItem = queuedItem;
+        prefetchedResponsePromise = synthesizeChatTtsChunk(
+          queuedItem.text,
+          queuedItem.correlationId
+        );
+      }
+
+      await playbackPromise;
+      if (!state.chatTtsEnabled) break;
+
+      if (prefetchedResponsePromise) {
+        currentSynth = await prefetchedResponsePromise;
+        continue;
+      }
+
+      nextItem = await waitForChatTtsQueueText(60);
+      if (!nextItem) {
+        break;
+      }
+      currentItem = nextItem;
+      currentSynth = await synthesizeChatTtsChunk(currentItem.text, currentItem.correlationId);
+    }
+  } catch (error) {
+    state.tts.status = "error";
+    state.tts.message = `Chat TTS failed: ${String(error)}`;
+  } finally {
+    chatTtsQueueRunning = false;
+    state.chatTtsPlaying = false;
+    chatTtsSpeakingSinceMs = 0;
+    if (voicePipelineState === "agent_speaking") {
+      setVoicePipelineState("idle");
+    }
+    renderAndBind(sendMessage);
+  }
+}
+
+function ingestChatStreamForTts(
+  sendMessage: (text: string) => Promise<void>,
+  correlationId: string,
+  delta: string
+): void {
+  if (chatTtsStopRequested) return;
+  if (!state.chatTtsEnabled) return;
+  if (!chatTtsActiveCorrelationId) {
+    resetChatTtsStreamParser(correlationId);
+  }
+  if (chatTtsActiveCorrelationId !== correlationId) {
+    return;
+  }
+  chatTtsSawStreamDeltaByCorrelation.add(correlationId);
+  const speakableDelta = extractSpeakableStreamDelta(delta);
+  enqueueSpeakableChunk(speakableDelta, false, correlationId);
+  // Eagerly flush first chunk to reduce time-to-first-audio.
+  if (!state.chatTtsPlaying) {
+    const flushed = tryLowLatencyBufferFlush();
+    if (flushed) {
+      void runChatTtsQueue(sendMessage);
+      return;
+    }
+  }
+  scheduleLowLatencyBufferFlush(sendMessage);
+  void runChatTtsQueue(sendMessage);
+}
+
+function flushChatStreamForTts(
+  sendMessage: (text: string) => Promise<void>,
+  correlationId: string
+): void {
+  if (chatTtsStopRequested) return;
+  if (!state.chatTtsEnabled || chatTtsActiveCorrelationId !== correlationId) return;
+  clearChatTtsFlushTimer();
+  chatTtsPendingTicks = "";
+  enqueueSpeakableChunk("", true, correlationId);
+  resetChatTtsStreamParser(null);
+  void runChatTtsQueue(sendMessage);
 }
 
 function formatLastUpdated(ts: number): string {
@@ -1170,25 +1974,6 @@ async function requestSpeakerAccess(): Promise<void> {
   await refreshDevicesState();
 }
 
-function shouldShowMicPermissionBubble(): boolean {
-  if (state.devices.microphonePermission === "enabled") return false;
-  if (state.devices.microphonePermission === "no_device") return false;
-  return !state.micPermissionBubbleDismissed;
-}
-
-function renderMicPermissionBubble(): string {
-  if (!shouldShowMicPermissionBubble()) return "";
-  return `
-    <div class="permission-bubble" role="status" aria-live="polite">
-      <button type="button" class="permission-bubble-close" id="micPermissionDismissBtn" aria-label="Dismiss microphone permission notice">×</button>
-      <span class="permission-bubble-text">Allow microphone access for Local Speech Recognition</span>
-      <div class="permission-bubble-actions permission-bubble-actions-second-row">
-        <button type="button" class="tool-action-btn permission-enable-btn is-warning" id="micPermissionEnableBtn">Enable Microphone</button>
-      </div>
-    </div>
-  `;
-}
-
 function render(): void {
   const app = document.querySelector<HTMLDivElement>("#app");
   if (!app) return;
@@ -1201,7 +1986,7 @@ function render(): void {
       state.llamaRuntime.pid
   );
 
-  const visibleConsoleEntries = getVisibleConsoleEntries();
+  const visibleConsoleEntries = getVisibleConsoleEntries(state.consoleEntries, state.consoleView);
   const consoleText = visibleConsoleEntries.length
     ? visibleConsoleEntries
         .map((entry) => formatConsoleEntryLine(entry))
@@ -1215,7 +2000,7 @@ function render(): void {
     </div>
   `;
   const consoleActionsHtml = `
-    ${renderConsoleToolbar()}
+    ${renderConsoleToolbar(state.consoleView, CONSOLE_DATA_ATTR)}
   `;
 
   const terminalUiHtml = renderTerminalWorkspace(
@@ -1232,7 +2017,14 @@ function render(): void {
   const activeWebTab = workspaceToolsRuntime.getActiveWebTab();
   const filteredFlow = filterFlowEvents(state.events, state.flowEventFilter, 120);
   state.flowFilteredEvents = filteredFlow.forInspector;
+  state.flowAvailableModels = state.chatModelOptions.map((item) => ({
+    id: item.id,
+    label: item.label
+  }));
   const toolViews = buildWorkspaceToolViews({
+    chartSource: state.chartSource,
+    chartRenderSource: state.chartRenderSource,
+    chartError: state.chartError,
     activeWebTab,
     webTabs: state.webTabs,
     activeWebTabId: state.activeWebTabId,
@@ -1341,10 +2133,49 @@ function render(): void {
     flowValidationResults: state.flowValidationResults,
     flowBusy: state.flowBusy,
     flowMessage: state.flowMessage,
+    flowAdvancedOpen: state.flowAdvancedOpen,
+    flowBottomPanel: state.flowBottomPanel,
+    flowWorkspaceSplit: state.flowWorkspaceSplit,
+    flowActiveTerminalPhase: state.flowActiveTerminalPhase,
+    flowPhaseSessionByName: state.flowPhaseSessionByName,
+    flowAutoFocusPhaseTerminal: state.flowAutoFocusPhaseTerminal,
+    flowPhaseTranscriptsByRun: state.flowPhaseTranscriptsByRun,
+    flowProjectSetupOpen: state.flowProjectSetupOpen,
+    flowProjectNameDraft: state.flowProjectNameDraft,
+    flowProjectTypeDraft: state.flowProjectTypeDraft,
+    flowProjectDescriptionDraft: state.flowProjectDescriptionDraft,
+    flowPhaseModels: state.flowPhaseModels,
+    flowAvailableModels: state.flowAvailableModels,
+    flowPaused: state.flowPaused,
+    flowModelUnavailableOpen: state.flowModelUnavailableOpen,
+    flowModelUnavailablePhase: state.flowModelUnavailablePhase,
+    flowModelUnavailableModel: state.flowModelUnavailableModel,
+    flowModelUnavailableFallbackModel: state.flowModelUnavailableFallbackModel,
+    flowModelUnavailableReason: state.flowModelUnavailableReason,
+    flowModelUnavailableAttempt: state.flowModelUnavailableAttempt,
+    flowModelUnavailableMaxAttempts: state.flowModelUnavailableMaxAttempts,
+    flowModelUnavailableStatus: state.flowModelUnavailableStatus,
+    flowTerminalPhases: [...FLOW_TERMINAL_PHASES],
+    terminalSessions: terminalManager.listSessions().map((session) => ({
+      sessionId: session.sessionId,
+      title: session.title,
+      status: session.status
+    })),
     filteredFlowEvents: filteredFlow.forRender
   });
 
   const panel = getPanelDefinition(state.sidebarTab, {
+    displayMode: state.displayMode,
+    displayModePreference: state.displayModePreference,
+    chatRoutePreference: state.chatRoutePreference,
+    showAppResourceCpu: state.showAppResourceCpu,
+    showAppResourceMemory: state.showAppResourceMemory,
+    showAppResourceNetwork: state.showAppResourceNetwork,
+    showBottomEngine: state.showBottomEngine,
+    showBottomModel: state.showBottomModel,
+    showBottomContext: state.showBottomContext,
+    showBottomSpeed: state.showBottomSpeed,
+    showBottomTtsLatency: state.showBottomTtsLatency,
     conversationId: state.conversationId,
     messages: state.messages,
     chatReasoningByCorrelation: state.chatReasoningByCorrelation,
@@ -1360,12 +2191,18 @@ function render(): void {
     chatActiveModelId: state.chatActiveModelId,
     chatActiveModelLabel: state.chatActiveModelLabel,
     chatActiveModelCapabilities: state.chatActiveModelCapabilities,
+    chatTtsEnabled: state.chatTtsEnabled,
+    chatTtsPlaying: state.chatTtsPlaying,
     devices: state.devices,
     apiConnections: state.apiConnections,
     apiFormOpen: state.apiFormOpen,
     apiDraft: state.apiDraft,
     apiEditingId: state.apiEditingId,
     apiMessage: state.apiMessage,
+    apiProbeBusy: state.apiProbeBusy,
+    apiProbeStatus: state.apiProbeStatus,
+    apiProbeMessage: state.apiProbeMessage,
+    apiDetectedModels: state.apiDetectedModels,
     conversations: state.conversations,
     chatThinkingEnabled: state.chatThinkingEnabled,
     llamaRuntime: state.llamaRuntime,
@@ -1397,18 +2234,24 @@ function render(): void {
     modelManagerUnslothUdCatalog: state.modelManagerUnslothUdCatalog,
     modelManagerUnslothUdLoading: state.modelManagerUnslothUdLoading,
     stt: state.stt,
+    tts: state.tts,
     consoleEntries: state.consoleEntries
   });
 
-  const primaryPaneHtml = `
-    <section class="pane primary-pane ${state.sidebarTab === "chat" ? "chat-pane" : ""}">
-      <header class="pane-topbar">
-        <span class="pane-title">${renderPanelTitleIcon(panel.icon, panel.title)}</span>
-        ${panel.renderActions()}
-      </header>
-      ${panel.renderBody()}
-    </section>
-  `;
+  const primaryPaneHtml = composePrimaryPaneHtml({
+    isChatTab: state.sidebarTab === "chat",
+    paneTitleHtml: renderPanelTitleIcon({
+      icon: panel.icon,
+      title: panel.title,
+      sidebarTab: state.sidebarTab,
+      chatModelOptions: state.chatModelOptions,
+      chatActiveModelId: state.chatActiveModelId,
+      ttsReady: state.tts.ready,
+      ttsEngine: state.tts.engine
+    }),
+    panelActionsHtml: panel.renderActions(),
+    panelBodyHtml: panel.renderBody()
+  });
 
   const workspacePaneHtml = renderWorkspacePane(
     consoleHtml,
@@ -1422,53 +2265,38 @@ function render(): void {
     state.workspaceTab
   );
 
-  const appBodyHtml =
-    state.layoutOrientation === "portrait"
-      ? `
-        <section class="app-body app-body-portrait" id="portraitLayout">
-          <section class="portrait-workspace-row">
-            ${workspacePaneHtml}
-          </section>
-          <div class="pane-divider pane-divider-horizontal" id="portraitPaneDivider" aria-label="Resize portrait panels" aria-orientation="horizontal" role="separator">
-            <div class="pane-divider-line"></div>
-          </div>
-          <section class="portrait-main-row">
-            ${renderSidebarRail(state.sidebarTab, llamaRuntimeOnline, state.stt.status === "running")}
-            <section class="main-column">
-              <div class="portrait-primary-wrap">
-                ${primaryPaneHtml}
-              </div>
-            </section>
-          </section>
-        </section>
-      `
-      : `
-        <section class="app-body">
-          ${renderSidebarRail(state.sidebarTab, llamaRuntimeOnline, state.stt.status === "running")}
-          <section class="main-column">
-          <div class="split-layout" id="splitLayout">
-            ${primaryPaneHtml}
-            <div class="pane-divider" id="paneDivider" aria-label="Resize panels" role="separator">
-              <div class="pane-divider-line"></div>
-            </div>
-            ${workspacePaneHtml}
-          </div>
-          </section>
-        </section>
-      `;
+  const sidebarRailHtml = renderSidebarRail(
+    state.sidebarTab,
+    llamaRuntimeOnline,
+    state.stt.status === "running",
+    state.chatTtsEnabled,
+    state.apiConnections.some(
+      (connection) => connection.apiType === "llm" && connection.status === "verified"
+    )
+  );
+  const appBodyHtml = composeAppBodyHtml({
+    layoutOrientation: state.layoutOrientation,
+    sidebarRailHtml,
+    primaryPaneHtml,
+    workspacePaneHtml
+  });
 
-  app.innerHTML = `
-    <main class="app-frame" style="--chat-pane-percent: ${state.chatPanePercent}; --portrait-workspace-percent: ${state.portraitWorkspacePercent};">
-      ${renderGlobalTopbar(state.displayMode, state.layoutOrientation, state.appVersion)}
-      ${renderMicPermissionBubble()}
-      ${appBodyHtml}
-      ${renderGlobalBottombar(currentBottomStatus())}
-    </main>
-  `;
-}
-
-function renderPanelTitleIcon(icon: IconName, title: string): string {
-  return `${iconHtml(icon, { size: 16, tone: "dark" })}<span>${title}</span>`;
+  app.innerHTML = composeAppFrameHtml({
+    chatPanePercent: state.chatPanePercent,
+    portraitWorkspacePercent: state.portraitWorkspacePercent,
+    topbarHtml: renderGlobalTopbar(
+      state.displayMode,
+      state.layoutOrientation,
+      state.appVersion,
+      state.runtimeMode
+    ),
+    micPermissionBubbleHtml: renderMicPermissionBubble({
+      microphonePermission: state.devices.microphonePermission,
+      micPermissionBubbleDismissed: state.micPermissionBubbleDismissed
+    }),
+    appBodyHtml,
+    bottombarHtml: renderGlobalBottombar(currentBottomStatus())
+  });
 }
 
 function pushConsoleEntry(
@@ -1485,131 +2313,6 @@ function pushConsoleEntry(
   if (state.consoleEntries.length > MAX_CONSOLE_ENTRIES) {
     state.consoleEntries.splice(0, state.consoleEntries.length - MAX_CONSOLE_ENTRIES);
   }
-}
-
-function getVisibleConsoleEntries(): Array<{
-  timestampMs: number;
-  level: "log" | "info" | "warn" | "error" | "debug";
-  source: "browser" | "app";
-  message: string;
-}> {
-  let visible = state.consoleEntries;
-  if (state.consoleView === "errors-warnings") {
-    visible = visible.filter((entry) => entry.level === "warn" || entry.level === "error");
-  } else if (state.consoleView === "security-events") {
-    visible = visible.filter((entry) => isSecurityConsoleEntry(entry.message));
-  }
-  return visible;
-}
-
-function renderConsoleToolbar(): string {
-  return renderToolToolbar({
-    tabsMode: "static",
-    tabs: [
-      {
-        id: "console-all",
-        label: "Console",
-        active: state.consoleView === "all",
-        buttonAttrs: {
-          [CONSOLE_DATA_ATTR.view]: "all"
-        }
-      },
-      {
-        id: "console-errors",
-        label: "Errors & Warnings",
-        active: state.consoleView === "errors-warnings",
-        buttonAttrs: {
-          [CONSOLE_DATA_ATTR.view]: "errors-warnings"
-        }
-      },
-      {
-        id: "console-security",
-        label: "Security Events",
-        active: state.consoleView === "security-events",
-        buttonAttrs: {
-          [CONSOLE_DATA_ATTR.view]: "security-events"
-        }
-      }
-    ],
-    actions: [
-      {
-        id: "console-copy",
-        title: "Copy all visible console lines",
-        icon: "copy",
-        label: "Copy",
-        className: "is-text is-compact",
-        buttonAttrs: {
-          [CONSOLE_DATA_ATTR.action]: "copy"
-        }
-      },
-      {
-        id: "console-save",
-        title: "Save all visible console lines to a .txt file",
-        icon: "save",
-        label: "Save .txt",
-        className: "is-text is-compact",
-        buttonAttrs: {
-          [CONSOLE_DATA_ATTR.action]: "save"
-        }
-      }
-    ]
-  });
-}
-
-function isSecurityConsoleEntry(message: string): boolean {
-  return /(security|auth|permission|credential|token|secret|oauth|forbidden|denied|unauthorized|tls|ssl|csrf|xss|csp|injection)/i.test(
-    message
-  );
-}
-
-function formatConsoleEntryLine(entry: {
-  timestampMs: number;
-  level: "log" | "info" | "warn" | "error" | "debug";
-  source: "browser" | "app";
-  message: string;
-}): string {
-  const time = new Date(entry.timestampMs).toLocaleTimeString();
-  const legacyTag = entry.message.includes("cmd.legacy_wrapper.used") ? " [Legacy]" : "";
-  return `${time} [${entry.source}] ${entry.level.toUpperCase()}${legacyTag} ${entry.message}`;
-}
-
-function buildConsoleCopyText(): string {
-  return getVisibleConsoleEntries().map((entry) => formatConsoleEntryLine(entry)).join("\n");
-}
-
-function buildConsoleFilename(): string {
-  const now = new Date();
-  const pad = (n: number) => String(n).padStart(2, "0");
-  const stamp = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}-${pad(
-    now.getHours()
-  )}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
-  return `console-${stamp}.txt`;
-}
-
-function conversationMarkdownFilename(conversationId: string): string {
-  const safe = conversationId.replace(/[^a-zA-Z0-9._-]+/g, "-");
-  return `chat-${safe || "conversation"}.md`;
-}
-
-function buildConversationMarkdown(
-  conversationId: string,
-  title: string,
-  messages: Array<{ role: "user" | "assistant"; content: string; timestampMs: number }>
-): string {
-  const lines: string[] = [];
-  lines.push(`# ${title || conversationId}`);
-  lines.push("");
-  lines.push(`- Conversation ID: \`${conversationId}\``);
-  lines.push(`- Exported: ${new Date().toLocaleString()}`);
-  lines.push("");
-  for (const msg of messages) {
-    const heading = msg.role === "user" ? "User" : "Assistant";
-    lines.push(`## ${heading} (${new Date(msg.timestampMs).toLocaleString()})`);
-    lines.push("");
-    lines.push(msg.content);
-    lines.push("");
-  }
-  return lines.join("\n");
 }
 
 function updateAssistantDraft(correlationId: string, delta: string): void {
@@ -1672,6 +2375,8 @@ function resetCurrentConversationUiState(): void {
   state.chatToolIntentByCorrelation = {};
   state.chatFirstAssistantChunkMsByCorrelation = {};
   state.chatFirstReasoningChunkMsByCorrelation = {};
+  state.chatTtsLatencyMs = null;
+  chatTtsLatencyCapturedByCorrelation.clear();
   state.chatStreaming = false;
   state.activeChatCorrelationId = null;
 }
@@ -1796,39 +2501,6 @@ function ensureToolIntentRow(correlationId: string, toolName: string): void {
   });
 }
 
-function parseTerminalOutput(payload: AppEvent["payload"]): { sessionId: string; data: string } | null {
-  if (!payload || typeof payload !== "object") return null;
-  const value = payload as Record<string, unknown>;
-  if (typeof value.sessionId !== "string" || typeof value.data !== "string") return null;
-  return { sessionId: value.sessionId, data: value.data };
-}
-
-function parseTerminalExit(payload: AppEvent["payload"]): { sessionId: string } | null {
-  if (!payload || typeof payload !== "object") return null;
-  const value = payload as Record<string, unknown>;
-  if (typeof value.sessionId !== "string") return null;
-  return { sessionId: value.sessionId };
-}
-
-function isNoisyTerminalControlEvent(event: AppEvent): boolean {
-  if (event.subsystem !== "ipc") return false;
-  if (event.stage === "error") return false;
-  return event.action === "cmd.terminal.resize" || event.action === "cmd.terminal.send_input";
-}
-
-function isNoisyRuntimeStatusEvent(event: AppEvent): boolean {
-  return (
-    event.subsystem === "runtime" &&
-    event.action === "llama.runtime.status" &&
-    event.stage === "complete"
-  );
-}
-
-function isNoisyChatStreamEvent(event: AppEvent): boolean {
-  if (event.subsystem !== "service") return false;
-  if (event.stage !== "progress") return false;
-  return event.action === "chat.stream.chunk" || event.action === "chat.stream.reasoning_chunk";
-}
 
 function formatRuntimeEventLine(event: AppEvent): string {
   const payloadText =
@@ -1849,13 +2521,6 @@ function formatRuntimeEventLine(event: AppEvent): string {
     return `${new Date(event.timestampMs).toLocaleTimeString()} [stderr] ${lineText}`;
   }
   return `${new Date(event.timestampMs).toLocaleTimeString()} ${event.action} ${event.stage} ${payloadText}`;
-}
-
-function payloadAsRecord(payload: AppEvent["payload"]): Record<string, unknown> | null {
-  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
-    return null;
-  }
-  return payload as Record<string, unknown>;
 }
 
 function formatAgentEventLine(event: AppEvent): string | null {
@@ -1927,14 +2592,6 @@ function updateRuntimeMetricsFromLine(line: string): void {
   }
 }
 
-function modelNameFromPath(path: string): string {
-  const trimmed = path.trim();
-  if (!trimmed) return "none";
-  const normalized = trimmed.replace(/\\/g, "/");
-  const tail = normalized.split("/").filter(Boolean).at(-1) ?? normalized;
-  return tail || "none";
-}
-
 function prettifyRepoName(repoId: string): string {
   const slug = repoId.split("/").at(-1) ?? repoId;
   const cleaned = slug.replace(/-GGUF(?:-UD)?$/i, "");
@@ -1947,12 +2604,6 @@ function extractParamCountLabel(repoId: string): string {
   return label ? label.toUpperCase() : "n/a";
 }
 
-function formatPercent(value: number): string {
-  if (!Number.isFinite(value)) return "0.0";
-  if (value >= 100) return "100";
-  return value.toFixed(1);
-}
-
 function currentBottomStatus() {
   const activeEngineId = state.llamaRuntime?.activeEngineId ?? null;
   const activeEngine =
@@ -1962,27 +2613,26 @@ function currentBottomStatus() {
     (state.llamaRuntimeSelectedEngineId
       ? state.llamaRuntime?.engines.find((engine) => engine.engineId === state.llamaRuntimeSelectedEngineId)
       : undefined);
-  const engine = activeEngine?.backend?.trim() || "offline";
-
-  const contextTokens = state.llamaRuntimeContextTokens;
-  const contextCapacity = state.llamaRuntimeContextCapacity;
-  const contextText =
-    contextTokens && contextCapacity && contextCapacity > 0
-      ? `${contextTokens}/${contextCapacity} (${formatPercent((contextTokens / contextCapacity) * 100)}%)`
-      : "n/a";
-
-  const speedText =
-    typeof state.llamaRuntimeTokensPerSecond === "number"
-      ? `${state.llamaRuntimeTokensPerSecond >= 100 ? state.llamaRuntimeTokensPerSecond.toFixed(0) : state.llamaRuntimeTokensPerSecond.toFixed(1)} tok/s`
-      : "n/a";
-
-  return {
-    runtimeMode: state.runtimeMode,
-    engine,
-    model: modelNameFromPath(state.llamaRuntimeModelPath),
-    contextText,
-    speedText
-  };
+  return buildBottomStatus({
+    activeEngineBackend: activeEngine?.backend ?? null,
+    showBottomEngine: state.showBottomEngine,
+    showBottomModel: state.showBottomModel,
+    showBottomContext: state.showBottomContext,
+    showBottomSpeed: state.showBottomSpeed,
+    showBottomTtsLatency: state.showBottomTtsLatency,
+    showAppResourceCpu: state.showAppResourceCpu,
+    showAppResourceMemory: state.showAppResourceMemory,
+    showAppResourceNetwork: state.showAppResourceNetwork,
+    modelPath: state.llamaRuntimeModelPath,
+    contextTokens: state.llamaRuntimeContextTokens,
+    contextCapacity: state.llamaRuntimeContextCapacity,
+    tokensPerSecond: state.llamaRuntimeTokensPerSecond,
+    ttsLatencyMs: state.chatTtsLatencyMs,
+    appResourceCpuPercent: state.appResourceCpuPercent,
+    appResourceMemoryBytes: state.appResourceMemoryBytes,
+    appResourceNetworkRxBytesPerSec: state.appResourceNetworkRxBytesPerSec,
+    appResourceNetworkTxBytesPerSec: state.appResourceNetworkTxBytesPerSec
+  });
 }
 
 async function refreshConversations(): Promise<void> {
@@ -2012,6 +2662,8 @@ async function loadConversation(conversationId: string): Promise<void> {
   state.chatToolIntentByCorrelation = {};
   state.chatFirstAssistantChunkMsByCorrelation = {};
   state.chatFirstReasoningChunkMsByCorrelation = {};
+  state.chatTtsLatencyMs = null;
+  chatTtsLatencyCapturedByCorrelation.clear();
 }
 
 async function refreshTools(): Promise<void> {
@@ -2030,6 +2682,7 @@ async function refreshTools(): Promise<void> {
       version: manifest.version,
         source: manifest.source,
         enabled: manifest.defaultEnabled,
+        icon: true,
         status: manifest.defaultEnabled ? "ready" : "disabled",
         entry: null
       });
@@ -2053,11 +2706,405 @@ async function refreshApiConnections(): Promise<void> {
   refreshCreateToolModelOptions();
 }
 
+function downloadTextFile(fileName: string, text: string, mimeType: string): void {
+  const blob = new Blob([text], { type: mimeType });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = fileName;
+  document.body.appendChild(anchor);
+  anchor.click();
+  document.body.removeChild(anchor);
+  URL.revokeObjectURL(url);
+}
+
+function pickTextFile(accept: string): Promise<{ name: string; text: string } | null> {
+  return new Promise((resolve) => {
+    const input = document.createElement("input");
+    const cleanup = () => {
+      if (input.parentElement) {
+        document.body.removeChild(input);
+      }
+    };
+    input.type = "file";
+    input.accept = accept;
+    input.style.display = "none";
+    document.body.appendChild(input);
+    window.setTimeout(cleanup, 60_000);
+    input.onchange = () => {
+      void (async () => {
+        try {
+          const file = input.files?.[0];
+          if (!file) {
+            resolve(null);
+            return;
+          }
+          const text = await file.text();
+          resolve({ name: file.name, text });
+        } catch {
+          resolve(null);
+        } finally {
+          cleanup();
+        }
+      })();
+    };
+    input.click();
+  });
+}
+
+function normalizePortableApiType(raw: string | null | undefined): ApiConnectionPortableRecord["apiType"] {
+  if (raw === "llm" || raw === "search" || raw === "stt" || raw === "tts" || raw === "image" || raw === "other") {
+    return raw;
+  }
+  return "llm";
+}
+
+function parsePortableSnapshot(payloadJson: string): ApiConnectionsPortableSnapshot {
+  const parsed = JSON.parse(payloadJson) as Partial<ApiConnectionsPortableSnapshot> | ApiConnectionPortableRecord[];
+  const rawConnections = Array.isArray(parsed)
+    ? parsed
+    : Array.isArray(parsed.connections)
+      ? parsed.connections
+      : [];
+  return {
+    version: typeof (parsed as ApiConnectionsPortableSnapshot).version === "number"
+      ? (parsed as ApiConnectionsPortableSnapshot).version
+      : 1,
+    exportedAtMs: Date.now(),
+    connections: rawConnections
+      .map((item) => {
+        const normalized: ApiConnectionPortableRecord = {
+          apiType: normalizePortableApiType(item.apiType),
+          apiUrl: String(item.apiUrl || "").trim(),
+          apiKey: String(item.apiKey || "").trim()
+        };
+        const id = typeof item.id === "string" ? item.id.trim() : "";
+        const name = typeof item.name === "string" ? item.name.trim() : "";
+        const modelName = typeof item.modelName === "string" ? item.modelName.trim() : "";
+        const apiStandardPath =
+          typeof item.apiStandardPath === "string" ? item.apiStandardPath.trim() : "";
+        if (id) normalized.id = id;
+        if (name) normalized.name = name;
+        if (modelName) normalized.modelName = modelName;
+        if (apiStandardPath) normalized.apiStandardPath = apiStandardPath;
+        if (typeof item.costPerMonthUsd === "number") normalized.costPerMonthUsd = item.costPerMonthUsd;
+        if (typeof item.createdMs === "number") normalized.createdMs = item.createdMs;
+        return normalized;
+      })
+      .filter((item) => Boolean(item.apiUrl) && Boolean(item.apiKey))
+  };
+}
+
+function csvEscapeCell(value: string): string {
+  if (value.includes(",") || value.includes('"') || value.includes("\n") || value.includes("\r")) {
+    return `"${value.replaceAll('"', '""')}"`;
+  }
+  return value;
+}
+
+function toApiConnectionsCsv(snapshot: ApiConnectionsPortableSnapshot): string {
+  const header = [
+    "id",
+    "apiType",
+    "apiUrl",
+    "name",
+    "apiKey",
+    "modelName",
+    "costPerMonthUsd",
+    "apiStandardPath",
+    "createdMs"
+  ];
+  const lines = [header.join(",")];
+  for (const item of snapshot.connections) {
+    const row = [
+      item.id || "",
+      item.apiType,
+      item.apiUrl,
+      item.name || "",
+      item.apiKey,
+      item.modelName || "",
+      typeof item.costPerMonthUsd === "number" ? String(item.costPerMonthUsd) : "",
+      item.apiStandardPath || "",
+      typeof item.createdMs === "number" ? String(item.createdMs) : ""
+    ].map(csvEscapeCell);
+    lines.push(row.join(","));
+  }
+  return `${lines.join("\n")}\n`;
+}
+
+function parseCsvLine(line: string): string[] {
+  const out: string[] = [];
+  let current = "";
+  let i = 0;
+  let inQuotes = false;
+  while (i < line.length) {
+    const ch = line[i];
+    if (inQuotes) {
+      if (ch === '"') {
+        if (line[i + 1] === '"') {
+          current += '"';
+          i += 2;
+          continue;
+        }
+        inQuotes = false;
+        i += 1;
+        continue;
+      }
+      current += ch;
+      i += 1;
+      continue;
+    }
+    if (ch === ",") {
+      out.push(current);
+      current = "";
+      i += 1;
+      continue;
+    }
+    if (ch === '"') {
+      inQuotes = true;
+      i += 1;
+      continue;
+    }
+    current += ch;
+    i += 1;
+  }
+  out.push(current);
+  return out;
+}
+
+function fromApiConnectionsCsv(csvText: string): ApiConnectionsPortableSnapshot {
+  const lines = csvText
+    .replace(/\r\n/g, "\n")
+    .replace(/\r/g, "\n")
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
+  if (!lines.length) {
+    return { version: 1, exportedAtMs: Date.now(), connections: [] };
+  }
+  const header = parseCsvLine(lines[0] ?? "").map((cell) => cell.trim());
+  const index = new Map(header.map((name, i) => [name, i]));
+  const connections: ApiConnectionPortableRecord[] = [];
+  for (let rowIdx = 1; rowIdx < lines.length; rowIdx += 1) {
+    const line = lines[rowIdx];
+    if (line === undefined) continue;
+    const cells = parseCsvLine(line);
+    const get = (name: string) => {
+      const cellIndex = index.get(name);
+      if (cellIndex === undefined) return "";
+      return (cells[cellIndex] || "").trim();
+    };
+    const apiUrl = get("apiUrl");
+    const apiKey = get("apiKey");
+    if (!apiUrl || !apiKey) continue;
+    const costRaw = get("costPerMonthUsd");
+    const createdRaw = get("createdMs");
+    const cost = costRaw ? Number.parseFloat(costRaw) : undefined;
+    const createdMs = createdRaw ? Number.parseInt(createdRaw, 10) : undefined;
+    const record: ApiConnectionPortableRecord = {
+      apiType: normalizePortableApiType(get("apiType")),
+      apiUrl,
+      apiKey
+    };
+    const id = get("id");
+    const name = get("name");
+    const modelName = get("modelName");
+    const apiStandardPath = get("apiStandardPath");
+    if (id) record.id = id;
+    if (name) record.name = name;
+    if (modelName) record.modelName = modelName;
+    if (apiStandardPath) record.apiStandardPath = apiStandardPath;
+    if (Number.isFinite(cost ?? NaN) && cost !== undefined) record.costPerMonthUsd = cost;
+    if (Number.isFinite(createdMs ?? NaN) && createdMs !== undefined) record.createdMs = createdMs;
+    connections.push(record);
+  }
+  return { version: 1, exportedAtMs: Date.now(), connections };
+}
+
+async function refreshTtsState(): Promise<void> {
+  if (!clientRef) return;
+  const [status, settings, voices] = await Promise.all([
+    clientRef.ttsStatus({ correlationId: nextCorrelationId() }),
+    clientRef.ttsSettingsGet({ correlationId: nextCorrelationId() }),
+    clientRef.ttsListVoices({ correlationId: nextCorrelationId() })
+  ]);
+  state.tts.engineId = status.engineId;
+  state.tts.engine = (status.engine as "kokoro" | "piper" | "matcha" | "kitten" | "pocket") || "kokoro";
+  state.tts.ready = status.ready;
+  state.tts.runtimeArchivePresent = status.runtimeArchivePresent;
+  state.tts.availableModelPaths = status.availableModelPaths || [];
+  state.tts.modelPath = status.modelPath;
+  state.tts.secondaryPath = status.secondaryPath || status.voicesPath || "";
+  state.tts.voicesPath = status.voicesPath;
+  state.tts.tokensPath = status.tokensPath || settings.tokensPath || "";
+  state.tts.dataDir = status.dataDir || settings.dataDir || "";
+  state.tts.pythonPath = status.pythonPath || settings.pythonPath;
+  state.tts.scriptPath = status.scriptPath;
+  state.tts.voices = voices.voices.length ? voices.voices : status.availableVoices;
+  state.tts.selectedVoice = status.selectedVoice || voices.selectedVoice || settings.voice;
+  state.tts.speed = settings.speed || status.speed || state.tts.speed;
+  state.tts.status = status.ready ? "ready" : "idle";
+  state.tts.message = status.message;
+}
+
 function refreshChatModelProfile(): void {
-  const profile = resolveActiveChatModelProfile(state.apiConnections);
-  state.chatActiveModelId = profile.id;
-  state.chatActiveModelLabel = profile.label;
-  state.chatActiveModelCapabilities = profile.capabilities;
+  state.chatModelOptions = buildChatModelOptions();
+  if (!state.chatModelOptions.length) {
+    const previousId = state.chatActiveModelId;
+    const fallback = "local-model";
+    state.chatActiveModelId = "local:fallback";
+    state.chatActiveModelLabel = fallback;
+    state.chatActiveModelCapabilities = inferChatModelCapabilities(fallback);
+    if (previousId !== state.chatActiveModelId) {
+      pushConsoleEntry("warn", "browser", "No chat models available; switched to local fallback model.");
+    }
+    return;
+  }
+  const selectedFromCurrent = state.chatModelOptions.find(
+    (option) => option.id === state.chatActiveModelId
+  );
+  if (selectedFromCurrent) {
+    applyChatModelSelection(selectedFromCurrent, false);
+    return;
+  }
+
+  const selectedFromPreferred = state.chatModelOptions.find(
+    (option) => option.id === preferredChatModelId
+  );
+  if (selectedFromPreferred) {
+    applyChatModelSelection(selectedFromPreferred, false);
+    return;
+  }
+
+  const preferredApi = state.chatModelOptions.find((option) => option.source === "api");
+  const selected = preferredApi ?? state.chatModelOptions[0];
+  if (!selected) return;
+  const previousId = state.chatActiveModelId;
+  applyChatModelSelection(selected, false);
+  if (previousId !== selected.id) {
+    pushConsoleEntry(
+      "info",
+      "browser",
+      `Chat model auto-switched to ${selected.label} (${selected.id}) because the previous selection was unavailable.`
+    );
+  }
+}
+
+function applyChatModelSelection(option: ChatModelOption, persistSelection = true): void {
+  state.chatActiveModelId = option.id;
+  state.chatActiveModelLabel = option.label;
+  state.chatActiveModelCapabilities = inferChatModelCapabilities(option.modelName);
+  if (persistSelection) {
+    preferredChatModelId = option.id;
+    persistChatModelId(option.id);
+  }
+}
+
+function buildChatModelOptions(): ChatModelOption[] {
+  const options: ChatModelOption[] = [];
+  const seen = new Set<string>();
+
+  const localModel = modelNameFromPath(state.llamaRuntimeModelPath);
+  const localRuntimeStarting =
+    state.llamaRuntimeBusy || state.llamaRuntime?.state === "starting";
+  if (localModel && localModel !== "-") {
+    options.push({
+      id: "local:runtime",
+      label: `local/${localModel}`,
+      source: "local",
+      modelName: localModel,
+      detail: "llama.cpp runtime"
+    });
+    seen.add(`local:${localModel.toLowerCase()}`);
+  } else if (localRuntimeStarting) {
+    const previousLocalModel =
+      state.chatActiveModelId.startsWith("local:") && state.chatActiveModelLabel.startsWith("local/")
+        ? state.chatActiveModelLabel.slice("local/".length).trim()
+        : "loading";
+    options.push({
+      id: "local:runtime",
+      label: `local/${previousLocalModel || "loading"}`,
+      source: "local",
+      modelName: previousLocalModel || "loading",
+      detail: "llama.cpp runtime starting"
+    });
+    seen.add(`local:${(previousLocalModel || "loading").toLowerCase()}`);
+  }
+
+  for (const connection of state.apiConnections) {
+    if (connection.apiType !== "llm" || connection.status !== "verified") continue;
+    const provider = resolveApiProviderLabel(connection.name, connection.apiUrl);
+    const models = (connection.availableModels || []).map((m) => m.trim()).filter(Boolean);
+    const fallback = (connection.modelName || "").trim();
+    const candidates = models.length ? models : (fallback ? [fallback] : []);
+    const apiUrlKey = connection.apiUrl.trim().toLowerCase();
+    const apiPathKey = (connection.apiStandardPath || "").trim().toLowerCase();
+    for (const model of candidates) {
+      // Deduplicate endpoint/model repeats when users add multiple records
+      // for the same provider URL and each record carries discovered model lists.
+      const key = `api:${apiUrlKey}:${apiPathKey}:${model.toLowerCase()}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      options.push({
+        id: `api:${connection.id}:${model}`,
+        label: `${provider}/${model}`,
+        source: "api",
+        modelName: model,
+        detail: connection.name || connection.apiUrl
+      });
+    }
+  }
+
+  return options.sort((a, b) => a.label.localeCompare(b.label));
+}
+
+function resolveApiProviderLabel(name: string | null, apiUrl: string): string {
+  try {
+    const parsed = new URL(apiUrl);
+    const host = (parsed.hostname || "").trim();
+    if (isSameMachineHost(host)) {
+      return "local";
+    }
+    if (looksLikeIpv4(host)) {
+      return host.slice(0, 15);
+    }
+    return extractProviderLabelFromHost(host).slice(0, 15);
+  } catch {
+    const raw = (name || "").trim();
+    return (raw || "api").slice(0, 15);
+  }
+}
+
+function extractProviderLabelFromHost(host: string): string {
+  const normalized = host.trim().toLowerCase().replace(/\.+$/g, "");
+  if (!normalized) return "api";
+  const parts = normalized.split(".").filter(Boolean);
+  if (!parts.length) return "api";
+
+  const first = parts[0];
+  if (parts.length >= 3 && (first === "api" || first === "www" || first === "m")) {
+    return parts[1] || first;
+  }
+  if (parts.length >= 2) {
+    const secondLevel = parts[parts.length - 2];
+    return secondLevel ?? parts[0] ?? "api";
+  }
+  return parts[0] ?? "api";
+}
+
+function isSameMachineHost(host: string): boolean {
+  const normalized = host.trim().toLowerCase();
+  return normalized === "localhost" || normalized === "127.0.0.1" || normalized === "::1";
+}
+
+function looksLikeIpv4(host: string): boolean {
+  if (!/^\d{1,3}(?:\.\d{1,3}){3}$/.test(host)) {
+    return false;
+  }
+  return host.split(".").every((part) => {
+    const value = Number.parseInt(part, 10);
+    return Number.isInteger(value) && value >= 0 && value <= 255;
+  });
 }
 
 function refreshCreateToolModelOptions(): void {
@@ -2074,17 +3121,20 @@ function refreshCreateToolModelOptions(): void {
   for (const connection of state.apiConnections) {
     if (connection.apiType !== "llm") continue;
     if (connection.status !== "verified" && connection.status !== "warning") continue;
-    const modelName = (connection.modelName || "").trim();
-    const display = modelName || connection.name || "LLM Connection";
-    const key = `api:${connection.id}:${display.toLowerCase()}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    options.push({
-      id: key,
-      label: display,
-      source: "api",
-      detail: connection.name || connection.apiUrl
-    });
+    const discovered = (connection.availableModels || []).map((model) => model.trim()).filter(Boolean);
+    const fallback = (connection.modelName || "").trim();
+    const candidates = discovered.length ? discovered : (fallback ? [fallback] : []);
+    for (const candidate of candidates) {
+      const key = `api:${connection.id}:${candidate.toLowerCase()}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      options.push({
+        id: key,
+        label: candidate,
+        source: "api",
+        detail: connection.name || connection.apiUrl
+      });
+    }
   }
 
   for (const model of state.modelManagerInstalled) {
@@ -2269,6 +3319,7 @@ async function refreshLlamaRuntime(): Promise<void> {
   } else {
     warnedMissingBundleEngineId = null;
   }
+  refreshChatModelProfile();
 }
 
 async function browseModelPath(): Promise<string | null> {
@@ -2301,6 +3352,88 @@ async function browseModelPath(): Promise<string | null> {
   }
 
   const manual = window.prompt("Enter absolute model path (GGUF file)", currentValue);
+  if (!manual) return null;
+  const normalized = manual.trim();
+  return normalized ? normalized : null;
+}
+
+async function browseTtsModelPath(currentValue: string): Promise<string | null> {
+  const resolveParentDir = (path: string): string => {
+    const normalized = path.trim().replace(/\\/g, "/");
+    if (!normalized) return "";
+    const slash = normalized.lastIndexOf("/");
+    if (slash <= 0) return "";
+    return normalized.slice(0, slash);
+  };
+
+  const trimmedCurrent = currentValue.trim();
+  const defaultPath =
+    resolveParentDir(trimmedCurrent) ||
+    resolveParentDir(state.tts.modelPath) ||
+    resolveParentDir(state.tts.secondaryPath) ||
+    resolveParentDir(state.tts.voicesPath);
+  if (state.runtimeMode === "tauri") {
+    try {
+      const { invoke } = await import("@tauri-apps/api/core");
+      const selected = await invoke<string | string[] | null>("plugin:dialog|open", {
+        options: {
+          title: "Select TTS ONNX Model",
+          directory: false,
+          multiple: false,
+          defaultPath: defaultPath || undefined,
+          filters: [
+            { name: "ONNX", extensions: ["onnx"] },
+            { name: "All files", extensions: ["*"] }
+          ]
+        }
+      });
+      if (Array.isArray(selected)) {
+        return selected[0] ?? null;
+      }
+      return selected;
+    } catch (error) {
+      pushConsoleEntry(
+        "warn",
+        "browser",
+        `Native TTS model picker unavailable, falling back to manual entry: ${String(error)}`
+      );
+    }
+  }
+
+  const manual = window.prompt("Enter absolute TTS model path (ONNX file)", trimmedCurrent);
+  if (!manual) return null;
+  const normalized = manual.trim();
+  return normalized ? normalized : null;
+}
+
+async function browseTtsSecondaryPath(currentValue: string): Promise<string | null> {
+  const trimmedCurrent = currentValue.trim();
+  if (state.runtimeMode === "tauri") {
+    try {
+      const { invoke } = await import("@tauri-apps/api/core");
+      const selected = await invoke<string | string[] | null>("plugin:dialog|open", {
+        options: {
+          title: "Select TTS secondary asset",
+          directory: false,
+          multiple: false,
+          filters: [
+            { name: "Common assets", extensions: ["bin", "onnx", "txt"] },
+            { name: "All files", extensions: ["*"] }
+          ],
+          defaultPath: trimmedCurrent || undefined
+        }
+      });
+      if (Array.isArray(selected)) return selected[0] ?? null;
+      return selected;
+    } catch (error) {
+      pushConsoleEntry(
+        "warn",
+        "browser",
+        `Native TTS secondary picker unavailable, falling back to manual entry: ${String(error)}`
+      );
+    }
+  }
+  const manual = window.prompt("Enter absolute TTS secondary asset path", trimmedCurrent);
   if (!manual) return null;
   const normalized = manual.trim();
   return normalized ? normalized : null;
@@ -2391,12 +3524,173 @@ async function autoStartLlamaRuntimeIfConfigured(): Promise<void> {
 }
 
 function renderAndBind(sendMessage: (text: string) => Promise<void>): void {
+  const selection = window.getSelection?.() ?? null;
+  const hasWorkspaceTextSelection =
+    Boolean(selection) &&
+    !selection!.isCollapsed &&
+    Boolean(selection!.toString().trim()) &&
+    Boolean(
+      selection!.anchorNode &&
+        selection!.focusNode &&
+        document.querySelector(".workspace-pane")?.contains(selection!.anchorNode) &&
+        document.querySelector(".workspace-pane")?.contains(selection!.focusNode)
+    );
+  if (hasWorkspaceTextSelection) {
+    if (deferredWorkspaceSelectionRenderTimerId === null) {
+      deferredWorkspaceSelectionRenderTimerId = window.setTimeout(() => {
+        deferredWorkspaceSelectionRenderTimerId = null;
+        renderAndBind(sendMessage);
+      }, 220);
+    }
+    return;
+  }
+  if (deferredWorkspaceSelectionRenderTimerId !== null) {
+    window.clearTimeout(deferredWorkspaceSelectionRenderTimerId);
+    deferredWorkspaceSelectionRenderTimerId = null;
+  }
+
+  const toggleChatAutoSpeak = async (): Promise<void> => {
+    if (!clientRef) return;
+    state.chatTtsEnabled = !state.chatTtsEnabled;
+    if (!state.chatTtsEnabled) {
+      resetChatTtsQueue();
+      stopTtsPlaybackLocal();
+      state.tts.message = "Auto-speak disabled.";
+      renderAndBind(sendMessage);
+      return;
+    }
+    state.tts.message = "Auto-speak enabled.";
+    renderAndBind(sendMessage);
+    void prewarmChatTtsIfNeeded();
+    if (state.activeChatCorrelationId) {
+      const existing = state.messages.find(
+        (message) =>
+          message.role === "assistant" && message.correlationId === state.activeChatCorrelationId
+      );
+      if (existing?.text) {
+        resetChatTtsStreamParser(state.activeChatCorrelationId);
+        const seed = extractSpeakableStreamDelta(existing.text);
+        enqueueSpeakableChunk(seed, false);
+        void runChatTtsQueue(sendMessage);
+      }
+    }
+  };
+
+  const toggleSttRuntime = async (): Promise<void> => {
+    if (!clientRef) return;
+    if (sttToggleInFlight) return;
+    sttToggleInFlight = true;
+    try {
+      const { invoke } = await import("@tauri-apps/api/core");
+      if (state.stt.status === "idle" || state.stt.status === "error") {
+        // First check and request microphone permission if needed
+        await refreshDevicesState();
+        const micPermission = state.devices.microphonePermission;
+        // Sync to STT state for UI display
+        state.stt.microphonePermission = micPermission;
+        if (micPermission !== "enabled") {
+          // Request microphone access - this will show permission prompt
+          await requestMicrophoneAccess();
+          // Check again after requesting
+          await refreshDevicesState();
+          const micPermissionAfter = state.devices.microphonePermission;
+          // Sync to STT state for UI display
+          state.stt.microphonePermission = micPermissionAfter;
+          if (micPermissionAfter !== "enabled") {
+            state.stt.status = "error";
+            state.stt.message = "Microphone access denied";
+            renderAndBind(sendMessage);
+            return;
+          }
+        }
+        // Start STT only after permission is confirmed
+        state.stt.status = "starting";
+        state.stt.message = state.stt.backend === "sherpa_onnx" ? "Starting sherpa-onnx..." : "Starting whisper server...";
+        state.stt.isListening = false;
+        renderAndBind(sendMessage);
+        await invoke("stt_set_backend", { backend: state.stt.backend });
+        await invoke("start_stt");
+        state.stt.status = "running";
+        state.stt.message = state.stt.backend === "sherpa_onnx" ? "Sherpa backend ready" : "Server started";
+        await setupSttTranscriptListener(sendMessage);
+        await startSttAudioCapture(invoke);
+      } else if (state.stt.status === "running" || state.stt.status === "starting") {
+        stopSttAudioCapture();
+        await sttIngestQueue.catch(() => undefined);
+        await sttTranscriptionQueue.catch(() => undefined);
+        await sttPartialTranscriptionQueue.catch(() => undefined);
+        await invoke("stt_stream_reset");
+        await invoke("stop_stt");
+        await teardownSttTranscriptListener();
+        setVoicePipelineState("idle");
+        state.stt.status = "idle";
+        state.stt.message = null;
+        state.stt.isListening = false;
+      }
+      renderAndBind(sendMessage);
+    } catch (error) {
+      stopSttAudioCapture();
+      await teardownSttTranscriptListener();
+      state.stt.status = "error";
+      state.stt.message = String(error);
+      state.stt.isListening = false;
+      renderAndBind(sendMessage);
+    } finally {
+      sttToggleInFlight = false;
+    }
+  };
+
+  const toggleVoiceMode = async (): Promise<void> => {
+    if (voiceModeToggleInFlight) return;
+    voiceModeToggleInFlight = true;
+    try {
+    const sttRunning = state.stt.status === "running" || state.stt.status === "starting";
+    const ttsActive = state.chatTtsEnabled;
+    const voiceModeActive = sttRunning && ttsActive;
+
+    if (voiceModeActive) {
+      await toggleSttRuntime();
+      if (state.chatTtsEnabled) {
+        await toggleChatAutoSpeak();
+      }
+      return;
+    }
+
+    if (!state.tts.ready) {
+      state.tts.status = "error";
+      state.tts.message = "Voice mode requires a ready TTS bundle. Configure TTS first.";
+      renderAndBind(sendMessage);
+      return;
+    }
+
+    if (!state.chatTtsEnabled) {
+      await toggleChatAutoSpeak();
+    }
+    if (state.stt.status !== "running" && state.stt.status !== "starting") {
+      await toggleSttRuntime();
+    }
+
+    const enabled = state.chatTtsEnabled;
+    const running = state.stt.status === "running" || state.stt.status === "starting";
+    if (!enabled || !running) {
+      if (state.chatTtsEnabled) {
+        await toggleChatAutoSpeak();
+      }
+      state.tts.message = "Voice mode failed to fully enable. Check microphone permission and STT status.";
+      renderAndBind(sendMessage);
+    }
+    } finally {
+      voiceModeToggleInFlight = false;
+    }
+  };
+
   persistCreateToolDraft(state);
   render();
   syncOverlayScrollbars();
   scrollConsoleToBottom();
   attachDividerResize();
   attachTopbarInteractions(sendMessage);
+  attachChatHeaderModelInteractions(sendMessage);
   attachSidebarInteractions(sendMessage);
   attachWorkspaceInteractions(sendMessage);
   bindCustomToolIframes();
@@ -2414,14 +3708,34 @@ function renderAndBind(sendMessage: (text: string) => Promise<void>): void {
       state.chatAttachedFileContent = null;
     },
     onStopCurrentResponse: async () => {
-      if (!clientRef || !state.activeChatCorrelationId) return;
       const targetCorrelationId = state.activeChatCorrelationId;
+      chatTtsStopRequested = true;
+      setVoicePipelineState("interrupted");
+      resetChatTtsQueue();
+      stopTtsPlaybackLocal();
+      if (clientRef) {
+        try {
+          await clientRef.ttsStop({ correlationId: nextCorrelationId() });
+        } catch (error) {
+          pushConsoleEntry("warn", "browser", `TTS stop request failed: ${String(error)}`);
+        }
+      }
+      state.chatStreaming = false;
+      state.activeChatCorrelationId = null;
+      if (!clientRef || !targetCorrelationId) {
+        renderAndBind(sendMessage);
+        return;
+      }
       await clientRef.cancelMessage({
         correlationId: nextCorrelationId(),
         targetCorrelationId
       });
       pushConsoleEntry("info", "browser", `Requested stop for ${targetCorrelationId}.`);
+      setVoicePipelineState("idle");
+      renderAndBind(sendMessage);
     },
+    onSpeakLatestAssistantTts: toggleChatAutoSpeak,
+    onToggleVoiceMode: toggleVoiceMode,
     onToggleThinkingPanel: async (correlationId: string) => {
       const current = state.chatThinkingExpandedByCorrelation[correlationId] === true;
       state.chatThinkingExpandedByCorrelation[correlationId] = !current;
@@ -2479,18 +3793,98 @@ function renderAndBind(sendMessage: (text: string) => Promise<void>): void {
       await refreshApiConnections();
       renderAndBind(sendMessage);
     },
+    onApiConnectionsExportJson: async () => {
+      if (!clientRef) return;
+      try {
+        const exported = await clientRef.exportApiConnections({
+          correlationId: nextCorrelationId()
+        });
+        downloadTextFile(
+          exported.fileName,
+          exported.payloadJson,
+          "application/json;charset=utf-8"
+        );
+        state.apiMessage = `Exported API connections to ${exported.fileName}.`;
+      } catch (error) {
+        state.apiMessage = `Failed exporting API connections: ${String(error)}`;
+      }
+      renderAndBind(sendMessage);
+    },
+    onApiConnectionsExportCsv: async () => {
+      if (!clientRef) return;
+      try {
+        const exported = await clientRef.exportApiConnections({
+          correlationId: nextCorrelationId()
+        });
+        const snapshot = parsePortableSnapshot(exported.payloadJson);
+        const csv = toApiConnectionsCsv(snapshot);
+        downloadTextFile("arxell-api-connections.csv", csv, "text/csv;charset=utf-8");
+        state.apiMessage = "Exported API connections to arxell-api-connections.csv.";
+      } catch (error) {
+        state.apiMessage = `Failed exporting API connections CSV: ${String(error)}`;
+      }
+      renderAndBind(sendMessage);
+    },
+    onApiConnectionsImportJson: async () => {
+      if (!clientRef) return;
+      const selected = await pickTextFile("application/json,.json");
+      if (!selected) return;
+      try {
+        const imported = await clientRef.importApiConnections({
+          correlationId: nextCorrelationId(),
+          payloadJson: selected.text
+        });
+        state.apiConnections = imported.connections;
+        refreshChatModelProfile();
+        refreshCreateToolModelOptions();
+        state.apiMessage = `Imported API connections from ${selected.name}.`;
+      } catch (error) {
+        state.apiMessage = `Failed importing API connections JSON: ${String(error)}`;
+      }
+      renderAndBind(sendMessage);
+    },
+    onApiConnectionsImportCsv: async () => {
+      if (!clientRef) return;
+      const selected = await pickTextFile("text/csv,.csv,text/plain,.txt");
+      if (!selected) return;
+      try {
+        const snapshot = fromApiConnectionsCsv(selected.text);
+        const payloadJson = `${JSON.stringify(snapshot, null, 2)}\n`;
+        const imported = await clientRef.importApiConnections({
+          correlationId: nextCorrelationId(),
+          payloadJson
+        });
+        state.apiConnections = imported.connections;
+        refreshChatModelProfile();
+        refreshCreateToolModelOptions();
+        state.apiMessage = `Imported API connections from ${selected.name}.`;
+      } catch (error) {
+        state.apiMessage = `Failed importing API connections CSV: ${String(error)}`;
+      }
+      renderAndBind(sendMessage);
+    },
     onApiConnectionsSetFormOpen: async (open: boolean) => {
       state.apiFormOpen = open;
       if (!open) {
         state.apiDraft = defaultApiConnectionDraft();
+        state.apiProbeBusy = false;
+        state.apiProbeStatus = null;
+        state.apiProbeMessage = null;
+        state.apiDetectedModels = [];
       }
       renderAndBind(sendMessage);
     },
     onApiConnectionDraftChange: async (patch) => {
+      const changingUrl = typeof patch.apiUrl === "string";
       state.apiDraft = {
         ...state.apiDraft,
         ...patch
       };
+      if (changingUrl) {
+        state.apiProbeStatus = null;
+        state.apiProbeMessage = null;
+        state.apiDetectedModels = [];
+      }
     },
     onApiConnectionEdit: async (id: string) => {
       if (!clientRef) return;
@@ -2518,15 +3912,75 @@ function renderAndBind(sendMessage: (text: string) => Promise<void>): void {
           : "",
         apiStandardPath: connection.apiStandardPath ?? ""
       };
+      state.apiDetectedModels = connection.availableModels?.length
+        ? [...connection.availableModels]
+        : (connection.modelName ? [connection.modelName] : []);
+      state.apiProbeBusy = false;
+      state.apiProbeStatus = null;
+      state.apiProbeMessage = null;
       state.apiFormOpen = true;
+      renderAndBind(sendMessage);
+    },
+    onApiConnectionProbe: async () => {
+      if (!clientRef) return;
+      const apiUrl = state.apiDraft.apiUrl.trim();
+      if (!apiUrl) {
+        state.apiProbeBusy = false;
+        state.apiProbeStatus = null;
+        state.apiProbeMessage = "Enter API URL to auto-detect endpoint standard and available models.";
+        state.apiDetectedModels = [];
+        renderAndBind(sendMessage);
+        return;
+      }
+      state.apiProbeBusy = true;
+      state.apiProbeStatus = "pending";
+      state.apiProbeMessage = "Testing endpoint...";
+      renderAndBind(sendMessage);
+      try {
+        const probeRequest: ApiConnectionProbeRequest = {
+          correlationId: nextCorrelationId(),
+          apiUrl,
+          apiType: state.apiDraft.apiType
+        };
+        const apiKey = state.apiDraft.apiKey.trim();
+        const apiStandardPath = state.apiDraft.apiStandardPath.trim();
+        if (apiKey) {
+          probeRequest.apiKey = apiKey;
+        }
+        if (apiStandardPath) {
+          probeRequest.apiStandardPath = apiStandardPath;
+        }
+        const probe = await clientRef.probeApiConnectionEndpoint(probeRequest);
+        state.apiProbeBusy = false;
+        state.apiProbeStatus = probe.status;
+        state.apiProbeMessage = probe.statusMessage;
+        state.apiDetectedModels = probe.models;
+        if (probe.apiStandardPath && !state.apiDraft.apiStandardPath.trim()) {
+          state.apiDraft.apiStandardPath = probe.apiStandardPath;
+        }
+        if (probe.detectedApiType !== state.apiDraft.apiType) {
+          state.apiDraft.apiType = probe.detectedApiType;
+        }
+        const currentModel = state.apiDraft.modelName.trim();
+        if (!currentModel && probe.selectedModel) {
+          state.apiDraft.modelName = probe.selectedModel;
+        } else if (currentModel && probe.models.length && !probe.models.includes(currentModel)) {
+          state.apiDraft.modelName = probe.selectedModel ?? currentModel;
+        }
+      } catch (error) {
+        state.apiProbeBusy = false;
+        state.apiProbeStatus = "warning";
+        state.apiProbeMessage = `Probe failed: ${String(error)}`;
+        state.apiDetectedModels = [];
+      }
       renderAndBind(sendMessage);
     },
     onApiConnectionSave: async () => {
       if (!clientRef) return;
       const apiUrl = state.apiDraft.apiUrl.trim();
       const apiKey = state.apiDraft.apiKey.trim();
-      if (!apiUrl || (!state.apiEditingId && !apiKey)) {
-        state.apiMessage = !apiUrl ? "API URL is required." : "API key is required.";
+      if (!apiUrl) {
+        state.apiMessage = "API URL is required.";
         renderAndBind(sendMessage);
         return;
       }
@@ -2565,6 +4019,8 @@ function renderAndBind(sendMessage: (text: string) => Promise<void>): void {
           state.apiConnections = state.apiConnections.map((record) =>
             record.id === state.apiEditingId ? verified.connection : record
           );
+          refreshChatModelProfile();
+          refreshCreateToolModelOptions();
           state.apiFormOpen = false;
           state.apiEditingId = null;
           state.apiDraft = defaultApiConnectionDraft();
@@ -2582,6 +4038,8 @@ function renderAndBind(sendMessage: (text: string) => Promise<void>): void {
             ...(state.apiDraft.apiStandardPath.trim() ? { apiStandardPath: state.apiDraft.apiStandardPath.trim() } : {})
           });
           state.apiConnections = [created.connection, ...state.apiConnections];
+          refreshChatModelProfile();
+          refreshCreateToolModelOptions();
           state.apiFormOpen = false;
           state.apiEditingId = null;
           state.apiDraft = defaultApiConnectionDraft();
@@ -2602,6 +4060,8 @@ function renderAndBind(sendMessage: (text: string) => Promise<void>): void {
         state.apiConnections = state.apiConnections.map((record) =>
           record.id === id ? verified.connection : record
         );
+        refreshChatModelProfile();
+        refreshCreateToolModelOptions();
         state.apiMessage = verified.connection.statusMessage;
       } catch (error) {
         state.apiMessage = `Failed re-verifying API: ${String(error)}`;
@@ -2619,6 +4079,8 @@ function renderAndBind(sendMessage: (text: string) => Promise<void>): void {
         });
         if (response.deleted) {
           state.apiConnections = state.apiConnections.filter((record) => record.id !== id);
+          refreshChatModelProfile();
+          refreshCreateToolModelOptions();
           state.apiMessage = "API connection removed.";
         } else {
           state.apiMessage = "API connection was not found.";
@@ -3001,63 +4463,368 @@ function renderAndBind(sendMessage: (text: string) => Promise<void>): void {
       }
       renderAndBind(sendMessage);
     },
-    onToggleStt: async () => {
+    onTtsRefresh: async () => {
       if (!clientRef) return;
+      state.tts.status = "busy";
+      state.tts.message = "Refreshing TTS status...";
+      renderAndBind(sendMessage);
+      try {
+        await refreshTtsState();
+      } catch (error) {
+        state.tts.status = "error";
+        state.tts.message = `TTS refresh failed: ${formatTtsError(error)}`;
+      }
+      renderAndBind(sendMessage);
+    },
+    onTtsStart: async () => {
+      if (!clientRef) return;
+      state.tts.status = "busy";
+      state.tts.message = `Starting ${state.tts.engine} TTS engine...`;
+      renderAndBind(sendMessage);
+      try {
+        const response = await clientRef.ttsSelfTest({
+          correlationId: nextCorrelationId()
+        });
+        await refreshTtsState();
+        state.tts.status = response.ok ? "ready" : "error";
+        state.tts.message = response.ok
+          ? `${state.tts.engine} TTS engine ready.`
+          : response.message || `${state.tts.engine} TTS engine failed to start.`;
+        state.tts.lastBytes = response.bytes;
+        state.tts.lastDurationMs = response.durationMs;
+        state.tts.lastSampleRate = response.sampleRate;
+      } catch (error) {
+        state.tts.status = "error";
+        state.tts.message = `TTS start failed: ${formatTtsError(error)}`;
+      }
+      renderAndBind(sendMessage);
+    },
+    onTtsSetVoice: async (voice: string) => {
+      state.tts.selectedVoice = voice.trim() || state.tts.selectedVoice;
+      if (!clientRef) {
+        renderAndBind(sendMessage);
+        return;
+      }
+      try {
+        await clientRef.ttsSettingsSet({
+          correlationId: nextCorrelationId(),
+          voice: state.tts.selectedVoice
+        });
+      } catch (error) {
+        state.tts.status = "error";
+        state.tts.message = `Failed saving voice: ${String(error)}`;
+      }
+      renderAndBind(sendMessage);
+    },
+    onTtsSetEngine: async (engine: TtsEngine) => {
+      state.tts = resetTtsStateForEngine(state.tts, engine);
+      if (!clientRef) {
+        renderAndBind(sendMessage);
+        return;
+      }
+      state.tts.status = "busy";
+      state.tts.message = `Switching TTS engine to ${engine}...`;
+      renderAndBind(sendMessage);
+      try {
+        await clientRef.ttsSettingsSet({
+          correlationId: nextCorrelationId(),
+          engine
+        });
+        await refreshTtsState();
+      } catch (error) {
+        state.tts.status = "error";
+        state.tts.message = `Failed switching engine: ${formatTtsError(error)}`;
+      }
+      renderAndBind(sendMessage);
+    },
+    onTtsSetSpeed: async (speed: number) => {
+      const normalized = Math.max(0.5, Math.min(2, speed));
+      state.tts.speed = normalized;
+      if (!clientRef) {
+        renderAndBind(sendMessage);
+        return;
+      }
+      try {
+        await clientRef.ttsSettingsSet({
+          correlationId: nextCorrelationId(),
+          speed: normalized
+        });
+      } catch (error) {
+        state.tts.status = "error";
+        state.tts.message = `Failed saving speed: ${String(error)}`;
+      }
+      renderAndBind(sendMessage);
+    },
+    onTtsSetTestText: async (text: string) => {
+      state.tts.testText = text;
+      renderAndBind(sendMessage);
+    },
+    onTtsSetModelBundle: async (modelPath: string) => {
+      const selectedPath = modelPath.trim();
+      if (!selectedPath) return;
+      if (!clientRef) {
+        state.tts.modelPath = selectedPath;
+        state.tts.message = `Selected bundle model: ${selectedPath}`;
+        renderAndBind(sendMessage);
+        return;
+      }
+      state.tts.status = "busy";
+      state.tts.message = "Switching model bundle...";
+      renderAndBind(sendMessage);
+      try {
+        await clientRef.ttsSettingsSet({
+          correlationId: nextCorrelationId(),
+          modelPath: selectedPath
+        });
+        await refreshTtsState();
+        state.tts.message = `Selected bundle model: ${selectedPath}`;
+      } catch (error) {
+        state.tts.status = "error";
+        state.tts.message = `Failed selecting model bundle: ${formatTtsError(error)}`;
+      }
+      renderAndBind(sendMessage);
+    },
+    onTtsBrowseModelPath: async () => {
+      const selectedPath = await browseTtsModelPath(state.tts.modelPath);
+      if (!selectedPath) return;
+      if (!clientRef) {
+        state.tts.modelPath = selectedPath;
+        state.tts.message = `Selected model: ${selectedPath}`;
+        renderAndBind(sendMessage);
+        return;
+      }
+      state.tts.status = "busy";
+      state.tts.message = "Saving TTS model path...";
+      renderAndBind(sendMessage);
+      try {
+        await clientRef.ttsSettingsSet({
+          correlationId: nextCorrelationId(),
+          modelPath: selectedPath
+        });
+        await refreshTtsState();
+        state.tts.message = `Selected model: ${selectedPath}`;
+      } catch (error) {
+        state.tts.status = "error";
+        state.tts.message = `Failed setting model path: ${formatTtsError(error)}`;
+      }
+      renderAndBind(sendMessage);
+    },
+    onTtsBrowseSecondaryPath: async () => {
+      const selectedPath = await browseTtsSecondaryPath(state.tts.secondaryPath || state.tts.voicesPath);
+      if (!selectedPath) return;
+      if (!clientRef) {
+        state.tts.secondaryPath = selectedPath;
+        state.tts.message = `Selected secondary asset: ${selectedPath}`;
+        renderAndBind(sendMessage);
+        return;
+      }
+      state.tts.status = "busy";
+      state.tts.message = "Saving secondary path...";
+      renderAndBind(sendMessage);
+      try {
+        await clientRef.ttsSettingsSet({
+          correlationId: nextCorrelationId(),
+          secondaryPath: selectedPath
+        });
+        await refreshTtsState();
+      } catch (error) {
+        state.tts.status = "error";
+        state.tts.message = `Failed setting secondary path: ${formatTtsError(error)}`;
+      }
+      renderAndBind(sendMessage);
+    },
+    onTtsDownloadModel: async () => {
+      if (!clientRef) return;
+      const trustedSourceUrl =
+        state.tts.engine === "kokoro"
+          ? "https://github.com/k2-fsa/sherpa-onnx/releases/tag/tts-models"
+          : state.tts.engine === "piper"
+          ? "https://k2-fsa.github.io/sherpa/onnx/tts/pretrained_models/vits.html"
+          : state.tts.engine === "matcha"
+          ? "https://k2-fsa.github.io/sherpa/onnx/tts/pretrained_models/matcha.html"
+          : state.tts.engine === "pocket"
+          ? "https://k2-fsa.github.io/sherpa/onnx/tts/pretrained_models/index.html"
+          : "https://k2-fsa.github.io/sherpa/onnx/tts/pretrained_models/index.html";
+      if (state.tts.engine !== "kokoro") {
+        window.open(trustedSourceUrl, "_blank", "noopener,noreferrer");
+        state.tts.message = `Opened trusted ${state.tts.engine} model source.`;
+        renderAndBind(sendMessage);
+        return;
+      }
+      state.tts.status = "busy";
+      state.tts.message = "Downloading sherpa Kokoro model bundle...";
+      renderAndBind(sendMessage);
+      try {
+        const response = await clientRef.ttsDownloadModel({
+          correlationId: nextCorrelationId()
+        });
+        state.tts.message = response.message;
+        await refreshTtsState();
+      } catch (error) {
+        state.tts.status = "error";
+        state.tts.message = `Model download failed: ${formatTtsError(error)}`;
+      }
+      renderAndBind(sendMessage);
+    },
+    onTtsDownloadModelWithUrl: async (url: string) => {
+      if (!clientRef) return;
+      if (state.tts.engine !== "kokoro") {
+        state.tts.message = "Model download is only available for Kokoro engine.";
+        renderAndBind(sendMessage);
+        return;
+      }
+      state.tts.status = "busy";
+      state.tts.message = "Downloading Kokoro model bundle...";
+      renderAndBind(sendMessage);
+      try {
+        const response = await clientRef.ttsDownloadModel({
+          correlationId: nextCorrelationId(),
+          url
+        });
+        state.tts.message = response.message;
+        await refreshTtsState();
+      } catch (error) {
+        state.tts.status = "error";
+        state.tts.message = `Model download failed: ${formatTtsError(error)}`;
+      }
+      renderAndBind(sendMessage);
+    },
+    onTtsSpeakTest: async () => {
+      if (!clientRef) return;
+      const text = state.tts.testText.trim();
+      if (!text) {
+        state.tts.status = "error";
+        state.tts.message = "Enter text to speak.";
+        renderAndBind(sendMessage);
+        return;
+      }
+      state.tts.status = "busy";
+      state.tts.message = "Synthesizing...";
+      renderAndBind(sendMessage);
+      try {
+        const response = await clientRef.ttsSpeak({
+          correlationId: nextCorrelationId(),
+          text,
+          voice: state.tts.selectedVoice,
+          speed: state.tts.speed
+        });
+        state.tts.status = "ready";
+        state.tts.message = `Spoke with ${response.voice}`;
+        state.tts.selectedVoice = response.voice;
+        state.tts.speed = response.speed;
+        state.tts.lastBytes = response.audioBytes.length;
+        state.tts.lastDurationMs = response.durationMs;
+        state.tts.lastSampleRate = response.sampleRate;
+        await playTtsAudio(response.audioBytes, null);
+      } catch (error) {
+        state.tts.status = "error";
+        state.tts.message = `Speak failed: ${formatTtsError(error)}`;
+      }
+      renderAndBind(sendMessage);
+    },
+    onTtsStop: async () => {
+      stopTtsPlaybackLocal();
+      if (!clientRef) {
+        renderAndBind(sendMessage);
+        return;
+      }
+      try {
+        await clientRef.ttsStop({ correlationId: nextCorrelationId() });
+        state.tts.status = state.tts.ready ? "ready" : "idle";
+        state.tts.message = "Stopped.";
+      } catch (error) {
+        state.tts.status = "error";
+        state.tts.message = `Stop failed: ${String(error)}`;
+      }
+      renderAndBind(sendMessage);
+    },
+    onTtsSelfTest: async () => {
+      if (!clientRef) return;
+      state.tts.status = "busy";
+      state.tts.message = "Running self-test...";
+      renderAndBind(sendMessage);
+      try {
+        const response = await clientRef.ttsSelfTest({
+          correlationId: nextCorrelationId()
+        });
+        state.tts.status = response.ok ? "ready" : "error";
+        state.tts.message = response.message;
+        state.tts.lastBytes = response.bytes;
+        state.tts.lastDurationMs = response.durationMs;
+        state.tts.lastSampleRate = response.sampleRate;
+      } catch (error) {
+        state.tts.status = "error";
+        state.tts.message = `Self-test failed: ${formatTtsError(error)}`;
+      }
+      renderAndBind(sendMessage);
+    },
+    onToggleStt: toggleSttRuntime,
+    onSetSttBackend: async (backend) => {
+      if (backend !== "whisper_cpp" && backend !== "sherpa_onnx") return;
+      if (state.stt.isListening || state.stt.status === "starting" || state.stt.status === "running") {
+        state.stt.message = "Stop STT before switching backend.";
+        renderAndBind(sendMessage);
+        return;
+      }
+      const { invoke } = await import("@tauri-apps/api/core");
+      await invoke("stt_set_backend", { backend });
+      state.stt.backend = backend;
+      persistSttBackend(backend);
+      state.stt.message = backend === "sherpa_onnx"
+        ? "Sherpa backend selected. Requires local sherpa model files."
+        : "Whisper backend selected.";
+      renderAndBind(sendMessage);
+    },
+    onSetSttModel: async (model) => {
+      if (state.runtimeMode === "tauri") {
+        const { invoke } = await import("@tauri-apps/api/core");
+        await invoke("stt_set_model", { model });
+      }
+      state.stt.selectedModel = model;
+      persistSttModel(model);
+      renderAndBind(sendMessage);
+    },
+    onSetSttLanguage: async (language) => {
+      state.stt.language = language;
+      persistSttLanguage(language);
+      renderAndBind(sendMessage);
+    },
+    onSetSttThreads: async (threads) => {
+      state.stt.threads = threads;
+      persistSttThreads(threads);
+      renderAndBind(sendMessage);
+    },
+    onToggleSttAdvancedSettings: async () => {
+      state.stt.showAdvancedSettings = !state.stt.showAdvancedSettings;
+      renderAndBind(sendMessage);
+    },
+    onDownloadSttModel: async (fileName) => {
+      if (!fileName) return;
+      state.stt.modelDownloadProgress = 0;
+      state.stt.modelDownloadError = null;
+      renderAndBind(sendMessage);
+      
       try {
         const { invoke } = await import("@tauri-apps/api/core");
-        if (state.stt.status === "idle" || state.stt.status === "error") {
-          // First check and request microphone permission if needed
-          await refreshDevicesState();
-          const micPermission = state.devices.microphonePermission;
-          // Sync to STT state for UI display
-          state.stt.microphonePermission = micPermission;
-          if (micPermission !== "enabled") {
-            // Request microphone access - this will show permission prompt
-            await requestMicrophoneAccess();
-            // Check again after requesting
-            await refreshDevicesState();
-            const micPermissionAfter = state.devices.microphonePermission;
-            // Sync to STT state for UI display
-            state.stt.microphonePermission = micPermissionAfter;
-            if (micPermissionAfter !== "enabled") {
-              state.stt.status = "error";
-              state.stt.message = "Microphone access denied";
-              renderAndBind(sendMessage);
-              return;
-            }
-          }
-          // Start STT only after permission is confirmed
-          state.stt.status = "starting";
-          state.stt.message = "Starting whisper server...";
-          state.stt.isListening = false;
-          renderAndBind(sendMessage);
-          await invoke("start_stt");
-          state.stt.status = "running";
-          state.stt.message = "Server started";
-          await setupSttTranscriptListener(sendMessage);
-          await startSttAudioCapture(invoke);
-        } else if (state.stt.status === "running" || state.stt.status === "starting") {
-          stopSttAudioCapture();
-          await sttTranscriptionQueue.catch(() => undefined);
-          await invoke("stop_stt");
-          await teardownSttTranscriptListener();
-          state.stt.status = "idle";
-          state.stt.message = null;
-          state.stt.isListening = false;
+        const result = await invoke<string>("stt_download_model", { fileName });
+        const models = await invoke<string[]>("stt_list_models");
+        state.stt.availableModels = Array.isArray(models) && models.length > 0 ? models : ["auto"];
+        if (!state.stt.availableModels.includes(state.stt.selectedModel)) {
+          state.stt.selectedModel = state.stt.availableModels[0] ?? "auto";
+          persistSttModel(state.stt.selectedModel);
         }
+        state.stt.modelDownloadProgress = null;
+        state.stt.message = result;
         renderAndBind(sendMessage);
       } catch (error) {
-        stopSttAudioCapture();
-        await teardownSttTranscriptListener();
-        state.stt.status = "error";
-        state.stt.message = String(error);
-        state.stt.isListening = false;
+        state.stt.modelDownloadError = `Download failed: ${String(error)}`;
+        state.stt.modelDownloadProgress = null;
         renderAndBind(sendMessage);
       }
     },
     onUpdateSttVadSetting: async (key, value) => {
       let normalized = value;
-      if (key === "vadBaseThreshold") normalized = clampSttSetting(value, 0, 0.2, 0.005);
+      if (key === "vadBaseThreshold") normalized = clampSttSetting(value, 0, 0.2, 0.0012);
       if (key === "vadStartFrames") normalized = Math.round(clampSttSetting(value, 1, 100, 2));
       if (key === "vadEndFrames") normalized = Math.round(clampSttSetting(value, 1, 200, 8));
       if (key === "vadDynamicMultiplier") normalized = clampSttSetting(value, 1, 10, 2.4);
@@ -3080,8 +4847,73 @@ function renderAndBind(sendMessage: (text: string) => Promise<void>): void {
       state.displayMode = mode === "system" ? resolveSystemDisplayMode() : mode;
       terminalManager.setDisplayMode(state.displayMode);
       renderAndBind(sendMessage);
+    },
+    onSetChatRoutePreference: async (mode) => {
+      state.chatRoutePreference = mode;
+      persistChatRoutePreference(mode);
+      pushConsoleEntry("info", "browser", `Chat route preference set to ${mode}.`);
+      renderAndBind(sendMessage);
+    },
+    onSetShowAppResourceCpu: async (value) => {
+      state.showAppResourceCpu = value;
+      persistShowAppResourcesCpu(value);
+      appResourcePolling.restart(1000);
+      renderAndBind(sendMessage);
+    },
+    onSetShowAppResourceMemory: async (value) => {
+      state.showAppResourceMemory = value;
+      persistShowAppResourcesMemory(value);
+      appResourcePolling.restart(1000);
+      renderAndBind(sendMessage);
+    },
+    onSetShowAppResourceNetwork: async (value) => {
+      state.showAppResourceNetwork = value;
+      persistShowAppResourcesNetwork(value);
+      appResourcePolling.restart(1000);
+      renderAndBind(sendMessage);
+    },
+    onSetShowBottomEngine: async (value) => {
+      state.showBottomEngine = value;
+      persistBottomItem(BOTTOM_BAR_PREF_KEYS.showBottomEngine, value);
+      renderAndBind(sendMessage);
+    },
+    onSetShowBottomModel: async (value) => {
+      state.showBottomModel = value;
+      persistBottomItem(BOTTOM_BAR_PREF_KEYS.showBottomModel, value);
+      renderAndBind(sendMessage);
+    },
+    onSetShowBottomContext: async (value) => {
+      state.showBottomContext = value;
+      persistBottomItem(BOTTOM_BAR_PREF_KEYS.showBottomContext, value);
+      renderAndBind(sendMessage);
+    },
+    onSetShowBottomSpeed: async (value) => {
+      state.showBottomSpeed = value;
+      persistBottomItem(BOTTOM_BAR_PREF_KEYS.showBottomSpeed, value);
+      renderAndBind(sendMessage);
+    },
+    onSetShowBottomTtsLatency: async (value) => {
+      state.showBottomTtsLatency = value;
+      persistBottomItem(BOTTOM_BAR_PREF_KEYS.showBottomTtsLatency, value);
+      renderAndBind(sendMessage);
     }
   });
+}
+
+function attachChatHeaderModelInteractions(sendMessage: (text: string) => Promise<void>): void {
+  const select = document.querySelector<HTMLSelectElement>("#chatHeaderModelSelect");
+  if (!select) return;
+  select.onchange = () => {
+    const nextId = select.value;
+    const selected = state.chatModelOptions.find((option) => option.id === nextId);
+    if (!selected) return;
+    const previousId = state.chatActiveModelId;
+    applyChatModelSelection(selected);
+    if (previousId !== selected.id) {
+      pushConsoleEntry("info", "browser", `Chat model changed to ${selected.label} (${selected.id}).`);
+    }
+    renderAndBind(sendMessage);
+  };
 }
 
 window.addEventListener("beforeunload", () => {
@@ -3231,9 +5063,17 @@ let sttScriptProcessor: ScriptProcessorNode | null = null;
 let sttSilentGainNode: GainNode | null = null;
 let sttLastWasSpeaking = false;
 let sttTranscriptUnlisten: (() => void) | null = null;
+let sttPartialUnlisten: (() => void) | null = null;
 let sttPipelineErrorUnlisten: (() => void) | null = null;
+let sttVadUnlisten: (() => void) | null = null;
 let sttTranscriptionQueue: Promise<void> = Promise.resolve();
+let sttPartialTranscriptionQueue: Promise<void> = Promise.resolve();
+let sttIngestQueue: Promise<void> = Promise.resolve();
 let sttFlushPendingUtterance: (() => void) | null = null;
+let sttToggleInFlight = false;
+let voiceModeToggleInFlight = false;
+let sttListenerSetupPromise: Promise<void> | null = null;
+let chartLastRenderedSource: string | null = null;
 
 function updateChatVoiceInputIcons(): void {
   const iconName = state.stt.isSpeaking ? APP_ICON.sidebar.sttSpeaking : APP_ICON.sidebar.stt;
@@ -3247,6 +5087,27 @@ function updateChatVoiceInputIcons(): void {
   const chatSttBtn = document.querySelector<HTMLButtonElement>("#chatSttBtn");
   if (chatSttBtn && state.stt.status !== "idle" && state.stt.status !== "error") {
     chatSttBtn.innerHTML = iconMarkup;
+  }
+}
+
+async function renderChartCanvasIfNeeded(sendMessage: (text: string) => Promise<void>): Promise<void> {
+  if (state.workspaceTab !== "chart-tool") return;
+  const canvas = document.querySelector<HTMLElement>("#chartCanvas");
+  if (!canvas) return;
+  const source = state.chartRenderSource;
+  if (chartLastRenderedSource === source) return;
+  const result = await renderMermaidInto(canvas, source);
+  chartLastRenderedSource = source;
+  if (!result.ok) {
+    if (state.chartError !== result.error) {
+      state.chartError = result.error;
+      renderAndBind(sendMessage);
+    }
+    return;
+  }
+  if (state.chartError) {
+    state.chartError = null;
+    renderAndBind(sendMessage);
   }
 }
 
@@ -3267,6 +5128,23 @@ function clampSttSetting(value: number, min: number, max: number, fallback: numb
   if (value < min) return min;
   if (value > max) return max;
   return value;
+}
+
+function isIgnorableSttTranscript(raw: string): boolean {
+  const transcript = raw.trim();
+  if (!transcript) return true;
+  if (/^\[?\s*blank_audio\s*\]?$/i.test(transcript)) return true;
+
+  // Strip non-verbal annotations commonly emitted by STT models:
+  // [typing], [Music], (cough), *laughs*, etc.
+  const stripped = transcript
+    .replace(/[\[(][^\])\n]{1,80}[\])]/g, " ")
+    .replace(/\*[^*\n]{1,80}\*/g, " ")
+    .replace(/[\s,.;:!?'"`~\-_/\\|()\[\]*]+/g, "")
+    .trim();
+
+  if (!stripped) return true;
+  return false;
 }
 
 function enqueueSttTranscription(
@@ -3291,32 +5169,108 @@ function enqueueSttTranscription(
     });
 }
 
+function enqueueSttPartialTranscription(
+  invokeFn: typeof import("@tauri-apps/api/core").invoke,
+  pcmSamples: Float32Array<ArrayBufferLike>,
+  utteranceId: string
+): void {
+  const samples = Array.from(pcmSamples);
+  sttPartialTranscriptionQueue = sttPartialTranscriptionQueue
+    .then(async () => {
+      await invokeFn("transcribe_partial_chunk", {
+        pcmSamples: samples,
+        utteranceId
+      });
+    })
+    .catch((error) => {
+      pushConsoleEntry(
+        "debug",
+        "browser",
+        "STT partial transcribe failed for " + utteranceId.slice(0, 8) + ": " + String(error)
+      );
+    });
+}
+
+function enqueueSttStreamIngest(
+  invokeFn: typeof import("@tauri-apps/api/core").invoke,
+  pcmSamples: Float32Array<ArrayBufferLike>
+): void {
+  const samples = Array.from(pcmSamples);
+  sttIngestQueue = sttIngestQueue
+    .then(async () => {
+      await invokeFn("stt_stream_ingest", { pcmSamples: samples });
+    })
+    .catch((error) => {
+      pushConsoleEntry("debug", "browser", "STT stream ingest failed: " + String(error));
+    });
+}
+
 async function setupSttTranscriptListener(onTranscript: (text: string) => Promise<void>): Promise<void> {
   if (sttTranscriptUnlisten) {
     pushConsoleEntry("debug", "browser", "STT listener: transcript listener already installed");
     return;
   }
-  const { listen } = await import("@tauri-apps/api/event");
-  sttTranscriptUnlisten = await listen<{ text: string }>("stt://transcript", (event) => {
-    const transcript = event.payload.text?.trim();
-    if (!transcript) {
-      pushConsoleEntry("debug", "browser", "STT event: received empty transcript payload");
-      return;
-    }
-    pushConsoleEntry("info", "browser", "STT event: transcript received (" + transcript.length + " chars)");
-    state.stt.lastTranscript = transcript;
-    state.chatDraft = transcript;
-    const input = document.querySelector<HTMLTextAreaElement>("#msg");
-    if (input) {
-      input.value = transcript;
-      input.focus();
-    }
-    if (!state.chatStreaming) {
+  if (sttListenerSetupPromise) {
+    await sttListenerSetupPromise;
+    return;
+  }
+  sttListenerSetupPromise = (async () => {
+    const { listen } = await import("@tauri-apps/api/event");
+    sttTranscriptUnlisten = await listen<{ text: string }>("stt://transcript", (event) => {
+      const transcript = event.payload.text?.trim();
+      if (!transcript) {
+        pushConsoleEntry("debug", "browser", "STT event: received empty transcript payload");
+        return;
+      }
+      if (isIgnorableSttTranscript(transcript)) {
+        pushConsoleEntry("debug", "browser", "STT event: ignored non-speech transcript placeholder");
+        return;
+      }
+      pushConsoleEntry("info", "browser", "STT event: transcript received (" + transcript.length + " chars)");
+      state.stt.lastTranscript = transcript;
+      state.chatDraft = transcript;
+      const input = document.querySelector<HTMLTextAreaElement>("#msg");
+      if (input) {
+        input.value = transcript;
+        input.focus();
+      }
+      const now = Date.now();
+      if (lastTranscriptDispatch.text === transcript && now - lastTranscriptDispatch.atMs < 1500) {
+        pushConsoleEntry("debug", "browser", "STT event: dropped duplicate transcript");
+        return;
+      }
+      if (state.chatStreaming) {
+        pushConsoleEntry("debug", "browser", "STT event: deferred while chat is streaming");
+        return;
+      }
+      lastTranscriptDispatch = { text: transcript, atMs: now };
+      clearVoicePrefillWarmupTimer();
+      voicePrefillLastPartial = "";
+      voicePrefillStableSinceMs = 0;
+      voicePrefillWarmedPartial = transcript;
       void onTranscript(transcript).catch((error) => {
         pushConsoleEntry("error", "browser", "STT send failed: " + String(error));
       });
-    }
-  });
+    });
+    sttPartialUnlisten = await listen<{ text?: string; utterance_id?: string }>(
+      "stt://partial",
+      (event) => {
+        const partial = event.payload.text?.trim();
+        if (!partial || isIgnorableSttTranscript(partial)) return;
+        state.chatDraft = partial;
+        maybeTriggerVoicePrefillWarmup(partial);
+        const input = document.querySelector<HTMLTextAreaElement>("#msg");
+        if (input) {
+          input.value = partial;
+        }
+      }
+    );
+  })();
+  try {
+    await sttListenerSetupPromise;
+  } finally {
+    sttListenerSetupPromise = null;
+  }
   pushConsoleEntry("info", "browser", "STT listener: transcript listener installed");
 }
 
@@ -3324,6 +5278,10 @@ async function teardownSttTranscriptListener(): Promise<void> {
   if (!sttTranscriptUnlisten) return;
   sttTranscriptUnlisten();
   sttTranscriptUnlisten = null;
+  if (sttPartialUnlisten) {
+    sttPartialUnlisten();
+    sttPartialUnlisten = null;
+  }
   pushConsoleEntry("info", "browser", "STT listener: transcript listener removed");
 }
 
@@ -3331,6 +5289,9 @@ async function startSttAudioCapture(invokeFn: typeof import("@tauri-apps/api/cor
   try {
     stopSttAudioCapture();
     sttTranscriptionQueue = Promise.resolve();
+    sttPartialTranscriptionQueue = Promise.resolve();
+    sttIngestQueue = Promise.resolve();
+    await invokeFn("stt_stream_reset");
     pushConsoleEntry("info", "browser", "STT capture: requesting microphone stream");
 
     sttMediaStream = await navigator.mediaDevices.getUserMedia({
@@ -3386,8 +5347,9 @@ async function startSttAudioCapture(invokeFn: typeof import("@tauri-apps/api/cor
 
     const inputSampleRate = sttAudioContext.sampleRate;
     const outputSampleRate = 16000;
+    const useBackendSegmenter = true;
     const readVadThreshold = (): number =>
-      clampSttSetting(state.stt.vadBaseThreshold, 0, 0.2, 0.005);
+      clampSttSetting(state.stt.vadBaseThreshold, 0, 0.2, 0.0012);
     const readVadStartFrames = (): number =>
       Math.round(clampSttSetting(state.stt.vadStartFrames, 1, 100, 2));
     const readVadEndFrames = (): number =>
@@ -3416,6 +5378,7 @@ async function startSttAudioCapture(invokeFn: typeof import("@tauri-apps/api/cor
     let vadLogFrames = 0;
     let peakEnergy = 0;
     let lastVadLogMs = 0;
+    let lastPartialEmitMs = 0;
 
     sttLastWasSpeaking = false;
     state.stt.isSpeaking = false;
@@ -3434,6 +5397,7 @@ async function startSttAudioCapture(invokeFn: typeof import("@tauri-apps/api/cor
       const samples = utteranceBuffer;
       const currentUtteranceId = utteranceId;
       pushConsoleEntry("info", "browser", "STT utterance: flush " + currentUtteranceId.slice(0, 8) + " (" + samples.length + " samples)");
+      setVoicePipelineState("processing");
       utteranceBuffer = new Float32Array(0);
       utteranceId = null;
       enqueueSttTranscription(invokeFn, samples, currentUtteranceId);
@@ -3459,6 +5423,25 @@ async function startSttAudioCapture(invokeFn: typeof import("@tauri-apps/api/cor
       const resampledData = resample(inputData, inputSampleRate, outputSampleRate);
       const energy = computeEnergy(resampledData);
       peakEnergy = Math.max(peakEnergy, energy);
+
+      if (useBackendSegmenter) {
+        enqueueSttStreamIngest(invokeFn, resampledData);
+        const now = Date.now();
+        if (now - lastVadLogMs >= 1000) {
+          pushConsoleEntry(
+            "debug",
+            "browser",
+            "STT stream: frames=" + vadLogFrames +
+              " rms=" + energy.toFixed(5) +
+              " peak=" + peakEnergy.toFixed(5) +
+              " speaking=" + String(state.stt.isSpeaking)
+          );
+          lastVadLogMs = now;
+          vadLogFrames = 0;
+          peakEnergy = 0;
+        }
+        return;
+      }
 
       if (!isSpeaking) {
         const noiseAdaptationAlpha = readVadNoiseAdaptationAlpha();
@@ -3502,13 +5485,52 @@ async function startSttAudioCapture(invokeFn: typeof import("@tauri-apps/api/cor
       }
 
       if (!isSpeaking && speechStartFrames >= readVadStartFrames()) {
+        const playingAgentSpeech = state.chatTtsPlaying;
+        const speakingElapsedMs = chatTtsSpeakingSinceMs ? Date.now() - chatTtsSpeakingSinceMs : 0;
+        const adaptiveBargeInThreshold = Math.max(
+          VOICE_BARGE_IN_MIN_RMS,
+          dynamicThreshold * VOICE_BARGE_IN_DYNAMIC_MULTIPLIER
+        );
+        const confidentBargeIn =
+          playingAgentSpeech &&
+          speakingElapsedMs >= VOICE_BARGE_IN_GRACE_MS &&
+          energy >= adaptiveBargeInThreshold;
+        if (confidentBargeIn) {
+          pushConsoleEntry(
+            "info",
+            "browser",
+            "Voice barge-in trigger: interrupting playback/generation (rms=" +
+              energy.toFixed(5) +
+              ", threshold=" +
+              adaptiveBargeInThreshold.toFixed(5) +
+              ", elapsedMs=" +
+              speakingElapsedMs +
+              ")"
+          );
+          requestVoiceBargeInInterrupt();
+        }
         isSpeaking = true;
+        if (voicePipelineState !== "interrupted") {
+          setVoicePipelineState("user_speaking");
+        }
         utteranceId = crypto.randomUUID();
+        lastPartialEmitMs = Date.now();
         pushConsoleEntry("info", "browser", "STT VAD: speech start (utterance=" + utteranceId.slice(0, 8) + ")");
         utteranceBuffer = appendFloat32(preSpeechBuffer, resampledData);
         preSpeechBuffer = new Float32Array(0);
       } else if (isSpeaking) {
         utteranceBuffer = appendFloat32(utteranceBuffer, resampledData);
+        const nowMs = Date.now();
+        const partialIntervalMs = 700;
+        const minPartialSamples = 16_000; // ~1s @16kHz
+        if (
+          utteranceId &&
+          utteranceBuffer.length >= minPartialSamples &&
+          nowMs - lastPartialEmitMs >= partialIntervalMs
+        ) {
+          lastPartialEmitMs = nowMs;
+          enqueueSttPartialTranscription(invokeFn, utteranceBuffer, utteranceId);
+        }
       }
 
       if (isSpeaking && utteranceBuffer.length >= readForceFlushSamples()) {
@@ -3559,6 +5581,10 @@ async function startSttAudioCapture(invokeFn: typeof import("@tauri-apps/api/cor
 }
 
 function stopSttAudioCapture(): void {
+  clearVoicePrefillWarmupTimer();
+  voicePrefillLastPartial = "";
+  voicePrefillStableSinceMs = 0;
+  voicePrefillWarmedPartial = "";
   sttFlushPendingUtterance?.();
   sttFlushPendingUtterance = null;
 
@@ -3590,6 +5616,15 @@ function currentPrimaryPanelRenderState() {
   return {
     displayMode: state.displayMode,
     displayModePreference: state.displayModePreference,
+    chatRoutePreference: state.chatRoutePreference,
+    showAppResourceCpu: state.showAppResourceCpu,
+    showAppResourceMemory: state.showAppResourceMemory,
+    showAppResourceNetwork: state.showAppResourceNetwork,
+    showBottomEngine: state.showBottomEngine,
+    showBottomModel: state.showBottomModel,
+    showBottomContext: state.showBottomContext,
+    showBottomSpeed: state.showBottomSpeed,
+    showBottomTtsLatency: state.showBottomTtsLatency,
     conversationId: state.conversationId,
     messages: state.messages,
     chatReasoningByCorrelation: state.chatReasoningByCorrelation,
@@ -3605,12 +5640,18 @@ function currentPrimaryPanelRenderState() {
     chatActiveModelId: state.chatActiveModelId,
     chatActiveModelLabel: state.chatActiveModelLabel,
     chatActiveModelCapabilities: state.chatActiveModelCapabilities,
+    chatTtsEnabled: state.chatTtsEnabled,
+    chatTtsPlaying: state.chatTtsPlaying,
     devices: state.devices,
     apiConnections: state.apiConnections,
     apiFormOpen: state.apiFormOpen,
     apiDraft: state.apiDraft,
     apiEditingId: state.apiEditingId,
     apiMessage: state.apiMessage,
+    apiProbeBusy: state.apiProbeBusy,
+    apiProbeStatus: state.apiProbeStatus,
+    apiProbeMessage: state.apiProbeMessage,
+    apiDetectedModels: state.apiDetectedModels,
     conversations: state.conversations,
     chatThinkingEnabled: state.chatThinkingEnabled,
     llamaRuntime: state.llamaRuntime,
@@ -3642,6 +5683,7 @@ function currentPrimaryPanelRenderState() {
     modelManagerUnslothUdCatalog: state.modelManagerUnslothUdCatalog,
     modelManagerUnslothUdLoading: state.modelManagerUnslothUdLoading,
     stt: state.stt,
+    tts: state.tts,
     consoleEntries: state.consoleEntries
   };
 }
@@ -3706,6 +5748,13 @@ function scrollConsoleToBottom(): void {
 }
 
 function attachTopbarInteractions(sendMessage: (text: string) => Promise<void>): void {
+  const topbarDragRegion = document.querySelector<HTMLElement>(".topbar-drag-region");
+  if (topbarDragRegion && state.runtimeMode === "tauri" && tauriWindowHandle) {
+    topbarDragRegion.onpointerdown = (event: PointerEvent) => {
+      if (event.button !== 0) return;
+      void tauriWindowHandle?.startDragging();
+    };
+  }
   const toggle = document.querySelector<HTMLButtonElement>("#displayModeToggle");
   if (toggle) {
     toggle.onclick = () => {
@@ -3721,6 +5770,42 @@ function attachTopbarInteractions(sendMessage: (text: string) => Promise<void>):
       state.layoutOrientation =
         state.layoutOrientation === "landscape" ? "portrait" : "landscape";
       renderAndBind(sendMessage);
+    };
+  }
+  const windowMinimizeBtn = document.querySelector<HTMLButtonElement>("#windowMinimizeBtn");
+  if (windowMinimizeBtn) {
+    windowMinimizeBtn.onclick = async () => {
+      try {
+        await tauriWindowHandle?.minimize();
+      } catch {
+        // Ignore in non-Tauri contexts.
+      }
+    };
+  }
+  const windowMaximizeBtn = document.querySelector<HTMLButtonElement>("#windowMaximizeBtn");
+  if (windowMaximizeBtn) {
+    windowMaximizeBtn.onclick = async () => {
+      try {
+        if (!tauriWindowHandle) return;
+        const isMaximized = await tauriWindowHandle.isMaximized();
+        if (isMaximized) {
+          await tauriWindowHandle.unmaximize();
+        } else {
+          await tauriWindowHandle.maximize();
+        }
+      } catch {
+        // Ignore in non-Tauri contexts.
+      }
+    };
+  }
+  const windowCloseBtn = document.querySelector<HTMLButtonElement>("#windowCloseBtn");
+  if (windowCloseBtn) {
+    windowCloseBtn.onclick = async () => {
+      try {
+        await tauriWindowHandle?.close();
+      } catch {
+        // Ignore in non-Tauri contexts.
+      }
     };
   }
 
@@ -3758,6 +5843,14 @@ function attachSidebarInteractions(sendMessage: (text: string) => Promise<void>)
       if (nextTab === "apis") {
         await refreshApiConnections();
       }
+      if (nextTab === "tts") {
+        try {
+          await refreshTtsState();
+        } catch (error) {
+          state.tts.status = "error";
+          state.tts.message = `TTS refresh failed: ${String(error)}`;
+        }
+      }
       renderAndBind(sendMessage);
     };
   });
@@ -3767,18 +5860,11 @@ function attachWorkspaceInteractions(sendMessage: (text: string) => Promise<void
   const workspacePane = document.querySelector<HTMLElement>(".workspace-pane");
   const shellPopover = document.querySelector<HTMLElement>(`#${TERMINAL_UI_ID.shellPopover}`);
   if (workspacePane) {
-    const protectedToolIds = new Set([
-      "terminal",
-      "files",
-      "webSearch",
-      "flow",
-      "tasks",
-      "createTool",
-      "memory",
-      "skills"
-    ]);
-    const isSystemTool = (toolId: string): boolean => protectedToolIds.has(toolId);
-
+    const setPrimarySelectionGuard = (enabled: boolean): void => {
+      const primaryPane = document.querySelector<HTMLElement>(".primary-pane");
+      if (!primaryPane) return;
+      primaryPane.classList.toggle("selection-guard", enabled);
+    };
     const toolInvokeOrThrow = async (
       toolId: string,
       action: string,
@@ -3822,128 +5908,14 @@ function attachWorkspaceInteractions(sendMessage: (text: string) => Promise<void
         recursive
       });
     };
-
-    const resolveWorkspaceRootPath = async (): Promise<string> => {
-      const correlationId = nextCorrelationId();
-      const data = await toolInvokeOrThrow("files", "list-directory", {
-        correlationId
-      });
-      const rootPath = String(data.rootPath ?? "").trim();
-      if (!rootPath) {
-        throw new Error("Unable to resolve workspace root.");
-      }
-      return rootPath;
-    };
-
-    const stripGeneratedToolWiring = (
-      source: string,
-      toolId: string,
-      markerPrefix: string
-    ): string => {
-      const escapedToolId = toolId.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-      const escapedMarker = markerPrefix.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-      const blockRegex = new RegExp(
-        `\\n?\\s*\\/\\/\\s*${escapedMarker}:${escapedToolId}[\\s\\S]*?(?=\\n\\s{4}[a-zA-Z_]+:\\s*\\{|\\n\\s*}\\s*,?\\s*$|$)`,
-        "g"
-      );
-      const lineRegex = new RegExp(
-        `^.*${escapedMarker}:${escapedToolId}.*\\n?`,
-        "gm"
-      );
-      return source.replace(blockRegex, "\n").replace(lineRegex, "");
-    };
-
-    const exportSingleTool = async (toolId: string): Promise<void> => {
-      if (isSystemTool(toolId)) return;
-      const root = await resolveWorkspaceRootPath();
-      const row = state.workspaceTools.find((item) => item.toolId === toolId) || null;
-      const entryPath = String(row?.entry ?? "").replace(/\\/g, "/");
-      const pluginDirFromEntry = entryPath.includes("/dist/")
-        ? entryPath.slice(0, entryPath.indexOf("/dist/"))
-        : "";
-      const toolDir =
-        row?.source === "custom"
-          ? pluginDirFromEntry || `${root}/plugins/${toolId}`
-          : `${root}/frontend/src/tools/${toolId}`;
-
-      const collectFiles = async (path: string): Promise<Array<{ fullPath: string; relativePath: string }>> => {
-        const correlationId = nextCorrelationId();
-        const listing = await toolInvokeOrThrow("files", "list-directory", {
-          correlationId,
-          path
-        });
-        const entries =
-          (listing.entries as Array<{ name?: string; isDir?: boolean; path?: string }>) || [];
-        const out: Array<{ fullPath: string; relativePath: string }> = [];
-        for (const entry of entries) {
-          const fullPath = String(entry.path ?? "");
-          if (!fullPath) continue;
-          if (entry.isDir) {
-            const nested = await collectFiles(fullPath);
-            out.push(...nested);
-            continue;
-          }
-          const relativePath = fullPath.startsWith(`${toolDir}/`)
-            ? fullPath.slice(toolDir.length + 1)
-            : fullPath;
-          out.push({ fullPath, relativePath });
-        }
-        return out;
-      };
-
-      const fileEntries = await collectFiles(toolDir);
-      const files: Record<string, string> = {};
-      for (const entry of fileEntries) {
-        const content = await readWorkspaceFile(entry.fullPath);
-        files[entry.relativePath] = content;
-      }
-      const payload = {
-        toolId,
-        source: row?.source || "unknown",
-        exportedAt: new Date().toISOString(),
-        files
-      };
-      const blob = new Blob([JSON.stringify(payload, null, 2)], {
-        type: "application/json;charset=utf-8"
-      });
-      const url = URL.createObjectURL(blob);
-      const anchor = document.createElement("a");
-      anchor.href = url;
-      anchor.download = `${toolId}-tool-export.json`;
-      document.body.appendChild(anchor);
-      anchor.click();
-      document.body.removeChild(anchor);
-      URL.revokeObjectURL(url);
-      pushConsoleEntry("info", "browser", `Exported tool bundle for ${toolId}.`);
-    };
-
-    const deleteSingleTool = async (toolId: string): Promise<void> => {
-      if (isSystemTool(toolId)) {
-        pushConsoleEntry("warn", "browser", `System tool '${toolId}' cannot be deleted.`);
-        return;
-      }
-      const confirmed = window.confirm(
-        `Delete tool '${toolId}'?\n\nThis will remove its files and generated wiring.\nConsider exporting first to keep a backup.`
-      );
-      if (!confirmed) return;
-
-      const root = await resolveWorkspaceRootPath();
-      const pluginDir = `${root}/plugins/${toolId}`;
-      const legacyToolDir = `${root}/frontend/src/tools/${toolId}`;
-
-      await deleteWorkspacePath(pluginDir, true).catch(() => undefined);
-      await deleteWorkspacePath(legacyToolDir, true).catch(() => undefined);
-      state.workspaceTools = state.workspaceTools.filter((tool) => tool.toolId !== toolId);
-      if (state.workspaceTab === (`${toolId}-tool` as WorkspaceTab)) {
-        state.workspaceTab = "manager-tool";
-      }
-      pushConsoleEntry(
-        "info",
-        "browser",
-        `Removed tool '${toolId}' without modifying core host source files.`
-      );
-      await refreshTools();
-    };
+    const workspaceToolManagerActions = createWorkspaceToolManagerActions({
+      state,
+      nextCorrelationId,
+      toolInvokeOrThrow,
+      deleteWorkspacePath,
+      refreshTools,
+      pushConsoleEntry
+    });
 
     const openPathInTerminal = async (path: string): Promise<void> => {
       const trimmed = path.trim();
@@ -3963,14 +5935,94 @@ function attachWorkspaceInteractions(sendMessage: (text: string) => Promise<void
       state.workspaceTab = "terminal";
     };
 
+    const flowPlanExists = async (): Promise<boolean> => {
+      const candidate = state.flowPlanPath?.trim() || "IMPLEMENTATION_PLAN.md";
+      try {
+        const content = await readWorkspaceFile(candidate);
+        return content.trim().length > 0;
+      } catch {
+        return false;
+      }
+    };
+
+    const maybeOpenFlowProjectSetup = async (): Promise<void> => {
+      if (state.flowProjectSetupDismissed) return;
+      if (state.flowProjectSetupOpen) return;
+      const exists = await flowPlanExists();
+      if (exists) return;
+      state.flowProjectSetupOpen = true;
+      if (!state.flowProjectNameDraft.trim()) {
+        const root = (state.filesRootPath || "").trim();
+        const fallback = root.split("/").filter(Boolean).at(-1) || "new-project";
+        state.flowProjectNameDraft = fallback;
+      }
+    };
+
     const workspaceToolDeps = {
       flow: {
         refreshRuns: refreshFlowRuns,
         startRun: workspaceToolsRuntime.startFlowRun,
         stopRun: workspaceToolsRuntime.stopFlowRun,
+        setPaused: workspaceToolsRuntime.setFlowPaused,
+        nudgeRun: workspaceToolsRuntime.nudgeFlowRun,
         resumeRun: workspaceToolsRuntime.resumeFlowRun,
         retryRun: workspaceToolsRuntime.retryFlowRun,
-        rerunValidation: workspaceToolsRuntime.rerunFlowValidation
+        rerunValidation: workspaceToolsRuntime.rerunFlowValidation,
+        openPhaseTerminal: async (phase: string) => {
+          if (!FLOW_TERMINAL_PHASES.includes(phase as (typeof FLOW_TERMINAL_PHASES)[number])) return;
+          const existing = state.flowPhaseSessionByName[phase];
+          const stillExists = existing
+            ? terminalManager.listSessions().some((session) => session.sessionId === existing)
+            : false;
+          const sessionId =
+            stillExists && existing
+              ? existing
+              : await createTerminalSessionForProfile(terminalManager, state.terminalShellProfile);
+          state.flowPhaseSessionByName = {
+            ...state.flowPhaseSessionByName,
+            [phase]: sessionId
+          };
+          state.activeTerminalSessionId = sessionId;
+          state.flowActiveTerminalPhase = phase;
+          persistFlowPhaseSessionMap(state.flowPhaseSessionByName);
+          persistFlowActivePhase(state.flowActiveTerminalPhase);
+        },
+        closePhaseTerminal: async (phase: string) => {
+          const sessionId = state.flowPhaseSessionByName[phase];
+          if (!sessionId) return;
+          await terminalManager.closeSession(sessionId);
+          const nextMap = { ...state.flowPhaseSessionByName };
+          delete nextMap[phase];
+          state.flowPhaseSessionByName = nextMap;
+          if (state.activeTerminalSessionId === sessionId) {
+            state.activeTerminalSessionId = terminalManager.listSessions()[0]?.sessionId ?? null;
+          }
+          persistFlowPhaseSessionMap(state.flowPhaseSessionByName);
+        },
+        createProjectSetup: async (name: string, projectType: string, description: string) => {
+          const projectName = name.trim() || "new-project";
+          const summary = description.trim();
+          const planPath = state.flowPlanPath?.trim() || "IMPLEMENTATION_PLAN.md";
+          const promptPlanPath = state.flowPromptPlanPath?.trim() || "PROMPT_plan.md";
+          const promptBuildPath = state.flowPromptBuildPath?.trim() || "PROMPT_build.md";
+          await workspaceToolsRuntime.createNewFilesFolder("specs").catch(() => undefined);
+
+          const planBody = `# Implementation Plan\n\nProject: ${projectName}\nType: ${projectType}\n${summary ? `Description: ${summary}\n` : ""}\n## Initial Tasks\n- [ ] Define project scope and first milestone\n- [ ] Scaffold baseline structure and dependencies\n- [ ] Implement first end-to-end vertical slice\n- [ ] Add/verify validation command coverage\n`;
+          const planPrompt = `You are planning implementation tasks for a ${projectType} project.\nProject name: ${projectName}\n${summary ? `Project description: ${summary}\n` : ""}Create concise, testable checklist items in ${planPath}.`;
+          const buildPrompt = `You are executing implementation tasks for a ${projectType} project.\nProject name: ${projectName}\n${summary ? `Project description: ${summary}\n` : ""}Implement one unchecked task from ${planPath}, then validate and update the plan.`;
+          const specSeed = `# ${projectName}\n\nType: ${projectType}\n\n${summary || "Describe goals, constraints, and first release scope."}\n`;
+          const readme = `# ${projectName}\n\nType: ${projectType}\n\n${summary || "Project scaffold created from Flow setup."}\n\n## Next Steps\n- Review IMPLEMENTATION_PLAN.md\n- Run Flow in dry mode for rehearsal\n- Run Flow in build mode for first task\n`;
+
+          await writeWorkspaceFile(planPath, planBody);
+          await writeWorkspaceFile(promptPlanPath, planPrompt);
+          await writeWorkspaceFile(promptBuildPath, buildPrompt);
+          await writeWorkspaceFile("specs/overview.md", specSeed);
+          await writeWorkspaceFile("README.md", readme).catch(() => undefined);
+
+          state.flowProjectSetupOpen = false;
+          state.flowProjectSetupDismissed = false;
+          state.flowMessage = `Project scaffold created for '${projectName}'.`;
+        }
       },
       files: {
         listFilesDirectory: workspaceToolsRuntime.listFilesDirectory,
@@ -4004,7 +6056,7 @@ function attachWorkspaceInteractions(sendMessage: (text: string) => Promise<void
         createScaffold: workspaceToolsRuntime.createToolScaffold,
         browseIcons: workspaceToolsRuntime.browseCreateToolIcons,
         generatePrd: workspaceToolsRuntime.generateCreateToolPrd,
-        generatePrdSection: async (section, onUpdate) => {
+        generatePrdSection: async (section: CreateToolPrdSection, onUpdate?: () => void) => {
           await workspaceToolsRuntime.generateCreateToolPrdSection(section, () => {
             onUpdate?.();
             renderAndBind(sendMessage);
@@ -4016,203 +6068,63 @@ function attachWorkspaceInteractions(sendMessage: (text: string) => Promise<void
       }
     };
     workspacePane.onclick = async (event) => {
-      const rawTarget = event.target as HTMLElement | null;
+      const prelude = await handleWorkspacePaneClickPrelude({
+        state,
+        event,
+        workspaceToolTargetSelector: WORKSPACE_TOOL_TARGET_SELECTOR,
+        rerender: () => renderAndBind(sendMessage),
+        isWorkspaceTab,
+        ensureTerminalSession,
+        refreshTools,
+        onWorkspaceTabActivated: async (workspaceTab) => {
+          await handleWorkspaceToolTabActivation(workspaceTab as WorkspaceTab, state, {
+            ensureWebTabs: workspaceToolsRuntime.ensureWebTabs,
+            refreshApiConnections,
+            hasVerifiedSearchConnection: workspaceToolsRuntime.hasVerifiedSearchConnection,
+            ensureFilesExplorerLoaded: workspaceToolsRuntime.ensureFilesExplorerLoaded,
+            refreshFlowRuns
+          });
+        },
+        maybeOpenFlowProjectSetup,
+        dispatchWorkspaceToolClick: async (target) => dispatchWorkspaceToolClick(target, state, workspaceToolDeps),
+        persistFlowWorkspacePrefs: () => persistFlowWorkspacePrefs(state)
+      });
+      if (prelude.handled) return;
+      const target = prelude.target;
+      if (!target) return;
+
       if (
-        state.filesContextMenuOpen &&
-        rawTarget &&
-        !rawTarget.closest(".files-context-menu")
+        await handleManagerAndTerminalClick({
+          state,
+          target,
+          event,
+          shellPopover,
+          clientRef,
+          nextCorrelationId,
+          refreshTools,
+          pushConsoleEntry,
+          rerender: () => renderAndBind(sendMessage),
+          persistFlowPhaseSessionMap,
+          terminalManager,
+          closeTerminalSessionAndPickNext,
+          createTerminalSessionForProfile,
+          workspaceToolManagerActions
+        })
       ) {
-        state.filesContextMenuOpen = false;
-        renderAndBind(sendMessage);
         return;
-      }
-      const target = (event.target as HTMLElement | null)?.closest<HTMLElement>(
-        WORKSPACE_TOOL_TARGET_SELECTOR
-      );
-      if (!target) {
-        const clickedInsideFiles = Boolean(rawTarget?.closest(".files-tool"));
-        if (clickedInsideFiles) {
-          const clickedInteractiveFilesElement = Boolean(
-            rawTarget?.closest(
-              '[data-files-action], .files-tool-grid-row, .files-tool-tree-row, .files-findbar, .files-editor-panel, .files-editor-input'
-            )
-          );
-          if (!clickedInteractiveFilesElement) {
-            state.filesSelectedEntryPath = null;
-            state.filesSelectedPaths = [];
-            state.filesSelectionAnchorPath = null;
-            state.filesSelectionGesture = null;
-            renderAndBind(sendMessage);
-            return;
-          }
-        }
-        return;
-      }
-
-      const nextWorkspaceTab = target.getAttribute(WORKSPACE_DATA_ATTR.tab);
-      if (nextWorkspaceTab && isWorkspaceTab(nextWorkspaceTab)) {
-        const workspaceTab: WorkspaceTab = nextWorkspaceTab;
-        state.workspaceTab = workspaceTab;
-        if (workspaceTab === "terminal") {
-          await ensureTerminalSession();
-        }
-        if (workspaceTab === "manager-tool") {
-          await refreshTools();
-        }
-        await handleWorkspaceToolTabActivation(workspaceTab, state, {
-          ensureWebTabs: workspaceToolsRuntime.ensureWebTabs,
-          refreshApiConnections,
-          hasVerifiedSearchConnection: workspaceToolsRuntime.hasVerifiedSearchConnection,
-          ensureFilesExplorerLoaded: workspaceToolsRuntime.ensureFilesExplorerLoaded,
-          refreshFlowRuns
-        });
-        renderAndBind(sendMessage);
-        return;
-      }
-
-      if (await dispatchWorkspaceToolClick(target, state, workspaceToolDeps)) {
-        renderAndBind(sendMessage);
-        return;
-      }
-
-      if (target.id === MANAGER_UI_ID.refreshToolsButton) {
-        await refreshTools();
-        renderAndBind(sendMessage);
-        return;
-      }
-
-      const managerAction = target.getAttribute(MANAGER_DATA_ATTR.action);
-      const managerActionToolId = target.getAttribute(MANAGER_DATA_ATTR.actionToolId) ?? "";
-      if (managerAction && managerActionToolId) {
-        try {
-          if (managerAction === "export-tool") {
-            await exportSingleTool(managerActionToolId);
-          }
-          if (managerAction === "delete-tool") {
-            await deleteSingleTool(managerActionToolId);
-          }
-        } catch (error) {
-          const message = error instanceof Error ? error.message : String(error);
-          pushConsoleEntry("error", "browser", `Tool manager action failed: ${message}`);
-        }
-        renderAndBind(sendMessage);
-        return;
-      }
-
-      if (target.id === MANAGER_UI_ID.exportToolsButton) {
-        if (!clientRef) return;
-        const exported = await clientRef.exportWorkspaceTools({
-          correlationId: nextCorrelationId()
-        });
-        const blob = new Blob([exported.payloadJson], {
-          type: "application/json;charset=utf-8"
-        });
-        const url = URL.createObjectURL(blob);
-        const anchor = document.createElement("a");
-        anchor.href = url;
-        anchor.download = exported.fileName;
-        document.body.appendChild(anchor);
-        anchor.click();
-        document.body.removeChild(anchor);
-        URL.revokeObjectURL(url);
-        pushConsoleEntry("info", "browser", `Exported tool registry to ${exported.fileName}.`);
-        renderAndBind(sendMessage);
-        return;
-      }
-
-      if (target.id === MANAGER_UI_ID.importToolsButton) {
-        const client = clientRef;
-        if (!client) return;
-        const input = document.createElement("input");
-        const cleanup = () => {
-          if (input.parentElement) {
-            document.body.removeChild(input);
-          }
-        };
-        input.type = "file";
-        input.accept = "application/json,.json";
-        input.style.display = "none";
-        document.body.appendChild(input);
-        window.setTimeout(cleanup, 60_000);
-        input.onchange = () => {
-          void (async () => {
-            try {
-              const file = input.files?.[0];
-              if (!file) return;
-              const payloadJson = await file.text();
-              await client.importWorkspaceTools({
-                correlationId: nextCorrelationId(),
-                payloadJson
-              });
-              await refreshTools();
-              pushConsoleEntry("info", "browser", `Imported tool registry from ${file.name}.`);
-            } catch (error) {
-              const message =
-                error instanceof Error ? error.message : "Unknown import failure";
-              pushConsoleEntry("error", "browser", `Failed importing tool registry: ${message}`);
-            } finally {
-              renderAndBind(sendMessage);
-              cleanup();
-            }
-          })();
-        };
-        input.click();
-        return;
-      }
-
-      const closeSessionId = target.getAttribute(TERMINAL_DATA_ATTR.closeSessionId);
-      if (closeSessionId) {
-        event.preventDefault();
-        event.stopPropagation();
-        state.activeTerminalSessionId = await closeTerminalSessionAndPickNext(
-          terminalManager,
-          closeSessionId
-        );
-        renderAndBind(sendMessage);
-        return;
-      }
-
-      const shellProfile = target.getAttribute(TERMINAL_DATA_ATTR.shellProfile) as
-        | TerminalShellProfile
-        | null;
-      if (shellProfile) {
-        state.terminalShellProfile = shellProfile;
-        if (shellPopover) shellPopover.hidden = true;
-        renderAndBind(sendMessage);
-        return;
-      }
-
-      if (target.id === TERMINAL_UI_ID.shellButton) {
-        event.preventDefault();
-        event.stopPropagation();
-        if (!shellPopover) return;
-        const nextHidden = !shellPopover.hidden;
-        shellPopover.hidden = nextHidden;
-        if (!nextHidden) return;
-        const closePopover = () => {
-          shellPopover.hidden = true;
-        };
-        document.addEventListener("click", closePopover, { once: true });
-        return;
-      }
-
-      const action = target.getAttribute(TERMINAL_DATA_ATTR.action);
-      if (action === "new") {
-        state.activeTerminalSessionId = await createTerminalSessionForProfile(
-          terminalManager,
-          state.terminalShellProfile
-        );
-        renderAndBind(sendMessage);
-        return;
-      }
-
-      const sessionId = target.getAttribute(TERMINAL_DATA_ATTR.sessionId);
-      if (sessionId) {
-        state.activeTerminalSessionId = sessionId;
-        renderAndBind(sendMessage);
       }
     };
     workspacePane.onmousedown = (event) => {
+      if (event.button === 0) {
+        setPrimarySelectionGuard(true);
+      }
+      const rawTarget = event.target as HTMLElement | null;
+      if (state.workspaceTab === "flow-tool" && rawTarget?.closest(".flow-splitter")) {
+        flowSplitDragActive = true;
+        workspacePane.querySelector<HTMLElement>(".flow-workspace")?.classList.add("is-resizing");
+        event.preventDefault();
+        return;
+      }
       const target = (event.target as HTMLElement | null)?.closest<HTMLElement>(
         WORKSPACE_TOOL_TARGET_SELECTOR
       );
@@ -4227,76 +6139,60 @@ function attachWorkspaceInteractions(sendMessage: (text: string) => Promise<void
       }
     };
     workspacePane.onmousemove = (event) => {
+      if (flowSplitDragActive && state.workspaceTab === "flow-tool") {
+        if (event.buttons === 0) {
+          flowSplitDragActive = false;
+          workspacePane.querySelector<HTMLElement>(".flow-workspace")?.classList.remove("is-resizing");
+          return;
+        }
+        const workspace = workspacePane.querySelector<HTMLElement>(".flow-workspace");
+        if (workspace) {
+          const rect = workspace.getBoundingClientRect();
+          const offset = event.clientY - rect.top;
+          const percent = Math.round((offset / Math.max(1, rect.height)) * 100);
+          const next = Math.max(28, Math.min(78, percent));
+          if (next !== state.flowWorkspaceSplit) {
+            state.flowWorkspaceSplit = next;
+            persistFlowWorkspacePrefs(state);
+            renderAndBind(sendMessage);
+          }
+        }
+        return;
+      }
       const target = event.target as HTMLElement | null;
       if (!target) return;
       if (dispatchWorkspaceToolMouseMove(target, state)) {
         renderAndBind(sendMessage);
       }
     };
-    workspacePane.onchange = async (event) => {
-      const toggle = (event.target as HTMLElement | null)?.closest<HTMLInputElement>(
-        `[${MANAGER_DATA_ATTR.toggleToolId}]`
-      );
-      if (toggle) {
-        if (!clientRef) return;
-        const toolId = toggle.getAttribute(MANAGER_DATA_ATTR.toggleToolId);
-        if (!toolId) return;
-        await clientRef.setWorkspaceToolEnabled({
-          toolId,
-          enabled: toggle.checked,
-          correlationId: nextCorrelationId()
-        });
-        await refreshTools();
-      }
-
-      dispatchWorkspaceToolChange(event.target as HTMLElement, state, workspaceToolDeps);
-
-      renderAndBind(sendMessage);
+    workspacePane.onmouseup = () => {
+      flowSplitDragActive = false;
+      workspacePane.querySelector<HTMLElement>(".flow-workspace")?.classList.remove("is-resizing");
+      setPrimarySelectionGuard(false);
     };
-
-    workspacePane.onsubmit = async (event) => {
-      if (await dispatchWorkspaceToolSubmit(event.target as HTMLElement, state, workspaceToolDeps)) {
-        event.preventDefault();
-        renderAndBind(sendMessage);
-      }
+    workspacePane.onmouseleave = () => {
+      flowSplitDragActive = false;
+      workspacePane.querySelector<HTMLElement>(".flow-workspace")?.classList.remove("is-resizing");
+      setPrimarySelectionGuard(false);
     };
-
-    workspacePane.oninput = (event) => {
-      let rerenderForFlow = false;
-      const toolInput = dispatchWorkspaceToolInput(
-        event.target as HTMLElement,
-        state,
-        workspaceToolDeps
-      );
-      if (toolInput.handled) {
-        persistCreateToolDraft(state);
-      }
-      if (toolInput.handled && toolInput.rerender) {
-        rerenderForFlow = true;
-      }
-      if (rerenderForFlow) {
-        renderAndBind(sendMessage);
-      }
-    };
-
-    workspacePane.onkeydown = async (event) => {
-      if (await dispatchWorkspaceToolKeyDown(event, state, workspaceToolDeps)) {
-        event.preventDefault();
-        renderAndBind(sendMessage);
-      }
-    };
-
-    workspacePane.ondblclick = async (event) => {
-      if (
-        await dispatchWorkspaceToolDoubleClick(
-          event.target as HTMLElement,
-          state,
-          workspaceToolDeps
-        )
-      ) {
-        renderAndBind(sendMessage);
-      }
-    };
+    bindWorkspaceToolDelegatedEvents({
+      workspacePane,
+      state,
+      workspaceToolDeps,
+      managerToggleAttr: MANAGER_DATA_ATTR.toggleToolId,
+      managerToggleIconAttr: MANAGER_DATA_ATTR.toggleToolIconId,
+      clientRef,
+      nextCorrelationId,
+      refreshTools,
+      dispatchWorkspaceToolChange,
+      dispatchWorkspaceToolSubmit,
+      dispatchWorkspaceToolInput,
+      dispatchWorkspaceToolKeyDown,
+      dispatchWorkspaceToolDoubleClick,
+      persistCreateToolDraft: () => persistCreateToolDraft(state),
+      persistFlowWorkspacePrefs: () => persistFlowWorkspacePrefs(state),
+      rerender: () => renderAndBind(sendMessage)
+    });
   }
   if (shellPopover) {
     shellPopover.onclick = (event) => {
@@ -4304,84 +6200,18 @@ function attachWorkspaceInteractions(sendMessage: (text: string) => Promise<void
     };
   }
 
-  if (state.workspaceTab === "terminal") {
-    const host = document.querySelector<HTMLElement>("#terminalHost");
-    if (host && state.activeTerminalSessionId) {
-      terminalManager.mountSession(state.activeTerminalSessionId, host);
-    }
-  }
+  void renderChartCanvasIfNeeded(sendMessage);
 
-  const consoleTabButtons = document.querySelectorAll<HTMLButtonElement>(`[${CONSOLE_DATA_ATTR.view}]`);
-  for (const button of consoleTabButtons) {
-    button.onclick = () => {
-      const view = button.getAttribute(CONSOLE_DATA_ATTR.view);
-      if (view !== "all" && view !== "errors-warnings" && view !== "security-events") return;
-      if (state.consoleView === view) return;
+  mountWorkspaceTerminalHosts(state, terminalManager, persistFlowPhaseSessionMap);
+  bindConsoleInteractions({
+    consoleEntries: state.consoleEntries,
+    consoleView: state.consoleView,
+    setConsoleView: (view) => {
       state.consoleView = view;
-      renderAndBind(sendMessage);
-    };
-  }
-
-  const consoleActionButtons = document.querySelectorAll<HTMLButtonElement>(
-    `[${CONSOLE_DATA_ATTR.action}]`
-  );
-  for (const button of consoleActionButtons) {
-    button.onclick = async () => {
-      const action = button.getAttribute(CONSOLE_DATA_ATTR.action);
-      if (!action) return;
-      if (action === "copy") {
-        const text = buildConsoleCopyText();
-        const visibleCount = getVisibleConsoleEntries().length;
-        if (!text) {
-          pushConsoleEntry("info", "browser", "Console is empty; nothing copied.");
-          renderAndBind(sendMessage);
-          return;
-        }
-        try {
-          await navigator.clipboard.writeText(text);
-          pushConsoleEntry("info", "browser", `Copied ${visibleCount} console lines.`);
-        } catch {
-          const textarea = document.createElement("textarea");
-          textarea.value = text;
-          textarea.setAttribute("readonly", "true");
-          textarea.style.position = "fixed";
-          textarea.style.opacity = "0";
-          document.body.appendChild(textarea);
-          textarea.focus();
-          textarea.select();
-          const ok = document.execCommand("copy");
-          document.body.removeChild(textarea);
-          if (!ok) {
-            pushConsoleEntry("error", "browser", "Failed to copy console output.");
-          } else {
-            pushConsoleEntry("info", "browser", `Copied ${visibleCount} console lines.`);
-          }
-        }
-        renderAndBind(sendMessage);
-        return;
-      }
-      if (action === "save") {
-        const text = buildConsoleCopyText();
-        const visibleCount = getVisibleConsoleEntries().length;
-        if (!text) {
-          pushConsoleEntry("info", "browser", "Console is empty; nothing to save.");
-          renderAndBind(sendMessage);
-          return;
-        }
-        const blob = new Blob([text], { type: "text/plain;charset=utf-8" });
-        const url = URL.createObjectURL(blob);
-        const anchor = document.createElement("a");
-        anchor.href = url;
-        anchor.download = buildConsoleFilename();
-        document.body.appendChild(anchor);
-        anchor.click();
-        document.body.removeChild(anchor);
-        URL.revokeObjectURL(url);
-        pushConsoleEntry("info", "browser", `Saved ${visibleCount} console lines as .txt.`);
-        renderAndBind(sendMessage);
-      }
-    };
-  }
+    },
+    pushConsoleEntry,
+    rerender: () => renderAndBind(sendMessage)
+  });
 
 }
 
@@ -4395,34 +6225,46 @@ async function ensureTerminalSession(): Promise<void> {
 
 async function bootstrap(): Promise<void> {
   installConsoleCapture();
+  let sendMessage: (text: string, attachments?: ChatAttachment[]) => Promise<void> = async () => {
+    // Initialized after bootstrap wiring.
+  };
   const { client, runtimeMode } = await createChatIpcClient();
   clientRef = client;
-  state.runtimeMode = runtimeMode;
-  try {
-    const version = (await client.getAppVersion()).version.trim();
-    if (version) {
-      state.appVersion = normalizeVersionLabel(version);
-    }
-  } catch {
-    state.appVersion = FALLBACK_APP_VERSION;
-  }
+  tauriWindowHandle = await syncBootstrapRuntime({
+    client,
+    runtimeMode,
+    state,
+    fallbackAppVersion: FALLBACK_APP_VERSION,
+    persistSttBackend,
+    persistSttModel
+  });
   terminalManager.setClient(client);
   terminalManager.setDisplayMode(state.displayMode);
 
-  await refreshConversations();
-  await refreshTools();
-  await refreshFlowRuns();
-  await refreshApiConnections();
-  await refreshDevicesState();
-  await refreshLlamaRuntime();
-  await refreshModelManagerInstalled();
-  if (state.modelManagerCollection === "unsloth_ud") {
-    await refreshModelManagerUnslothUdCatalog();
-  }
-  await autoStartLlamaRuntimeIfConfigured();
-  await loadConversation(state.conversationId);
+  await runCoreBootstrapSteps({
+    refreshConversations,
+    refreshTools,
+    refreshFlowRuns,
+    refreshApiConnections,
+    refreshTtsState,
+    onTtsBootstrapError: (error) => {
+      state.tts.status = "error";
+      state.tts.message = `TTS bootstrap failed: ${String(error)}`;
+    },
+    refreshDevicesState,
+    refreshLlamaRuntime,
+    refreshModelManagerInstalled,
+    shouldRefreshUnslothUdCatalog: () => state.modelManagerCollection === "unsloth_ud",
+    refreshModelManagerUnslothUdCatalog,
+    autoStartLlamaRuntimeIfConfigured,
+    loadConversation: () => loadConversation(state.conversationId)
+  });
+
+  appResourcePolling.restart(1000);
 
   window.addEventListener("beforeunload", () => {
+    appResourcePolling.stop();
+    stopTtsPlaybackLocal();
     void terminalManager.closeAll();
   });
   if (navigator.mediaDevices?.addEventListener) {
@@ -4430,39 +6272,25 @@ async function bootstrap(): Promise<void> {
       void refreshDevicesState().then(() => renderAndBind(sendMessage));
     });
   }
-  if (runtimeMode === "tauri" && !sttPipelineErrorUnlisten) {
-    const { listen } = await import("@tauri-apps/api/event");
-    sttPipelineErrorUnlisten = await listen<{
-      source?: string;
-      message?: string;
-      details?: string | null;
-    }>("pipeline://error", (event) => {
-      const source = event.payload.source?.trim() || "unknown";
-      const message = event.payload.message?.trim() || "Pipeline error";
-      const details = typeof event.payload.details === "string" ? event.payload.details.trim() : "";
-      const detailsText = details ? ` details=${details}` : "";
-      pushConsoleEntry("error", "app", `[${source}] pipeline.error ${message}${detailsText}`);
-      const syntheticEvent: AppEvent = {
-        timestampMs: Date.now(),
-        correlationId: nextCorrelationId(),
-        subsystem: "service",
-        action: "pipeline.error",
-        stage: "error",
-        severity: "error",
-        payload: {
-          source,
-          message,
-          details: details || null
-        }
-      };
-      state.events.push(syntheticEvent);
-      if (source === "stt") {
-        state.stt.status = "error";
-        state.stt.message = message;
-      }
-      renderAndBind(sendMessage);
-    });
-  }
+  await installTauriSttListeners({
+    runtimeMode,
+    state,
+    sttPipelineErrorUnlisten,
+    sttVadUnlisten,
+    setSttPipelineErrorUnlisten: (value) => {
+      sttPipelineErrorUnlisten = value;
+    },
+    setSttVadUnlisten: (value) => {
+      sttVadUnlisten = value;
+    },
+    nextCorrelationId,
+    pushConsoleEntry,
+    rerender: () => renderAndBind(sendMessage),
+    onVadSpeakingChanged: (isSpeaking) => {
+      sttLastWasSpeaking = isSpeaking;
+      updateChatVoiceInputIcons();
+    }
+  });
 
   const scheduleFlowRunsRefresh = createFlowRunsRefreshScheduler({
     refresh: refreshFlowRuns,
@@ -4470,259 +6298,101 @@ async function bootstrap(): Promise<void> {
     delayMs: 250
   });
 
-  client.onEvent((event) => {
-    const agentEventLine = formatAgentEventLine(event);
-    if (agentEventLine) {
-      pushConsoleEntry(
-        event.severity === "error" ? "error" : "info",
-        "app",
-        `[agent] ${agentEventLine} corr=${event.correlationId}`
-      );
-    } else if (
-      !event.action.startsWith("llama.runtime") &&
-      !isNoisyRuntimeStatusEvent(event) &&
-      !isNoisyChatStreamEvent(event)
-    ) {
-      const payloadText =
-        event.stage === "error"
-          ? ` payload=${safePayloadPreview(event.payload)}`
-          : "";
-      pushConsoleEntry(
-        event.severity === "error" ? "error" : "info",
-        "app",
-        `[${event.subsystem}] ${event.action} ${event.stage} corr=${event.correlationId}${payloadText}`
-      );
-    }
-
-    if (event.action === "terminal.output") {
-      const output = parseTerminalOutput(event.payload);
-      if (output) {
-        terminalManager.writeOutput(output.sessionId, output.data);
-      }
-      return;
-    }
-
-    if (event.action === "terminal.exit") {
-      const exiting = parseTerminalExit(event.payload);
-      if (exiting) {
-        terminalManager.markExited(exiting.sessionId);
-        renderAndBind(sendMessage);
-      }
-      return;
-    }
-
-    if (isNoisyTerminalControlEvent(event)) {
-      return;
-    }
-
-    if (event.action.startsWith("llama.runtime")) {
-      const processLine = extractRuntimeProcessLine(event);
-      if (processLine) {
-        updateRuntimeMetricsFromLine(processLine);
-      }
-      const runtimeLine = formatRuntimeEventLine(event);
-      pushConsoleEntry(
-        event.severity === "error" ? "error" : "info",
-        "app",
-        `[runtime] ${runtimeLine} corr=${event.correlationId}`
-      );
-
-      if (!isNoisyRuntimeStatusEvent(event)) {
-        state.llamaRuntimeLogs.push(
-          runtimeLine
-        );
-        if (state.llamaRuntimeLogs.length > 300) {
-          state.llamaRuntimeLogs.splice(0, state.llamaRuntimeLogs.length - 300);
-        }
-      }
-      if (
-        (event.stage === "complete" || event.stage === "error") &&
-        event.action !== "llama.runtime.status"
-      ) {
-        void refreshLlamaRuntime().then(() => renderAndBind(sendMessage));
-      }
-    }
-
-    if (event.action.startsWith("model.manager.")) {
-      if (event.stage === "start") {
-        state.modelManagerBusy = true;
-      }
-      if (event.stage === "complete" || event.stage === "error") {
-        state.modelManagerBusy = false;
-      }
-      if (event.stage === "error") {
-        state.modelManagerMessage = `Model manager error: ${safePayloadPreview(event.payload)}`;
-      }
-    }
-
-    state.events.push(event);
-    applyFlowRuntimeEvent(state, event, scheduleFlowRunsRefresh);
-
-    if (event.action === "chat.stream.start") {
-      if (!isCurrentChatCorrelation(event.correlationId)) {
-        return;
-      }
-      state.chatStreamCompleteByCorrelation[event.correlationId] = false;
-    }
-    if (event.action === "chat.stream.complete") {
-      if (!isCurrentChatCorrelation(event.correlationId)) {
-        return;
-      }
-      state.chatStreamCompleteByCorrelation[event.correlationId] = true;
-      scheduleChatStreamDomUpdate();
-      return;
-    }
-    if (event.action === "chat.agent.tool.start") {
-      if (!isCurrentChatCorrelation(event.correlationId)) {
-        return;
-      }
-      const payload = parseAgentToolPayload(event.payload);
-      if (payload) {
-        ensureAssistantMessageForCorrelation(event.correlationId);
-        ensureToolIntentRow(event.correlationId, payload.toolName);
-        appendChatToolRow(event.correlationId, {
-          icon: toolIconName(payload.toolName),
-          title: `${toolTitleName(payload.toolName)} · start`,
-          details: payload.display || `Started tool call ${payload.toolCallId}.`
-        });
-        scheduleChatStreamDomUpdate();
-        return;
-      }
-    }
-    if (event.action === "chat.agent.tool.end") {
-      if (!isCurrentChatCorrelation(event.correlationId)) {
-        return;
-      }
-      const payload = parseAgentToolPayload(event.payload);
-      if (payload) {
-        ensureAssistantMessageForCorrelation(event.correlationId);
-        appendChatToolRow(event.correlationId, {
-          icon: toolIconName(payload.toolName),
-          title: `${toolTitleName(payload.toolName)} · complete`,
-          details: payload.display || `Tool call ${payload.toolCallId} completed.`
-        });
-        scheduleChatStreamDomUpdate();
-        return;
-      }
-    }
-    if (event.action === "chat.agent.tool.result") {
-      if (!isCurrentChatCorrelation(event.correlationId)) {
-        return;
-      }
-      const payload = parseAgentToolPayload(event.payload);
-      if (payload) {
-        ensureAssistantMessageForCorrelation(event.correlationId);
-        const status = payload.success === false ? "error" : "result";
-        const defaultDetail =
-          payload.success === false
-            ? `Tool call ${payload.toolCallId} returned an error.`
-            : `Tool call ${payload.toolCallId} returned successfully.`;
-        appendChatToolRow(event.correlationId, {
-          icon: payload.success === false ? "triangle-alert" : toolIconName(payload.toolName),
-          title: `${toolTitleName(payload.toolName)} · ${status}`,
-          details: payload.display || defaultDetail
-        });
-        scheduleChatStreamDomUpdate();
-        return;
-      }
-    }
-
-    if (event.action === "chat.stream.chunk") {
-      const chunk = parseStreamChunk(event.payload);
-      if (chunk && chunk.conversationId === state.conversationId) {
-        updateAssistantDraft(event.correlationId, chunk.delta);
-        scheduleChatStreamDomUpdate();
-        return;
-      }
-    }
-    if (event.action === "chat.stream.reasoning_chunk") {
-      const chunk = parseReasoningStreamChunk(event.payload);
-      if (chunk && chunk.conversationId === state.conversationId) {
-        updateReasoningDraft(event.correlationId, chunk.delta);
-        scheduleChatStreamDomUpdate();
-        return;
-      }
-    }
-
-    renderAndBind(sendMessage);
+  const maybeHandleFlowPhaseTerminalEvent = createFlowPhaseTerminalEventHandler({
+    state,
+    terminalManager,
+    flowTerminalPhases: FLOW_TERMINAL_PHASES,
+    createTerminalSessionForProfile,
+    persistFlowWorkspacePrefs: () => persistFlowWorkspacePrefs(state),
+    persistFlowPhaseSessionMap
   });
 
-  async function sendMessage(text: string, attachments?: ChatAttachment[]): Promise<void> {
-    if (!clientRef) return;
-
-    const correlationId = nextCorrelationId();
-    const normalizedUserText = normalizeChatText(text);
-    state.messages.push({ role: "user", text: normalizedUserText });
-    state.chatDraft = "";
-    state.chatStreaming = true;
-    state.activeChatCorrelationId = correlationId;
-    state.chatStreamCompleteByCorrelation[correlationId] = false;
-    renderAndBind(sendMessage);
-
-    try {
-      const requestPayloadBase = {
-        conversationId: state.conversationId,
-        userMessage: normalizedUserText,
-        correlationId,
-        thinkingEnabled: state.chatThinkingEnabled
-      } as const;
-      const requestPayload = attachments?.length
-        ? {
-            ...requestPayloadBase,
-            attachments
-          }
-        : requestPayloadBase;
-      const response = await clientRef.sendMessage(
-        state.llamaRuntimeMaxTokens === null
-          ? requestPayload
-          : {
-              ...requestPayload,
-              maxTokens: state.llamaRuntimeMaxTokens
-            }
-      );
-
-      const existing = state.messages.find(
-        (m) => m.role === "assistant" && m.correlationId === response.correlationId
-      );
-      if (existing) {
-        existing.text = normalizeChatText(response.assistantMessage);
-      } else {
-        state.messages.push({
-          role: "assistant",
-          text: normalizeChatText(response.assistantMessage),
-          correlationId: response.correlationId
-        });
-      }
-      if (response.assistantThinking?.trim()) {
-        state.chatReasoningByCorrelation[response.correlationId] = normalizeChatText(
-          response.assistantThinking
-        );
-        state.chatThinkingExpandedByCorrelation[response.correlationId] =
-          state.chatThinkingExpandedByCorrelation[response.correlationId] === true;
-        if (!state.chatThinkingPlacementByCorrelation[response.correlationId]) {
-          state.chatThinkingPlacementByCorrelation[response.correlationId] = "after";
+  registerClientEventBridge({
+    client,
+    handleCoreEvent: (event) => {
+      if (event.action === "chart.definition.set") {
+        const payload = payloadAsRecord(event.payload);
+        const definition = typeof payload?.definition === "string" ? payload.definition.trim() : "";
+        if (definition) {
+          state.chartSource = definition;
+          state.chartRenderSource = definition;
+          state.chartError = null;
+          state.workspaceTab = "chart-tool";
+          chartLastRenderedSource = null;
+          renderAndBind(sendMessage);
         }
+        return true;
       }
-
-      await refreshConversations();
-    } catch (error) {
-      state.events.push({
-        timestampMs: Date.now(),
-        correlationId,
-        subsystem: "frontend",
-        action: "chat.send",
-        stage: "error",
-        severity: "error",
-        payload: { message: String(error) }
+      return handleCoreAppEvent(event, {
+        onChatTtsStreamChunkEvent,
+        formatAgentEventLine,
+        pushConsoleEntry,
+        safePayloadPreview,
+        terminalManager,
+        renderAndBind: () => renderAndBind(sendMessage),
+        resolveChatTtsStreamWaiters,
+        extractRuntimeProcessLine,
+        updateRuntimeMetricsFromLine,
+        formatRuntimeEventLine,
+        refreshLlamaRuntime,
+        state,
+        applyFlowRuntimeEvent: (eventItem) => applyFlowRuntimeEvent(state, eventItem, scheduleFlowRunsRefresh),
+        maybeHandleFlowPhaseTerminalEvent
       });
-    } finally {
-      if (state.activeChatCorrelationId === correlationId) {
-        state.activeChatCorrelationId = null;
-      }
-      state.chatStreaming = false;
-      renderAndBind(sendMessage);
-    }
-  }
+    },
+    handleChatEvent: (event) =>
+      handleChatStreamEvent(event, {
+        isCurrentChatCorrelation,
+        state,
+        setChatTtsStopRequested: (value) => {
+          chatTtsStopRequested = value;
+        },
+        getVoicePipelineState: () => voicePipelineState,
+        setVoicePipelineState,
+        resetChatTtsStreamParser,
+        flushChatStreamForTts: (correlationId) => flushChatStreamForTts(sendMessage, correlationId),
+        scheduleChatStreamDomUpdate,
+        parseAgentToolPayload,
+        ensureAssistantMessageForCorrelation,
+        ensureToolIntentRow,
+        appendChatToolRow: (correlationId, row) => appendChatToolRow(correlationId, row as any),
+        toolIconName,
+        toolTitleName,
+        parseStreamChunk,
+        parseReasoningStreamChunk,
+        updateAssistantDraft,
+        ingestChatStreamForTts: (correlationId, delta) => ingestChatStreamForTts(sendMessage, correlationId, delta),
+        updateReasoningDraft,
+        renderAndBind: () => renderAndBind(sendMessage)
+      })
+  });
+
+  sendMessage = initializeSendMessageBinding({
+    getClientRef: () => clientRef,
+    state,
+    nextCorrelationId,
+    normalizeChatText,
+    clearVoicePrefillState: () => {
+      clearVoicePrefillWarmupTimer();
+      voicePrefillLastPartial = "";
+      voicePrefillStableSinceMs = 0;
+      voicePrefillWarmedPartial = "";
+    },
+    chatTtsLatencyCapturedByCorrelation,
+    chatTtsSawStreamDeltaByCorrelation,
+    postprocessSpeakableText,
+    extractSpeakableStreamDelta,
+    enqueueImmediateTtsChunk: (text, correlationId) => {
+      chatTtsQueue.push({ text, correlationId });
+      notifyChatTtsQueueAvailable();
+    },
+    enqueueSpeakableChunk,
+    runChatTtsQueue,
+    refreshConversations,
+    renderAndBind
+  }, (boundSendMessage) => {
+    appResourceRenderSendMessageRef = boundSendMessage;
+  });
 
   installCustomToolBridge(sendMessage);
   renderAndBind(sendMessage);

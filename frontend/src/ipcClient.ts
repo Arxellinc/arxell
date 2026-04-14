@@ -5,13 +5,21 @@ import type {
   ApiConnectionDeleteResponse,
   ApiConnectionGetSecretRequest,
   ApiConnectionGetSecretResponse,
+  ApiConnectionProbeRequest,
+  ApiConnectionProbeResponse,
   ApiConnectionRecord,
   ApiConnectionReverifyRequest,
   ApiConnectionReverifyResponse,
   ApiConnectionUpdateRequest,
   ApiConnectionUpdateResponse,
+  ApiConnectionsExportRequest,
+  ApiConnectionsExportResponse,
+  ApiConnectionsImportRequest,
+  ApiConnectionsImportResponse,
   ApiConnectionsListRequest,
   ApiConnectionsListResponse,
+  AppResourceUsageRequest,
+  AppResourceUsageResponse,
   AppEvent,
   AppVersionResponse,
   ChatCancelRequest,
@@ -24,6 +32,22 @@ import type {
   ChatListConversationsResponse,
   DevicesProbeMicrophoneRequest,
   DevicesProbeMicrophoneResponse,
+  TtsListVoicesRequest,
+  TtsListVoicesResponse,
+  TtsDownloadModelRequest,
+  TtsDownloadModelResponse,
+  TtsSelfTestRequest,
+  TtsSelfTestResponse,
+  TtsSettingsGetRequest,
+  TtsSettingsGetResponse,
+  TtsSettingsSetRequest,
+  TtsSettingsSetResponse,
+  TtsSpeakRequest,
+  TtsSpeakResponse,
+  TtsStatusRequest,
+  TtsStatusResponse,
+  TtsStopRequest,
+  TtsStopResponse,
   LlamaRuntimeInstallRequest,
   LlamaRuntimeInstallResponse,
   LlamaRuntimeStartRequest,
@@ -61,6 +85,8 @@ import type {
   WorkspaceToolsListResponse,
   WorkspaceToolSetEnabledRequest,
   WorkspaceToolSetEnabledResponse,
+  WorkspaceToolSetIconRequest,
+  WorkspaceToolSetIconResponse,
   WorkspaceToolsExportRequest,
   WorkspaceToolsExportResponse,
   WorkspaceToolsImportRequest,
@@ -82,13 +108,16 @@ import type {
   FlowStatusRequest,
   FlowStatusResponse,
   FlowStopRequest,
-  FlowStopResponse
+  FlowStopResponse,
+  FlowPauseResponse,
+  FlowNudgeResponse
 } from "./contracts";
 import { APP_BUILD_VERSION } from "./version";
 import { getAllToolManifests } from "./tools/registry";
 
 export interface ChatIpcClient {
   getAppVersion(): Promise<AppVersionResponse>;
+  getAppResourceUsage(request: AppResourceUsageRequest): Promise<AppResourceUsageResponse>;
   sendMessage(request: ChatSendRequest): Promise<ChatSendResponse>;
   cancelMessage(request: ChatCancelRequest): Promise<ChatCancelResponse>;
   getMessages(request: ChatGetMessagesRequest): Promise<ChatGetMessagesResponse>;
@@ -108,6 +137,9 @@ export interface ChatIpcClient {
   setWorkspaceToolEnabled(
     request: WorkspaceToolSetEnabledRequest
   ): Promise<WorkspaceToolSetEnabledResponse>;
+  setWorkspaceToolIcon(
+    request: WorkspaceToolSetIconRequest
+  ): Promise<WorkspaceToolSetIconResponse>;
   toolInvoke(request: ToolInvokeRequest): Promise<ToolInvokeResponse>;
   customToolCapabilityInvoke(
     request: CustomToolCapabilityInvokeRequest
@@ -119,7 +151,12 @@ export interface ChatIpcClient {
     request: PluginCapabilityInvokeRequest
   ): Promise<PluginCapabilityInvokeResponse>;
   listApiConnections(request: ApiConnectionsListRequest): Promise<ApiConnectionsListResponse>;
+  exportApiConnections(request: ApiConnectionsExportRequest): Promise<ApiConnectionsExportResponse>;
+  importApiConnections(request: ApiConnectionsImportRequest): Promise<ApiConnectionsImportResponse>;
   createApiConnection(request: ApiConnectionCreateRequest): Promise<ApiConnectionCreateResponse>;
+  probeApiConnectionEndpoint(
+    request: ApiConnectionProbeRequest
+  ): Promise<ApiConnectionProbeResponse>;
   updateApiConnection(request: ApiConnectionUpdateRequest): Promise<ApiConnectionUpdateResponse>;
   reverifyApiConnection(
     request: ApiConnectionReverifyRequest
@@ -150,6 +187,14 @@ export interface ChatIpcClient {
   probeMicrophoneDevice(
     request: DevicesProbeMicrophoneRequest
   ): Promise<DevicesProbeMicrophoneResponse>;
+  ttsStatus(request: TtsStatusRequest): Promise<TtsStatusResponse>;
+  ttsListVoices(request: TtsListVoicesRequest): Promise<TtsListVoicesResponse>;
+  ttsSpeak(request: TtsSpeakRequest): Promise<TtsSpeakResponse>;
+  ttsStop(request: TtsStopRequest): Promise<TtsStopResponse>;
+  ttsSelfTest(request: TtsSelfTestRequest): Promise<TtsSelfTestResponse>;
+  ttsSettingsGet(request: TtsSettingsGetRequest): Promise<TtsSettingsGetResponse>;
+  ttsSettingsSet(request: TtsSettingsSetRequest): Promise<TtsSettingsSetResponse>;
+  ttsDownloadModel(request: TtsDownloadModelRequest): Promise<TtsDownloadModelResponse>;
   onEvent(listener: (event: AppEvent) => void): () => void;
 }
 
@@ -165,6 +210,26 @@ export async function createChatIpcClient(): Promise<ChatIpcClientFactoryResult>
     return { client: await createTauriChatIpcClient(), runtimeMode: "tauri" };
   }
   return { client: new MockChatIpcClient(), runtimeMode: "mock" };
+}
+
+function toPluginCapabilityInvokeResponse(
+  response: CustomToolCapabilityInvokeResponse
+): PluginCapabilityInvokeResponse {
+  const mapped: PluginCapabilityInvokeResponse = {
+    correlationId: response.correlationId,
+    pluginId: response.customToolId,
+    requestId: response.requestId,
+    capability: response.capability,
+    ok: response.ok,
+    data: response.data
+  };
+  if (response.error !== undefined) {
+    mapped.error = response.error;
+  }
+  if (response.code !== undefined) {
+    mapped.code = response.code;
+  }
+  return mapped;
 }
 
 class TauriChatIpcClient implements ChatIpcClient {
@@ -198,6 +263,10 @@ class TauriChatIpcClient implements ChatIpcClient {
 
   getAppVersion(): Promise<AppVersionResponse> {
     return this.invokeFn<AppVersionResponse>("cmd_app_version");
+  }
+
+  getAppResourceUsage(request: AppResourceUsageRequest): Promise<AppResourceUsageResponse> {
+    return this.invokeFn<AppResourceUsageResponse>("cmd_app_resource_usage", { request });
   }
 
   sendMessage(request: ChatSendRequest): Promise<ChatSendResponse> {
@@ -260,6 +329,14 @@ class TauriChatIpcClient implements ChatIpcClient {
     });
   }
 
+  setWorkspaceToolIcon(
+    request: WorkspaceToolSetIconRequest
+  ): Promise<WorkspaceToolSetIconResponse> {
+    return this.invokeFn<WorkspaceToolSetIconResponse>("cmd_workspace_tool_set_icon", {
+      request
+    });
+  }
+
   toolInvoke(request: ToolInvokeRequest): Promise<ToolInvokeResponse> {
     return this.invokeFn<ToolInvokeResponse>("cmd_tool_invoke", { request });
   }
@@ -289,16 +366,7 @@ class TauriChatIpcClient implements ChatIpcClient {
       requestId: request.requestId,
       capability: request.capability,
       payload: request.payload
-    }).then((response) => ({
-      correlationId: response.correlationId,
-      pluginId: response.customToolId,
-      requestId: response.requestId,
-      capability: response.capability,
-      ok: response.ok,
-      data: response.data,
-      error: response.error,
-      code: response.code
-    }));
+    }).then((response) => toPluginCapabilityInvokeResponse(response));
   }
 
   private async invokeToolTyped<TResponse>(
@@ -330,8 +398,26 @@ class TauriChatIpcClient implements ChatIpcClient {
     return this.invokeFn<ApiConnectionsListResponse>("cmd_api_connections_list", { request });
   }
 
+  exportApiConnections(
+    request: ApiConnectionsExportRequest
+  ): Promise<ApiConnectionsExportResponse> {
+    return this.invokeFn<ApiConnectionsExportResponse>("cmd_api_connections_export", { request });
+  }
+
+  importApiConnections(
+    request: ApiConnectionsImportRequest
+  ): Promise<ApiConnectionsImportResponse> {
+    return this.invokeFn<ApiConnectionsImportResponse>("cmd_api_connections_import", { request });
+  }
+
   createApiConnection(request: ApiConnectionCreateRequest): Promise<ApiConnectionCreateResponse> {
     return this.invokeFn<ApiConnectionCreateResponse>("cmd_api_connection_create", { request });
+  }
+
+  probeApiConnectionEndpoint(
+    request: ApiConnectionProbeRequest
+  ): Promise<ApiConnectionProbeResponse> {
+    return this.invokeFn<ApiConnectionProbeResponse>("cmd_api_connection_probe", { request });
   }
 
   updateApiConnection(request: ApiConnectionUpdateRequest): Promise<ApiConnectionUpdateResponse> {
@@ -423,6 +509,38 @@ class TauriChatIpcClient implements ChatIpcClient {
       request
     });
   }
+
+  ttsStatus(request: TtsStatusRequest): Promise<TtsStatusResponse> {
+    return this.invokeFn<TtsStatusResponse>("cmd_tts_status", { request });
+  }
+
+  ttsListVoices(request: TtsListVoicesRequest): Promise<TtsListVoicesResponse> {
+    return this.invokeFn<TtsListVoicesResponse>("cmd_tts_list_voices", { request });
+  }
+
+  ttsSpeak(request: TtsSpeakRequest): Promise<TtsSpeakResponse> {
+    return this.invokeFn<TtsSpeakResponse>("cmd_tts_speak", { request });
+  }
+
+  ttsStop(request: TtsStopRequest): Promise<TtsStopResponse> {
+    return this.invokeFn<TtsStopResponse>("cmd_tts_stop", { request });
+  }
+
+  ttsSelfTest(request: TtsSelfTestRequest): Promise<TtsSelfTestResponse> {
+    return this.invokeFn<TtsSelfTestResponse>("cmd_tts_self_test", { request });
+  }
+
+  ttsSettingsGet(request: TtsSettingsGetRequest): Promise<TtsSettingsGetResponse> {
+    return this.invokeFn<TtsSettingsGetResponse>("cmd_tts_settings_get", { request });
+  }
+
+  ttsSettingsSet(request: TtsSettingsSetRequest): Promise<TtsSettingsSetResponse> {
+    return this.invokeFn<TtsSettingsSetResponse>("cmd_tts_settings_set", { request });
+  }
+
+  ttsDownloadModel(request: TtsDownloadModelRequest): Promise<TtsDownloadModelResponse> {
+    return this.invokeFn<TtsDownloadModelResponse>("cmd_tts_download_model", { request });
+  }
 }
 
 export class MockChatIpcClient implements ChatIpcClient {
@@ -441,15 +559,57 @@ export class MockChatIpcClient implements ChatIpcClient {
         version: manifest.version,
         source: manifest.source,
         enabled: manifest.defaultEnabled,
+        icon: true,
         status: manifest.defaultEnabled ? "ready" : "disabled"
       }
     ])
   );
   private readonly apiConnections = new Map<string, ApiConnectionRecord>();
   private readonly apiConnectionSecrets = new Map<string, string>();
+  private mockTts: {
+    engine: "kokoro" | "piper" | "matcha" | "kitten" | "pocket";
+    voice: string;
+    speed: number;
+    modelPath: string;
+    secondaryPath: string;
+    voicesPath: string;
+    tokensPath: string;
+    dataDir: string;
+  } = {
+    engine: "kokoro",
+    voice: "af_heart",
+    speed: 1,
+    modelPath: "",
+    secondaryPath: "",
+    voicesPath: "",
+    tokensPath: "",
+    dataDir: ""
+  };
+
+  private normalizeMockTtsEngine(value: string | undefined | null): "kokoro" | "piper" | "matcha" | "kitten" | "pocket" {
+    const normalized = (value || "").trim().toLowerCase();
+    if (normalized === "piper" || normalized === "matcha" || normalized === "kitten" || normalized === "pocket") {
+      return normalized;
+    }
+    return "kokoro";
+  }
+
+  private mockVoicesForEngine(engine: "kokoro" | "piper" | "matcha" | "kitten" | "pocket"): string[] {
+    return engine === "kokoro" ? ["af_heart"] : ["speaker_0"];
+  }
 
   async getAppVersion(): Promise<AppVersionResponse> {
     return { version: APP_BUILD_VERSION };
+  }
+
+  async getAppResourceUsage(request: AppResourceUsageRequest): Promise<AppResourceUsageResponse> {
+    return {
+      correlationId: request.correlationId,
+      cpuPercent: 0,
+      memoryBytes: null,
+      networkRxBytesPerSec: 0,
+      networkTxBytesPerSec: 0
+    };
   }
 
   onEvent(listener: (event: AppEvent) => void): () => void {
@@ -666,6 +826,20 @@ export class MockChatIpcClient implements ChatIpcClient {
     };
   }
 
+  async setWorkspaceToolIcon(
+    request: WorkspaceToolSetIconRequest
+  ): Promise<WorkspaceToolSetIconResponse> {
+    const current = this.tools.get(request.toolId);
+    if (current) {
+      current.icon = request.icon;
+    }
+    return {
+      toolId: request.toolId,
+      icon: request.icon,
+      correlationId: request.correlationId
+    };
+  }
+
   async toolInvoke(request: ToolInvokeRequest): Promise<ToolInvokeResponse> {
     const payload = request.payload as Record<string, unknown>;
     try {
@@ -705,6 +879,38 @@ export class MockChatIpcClient implements ChatIpcClient {
       }
       if (request.toolId === "flow" && request.action === "status") {
         const response = await this.mockFlowStatus(payload as unknown as FlowStatusRequest);
+        return {
+          correlationId: request.correlationId,
+          toolId: request.toolId,
+          action: request.action,
+          ok: true,
+          data: response as unknown as Record<string, unknown>
+        };
+      }
+      if (request.toolId === "flow" && (request.action === "pause" || request.action === "set-paused" || request.action === "setPaused")) {
+        const runId = typeof payload.runId === "string" ? payload.runId : "";
+        const paused = payload.paused === true;
+        const response: FlowPauseResponse = {
+          correlationId: String(payload.correlationId ?? request.correlationId),
+          runId,
+          paused,
+          updated: true
+        };
+        return {
+          correlationId: request.correlationId,
+          toolId: request.toolId,
+          action: request.action,
+          ok: true,
+          data: response as unknown as Record<string, unknown>
+        };
+      }
+      if (request.toolId === "flow" && (request.action === "nudge" || request.action === "redirect" || request.action === "redirect-task")) {
+        const runId = typeof payload.runId === "string" ? payload.runId : "";
+        const response: FlowNudgeResponse = {
+          correlationId: String(payload.correlationId ?? request.correlationId),
+          runId,
+          accepted: true
+        };
         return {
           correlationId: request.correlationId,
           toolId: request.toolId,
@@ -822,16 +1028,7 @@ export class MockChatIpcClient implements ChatIpcClient {
       capability: request.capability,
       payload: request.payload
     });
-    return {
-      correlationId: response.correlationId,
-      pluginId: response.customToolId,
-      requestId: response.requestId,
-      capability: response.capability,
-      ok: response.ok,
-      data: response.data,
-      error: response.error,
-      code: response.code
-    };
+    return toPluginCapabilityInvokeResponse(response);
   }
 
   private async mockFilesListDirectory(
@@ -970,13 +1167,15 @@ export class MockChatIpcClient implements ChatIpcClient {
     request: WorkspaceToolsExportRequest
   ): Promise<WorkspaceToolsExportResponse> {
     const enabled: Record<string, boolean> = {};
+    const icon: Record<string, boolean> = {};
     for (const [toolId, tool] of this.tools.entries()) {
       enabled[toolId] = tool.enabled;
+      icon[toolId] = tool.icon;
     }
     return {
       correlationId: request.correlationId,
       fileName: "arxell-tools-registry.json",
-      payloadJson: `${JSON.stringify({ version: 1, enabled }, null, 2)}\n`
+      payloadJson: `${JSON.stringify({ version: 1, enabled, icon }, null, 2)}\n`
     };
   }
 
@@ -985,13 +1184,19 @@ export class MockChatIpcClient implements ChatIpcClient {
   ): Promise<WorkspaceToolsImportResponse> {
     const parsed = JSON.parse(request.payloadJson) as {
       enabled?: Record<string, boolean>;
+      icon?: Record<string, boolean>;
     };
     const enabled = parsed.enabled ?? {};
+    const icon = parsed.icon ?? {};
     for (const [toolId, tool] of this.tools.entries()) {
       const value = enabled[toolId];
       if (typeof value === "boolean") {
         tool.enabled = value;
         tool.status = value ? "ready" : "disabled";
+      }
+      const iconValue = icon[toolId];
+      if (typeof iconValue === "boolean") {
+        tool.icon = iconValue;
       }
     }
     return {
@@ -1009,11 +1214,98 @@ export class MockChatIpcClient implements ChatIpcClient {
     };
   }
 
+  async exportApiConnections(
+    request: ApiConnectionsExportRequest
+  ): Promise<ApiConnectionsExportResponse> {
+    const connections = [...this.apiConnections.values()].sort((a, b) => b.createdMs - a.createdMs);
+    const payload = {
+      version: 1,
+      exportedAtMs: Date.now(),
+      connections: connections.map((record) => ({
+        id: record.id,
+        apiType: record.apiType,
+        apiUrl: record.apiUrl,
+        name: record.name,
+        apiKey: this.apiConnectionSecrets.get(record.id) || "",
+        modelName: record.modelName,
+        costPerMonthUsd: record.costPerMonthUsd,
+        apiStandardPath: record.apiStandardPath,
+        createdMs: record.createdMs
+      }))
+    };
+    return {
+      correlationId: request.correlationId,
+      fileName: "arxell-api-connections.json",
+      payloadJson: `${JSON.stringify(payload, null, 2)}\n`
+    };
+  }
+
+  async importApiConnections(
+    request: ApiConnectionsImportRequest
+  ): Promise<ApiConnectionsImportResponse> {
+    const raw = request.payloadJson.trim();
+    if (!raw) {
+      return {
+        correlationId: request.correlationId,
+        connections: [...this.apiConnections.values()].sort((a, b) => b.createdMs - a.createdMs)
+      };
+    }
+    const parsed = JSON.parse(raw) as {
+      connections?: Array<{
+        id?: string;
+        apiType?: ApiConnectionRecord["apiType"];
+        apiUrl?: string;
+        name?: string | null;
+        apiKey?: string;
+        modelName?: string | null;
+        costPerMonthUsd?: number | null;
+        apiStandardPath?: string | null;
+        createdMs?: number;
+      }>;
+    };
+    const items = Array.isArray(parsed.connections) ? parsed.connections : [];
+    for (const item of items) {
+      const apiUrl = String(item.apiUrl || "").trim();
+      const apiKey = String(item.apiKey || "").trim();
+      if (!apiUrl || !apiKey) continue;
+      const id = String(item.id || "").trim() || `api-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+      const createdMs = Number.isFinite(item.createdMs) ? Number(item.createdMs) : Date.now();
+      const prefix = apiKey.slice(0, 7);
+      const modelName = typeof item.modelName === "string" && item.modelName.trim()
+        ? item.modelName.trim()
+        : null;
+      const connection: ApiConnectionRecord = {
+        id,
+        apiType: item.apiType || "llm",
+        apiUrl,
+        name: item.name?.trim() || null,
+        apiKeyPrefix: prefix,
+        apiKeyMasked: prefix ? `${prefix}…` : "(none)",
+        modelName,
+        costPerMonthUsd:
+          typeof item.costPerMonthUsd === "number" ? item.costPerMonthUsd : null,
+        status: "pending",
+        statusMessage: "Imported connection. Verify to confirm status.",
+        lastCheckedMs: null,
+        createdMs,
+        apiStandardPath: item.apiStandardPath?.trim() || null,
+        availableModels: modelName ? [modelName] : []
+      };
+      this.apiConnections.set(id, connection);
+      this.apiConnectionSecrets.set(id, apiKey);
+    }
+    return {
+      correlationId: request.correlationId,
+      connections: [...this.apiConnections.values()].sort((a, b) => b.createdMs - a.createdMs)
+    };
+  }
+
   async createApiConnection(
     request: ApiConnectionCreateRequest
   ): Promise<ApiConnectionCreateResponse> {
     const now = Date.now();
-    const prefix = request.apiKey.trim().slice(0, 7);
+    const apiKey = request.apiKey?.trim() || "";
+    const prefix = apiKey.slice(0, 7);
     const isVerified = /^https?:\/\//.test(request.apiUrl.trim());
     const connection: ApiConnectionRecord = {
       id: `api-${now}-${Math.floor(Math.random() * 1000)}`,
@@ -1031,13 +1323,34 @@ export class MockChatIpcClient implements ChatIpcClient {
         : "Mock verification failed: invalid URL",
       lastCheckedMs: now,
       createdMs: now,
-      apiStandardPath: request.apiStandardPath?.trim() || null
+      apiStandardPath: request.apiStandardPath?.trim() || null,
+      availableModels: request.modelName?.trim() ? [request.modelName.trim()] : []
     };
     this.apiConnections.set(connection.id, connection);
-    this.apiConnectionSecrets.set(connection.id, request.apiKey);
+    this.apiConnectionSecrets.set(connection.id, apiKey);
     return {
       correlationId: request.correlationId,
       connection
+    };
+  }
+
+  async probeApiConnectionEndpoint(
+    request: ApiConnectionProbeRequest
+  ): Promise<ApiConnectionProbeResponse> {
+    const apiUrl = request.apiUrl.trim();
+    const isReachable = /^https?:\/\//.test(apiUrl);
+    const models = isReachable ? ["local-model"] : [];
+    return {
+      correlationId: request.correlationId,
+      detectedApiType: request.apiType ?? "llm",
+      apiStandardPath: "/v1/chat/completions",
+      verifyUrl: `${apiUrl.replace(/\/$/, "")}/v1/chat/completions`,
+      models,
+      selectedModel: models[0] ?? null,
+      status: isReachable ? "verified" : "warning",
+      statusMessage: isReachable
+        ? "Mock probe detected an OpenAI-compatible endpoint."
+        : "Mock probe failed: invalid URL."
     };
   }
 
@@ -1057,6 +1370,9 @@ export class MockChatIpcClient implements ChatIpcClient {
       ...(request.modelName !== undefined && { modelName: request.modelName || null }),
       ...(request.costPerMonthUsd !== undefined && { costPerMonthUsd: request.costPerMonthUsd }),
       ...(request.apiStandardPath !== undefined && { apiStandardPath: request.apiStandardPath || null }),
+      ...(request.modelName !== undefined && {
+        availableModels: request.modelName ? [request.modelName] : current.availableModels
+      }),
       lastCheckedMs: Date.now()
     };
     this.apiConnections.set(updated.id, updated);
@@ -1329,6 +1645,155 @@ export class MockChatIpcClient implements ChatIpcClient {
         inputDeviceCount: audioInputs.length,
         defaultInputName: audioInputs[0]?.label || null
       };
+  }
+
+  async ttsStatus(request: TtsStatusRequest): Promise<TtsStatusResponse> {
+    const voices = this.mockVoicesForEngine(this.mockTts.engine);
+    const fallbackVoice = voices[0] ?? (this.mockTts.engine === "kokoro" ? "af_heart" : "speaker_0");
+    return {
+      correlationId: request.correlationId,
+      engineId: `sherpa-${this.mockTts.engine}`,
+      engine: this.mockTts.engine,
+      ready: false,
+      message: "Mock runtime: TTS unavailable",
+      modelPath: this.mockTts.modelPath,
+      secondaryPath: this.mockTts.secondaryPath,
+      voicesPath: this.mockTts.engine === "piper" ? "" : this.mockTts.voicesPath,
+      tokensPath: this.mockTts.tokensPath,
+      dataDir: this.mockTts.dataDir,
+      pythonPath: "",
+      scriptPath: "",
+      runtimeArchivePresent: false,
+      availableModelPaths: this.mockTts.modelPath ? [this.mockTts.modelPath] : [],
+      availableVoices: voices,
+      selectedVoice: voices.includes(this.mockTts.voice) ? this.mockTts.voice : fallbackVoice,
+      speed: this.mockTts.speed
+    };
+  }
+
+  async ttsListVoices(request: TtsListVoicesRequest): Promise<TtsListVoicesResponse> {
+    const voices = this.mockVoicesForEngine(this.mockTts.engine);
+    const fallbackVoice = voices[0] ?? (this.mockTts.engine === "kokoro" ? "af_heart" : "speaker_0");
+    return {
+      correlationId: request.correlationId,
+      voices,
+      selectedVoice: voices.includes(this.mockTts.voice) ? this.mockTts.voice : fallbackVoice
+    };
+  }
+
+  async ttsSpeak(request: TtsSpeakRequest): Promise<TtsSpeakResponse> {
+    void request;
+    throw new Error("Mock runtime does not synthesize TTS audio.");
+  }
+
+  async ttsStop(request: TtsStopRequest): Promise<TtsStopResponse> {
+    return {
+      correlationId: request.correlationId,
+      stopped: true
+    };
+  }
+
+  async ttsSelfTest(request: TtsSelfTestRequest): Promise<TtsSelfTestResponse> {
+    return {
+      correlationId: request.correlationId,
+      ok: false,
+      message: "Mock runtime: self-test unavailable",
+      bytes: 0,
+      sampleRate: 0,
+      durationMs: 0
+    };
+  }
+
+  async ttsSettingsGet(request: TtsSettingsGetRequest): Promise<TtsSettingsGetResponse> {
+    const voices = this.mockVoicesForEngine(this.mockTts.engine);
+    const fallbackVoice = voices[0] ?? (this.mockTts.engine === "kokoro" ? "af_heart" : "speaker_0");
+    const voice = voices.includes(this.mockTts.voice) ? this.mockTts.voice : fallbackVoice;
+    return {
+      correlationId: request.correlationId,
+      engineId: `sherpa-${this.mockTts.engine}`,
+      engine: this.mockTts.engine,
+      voice,
+      speed: this.mockTts.speed,
+      modelPath: this.mockTts.modelPath,
+      secondaryPath: this.mockTts.secondaryPath,
+      voicesPath: this.mockTts.engine === "piper" ? "" : this.mockTts.voicesPath,
+      tokensPath: this.mockTts.tokensPath,
+      dataDir: this.mockTts.dataDir,
+      pythonPath: ""
+    };
+  }
+
+  async ttsSettingsSet(request: TtsSettingsSetRequest): Promise<TtsSettingsSetResponse> {
+    const nextEngine = this.normalizeMockTtsEngine(request.engine ?? this.mockTts.engine);
+    const engineChanged = nextEngine !== this.mockTts.engine;
+    if (engineChanged) {
+      this.mockTts.engine = nextEngine;
+      this.mockTts.modelPath = "";
+      this.mockTts.secondaryPath = "";
+      this.mockTts.voicesPath = "";
+      this.mockTts.tokensPath = "";
+      this.mockTts.dataDir = "";
+      this.mockTts.speed = 1;
+      this.mockTts.voice = this.mockVoicesForEngine(nextEngine)[0] ?? (nextEngine === "kokoro" ? "af_heart" : "speaker_0");
+    }
+    if (typeof request.speed === "number" && Number.isFinite(request.speed)) {
+      this.mockTts.speed = request.speed;
+    }
+    if (typeof request.voice === "string") {
+      const voice = request.voice.trim();
+      if (voice) {
+        this.mockTts.voice = voice;
+      }
+    }
+    if (typeof request.modelPath === "string") {
+      this.mockTts.modelPath = request.modelPath.trim();
+    }
+    if (typeof request.secondaryPath === "string") {
+      this.mockTts.secondaryPath = request.secondaryPath.trim();
+      if (this.mockTts.engine !== "piper") {
+        this.mockTts.voicesPath = this.mockTts.secondaryPath;
+      }
+    }
+    if (typeof request.voicesPath === "string") {
+      const value = request.voicesPath.trim();
+      if (this.mockTts.engine === "piper") {
+        this.mockTts.secondaryPath = value;
+        this.mockTts.voicesPath = "";
+      } else {
+        this.mockTts.voicesPath = value;
+        this.mockTts.secondaryPath = value;
+      }
+    }
+    if (typeof request.tokensPath === "string") {
+      this.mockTts.tokensPath = request.tokensPath.trim();
+    }
+    if (typeof request.dataDir === "string") {
+      this.mockTts.dataDir = request.dataDir.trim();
+    }
+    const voices = this.mockVoicesForEngine(this.mockTts.engine);
+    if (!voices.includes(this.mockTts.voice)) {
+      this.mockTts.voice = voices[0] ?? (this.mockTts.engine === "kokoro" ? "af_heart" : "speaker_0");
+    }
+
+    return {
+      correlationId: request.correlationId,
+      ok: true,
+      engine: this.mockTts.engine,
+      voice: this.mockTts.voice,
+      speed: this.mockTts.speed
+    };
+  }
+
+  async ttsDownloadModel(request: TtsDownloadModelRequest): Promise<TtsDownloadModelResponse> {
+    return {
+      correlationId: request.correlationId,
+      ok: false,
+      message: "Mock runtime cannot download TTS models.",
+      modelPath: "",
+      voicesPath: "",
+      tokensPath: "",
+      dataDir: ""
+    };
   }
 
   private emit(event: AppEvent): void {

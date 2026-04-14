@@ -463,6 +463,94 @@ jobs:
             print(f"  {p.name}")
           PY
 
+      - name: Prepare bundled Kokoro runtime archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          if command -v python3 >/dev/null 2>&1; then
+            PY=python3
+          elif command -v python >/dev/null 2>&1; then
+            PY=python
+          else
+            echo "Python executable not found on runner" >&2
+            exit 1
+          fi
+          "$PY" scripts/prepare_kokoro_runtime.py
+
+      - name: Verify bundled Kokoro runtime archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          if command -v python3 >/dev/null 2>&1; then
+            PY=python3
+          elif command -v python >/dev/null 2>&1; then
+            PY=python
+          else
+            echo "Python executable not found on runner" >&2
+            exit 1
+          fi
+          "$PY" scripts/verify_kokoro_runtime_archive.py
+
+      - name: Generate Kokoro runtime manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          if command -v python3 >/dev/null 2>&1; then
+            PY=python3
+          elif command -v python >/dev/null 2>&1; then
+            PY=python
+          else
+            echo "Python executable not found on runner" >&2
+            exit 1
+          fi
+          "$PY" - <<'PY'
+          import hashlib
+          import json
+          import pathlib
+          import platform
+
+          def expected_archive_name() -> str:
+            system = platform.system().lower()
+            machine = platform.machine().lower()
+            if machine in {"amd64", "x86_64", "x64"}:
+              arch = "x86_64"
+            elif machine in {"arm64", "aarch64"}:
+              arch = "aarch64"
+            else:
+              raise RuntimeError(f"Unsupported architecture: {machine}")
+
+            if system == "linux":
+              os_tag = "linux"
+            elif system == "darwin":
+              os_tag = "macos"
+            elif system == "windows":
+              os_tag = "windows"
+            else:
+              raise RuntimeError(f"Unsupported platform: {system}")
+            return f"kokoro-runtime-{os_tag}-{arch}.zip"
+
+          repo_root = pathlib.Path(".").resolve()
+          runtime_dir = repo_root / "src-tauri" / "resources" / "kokoro-runtime"
+          archive = runtime_dir / expected_archive_name()
+          if not archive.exists():
+            raise RuntimeError(f"Kokoro runtime archive missing: {archive}")
+
+          sha256 = hashlib.sha256(archive.read_bytes()).hexdigest()
+          manifest = {
+            "runnerOs": platform.system(),
+            "runnerArch": platform.machine(),
+            "archiveName": archive.name,
+            "archivePath": str(archive.relative_to(repo_root)),
+            "archiveSizeBytes": archive.stat().st_size,
+            "sha256": sha256,
+          }
+          (runtime_dir / "manifest.json").write_text(
+            json.dumps(manifest, indent=2) + "\n",
+            encoding="utf-8",
+          )
+          print(f"[kokoro-runtime] manifest written for {archive.name}")
+          PY
+
       - name: Build desktop binary
         run: cargo build --release --manifest-path src-tauri/Cargo.toml --features tauri-runtime
 
@@ -486,6 +574,20 @@ jobs:
           name: ${{ matrix.platform.name }}-v${{ steps.app_version.outputs.version }}-whisper-runtime-manifest
           path: src-tauri/resources/whisper-server/manifest.json
           if-no-files-found: warn
+
+      - name: Upload bundled Kokoro runtime manifest
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.platform.name }}-v${{ steps.app_version.outputs.version }}-kokoro-runtime-manifest
+          path: src-tauri/resources/kokoro-runtime/manifest.json
+          if-no-files-found: error
+
+      - name: Upload bundled Kokoro runtime archive
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.platform.name }}-v${{ steps.app_version.outputs.version }}-kokoro-runtime
+          path: src-tauri/resources/kokoro-runtime/kokoro-runtime-*.zip
+          if-no-files-found: error
 
       - name: Package release bundle
         id: package_release
@@ -528,6 +630,13 @@ jobs:
           whisper_manifest = pathlib.Path("src-tauri/resources/whisper-server/manifest.json")
           if whisper_manifest.is_file():
               shutil.copy2(whisper_manifest, bundle_dir / "whisper-runtime-manifest.json")
+
+          kokoro_manifest = pathlib.Path("src-tauri/resources/kokoro-runtime/manifest.json")
+          if kokoro_manifest.is_file():
+              shutil.copy2(kokoro_manifest, bundle_dir / "kokoro-runtime-manifest.json")
+
+          for kokoro_archive in pathlib.Path("src-tauri/resources/kokoro-runtime").glob("kokoro-runtime-*.zip"):
+              shutil.copy2(kokoro_archive, bundle_dir / kokoro_archive.name)
 
           archive_base = out_root / f"{platform_name}-v{app_version}"
           archive_zip = pathlib.Path(

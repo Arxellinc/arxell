@@ -21,6 +21,7 @@ export const TERMINAL_UI_ID = {
 
 export const MANAGER_DATA_ATTR = {
   toggleToolId: "data-workspace-tool-toggle-id",
+  toggleToolIconId: "data-workspace-tool-toggle-icon-id",
   action: "data-workspace-tool-action",
   actionToolId: "data-workspace-tool-action-id"
 } as const;
@@ -70,7 +71,9 @@ export const TASKS_DATA_ATTR = {
 export const FLOW_DATA_ATTR = {
   action: "data-flow-action",
   runId: "data-flow-run-id",
-  mode: "data-flow-mode"
+  mode: "data-flow-mode",
+  phase: "data-flow-phase",
+  panel: "data-flow-panel"
 } as const;
 
 export const FLOW_UI_ID = {
@@ -84,5 +87,9 @@ export const FLOW_UI_ID = {
   specsGlob: "flowSpecsGlob",
   implementCommand: "flowImplementCommand",
   backpressureCommands: "flowBackpressureCommands",
-  eventFilterInput: "flowEventFilterInput"
+  eventFilterInput: "flowEventFilterInput",
+  advancedToggle: "flowAdvancedToggle",
+  projectNameInput: "flowProjectNameInput",
+  projectTypeSelect: "flowProjectTypeSelect",
+  projectDescriptionInput: "flowProjectDescriptionInput"
 } as const;

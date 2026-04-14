@@ -17,7 +17,8 @@
         "height": 860,
         "minWidth": 960,
         "minHeight": 640,
-        "resizable": true
+        "resizable": true,
+        "decorations": false
       }
     ],
     "security": {
@@ -30,10 +31,9 @@
     "resources": [
       "resources/llama-runtime/*",
       "resources/llama-runtime/**/*",
-      "resources/whisper-server/*",
-      "resources/whisper-server/**/*",
       "resources/whisper/*",
-      "resources/whisper/**/*"
+      "resources/whisper/**/*",
+      "resources/voice/**/*"
     ]
   }
 }
