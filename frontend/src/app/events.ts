@@ -21,6 +21,13 @@ export function isNoisyTerminalControlEvent(event: AppEvent): boolean {
 }
 
 export function isNoisyRuntimeStatusEvent(event: AppEvent): boolean {
+  if (
+    event.subsystem === "runtime" &&
+    event.action === "tts.download_model" &&
+    event.stage === "progress"
+  ) {
+    return true;
+  }
   return (
     event.subsystem === "runtime" &&
     event.action === "llama.runtime.status" &&

@@ -17,8 +17,7 @@ use arxell_lite::contracts::{
     AppResourceUsageResponse, AppVersionResponse, ChatCancelRequest, ChatCancelResponse,
     ChatDeleteConversationRequest, ChatDeleteConversationResponse, ChatGetMessagesRequest,
     ChatGetMessagesResponse, ChatListConversationsRequest, ChatListConversationsResponse,
-    ChatSendRequest, ChatSendResponse, CreateToolGenerateTextRequest,
-    CreateToolGenerateTextResponse, CustomToolCapabilityInvokeRequest,
+    ChatSendRequest, ChatSendResponse, CustomToolCapabilityInvokeRequest,
     CustomToolCapabilityInvokeResponse, DevicesProbeMicrophoneRequest,
     DevicesProbeMicrophoneResponse, EventSeverity, EventStage, FilesListDirectoryRequest,
     FilesListDirectoryResponse, FlowListRunsRequest, FlowListRunsResponse,
@@ -40,6 +39,8 @@ use arxell_lite::contracts::{
     TtsSettingsSetRequest, TtsSettingsSetResponse, TtsSpeakRequest, TtsSpeakResponse,
     TtsStatusRequest, TtsStatusResponse, TtsStopRequest, TtsStopResponse, WebSearchRequest,
     WebSearchResponse, WorkspaceToolSetEnabledRequest, WorkspaceToolSetEnabledResponse,
+    WorkspaceToolCreateAppPluginRequest, WorkspaceToolCreateAppPluginResponse,
+    WorkspaceToolForgetRequest, WorkspaceToolForgetResponse,
     WorkspaceToolSetIconRequest, WorkspaceToolSetIconResponse, WorkspaceToolsExportRequest,
     WorkspaceToolsExportResponse, WorkspaceToolsImportRequest, WorkspaceToolsImportResponse,
     WorkspaceToolsListRequest, WorkspaceToolsListResponse,
@@ -214,6 +215,8 @@ fn main() {
             cmd_workspace_tools_list,
             cmd_workspace_tool_set_enabled,
             cmd_workspace_tool_set_icon,
+            cmd_workspace_tool_forget,
+            cmd_workspace_tool_create_app_plugin,
             cmd_workspace_tools_export,
             cmd_workspace_tools_import,
             cmd_api_connections_list,
@@ -238,7 +241,6 @@ fn main() {
             cmd_model_manager_download_hf,
             cmd_model_manager_delete_installed,
             cmd_model_manager_list_catalog_csv,
-            cmd_create_tool_generate_text,
             cmd_files_list_directory,
             cmd_tool_invoke,
             cmd_custom_tool_capability_invoke,
@@ -585,6 +587,41 @@ async fn cmd_workspace_tool_set_icon(
         correlation_id: request.correlation_id,
         tool_id: request.tool_id,
         icon: request.icon,
+    })
+}
+
+#[cfg(feature = "tauri-runtime")]
+#[tauri::command]
+async fn cmd_workspace_tool_forget(
+    state: State<'_, TauriBridgeState>,
+    request: WorkspaceToolForgetRequest,
+) -> Result<WorkspaceToolForgetResponse, String> {
+    state
+        .workspace_tools
+        .forget_tool(request.tool_id.as_str())
+        .map_err(|e| e.to_string())?;
+    Ok(WorkspaceToolForgetResponse {
+        correlation_id: request.correlation_id,
+        tool_id: request.tool_id,
+        forgotten: true,
+    })
+}
+
+#[cfg(feature = "tauri-runtime")]
+#[tauri::command]
+async fn cmd_workspace_tool_create_app_plugin(
+    state: State<'_, TauriBridgeState>,
+    request: WorkspaceToolCreateAppPluginRequest,
+) -> Result<WorkspaceToolCreateAppPluginResponse, String> {
+    let tool = state.workspace_tools.create_app_tool_plugin(
+        request.tool_id.as_str(),
+        request.name.as_str(),
+        request.icon.as_str(),
+        request.description.as_str(),
+    )?;
+    Ok(WorkspaceToolCreateAppPluginResponse {
+        correlation_id: request.correlation_id,
+        tool,
     })
 }
 
@@ -1073,251 +1110,6 @@ async fn cmd_model_manager_list_catalog_csv(
         list_name: request.list_name,
         rows,
     })
-}
-
-#[cfg(feature = "tauri-runtime")]
-#[derive(Debug, Serialize)]
-struct CreateToolOpenAiMessage {
-    role: String,
-    content: String,
-}
-
-#[cfg(feature = "tauri-runtime")]
-#[derive(Debug, Serialize)]
-struct CreateToolOpenAiRequest {
-    model: String,
-    messages: Vec<CreateToolOpenAiMessage>,
-    stream: bool,
-    max_tokens: Option<u32>,
-    temperature: Option<f32>,
-}
-
-#[cfg(feature = "tauri-runtime")]
-#[tauri::command]
-async fn cmd_create_tool_generate_text(
-    state: State<'_, TauriBridgeState>,
-    request: CreateToolGenerateTextRequest,
-) -> Result<CreateToolGenerateTextResponse, String> {
-    let (endpoint, model, api_key) =
-        resolve_create_tool_provider(&state, request.model_id.as_str())?;
-    let prompt = request.prompt.trim();
-    if prompt.is_empty() {
-        return Err("prompt is required".to_string());
-    }
-
-    let payload = CreateToolOpenAiRequest {
-        model: model.clone(),
-        messages: vec![
-            CreateToolOpenAiMessage {
-                role: "system".to_string(),
-                content: "You are assisting with structured product and implementation planning for a workspace tool. Return concise high-signal text."
-                    .to_string(),
-            },
-            CreateToolOpenAiMessage {
-                role: "user".to_string(),
-                content: prompt.to_string(),
-            },
-        ],
-        stream: false,
-        max_tokens: request.max_tokens.or(Some(1400)),
-        temperature: Some(0.25),
-    };
-
-    let client = reqwest::Client::builder()
-        .connect_timeout(std::time::Duration::from_secs(8))
-        .timeout(std::time::Duration::from_secs(60))
-        .build()
-        .map_err(|e| format!("failed creating HTTP client: {e}"))?;
-
-    let mut req = client
-        .post(endpoint.as_str())
-        .header("Content-Type", "application/json")
-        .header("User-Agent", "arxell-lite/create-tool");
-    if let Some(key) = api_key {
-        req = req
-            .header("Authorization", format!("Bearer {key}"))
-            .header("x-api-key", key);
-    }
-
-    let response = req
-        .json(&payload)
-        .send()
-        .await
-        .map_err(|e| format!("generation request failed: {e}"))?;
-
-    if !response.status().is_success() {
-        let status = response.status();
-        let body = response
-            .text()
-            .await
-            .unwrap_or_else(|_| "<unreadable body>".to_string());
-        return Err(format!(
-            "generation failed (HTTP {}): {}",
-            status.as_u16(),
-            body.chars().take(240).collect::<String>()
-        ));
-    }
-
-    let body = response
-        .json::<Value>()
-        .await
-        .map_err(|e| format!("failed parsing generation response: {e}"))?;
-    let text = extract_generated_text_from_value(&body);
-    if text.trim().is_empty() {
-        return Err("generation response was empty".to_string());
-    }
-
-    Ok(CreateToolGenerateTextResponse {
-        correlation_id: request.correlation_id,
-        model_id: request.model_id,
-        resolved_model: model,
-        resolved_endpoint: endpoint,
-        text,
-    })
-}
-
-#[cfg(feature = "tauri-runtime")]
-fn resolve_create_tool_provider(
-    state: &TauriBridgeState,
-    model_id: &str,
-) -> Result<(String, String, Option<String>), String> {
-    let trimmed = model_id.trim();
-    if trimmed.is_empty() || trimmed == "primary-agent" {
-        let verified_llm = state
-            .api_registry
-            .verified_for_agent()
-            .into_iter()
-            .find(|record| matches!(record.api_type, ApiConnectionType::Llm));
-        if let Some(record) = verified_llm {
-            let endpoint = create_tool_chat_endpoint(
-                record.api_url.as_str(),
-                record.api_standard_path.as_deref(),
-            );
-            let model = record.model_name.unwrap_or_else(fallback_model_name);
-            return Ok((endpoint, model, Some(record.api_key)));
-        }
-        return Ok((
-            fallback_endpoint(),
-            fallback_model_name(),
-            std::env::var("OPENAI_API_KEY").ok(),
-        ));
-    }
-
-    if let Some(rest) = trimmed.strip_prefix("api:") {
-        let id = rest.split(':').next().unwrap_or("").trim();
-        if id.is_empty() {
-            return Err("invalid api model id".to_string());
-        }
-        let record = state
-            .api_registry
-            .list()
-            .into_iter()
-            .find(|item| item.id == id)
-            .ok_or_else(|| format!("api connection not found: {id}"))?;
-        if !matches!(record.api_type, ApiConnectionType::Llm) {
-            return Err(format!("api connection is not an LLM endpoint: {id}"));
-        }
-        if !matches!(
-            record.status,
-            ApiConnectionStatus::Verified | ApiConnectionStatus::Warning
-        ) {
-            return Err(format!(
-                "api connection is not usable (status={:?}): {id}",
-                record.status
-            ));
-        }
-        let api_key = state.api_registry.get_secret_api_key(id)?;
-        let endpoint =
-            create_tool_chat_endpoint(record.api_url.as_str(), record.api_standard_path.as_deref());
-        let model = record.model_name.unwrap_or_else(fallback_model_name);
-        return Ok((endpoint, model, Some(api_key)));
-    }
-
-    if let Some(rest) = trimmed.strip_prefix("mm:") {
-        let model = rest.trim();
-        if model.is_empty() {
-            return Err("invalid model-manager model id".to_string());
-        }
-        return Ok((
-            fallback_endpoint(),
-            model.to_string(),
-            std::env::var("OPENAI_API_KEY").ok(),
-        ));
-    }
-
-    Err(format!("unsupported model id: {trimmed}"))
-}
-
-#[cfg(feature = "tauri-runtime")]
-fn create_tool_chat_endpoint(api_url: &str, api_standard_path: Option<&str>) -> String {
-    let base = api_url.trim().trim_end_matches('/');
-    let path = api_standard_path
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .unwrap_or("/chat/completions");
-    if path.starts_with("http://") || path.starts_with("https://") {
-        return path.to_string();
-    }
-    let lower = base.to_ascii_lowercase();
-    if lower.ends_with("/chat/completions") {
-        return base.to_string();
-    }
-    if path.starts_with('/') {
-        format!("{base}{path}")
-    } else {
-        format!("{base}/{path}")
-    }
-}
-
-#[cfg(feature = "tauri-runtime")]
-fn extract_generated_text_from_value(body: &Value) -> String {
-    let from_message = body
-        .get("choices")
-        .and_then(|v| v.get(0))
-        .and_then(|v| v.get("message"))
-        .and_then(|v| v.get("content"))
-        .map(value_to_flat_text);
-    if let Some(text) = from_message {
-        if !text.trim().is_empty() {
-            return text;
-        }
-    }
-    let from_text = body
-        .get("choices")
-        .and_then(|v| v.get(0))
-        .and_then(|v| v.get("text"))
-        .map(value_to_flat_text);
-    from_text.unwrap_or_default()
-}
-
-#[cfg(feature = "tauri-runtime")]
-fn value_to_flat_text(value: &Value) -> String {
-    match value {
-        Value::String(s) => s.clone(),
-        Value::Array(items) => {
-            let mut out = String::new();
-            for item in items {
-                if let Some(s) = item.get("text").and_then(|v| v.as_str()) {
-                    out.push_str(s);
-                } else if let Some(s) = item.as_str() {
-                    out.push_str(s);
-                }
-            }
-            out
-        }
-        _ => String::new(),
-    }
-}
-
-#[cfg(feature = "tauri-runtime")]
-fn fallback_endpoint() -> String {
-    std::env::var("FOUNDATION_LLM_ENDPOINT")
-        .unwrap_or_else(|_| "http://127.0.0.1:1420/v1/chat/completions".to_string())
-}
-
-#[cfg(feature = "tauri-runtime")]
-fn fallback_model_name() -> String {
-    std::env::var("FOUNDATION_LLM_MODEL").unwrap_or_else(|_| "local-model".to_string())
 }
 
 #[cfg(feature = "tauri-runtime")]

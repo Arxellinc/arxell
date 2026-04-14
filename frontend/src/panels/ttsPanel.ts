@@ -33,6 +33,12 @@ function bundleLabelFromModelPath(modelPath: string): string {
   return parent ? `${parent} (${file})` : file;
 }
 
+function formatBytes(value: number | null | undefined): string {
+  if (!Number.isFinite(value ?? NaN) || !value) return "";
+  const mb = value / (1024 * 1024);
+  return `${mb.toFixed(mb >= 10 ? 0 : 1)} MB`;
+}
+
 export function renderTtsActions(): string {
   return `
     <button type="button" class="tool-action-btn" id="ttsStartBtn">Start</button>
@@ -54,6 +60,22 @@ export function renderTtsBody(state: PrimaryPanelRenderState): string {
   const secondaryRequired = engineUi.secondaryRequired;
   const showSecondaryPath = engineUi.showSecondaryPath;
   const secondaryPath = tts.secondaryPath || (tts.engine === "piper" ? "" : tts.voicesPath || "");
+  const showDownloadProgress = busy && (tts.downloadPercent !== null || tts.downloadReceivedBytes !== null);
+  const progressValue = Number.isFinite(tts.downloadPercent ?? NaN)
+    ? Math.max(0, Math.min(100, tts.downloadPercent ?? 0))
+    : null;
+  const progressLabel =
+    progressValue !== null
+      ? `${progressValue.toFixed(0)}%`
+      : tts.downloadReceivedBytes
+      ? formatBytes(tts.downloadReceivedBytes)
+      : "Downloading";
+  const progressDetail =
+    tts.downloadTotalBytes && tts.downloadReceivedBytes
+      ? `${formatBytes(tts.downloadReceivedBytes)} of ${formatBytes(tts.downloadTotalBytes)}`
+      : tts.downloadReceivedBytes
+      ? formatBytes(tts.downloadReceivedBytes)
+      : "";
   const modelPathOptions = Array.from(
     new Set([...(tts.availableModelPaths || []), ...(tts.modelPath ? [tts.modelPath] : [])])
   );
@@ -120,6 +142,19 @@ export function renderTtsBody(state: PrimaryPanelRenderState): string {
 
       ${compatHint ? `<div class="tts-compat-hint">${escapeHtml(compatHint)}</div>` : ""}
 
+      ${
+        showDownloadProgress
+          ? `<div class="tts-download-progress" role="status" aria-live="polite">
+              <div class="tts-download-progress-top">
+                <span>Downloading model bundle</span>
+                <span>${escapeHtml(progressLabel)}</span>
+              </div>
+              <progress ${progressValue !== null ? `value="${progressValue.toFixed(2)}" max="100"` : ""}></progress>
+              ${progressDetail ? `<div class="tts-download-progress-detail">${escapeHtml(progressDetail)}</div>` : ""}
+            </div>`
+          : ""
+      }
+
       <div class="config-table">
         <div class="config-row tts-config-row">
           <label class="config-key" for="ttsVoiceSelect">Voice</label>
@@ -146,6 +181,7 @@ export function renderTtsBody(state: PrimaryPanelRenderState): string {
         </div>
       </div>
       <div class="tts-compat-hint">${escapeHtml(engineHint)}</div>
+      ${tts.lexiconStatus ? `<div class="tts-compat-hint">${escapeHtml(tts.lexiconStatus)}</div>` : ""}
 
       <div class="config-table" style="margin-top: 12px;">
         <div class="config-row tts-config-row">

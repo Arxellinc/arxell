@@ -9,7 +9,7 @@ export interface ToolHostStore {
   applyEvent: (event: AppEvent) => void;
 }
 
-export function createToolHostStore(): ToolHostStore {
+export function createWorkspaceToolHostStore(): ToolHostStore {
   const modules = new Map<string, ToolModule<unknown>>();
   const states = new Map<string, unknown>();
 

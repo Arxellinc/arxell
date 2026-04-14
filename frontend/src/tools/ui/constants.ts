@@ -91,5 +91,6 @@ export const FLOW_UI_ID = {
   advancedToggle: "flowAdvancedToggle",
   projectNameInput: "flowProjectNameInput",
   projectTypeSelect: "flowProjectTypeSelect",
+  projectIconInput: "flowProjectIconInput",
   projectDescriptionInput: "flowProjectDescriptionInput"
 } as const;

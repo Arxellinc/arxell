@@ -18,6 +18,7 @@ const FLOW_PROJECT_TYPE_OPTIONS = [
 ];
 
 const FLOW_PHASE_MODEL_KEYS = ["select_task", "investigate", "update_plan", "implement", "validate"];
+const FLOW_ALL_PHASES_KEY = "__all";
 
 export interface FlowTerminalSessionView {
   sessionId: string;
@@ -55,6 +56,7 @@ export interface FlowToolViewState {
   projectSetupOpen: boolean;
   projectNameDraft: string;
   projectTypeDraft: string;
+  projectIconDraft: string;
   projectDescriptionDraft: string;
   phaseModels: Record<string, string>;
   availableModels: Array<{ id: string; label: string }>;
@@ -255,8 +257,6 @@ export function renderFlowToolBody(view: FlowToolViewState): string {
   const activeRun = view.runs.find((run) => run.runId === view.activeRunId) ?? null;
   const split = Math.max(28, Math.min(78, view.workspaceSplit));
   const activePhase = view.activeTerminalPhase;
-  const activeSessionId = view.phaseSessionByName[activePhase] ?? "";
-  const activeSession = view.terminalSessions.find((session) => session.sessionId === activeSessionId) ?? null;
   const bottomPanelTabs: Array<{ id: "terminal" | "validate" | "events"; label: string }> = [
     { id: "terminal", label: "Terminal" },
     { id: "validate", label: "Validate" },
@@ -284,17 +284,6 @@ export function renderFlowToolBody(view: FlowToolViewState): string {
       ? `<div class="flow-terminal-panel">
           <div class="flow-terminal-header">
             <div class="flow-phase-tabs">${terminalPhaseTabs}</div>
-            <div class="flow-terminal-actions">
-              <button ${FLOW_DATA_ATTR.action}="open-phase-terminal" ${FLOW_DATA_ATTR.phase}="${escapeHtml(
-          activePhase
-        )}">Open</button>
-              <button ${FLOW_DATA_ATTR.action}="close-phase-terminal" ${FLOW_DATA_ATTR.phase}="${escapeHtml(
-          activePhase
-        )}" ${activeSession ? "" : "disabled"}>Close</button>
-              <span class="flow-terminal-meta">${escapeHtml(
-                activeSession ? `${activeSession.title} (${activeSession.status})` : "No terminal session"
-              )}</span>
-            </div>
           </div>
           <div class="flow-phase-terminal-host terminal-host" id="flowPhaseTerminalHost"></div>
           <div class="flow-transcript-strip">
@@ -328,12 +317,6 @@ export function renderFlowToolBody(view: FlowToolViewState): string {
           </div>`;
 
   return `<div class="flow-tool primary-pane-body">
-    <section class="flow-status-line">
-      <div class="flow-run-summary">${escapeHtml(
-        activeRun ? `${activeRun.runId} · ${activeRun.mode} · ${activeRun.status}` : "No run selected"
-      )}</div>
-    </section>
-
     ${
       view.advancedOpen
         ? `<section class="flow-controls">
@@ -419,34 +402,43 @@ export function renderFlowToolBody(view: FlowToolViewState): string {
               .join("")}
           </select>
         </label>
+        ${
+          view.projectTypeDraft === "app-tool"
+            ? `<label class="flow-control">
+          <span>Tool Icon (from <a href="https://lucide.dev/icons/" target="_blank" rel="noopener noreferrer" class="tts-trusted-link">https://lucide.dev/icons/</a>)</span>
+          <input id="${FLOW_UI_ID.projectIconInput}" type="text" value="${escapeHtml(
+                view.projectIconDraft
+              )}" placeholder="Example: wrench" />
+        </label>`
+            : ""
+        }
         <label class="flow-control">
           <span>Project Description (optional)</span>
-          <textarea id="${FLOW_UI_ID.projectDescriptionInput}" rows="3" placeholder="1-3 sentences about what you want to build.">${escapeHtml(
+          <textarea id="${FLOW_UI_ID.projectDescriptionInput}" class="flow-project-description-input" rows="8" placeholder="Describe the goals, constraints, workflows, users, integrations, and any implementation details you already know.">${escapeHtml(
             view.projectDescriptionDraft
           )}</textarea>
         </label>
         <div class="flow-project-modal-actions">
-          <button ${FLOW_DATA_ATTR.action}="create-project-setup">Create Project</button>
-          <button ${FLOW_DATA_ATTR.action}="skip-project-setup">Skip for now</button>
+          <button type="button" ${FLOW_DATA_ATTR.action}="create-project-setup">Create Project</button>
+          <button type="button" ${FLOW_DATA_ATTR.action}="skip-project-setup">Skip for now</button>
         </div>
+        ${view.message ? `<div class="flow-message">${escapeHtml(view.message)}</div>` : ""}
         <details class="flow-project-modal-advanced">
           <summary>Advanced: Phase Models</summary>
           <div class="flow-project-model-grid">
+            <label class="flow-control flow-control-full">
+              <span>Apply to all</span>
+              <select ${FLOW_DATA_ATTR.action}="set-phase-model" ${FLOW_DATA_ATTR.phase}="${FLOW_ALL_PHASES_KEY}">
+                ${renderPhaseModelOptions(view.availableModels, getAllPhaseModelSelection(view.phaseModels))}
+              </select>
+            </label>
             ${FLOW_PHASE_MODEL_KEYS
               .map((phase) => {
                 const selected = view.phaseModels[phase] || "auto";
                 return `<label class="flow-control">
                 <span>${phase}</span>
                 <select ${FLOW_DATA_ATTR.action}="set-phase-model" ${FLOW_DATA_ATTR.phase}="${phase}">
-                  <option value="auto" ${selected === "auto" ? "selected" : ""}>auto</option>
-                  ${view.availableModels
-                    .map(
-                      (model) =>
-                        `<option value="${escapeHtml(model.id)}" ${
-                          selected === model.id ? "selected" : ""
-                        }>${escapeHtml(model.label)}</option>`
-                    )
-                    .join("")}
+                  ${renderPhaseModelOptions(view.availableModels, selected)}
                 </select>
               </label>`;
               })
@@ -484,4 +476,24 @@ export function renderFlowToolBody(view: FlowToolViewState): string {
         : ""
     }
   </div>`;
+}
+
+function getAllPhaseModelSelection(phaseModels: Record<string, string>): string {
+  const values = FLOW_PHASE_MODEL_KEYS.map((phase) => phaseModels[phase] || "auto");
+  const first = values[0] || "auto";
+  return values.every((value) => value === first) ? first : "auto";
+}
+
+function renderPhaseModelOptions(
+  models: Array<{ id: string; label: string }>,
+  selected: string
+): string {
+  return `<option value="auto" ${selected === "auto" ? "selected" : ""}>auto</option>${models
+    .map(
+      (model) =>
+        `<option value="${escapeHtml(model.id)}" ${selected === model.id ? "selected" : ""}>${escapeHtml(
+          model.label
+        )}</option>`
+    )
+    .join("")}`;
 }

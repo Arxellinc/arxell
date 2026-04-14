@@ -99,10 +99,14 @@ export interface TtsState {
   voices: string[];
   selectedVoice: string;
   speed: number;
+  lexiconStatus: string;
   testText: string;
   lastDurationMs: number | null;
   lastBytes: number | null;
   lastSampleRate: number | null;
+  downloadReceivedBytes: number | null;
+  downloadTotalBytes: number | null;
+  downloadPercent: number | null;
 }
 
 export interface ConsoleEntry {

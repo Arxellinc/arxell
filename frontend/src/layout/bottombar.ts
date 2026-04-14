@@ -40,8 +40,8 @@ export function renderGlobalBottombar(status: GlobalBottomStatus): string {
   const resourceContainerHidden =
     appResourceCpuText || appResourceMemoryText || appResourceNetworkText ? "" : " hidden";
   const runtimeItems: string[] = [];
-  if (engineText) runtimeItems.push(`<span class="runtime-item"><span class="runtime-label">◆ Engine:</span> <span class="runtime-value">${escapeText(engineText)}</span></span>`);
-  if (modelText) runtimeItems.push(`<span class="runtime-item"><span class="runtime-label">◈ Model:</span> <span class="runtime-value">${escapeText(modelText)}</span></span>`);
+  if (engineText) runtimeItems.push(`<span class="runtime-item"><span class="runtime-label">$ Engine:</span> <span class="runtime-value">${escapeText(engineText)}</span></span>`);
+  if (modelText) runtimeItems.push(`<span class="runtime-item"><span class="runtime-label"># </span> <span class="runtime-value">${escapeText(modelText)}</span></span>`);
   if (contextText) runtimeItems.push(`<span class="runtime-item"><span class="runtime-label">◍ Context:</span> <span class="runtime-value">${escapeText(contextText)}</span></span>`);
   if (speedText) runtimeItems.push(`<span class="runtime-item"><span class="runtime-label">⇄ Speed:</span> <span class="runtime-value">${escapeText(speedText)}</span></span>`);
   if (ttsLatencyText) runtimeItems.push(`<span class="runtime-item"><span class="runtime-label">♫ TTS Latency:</span> <span class="runtime-value">${escapeText(ttsLatencyText)}</span></span>`);

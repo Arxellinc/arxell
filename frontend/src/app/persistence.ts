@@ -1,5 +1,4 @@
 import type { DisplayMode } from "../layout";
-import { DEFAULT_CREATE_TOOL_SPEC } from "../tools/createTool/state";
 
 const LLAMA_MODEL_PATH_STORAGE_KEY = "arxell.llama.modelPath";
 const LLAMA_MAX_TOKENS_STORAGE_KEY = "arxell.llama.maxTokens";
@@ -15,7 +14,6 @@ const SHOW_BOTTOM_TTS_LATENCY_STORAGE_KEY = "arxell.settings.showBottom.ttsLaten
 const CHAT_MODEL_ID_STORAGE_KEY = "arxell.chat.modelId";
 const STT_BACKEND_STORAGE_KEY = "arxell.stt.backend";
 const MIC_PERMISSION_BUBBLE_DISMISSED_KEY = "arxell.micPermissionBubbleDismissed";
-const CREATE_TOOL_DRAFT_STORAGE_KEY = "arxell.createTool.draft.v1";
 const FLOW_ADVANCED_OPEN_STORAGE_KEY = "arxell.flow.advancedOpen";
 const FLOW_BOTTOM_PANEL_STORAGE_KEY = "arxell.flow.bottomPanel";
 const FLOW_SPLIT_STORAGE_KEY = "arxell.flow.split";
@@ -45,54 +43,6 @@ export const FLOW_TERMINAL_PHASES = [
 
 export type ChatRoutePreference = "auto" | "agent" | "legacy";
 export type SttBackend = "whisper_cpp" | "sherpa_onnx";
-
-export type CreateToolLayoutModifier =
-  | "modal-focused"
-  | "secondary-toolbar"
-  | "chat-sidecar"
-  | "bottom-console"
-  | "wizard-steps"
-  | "map-canvas"
-  | "split-main-detail"
-  | "triple-panel"
-  | "timeline-console"
-  | "dashboard-cards"
-  | "tabbed-workbench"
-  | "command-palette-first";
-
-const CREATE_TOOL_LAYOUT_MODIFIERS = new Set<CreateToolLayoutModifier>([
-  "modal-focused",
-  "secondary-toolbar",
-  "chat-sidecar",
-  "bottom-console",
-  "wizard-steps",
-  "map-canvas",
-  "split-main-detail",
-  "triple-panel",
-  "timeline-console",
-  "dashboard-cards",
-  "tabbed-workbench",
-  "command-palette-first"
-]);
-
-export interface PersistedCreateToolDraft {
-  createToolStage: "meta" | "prd" | "build" | "fix";
-  createToolSelectedModelId: string;
-  createToolPrdUiPreset: "left-sidebar" | "right-sidebar" | "both-sidebars" | "no-sidebar";
-  createToolLayoutModifiers: CreateToolLayoutModifier[];
-  createToolPrdUiNotes: string;
-  createToolPrdInputs: string;
-  createToolPrdProcess: string;
-  createToolPrdConnections: string;
-  createToolPrdDependencies: string;
-  createToolPrdExpectedBehavior: string;
-  createToolPrdOutputs: string;
-  createToolPrdMarkdownDoc: string;
-  createToolDevPlan: string;
-  createToolBuildViewMode: "code" | "preview";
-  createToolFixNotes: string;
-  createToolSpec: typeof DEFAULT_CREATE_TOOL_SPEC;
-}
 
 export function loadPersistedLlamaModelPath(): string {
   try {
@@ -434,129 +384,4 @@ export function resolveSystemDisplayMode(): DisplayMode {
     }
   } catch {}
   return "dark";
-}
-
-export function loadPersistedCreateToolDraft(): PersistedCreateToolDraft | null {
-  try {
-    const raw = window.localStorage.getItem(CREATE_TOOL_DRAFT_STORAGE_KEY);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw) as Partial<PersistedCreateToolDraft>;
-    if (!parsed || typeof parsed !== "object") return null;
-    const stage =
-      parsed.createToolStage === "meta" ||
-      parsed.createToolStage === "prd" ||
-      parsed.createToolStage === "build" ||
-      parsed.createToolStage === "fix"
-        ? parsed.createToolStage
-        : "meta";
-    const uiPreset =
-      parsed.createToolPrdUiPreset === "left-sidebar" ||
-      parsed.createToolPrdUiPreset === "right-sidebar" ||
-      parsed.createToolPrdUiPreset === "both-sidebars" ||
-      parsed.createToolPrdUiPreset === "no-sidebar"
-        ? parsed.createToolPrdUiPreset
-        : "left-sidebar";
-    const buildViewMode = parsed.createToolBuildViewMode === "preview" ? "preview" : "code";
-    const persistedSpec = parsed.createToolSpec;
-    const nextSpec = {
-      ...DEFAULT_CREATE_TOOL_SPEC,
-      ...(persistedSpec && typeof persistedSpec === "object" ? persistedSpec : {}),
-      guardrails: {
-        ...DEFAULT_CREATE_TOOL_SPEC.guardrails,
-        ...(persistedSpec &&
-        typeof persistedSpec === "object" &&
-        persistedSpec.guardrails &&
-        typeof persistedSpec.guardrails === "object"
-          ? persistedSpec.guardrails
-          : {})
-      }
-    };
-    return {
-      createToolStage: stage,
-      createToolSelectedModelId:
-        typeof parsed.createToolSelectedModelId === "string" && parsed.createToolSelectedModelId.trim()
-          ? parsed.createToolSelectedModelId.trim()
-          : "primary-agent",
-      createToolPrdUiPreset: uiPreset,
-      createToolLayoutModifiers: Array.isArray(parsed.createToolLayoutModifiers)
-        ? parsed.createToolLayoutModifiers.filter((item) => CREATE_TOOL_LAYOUT_MODIFIERS.has(item))
-        : [],
-      createToolPrdUiNotes:
-        typeof parsed.createToolPrdUiNotes === "string" ? parsed.createToolPrdUiNotes : "",
-      createToolPrdInputs: typeof parsed.createToolPrdInputs === "string" ? parsed.createToolPrdInputs : "",
-      createToolPrdProcess:
-        typeof parsed.createToolPrdProcess === "string" ? parsed.createToolPrdProcess : "",
-      createToolPrdConnections:
-        typeof parsed.createToolPrdConnections === "string" ? parsed.createToolPrdConnections : "",
-      createToolPrdDependencies:
-        typeof parsed.createToolPrdDependencies === "string" ? parsed.createToolPrdDependencies : "",
-      createToolPrdExpectedBehavior:
-        typeof parsed.createToolPrdExpectedBehavior === "string"
-          ? parsed.createToolPrdExpectedBehavior
-          : "",
-      createToolPrdOutputs:
-        typeof parsed.createToolPrdOutputs === "string" ? parsed.createToolPrdOutputs : "",
-      createToolPrdMarkdownDoc:
-        typeof parsed.createToolPrdMarkdownDoc === "string" ? parsed.createToolPrdMarkdownDoc : "",
-      createToolDevPlan: typeof parsed.createToolDevPlan === "string" ? parsed.createToolDevPlan : "",
-      createToolBuildViewMode: buildViewMode,
-      createToolFixNotes: typeof parsed.createToolFixNotes === "string" ? parsed.createToolFixNotes : "",
-      createToolSpec: nextSpec
-    };
-  } catch {
-    return null;
-  }
-}
-
-export function persistCreateToolDraft(slice: {
-  createToolStage: "meta" | "prd" | "build" | "fix";
-  createToolSelectedModelId: string;
-  createToolPrdUiPreset: "left-sidebar" | "right-sidebar" | "both-sidebars" | "no-sidebar";
-  createToolLayoutModifiers: CreateToolLayoutModifier[];
-  createToolPrdUiNotes: string;
-  createToolPrdInputs: string;
-  createToolPrdProcess: string;
-  createToolPrdConnections: string;
-  createToolPrdDependencies: string;
-  createToolPrdExpectedBehavior: string;
-  createToolPrdOutputs: string;
-  createToolPreviewFiles: Record<string, string>;
-  createToolDevPlan: string;
-  createToolBuildViewMode: "code" | "preview";
-  createToolFixNotes: string;
-  createToolSpec: typeof DEFAULT_CREATE_TOOL_SPEC;
-}): void {
-  try {
-    const payload: PersistedCreateToolDraft = {
-      createToolStage: slice.createToolStage,
-      createToolSelectedModelId: slice.createToolSelectedModelId || "primary-agent",
-      createToolPrdUiPreset: slice.createToolPrdUiPreset,
-      createToolLayoutModifiers: slice.createToolLayoutModifiers.filter((item) =>
-        CREATE_TOOL_LAYOUT_MODIFIERS.has(item)
-      ),
-      createToolPrdUiNotes: slice.createToolPrdUiNotes,
-      createToolPrdInputs: slice.createToolPrdInputs,
-      createToolPrdProcess: slice.createToolPrdProcess,
-      createToolPrdConnections: slice.createToolPrdConnections,
-      createToolPrdDependencies: slice.createToolPrdDependencies,
-      createToolPrdExpectedBehavior: slice.createToolPrdExpectedBehavior,
-      createToolPrdOutputs: slice.createToolPrdOutputs,
-      createToolPrdMarkdownDoc:
-        typeof slice.createToolPreviewFiles["PRD.md"] === "string"
-          ? slice.createToolPreviewFiles["PRD.md"]
-          : "",
-      createToolDevPlan: slice.createToolDevPlan,
-      createToolBuildViewMode: slice.createToolBuildViewMode,
-      createToolFixNotes: slice.createToolFixNotes,
-      createToolSpec: {
-        ...DEFAULT_CREATE_TOOL_SPEC,
-        ...slice.createToolSpec,
-        guardrails: {
-          ...DEFAULT_CREATE_TOOL_SPEC.guardrails,
-          ...(slice.createToolSpec?.guardrails || {})
-        }
-      }
-    };
-    window.localStorage.setItem(CREATE_TOOL_DRAFT_STORAGE_KEY, JSON.stringify(payload));
-  } catch {}
 }

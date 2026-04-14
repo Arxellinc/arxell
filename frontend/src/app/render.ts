@@ -49,6 +49,7 @@ export function buildBottomStatus(input: {
   showAppResourceMemory: boolean;
   showAppResourceNetwork: boolean;
   modelPath: string;
+  modelLabel?: string | null;
   contextTokens: number | null;
   contextCapacity: number | null;
   tokensPerSecond: number | null;
@@ -83,7 +84,7 @@ export function buildBottomStatus(input: {
     appResourceMemoryText,
     appResourceNetworkText,
     engine: input.showBottomEngine ? engine : null,
-    model: input.showBottomModel ? modelNameFromPath(input.modelPath) : null,
+    model: input.showBottomModel ? (input.modelLabel?.trim() || modelNameFromPath(input.modelPath)) : null,
     contextText: input.showBottomContext ? contextText : null,
     speedText: input.showBottomSpeed ? speedText : null,
     ttsLatencyText: input.showBottomTtsLatency ? ttsLatencyText : null

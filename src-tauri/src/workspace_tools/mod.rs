@@ -1,5 +1,6 @@
 use crate::contracts::WorkspaceToolRecord;
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -63,14 +64,6 @@ const WORKSPACE_TOOL_MANIFESTS: &[WorkspaceToolManifest] = &[
         title: "Tasks",
         description: "Task planning and status tracking",
         category: "agent",
-        core: false,
-        default_enabled: true,
-    },
-    WorkspaceToolManifest {
-        tool_id: "createTool",
-        title: "Create Tool",
-        description: "Scaffold and register custom workspace tools",
-        category: "workspace",
         core: false,
         default_enabled: true,
     },
@@ -219,6 +212,108 @@ impl WorkspaceToolsService {
         Ok(())
     }
 
+    pub fn forget_tool(&self, tool_id: &str) -> Result<(), String> {
+        let normalized = tool_id.trim();
+        if normalized.is_empty() {
+            return Err("tool id is required".to_string());
+        }
+        let mut snapshot = read_registry_snapshot(&self.registry_path);
+        snapshot.enabled.remove(normalized);
+        snapshot.icon.remove(normalized);
+        self.persist_registry_snapshot(&snapshot)?;
+
+        let mut state = self.state.write().expect("workspace tools lock poisoned");
+        state.tools.remove(normalized);
+        state.plugin_ids.remove(normalized);
+        state.plugin_capabilities.remove(normalized);
+        apply_plugins(&mut state, &self.plugins_root, &snapshot);
+        Ok(())
+    }
+
+    pub fn create_app_tool_plugin(
+        &self,
+        tool_id: &str,
+        name: &str,
+        icon: &str,
+        description: &str,
+    ) -> Result<WorkspaceToolRecord, String> {
+        let tool_id = sanitize_tool_id(tool_id);
+        if tool_id.is_empty() {
+            return Err("tool id is required".to_string());
+        }
+        if WORKSPACE_TOOL_MANIFESTS
+            .iter()
+            .any(|manifest| manifest.tool_id == tool_id.as_str())
+        {
+            return Err(format!("tool id is reserved: {tool_id}"));
+        }
+
+        let plugin_dir = self.plugins_root.join(tool_id.as_str());
+        if plugin_dir.exists() {
+            return Err(format!("tool already exists: {tool_id}"));
+        }
+
+        let dist_dir = plugin_dir.join("dist");
+        fs::create_dir_all(dist_dir.as_path())
+            .map_err(|e| format!("failed creating plugin directory: {e}"))?;
+
+        let title = name.trim();
+        let title = if title.is_empty() { tool_id.as_str() } else { title };
+        let description = description.trim();
+        let description = if description.is_empty() {
+            "Generated workspace app tool"
+        } else {
+            description
+        };
+        let icon = icon.trim();
+        let icon = if icon.is_empty() { "wrench" } else { icon };
+
+        let manifest = json!({
+            "id": tool_id,
+            "name": title,
+            "version": "1.0.0",
+            "entry": "dist/index.html",
+            "category": "workspace",
+            "icon": icon
+        });
+        let permissions = json!({ "capabilities": ["files.read"] });
+
+        fs::write(
+            plugin_dir.join("manifest.json"),
+            format!(
+                "{}\n",
+                serde_json::to_string_pretty(&manifest)
+                    .map_err(|e| format!("failed serializing plugin manifest: {e}"))?
+            ),
+        )
+        .map_err(|e| format!("failed writing plugin manifest: {e}"))?;
+        fs::write(
+            plugin_dir.join("permissions.json"),
+            format!(
+                "{}\n",
+                serde_json::to_string_pretty(&permissions)
+                    .map_err(|e| format!("failed serializing plugin permissions: {e}"))?
+            ),
+        )
+        .map_err(|e| format!("failed writing plugin permissions: {e}"))?;
+        fs::write(
+            dist_dir.join("index.html"),
+            render_plugin_index_html(title, description),
+        )
+        .map_err(|e| format!("failed writing plugin index: {e}"))?;
+        fs::write(dist_dir.join("main.js"), render_plugin_main_js(title))
+            .map_err(|e| format!("failed writing plugin script: {e}"))?;
+
+        let snapshot = read_registry_snapshot(&self.registry_path);
+        let mut state = self.state.write().expect("workspace tools lock poisoned");
+        apply_plugins(&mut state, &self.plugins_root, &snapshot);
+        state
+            .tools
+            .get(tool_id.as_str())
+            .cloned()
+            .ok_or_else(|| format!("created plugin was not discovered: {tool_id}"))
+    }
+
     pub fn ensure_custom_tool_capability(
         &self,
         custom_tool_id: &str,
@@ -310,12 +405,16 @@ impl WorkspaceToolsService {
             enabled,
             icon,
         };
+        self.persist_registry_snapshot(&snapshot)
+    }
+
+    fn persist_registry_snapshot(&self, snapshot: &ToolRegistrySnapshot) -> Result<(), String> {
         let Some(parent) = self.registry_path.parent() else {
             return Err("invalid tool registry path".to_string());
         };
         fs::create_dir_all(parent)
             .map_err(|e| format!("failed creating tool registry dir: {e}"))?;
-        let payload = serde_json::to_string_pretty(&snapshot)
+        let payload = serde_json::to_string_pretty(snapshot)
             .map_err(|e| format!("failed serializing tool registry: {e}"))?;
         let tmp_path = self.registry_path.with_extension("json.tmp");
         fs::write(&tmp_path, format!("{payload}\n"))
@@ -477,6 +576,103 @@ fn normalize_category(input: Option<&str>) -> &'static str {
         "ops" => "ops",
         _ => "workspace",
     }
+}
+
+fn sanitize_tool_id(value: &str) -> String {
+    let mut out = String::new();
+    let mut last_dash = false;
+    for ch in value.trim().to_lowercase().chars() {
+        let next = if ch.is_ascii_alphanumeric() { ch } else { '-' };
+        if next == '-' {
+            if last_dash {
+                continue;
+            }
+            last_dash = true;
+        } else {
+            last_dash = false;
+        }
+        out.push(next);
+        if out.len() >= 40 {
+            break;
+        }
+    }
+    out.trim_matches('-').to_string()
+}
+
+fn escape_html(value: &str) -> String {
+    value
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&#39;")
+}
+
+fn render_plugin_index_html(title: &str, description: &str) -> String {
+    format!(
+        r#"<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>{}</title>
+    <style>
+      :root {{ color-scheme: dark; }}
+      body {{ margin: 0; font: 13px/1.45 ui-sans-serif, system-ui, sans-serif; background: #10151b; color: #d8e0ea; }}
+      .wrap {{ padding: 14px; display: grid; gap: 12px; }}
+      .panel {{ border: 1px solid #2d3948; border-radius: 8px; padding: 12px; background: #151d26; }}
+      h1 {{ margin: 0; font-size: 16px; }}
+      p {{ margin: 6px 0 0; color: #9aa8b8; }}
+      button {{ height: 30px; border-radius: 6px; border: 1px solid #3a4a5d; background: #202b37; color: #edf3fb; padding: 0 12px; }}
+      pre {{ margin: 0; white-space: pre-wrap; word-break: break-word; color: #c5d1df; }}
+    </style>
+  </head>
+  <body>
+    <main class="wrap">
+      <section class="panel">
+        <h1>{}</h1>
+        <p>{}</p>
+      </section>
+      <section class="panel">
+        <button id="runBtn" type="button">Run</button>
+      </section>
+      <section class="panel"><pre id="output">Ready.</pre></section>
+    </main>
+    <script src="./main.js"></script>
+  </body>
+</html>
+"#,
+        escape_html(title),
+        escape_html(title),
+        escape_html(description)
+    )
+}
+
+fn render_plugin_main_js(title: &str) -> String {
+    format!(
+        r#"(() => {{
+  const output = document.getElementById("output");
+  const runBtn = document.getElementById("runBtn");
+  function setOutput(text) {{
+    if (output) output.textContent = text;
+  }}
+  window.addEventListener("message", (event) => {{
+    const data = event.data;
+    if (!data || typeof data !== "object") return;
+    if (data.type === "plugin.init" || data.type === "customTool.init") {{
+      setOutput("Ready.");
+    }}
+  }});
+  if (runBtn) {{
+    runBtn.addEventListener("click", () => {{
+      setOutput("Ran at " + new Date().toLocaleTimeString());
+    }});
+  }}
+  window.parent.postMessage({{ type: "plugin.ready", title: {} }}, "*");
+}})();
+"#,
+        serde_json::to_string(title).unwrap_or_else(|_| "\"App Tool\"".to_string())
+    )
 }
 
 fn default_registry_path() -> PathBuf {

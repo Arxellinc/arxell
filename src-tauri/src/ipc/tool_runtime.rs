@@ -39,6 +39,42 @@ pub async fn invoke_tool(
 ) -> Result<ToolInvokeResponse, String> {
     static REGISTRY: OnceLock<InvokeRegistry> = OnceLock::new();
     let registry = REGISTRY.get_or_init(build_registry);
+
+    // Enforce ToolMode for flow tool side-effect actions
+    if request.tool_id == "flow" {
+        match request.action.as_str() {
+            "start" => {
+                // dryRun=false or autoPush=true require non-sandbox mode
+                if let Some(dry_run) = request.payload.get("dryRun").and_then(|v| v.as_bool()) {
+                    if !dry_run && matches!(request.mode, ToolMode::Sandbox) {
+                        return Ok(tool_invoke_err(
+                            &request,
+                            "flow.start with dryRun=false requires mode other than sandbox".to_string(),
+                        ));
+                    }
+                }
+                if let Some(auto_push) = request.payload.get("autoPush").and_then(|v| v.as_bool()) {
+                    if auto_push && matches!(request.mode, ToolMode::Sandbox) {
+                        return Ok(tool_invoke_err(
+                            &request,
+                            "flow.start with autoPush=true requires mode other than sandbox".to_string(),
+                        ));
+                    }
+                }
+            }
+            "rerun-validation" => {
+                // Validation rerun executes commands, requires non-sandbox
+                if matches!(request.mode, ToolMode::Sandbox) {
+                    return Ok(tool_invoke_err(
+                        &request,
+                        "flow.rerun-validation requires mode other than sandbox".to_string(),
+                    ));
+                }
+            }
+            _ => {}
+        }
+    }
+
     let response = match registry.get(request.tool_id.as_str(), request.action.as_str()) {
         Some(handler) => match handler(state, request.payload.clone()).await {
             Ok(result) => tool_invoke_ok(&request, result),

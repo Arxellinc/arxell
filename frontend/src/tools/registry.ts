@@ -46,7 +46,6 @@ const PREFERRED_TOOL_ORDER = [
   "chart",
   "flow",
   "tasks",
-  "createTool",
   "memory",
   "skills"
 ] as const;

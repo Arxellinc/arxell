@@ -120,7 +120,6 @@ function isUserTool(tool: WorkspaceToolRecord): boolean {
     "webSearch",
     "flow",
     "tasks",
-    "createTool",
     "memory",
     "skills"
   ]);

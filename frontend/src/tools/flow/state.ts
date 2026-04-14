@@ -59,6 +59,7 @@ export interface FlowRuntimeSlice {
   flowProjectSetupDismissed: boolean;
   flowProjectNameDraft: string;
   flowProjectTypeDraft: string;
+  flowProjectIconDraft: string;
   flowProjectDescriptionDraft: string;
   flowPhaseModels: Record<string, string>;
   flowAvailableModels: Array<{ id: string; label: string }>;

@@ -16,11 +16,6 @@ import {
   handleWebKeyDown,
   handleWebSubmit
 } from "../webSearch/bindings";
-import {
-  handleCreateToolChange,
-  handleCreateToolClick,
-  handleCreateToolInput
-} from "../createTool/bindings";
 import { handleChartClick, handleChartInput } from "../chart/bindings";
 import { handleTasksChange, handleTasksClick, handleTasksInput } from "../tasks/bindings";
 import {
@@ -35,7 +30,6 @@ import {
   WEB_DATA_ATTR,
   WORKSPACE_DATA_ATTR
 } from "../ui/constants";
-import type { CreateToolPrdSection } from "../createTool/state";
 import type { FlowRunView, FlowRuntimeSlice } from "../flow/state";
 export type WorkspaceToolState = FlowRuntimeSlice & Record<string, unknown>;
 
@@ -58,9 +52,6 @@ export const WORKSPACE_TOOL_TARGET_SELECTOR = [
   `[${TASKS_DATA_ATTR.action}]`,
   `[${TASKS_DATA_ATTR.taskId}]`,
   `[${TASKS_DATA_ATTR.field}]`,
-  "[data-create-tool-action]",
-  "[data-create-tool-field]",
-  "[data-create-tool-guard]",
   `[${FLOW_DATA_ATTR.action}]`,
   `[${FLOW_DATA_ATTR.runId}]`,
   "[data-chart-action]"
@@ -76,7 +67,12 @@ export interface WorkspaceToolDispatchDeps {
     rerunValidation: (run: FlowRunView) => Promise<void>;
     openPhaseTerminal: (phase: string) => Promise<void>;
     closePhaseTerminal: (phase: string) => Promise<void>;
-    createProjectSetup: (name: string, projectType: string, description: string) => Promise<void>;
+    createProjectSetup: (
+      name: string,
+      projectType: string,
+      icon: string,
+      description: string
+    ) => Promise<void>;
     setPaused: (paused: boolean) => Promise<void>;
     nudgeRun: (message: string) => Promise<void>;
   };
@@ -111,15 +107,6 @@ export interface WorkspaceToolDispatchDeps {
     withActiveWebTab: (mutator: any) => void;
     saveWebSearchSetup: () => Promise<void>;
   };
-  createTool: {
-    createScaffold: () => Promise<void>;
-    browseIcons: () => Promise<void>;
-    generatePrd: () => Promise<void>;
-    generatePrdSection: (section: CreateToolPrdSection, onUpdate?: () => void) => Promise<void>;
-    runPrdReview: () => Promise<void>;
-    generateDevPlan: () => Promise<void>;
-    registerTool: () => Promise<void>;
-  };
 }
 
 export async function dispatchWorkspaceToolClick(
@@ -134,9 +121,6 @@ export async function dispatchWorkspaceToolClick(
     return true;
   }
   if (await handleTasksClick(target, state as any)) {
-    return true;
-  }
-  if (await handleCreateToolClick(target, state as any, deps as any)) {
     return true;
   }
   if (await handleChartClick(target, state as any)) {
@@ -156,8 +140,7 @@ export function dispatchWorkspaceToolChange(
   const webHandled = handleWebChange(target, { withActiveWebTab: deps.web.withActiveWebTab as any });
   const flowHandled = handleFlowChange(target, state as any);
   const tasksHandled = handleTasksChange(target, state as any);
-  const createToolHandled = handleCreateToolChange(target, state as any);
-  return webHandled || flowHandled || tasksHandled || createToolHandled;
+  return webHandled || flowHandled || tasksHandled;
 }
 
 export function dispatchWorkspaceToolInput(
@@ -167,7 +150,6 @@ export function dispatchWorkspaceToolInput(
 ): { handled: boolean; rerender: boolean } {
   const filesResult = handleFilesInput(target, state as any);
   const tasksHandled = handleTasksInput(target, state as any);
-  const createToolResult = handleCreateToolInput(target, state as any);
   const webHandled = handleWebInput(target, state as any, { withActiveWebTab: deps.web.withActiveWebTab as any });
   const flowResult = handleFlowInput(target, state as any);
   const chartResult = handleChartInput(target, state as any);
@@ -175,14 +157,12 @@ export function dispatchWorkspaceToolInput(
     handled:
       filesResult.handled ||
       tasksHandled ||
-      createToolResult.handled ||
       webHandled ||
       flowResult.handled ||
       chartResult.handled,
     rerender:
       filesResult.rerender ||
       tasksHandled ||
-      createToolResult.rerender ||
       flowResult.rerender ||
       chartResult.rerender
   };

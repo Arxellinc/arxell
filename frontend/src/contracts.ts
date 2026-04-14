@@ -199,6 +199,30 @@ export interface WorkspaceToolSetIconResponse {
   icon: boolean;
 }
 
+export interface WorkspaceToolForgetRequest {
+  correlationId: string;
+  toolId: string;
+}
+
+export interface WorkspaceToolForgetResponse {
+  correlationId: string;
+  toolId: string;
+  forgotten: boolean;
+}
+
+export interface WorkspaceToolCreateAppPluginRequest {
+  correlationId: string;
+  toolId: string;
+  name: string;
+  icon: string;
+  description: string;
+}
+
+export interface WorkspaceToolCreateAppPluginResponse {
+  correlationId: string;
+  tool: WorkspaceToolRecord;
+}
+
 export interface WorkspaceToolsExportRequest {
   correlationId: string;
 }
@@ -255,21 +279,6 @@ export interface PluginCapabilityInvokeResponse {
   data: Record<string, unknown>;
   error?: string;
   code?: string;
-}
-
-export interface CreateToolGenerateTextRequest {
-  correlationId: string;
-  modelId: string;
-  prompt: string;
-  maxTokens?: number;
-}
-
-export interface CreateToolGenerateTextResponse {
-  correlationId: string;
-  modelId: string;
-  resolvedModel: string;
-  resolvedEndpoint: string;
-  text: string;
 }
 
 export interface FilesListDirectoryRequest {
@@ -668,6 +677,7 @@ export interface TtsStatusResponse {
   availableVoices: string[];
   selectedVoice: string;
   speed: number;
+  lexiconStatus: string;
 }
 
 export interface TtsListVoicesRequest {

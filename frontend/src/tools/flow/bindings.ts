@@ -10,7 +10,12 @@ interface FlowClickDeps {
   rerunValidation: (run: FlowRunView) => Promise<void>;
   openPhaseTerminal: (phase: string) => Promise<void>;
   closePhaseTerminal: (phase: string) => Promise<void>;
-  createProjectSetup: (name: string, projectType: string, description: string) => Promise<void>;
+  createProjectSetup: (
+    name: string,
+    projectType: string,
+    icon: string,
+    description: string
+  ) => Promise<void>;
   setPaused: (paused: boolean) => Promise<void>;
   nudgeRun: (message: string) => Promise<void>;
 }
@@ -119,6 +124,9 @@ export async function handleFlowClick(
     const phase = target.getAttribute(FLOW_DATA_ATTR.phase);
     if (phase) {
       slice.flowActiveTerminalPhase = phase;
+      if (!slice.flowPhaseSessionByName[phase]) {
+        await deps.openPhaseTerminal(phase);
+      }
     }
     return true;
   }
@@ -137,29 +145,28 @@ export async function handleFlowClick(
     return true;
   }
   if (flowAction === "create-project-setup") {
-    await deps.createProjectSetup(
-      slice.flowProjectNameDraft.trim(),
-      slice.flowProjectTypeDraft,
-      slice.flowProjectDescriptionDraft.trim()
-    );
-    slice.flowProjectSetupOpen = false;
-    slice.flowProjectSetupDismissed = false;
+    const descriptionInput = document.getElementById(FLOW_UI_ID.projectDescriptionInput) as HTMLTextAreaElement | null;
+    const description = descriptionInput?.value ?? slice.flowProjectDescriptionDraft;
+    slice.flowProjectDescriptionDraft = description;
+    slice.flowMessage = "Creating project scaffold...";
+    try {
+      await deps.createProjectSetup(
+        slice.flowProjectNameDraft.trim(),
+        slice.flowProjectTypeDraft,
+        slice.flowProjectIconDraft.trim(),
+        description.trim()
+      );
+      slice.flowProjectSetupOpen = false;
+      slice.flowProjectSetupDismissed = false;
+    } catch (error) {
+      slice.flowMessage = error instanceof Error ? error.message : `Project creation failed: ${String(error)}`;
+      slice.flowProjectSetupOpen = true;
+    }
     return true;
   }
   if (flowAction === "skip-project-setup") {
     slice.flowProjectSetupOpen = false;
     slice.flowProjectSetupDismissed = true;
-    return true;
-  }
-  if (flowAction === "set-phase-model") {
-    const phase = target.getAttribute(FLOW_DATA_ATTR.phase);
-    const select = target.closest("select");
-    if (phase && select) {
-      slice.flowPhaseModels = {
-        ...slice.flowPhaseModels,
-        [phase]: (select as HTMLSelectElement).value || "auto"
-      };
-    }
     return true;
   }
   if (flowAction === "copy-event") {
@@ -182,6 +189,29 @@ export async function handleFlowClick(
 }
 
 export function handleFlowChange(target: HTMLElement, slice: FlowRuntimeSlice): boolean {
+  const phaseModelSelect = target.closest<HTMLSelectElement>(`[${FLOW_DATA_ATTR.action}="set-phase-model"]`);
+  if (phaseModelSelect) {
+    const phase = phaseModelSelect.getAttribute(FLOW_DATA_ATTR.phase);
+    const value = phaseModelSelect.value || "auto";
+    if (phase === "__all") {
+      slice.flowPhaseModels = {
+        select_task: value,
+        investigate: value,
+        update_plan: value,
+        implement: value,
+        validate: value
+      };
+      return true;
+    }
+    if (phase) {
+      slice.flowPhaseModels = {
+        ...slice.flowPhaseModels,
+        [phase]: value
+      };
+      return true;
+    }
+  }
+
   const flowModeSelect = target.closest<HTMLSelectElement>(`#${FLOW_UI_ID.modeSelect}`);
   if (flowModeSelect && (flowModeSelect.value === "plan" || flowModeSelect.value === "build")) {
     slice.flowMode = flowModeSelect.value;
@@ -214,7 +244,7 @@ export function handleFlowInput(target: HTMLElement, slice: FlowRuntimeSlice): {
   let rerenderForFlow = false;
 
   const flowTextInput = target.closest<HTMLInputElement>(
-    `#${FLOW_UI_ID.promptPlanPath}, #${FLOW_UI_ID.promptBuildPath}, #${FLOW_UI_ID.planPath}, #${FLOW_UI_ID.specsGlob}, #${FLOW_UI_ID.implementCommand}, #${FLOW_UI_ID.eventFilterInput}, #${FLOW_UI_ID.projectNameInput}`
+    `#${FLOW_UI_ID.promptPlanPath}, #${FLOW_UI_ID.promptBuildPath}, #${FLOW_UI_ID.planPath}, #${FLOW_UI_ID.specsGlob}, #${FLOW_UI_ID.implementCommand}, #${FLOW_UI_ID.eventFilterInput}, #${FLOW_UI_ID.projectNameInput}, #${FLOW_UI_ID.projectIconInput}`
   );
   if (flowTextInput) {
     if (flowTextInput.id === FLOW_UI_ID.promptPlanPath) {
@@ -232,14 +262,16 @@ export function handleFlowInput(target: HTMLElement, slice: FlowRuntimeSlice): {
       rerenderForFlow = true;
     } else if (flowTextInput.id === FLOW_UI_ID.projectNameInput) {
       slice.flowProjectNameDraft = flowTextInput.value;
-      }
+    } else if (flowTextInput.id === FLOW_UI_ID.projectIconInput) {
+      slice.flowProjectIconDraft = flowTextInput.value;
+    }
     return { handled: true, rerender: rerenderForFlow };
   }
 
   const projectTypeSelect = target.closest<HTMLSelectElement>(`#${FLOW_UI_ID.projectTypeSelect}`);
   if (projectTypeSelect) {
     slice.flowProjectTypeDraft = projectTypeSelect.value;
-    return { handled: true, rerender: false };
+    return { handled: true, rerender: true };
   }
 
   const projectDescription = target.closest<HTMLTextAreaElement>(`#${FLOW_UI_ID.projectDescriptionInput}`);

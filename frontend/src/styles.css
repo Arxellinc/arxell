@@ -2818,6 +2818,36 @@ body {
   color: #f4fff8;
 }
 
+.tts-download-progress {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-soft);
+}
+
+.tts-download-progress-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: var(--text-xs);
+  color: var(--ink);
+}
+
+.tts-download-progress progress {
+  width: 100%;
+  height: 10px;
+}
+
+.tts-download-progress-detail {
+  font-size: var(--text-xs);
+  color: var(--muted);
+}
+
 .tts-compat-hint {
   margin-top: 8px;
   margin-bottom: 12px;

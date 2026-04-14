@@ -9,5 +9,5 @@ export const chartToolManifest: ToolManifest = {
   core: false,
   defaultEnabled: true,
   source: "builtin",
-  icon: "git-compare-arrows"
+  icon: "network"
 };

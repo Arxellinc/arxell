@@ -85,12 +85,6 @@ import {
 import type { WebSearchHistoryItem, WebTabState } from "./tools/webSearch/state";
 import { loadPersistedTasksById } from "./tools/tasks/actions";
 import type { TaskFolder, TaskSortDirection, TaskSortKey, TaskRecord } from "./tools/tasks/state";
-import {
-  DEFAULT_CREATE_TOOL_SPEC,
-  DEFAULT_CREATE_TOOL_UI_PREVIEW_HTML,
-  type CreateToolModelOption,
-  type CreateToolPrdSection
-} from "./tools/createTool/state";
 import { resetTtsStateForEngine, type TtsEngine } from "./tts/engineRules";
 import { getAllToolManifests } from "./tools/registry";
 import { renderChatMessages } from "./panels/chatPanel";
@@ -112,7 +106,6 @@ import {
   loadPersistedBottomItem,
   loadPersistedChatModelId,
   loadPersistedChatRoutePreference,
-  loadPersistedCreateToolDraft,
   loadPersistedFlowActivePhase,
   loadPersistedFlowAdvancedOpen,
   loadPersistedFlowAutoFollow,
@@ -131,7 +124,6 @@ import {
   persistBottomItem,
   persistChatRoutePreference,
   persistChatModelId,
-  persistCreateToolDraft,
   persistFlowPhaseSessionMap,
   persistFlowActivePhase,
   persistFlowWorkspacePrefs,
@@ -147,8 +139,6 @@ import {
   persistSttThreads,
   resolveSystemDisplayMode,
   type ChatRoutePreference,
-  type CreateToolLayoutModifier,
-  type PersistedCreateToolDraft,
   type SttBackend
 } from "./app/persistence";
 import { createAppResourcePolling } from "./app/polling";
@@ -234,9 +224,6 @@ function generateChatConversationId(): string {
   }
   return `C${suffix}`;
 }
-const persistedCreateToolDraft = loadPersistedCreateToolDraft();
-const persistedCreateToolPrdMarkdownDoc = persistedCreateToolDraft?.createToolPrdMarkdownDoc ?? "";
-
 const state: {
   conversationId: string;
   messages: UiMessage[];
@@ -357,54 +344,6 @@ const state: {
   tasksSortDirection: TaskSortDirection;
   tasksDetailsCollapsed: boolean;
   tasksJsonDraft: string;
-  createToolStage: "meta" | "prd" | "build" | "fix";
-  createToolModelOptions: CreateToolModelOption[];
-  createToolSelectedModelId: string;
-  createToolPrdUiPreset: "left-sidebar" | "right-sidebar" | "both-sidebars" | "no-sidebar";
-  createToolLayoutModifiers: CreateToolLayoutModifier[];
-  createToolPrdUiNotes: string;
-  createToolPrdInputs: string;
-  createToolPrdProcess: string;
-  createToolPrdConnections: string;
-  createToolPrdDependencies: string;
-  createToolPrdExpectedBehavior: string;
-  createToolPrdOutputs: string;
-  createToolDevPlan: string;
-  createToolBuildViewMode: "code" | "preview";
-  createToolUiPreviewHtml: string;
-  createToolFixNotes: string;
-  createToolIconBrowserOpen: boolean;
-  createToolIconBrowserQuery: string;
-  createToolIconBrowserAppliedQuery: string;
-  createToolIconLibrary: Array<{ name: string; svg: string }>;
-  createToolSpec: typeof DEFAULT_CREATE_TOOL_SPEC;
-  createToolWorkspaceRoot: string;
-  createToolPreviewFiles: Record<string, string>;
-  createToolPreviewOrder: string[];
-  createToolSelectedPreviewPath: string;
-  createToolValidationErrors: string[];
-  createToolValidationWarnings: string[];
-  createToolStatusMessage: string | null;
-  createToolLastResultJson: string;
-  createToolPrdGeneratingSection:
-    | "UI"
-    | "INPUTS"
-    | "PROCESS"
-    | "CONNECTIONS"
-    | "DEPENDENCIES"
-    | "EXPECTED_BEHAVIOR"
-    | "OUTPUTS"
-    | null;
-  createToolPrdGeneratingAll: boolean;
-  createToolPrdReviewBusy: boolean;
-  createToolPrdReviewFindings: Array<{
-    severity: "critical" | "high" | "medium";
-    section: "INPUTS" | "PROCESS" | "CONNECTIONS" | "DEPENDENCIES" | "EXPECTED_BEHAVIOR" | "OUTPUTS";
-    title: string;
-    detail: string;
-    suggestion: string;
-  }>;
-  createToolBusy: boolean;
   flowRuns: FlowRunView[];
   flowActiveRunId: string | null;
   flowMode: "plan" | "build";
@@ -433,6 +372,7 @@ const state: {
   flowProjectSetupDismissed: boolean;
   flowProjectNameDraft: string;
   flowProjectTypeDraft: string;
+  flowProjectIconDraft: string;
   flowProjectDescriptionDraft: string;
   flowPhaseModels: Record<string, string>;
   flowAvailableModels: Array<{ id: string; label: string }>;
@@ -546,10 +486,14 @@ const state: {
     voices: string[];
     selectedVoice: string;
     speed: number;
+    lexiconStatus: string;
     testText: string;
     lastDurationMs: number | null;
     lastBytes: number | null;
     lastSampleRate: number | null;
+    downloadReceivedBytes: number | null;
+    downloadTotalBytes: number | null;
+    downloadPercent: number | null;
   };
 } = {
   conversationId: generateChatConversationId(),
@@ -666,46 +610,6 @@ const state: {
   tasksSortDirection: "desc",
   tasksDetailsCollapsed: false,
   tasksJsonDraft: "",
-  createToolStage: persistedCreateToolDraft?.createToolStage ?? "meta",
-  createToolModelOptions: [],
-  createToolSelectedModelId: persistedCreateToolDraft?.createToolSelectedModelId ?? "primary-agent",
-  createToolPrdUiPreset: persistedCreateToolDraft?.createToolPrdUiPreset ?? "left-sidebar",
-  createToolLayoutModifiers: persistedCreateToolDraft?.createToolLayoutModifiers ?? [],
-  createToolPrdUiNotes: persistedCreateToolDraft?.createToolPrdUiNotes ?? "",
-  createToolPrdInputs: persistedCreateToolDraft?.createToolPrdInputs ?? "",
-  createToolPrdProcess: persistedCreateToolDraft?.createToolPrdProcess ?? "",
-  createToolPrdConnections: persistedCreateToolDraft?.createToolPrdConnections ?? "",
-  createToolPrdDependencies: persistedCreateToolDraft?.createToolPrdDependencies ?? "",
-  createToolPrdExpectedBehavior: persistedCreateToolDraft?.createToolPrdExpectedBehavior ?? "",
-  createToolPrdOutputs: persistedCreateToolDraft?.createToolPrdOutputs ?? "",
-  createToolDevPlan: persistedCreateToolDraft?.createToolDevPlan ?? "",
-  createToolBuildViewMode: persistedCreateToolDraft?.createToolBuildViewMode ?? "code",
-  createToolUiPreviewHtml: DEFAULT_CREATE_TOOL_UI_PREVIEW_HTML,
-  createToolFixNotes: persistedCreateToolDraft?.createToolFixNotes ?? "",
-  createToolIconBrowserOpen: false,
-  createToolIconBrowserQuery: "",
-  createToolIconBrowserAppliedQuery: "",
-  createToolIconLibrary: [],
-  createToolSpec: {
-    ...(persistedCreateToolDraft?.createToolSpec || DEFAULT_CREATE_TOOL_SPEC)
-  },
-  createToolWorkspaceRoot: "",
-  createToolPreviewFiles: persistedCreateToolPrdMarkdownDoc
-    ? {
-        "PRD.md": persistedCreateToolPrdMarkdownDoc
-      }
-    : {},
-  createToolPreviewOrder: persistedCreateToolPrdMarkdownDoc ? ["PRD.md"] : [],
-  createToolSelectedPreviewPath: persistedCreateToolPrdMarkdownDoc ? "PRD.md" : "",
-  createToolValidationErrors: [],
-  createToolValidationWarnings: [],
-  createToolStatusMessage: null,
-  createToolLastResultJson: "",
-  createToolPrdGeneratingSection: null,
-  createToolPrdGeneratingAll: false,
-  createToolPrdReviewBusy: false,
-  createToolPrdReviewFindings: [],
-  createToolBusy: false,
   flowRuns: [],
   flowActiveRunId: null,
   flowMode: "plan",
@@ -734,6 +638,7 @@ const state: {
   flowProjectSetupDismissed: false,
   flowProjectNameDraft: "",
   flowProjectTypeDraft: "app-tool",
+  flowProjectIconDraft: "wrench",
   flowProjectDescriptionDraft: "",
   flowPhaseModels: {},
   flowAvailableModels: [],
@@ -837,10 +742,14 @@ const state: {
     voices: ["af_heart"],
     selectedVoice: "af_heart",
     speed: 1,
+    lexiconStatus: "",
     testText: "Hello from Arxell Lite text to speech.",
     lastDurationMs: null,
     lastBytes: null,
-    lastSampleRate: null
+    lastSampleRate: null,
+    downloadReceivedBytes: null,
+    downloadTotalBytes: null,
+    downloadPercent: null
   }
 };
 state.activeWebTabId = state.webTabs[0]?.id ?? "";
@@ -2083,40 +1992,6 @@ function render(): void {
     tasksSortDirection: state.tasksSortDirection,
     tasksDetailsCollapsed: state.tasksDetailsCollapsed,
     tasksJsonDraft: state.tasksJsonDraft,
-    createToolStage: state.createToolStage,
-    createToolModelOptions: state.createToolModelOptions,
-    createToolSelectedModelId: state.createToolSelectedModelId,
-    createToolPrdUiPreset: state.createToolPrdUiPreset,
-    createToolLayoutModifiers: state.createToolLayoutModifiers,
-    createToolPrdUiNotes: state.createToolPrdUiNotes,
-    createToolPrdInputs: state.createToolPrdInputs,
-    createToolPrdProcess: state.createToolPrdProcess,
-    createToolPrdConnections: state.createToolPrdConnections,
-    createToolPrdDependencies: state.createToolPrdDependencies,
-    createToolPrdExpectedBehavior: state.createToolPrdExpectedBehavior,
-    createToolPrdOutputs: state.createToolPrdOutputs,
-    createToolDevPlan: state.createToolDevPlan,
-    createToolBuildViewMode: state.createToolBuildViewMode,
-    createToolUiPreviewHtml: state.createToolUiPreviewHtml,
-    createToolFixNotes: state.createToolFixNotes,
-    createToolIconBrowserOpen: state.createToolIconBrowserOpen,
-    createToolIconBrowserQuery: state.createToolIconBrowserQuery,
-    createToolIconBrowserAppliedQuery: state.createToolIconBrowserAppliedQuery,
-    createToolIconLibrary: state.createToolIconLibrary,
-    createToolSpec: state.createToolSpec,
-    createToolWorkspaceRoot: state.createToolWorkspaceRoot,
-    createToolPreviewFiles: state.createToolPreviewFiles,
-    createToolPreviewOrder: state.createToolPreviewOrder,
-    createToolSelectedPreviewPath: state.createToolSelectedPreviewPath,
-    createToolValidationErrors: state.createToolValidationErrors,
-    createToolValidationWarnings: state.createToolValidationWarnings,
-    createToolStatusMessage: state.createToolStatusMessage,
-    createToolLastResultJson: state.createToolLastResultJson,
-    createToolPrdGeneratingSection: state.createToolPrdGeneratingSection,
-    createToolPrdGeneratingAll: state.createToolPrdGeneratingAll,
-    createToolPrdReviewBusy: state.createToolPrdReviewBusy,
-    createToolPrdReviewFindings: state.createToolPrdReviewFindings,
-    createToolBusy: state.createToolBusy,
     flowRuns: state.flowRuns,
     flowActiveRunId: state.flowActiveRunId,
     flowMode: state.flowMode,
@@ -2143,6 +2018,7 @@ function render(): void {
     flowProjectSetupOpen: state.flowProjectSetupOpen,
     flowProjectNameDraft: state.flowProjectNameDraft,
     flowProjectTypeDraft: state.flowProjectTypeDraft,
+    flowProjectIconDraft: state.flowProjectIconDraft,
     flowProjectDescriptionDraft: state.flowProjectDescriptionDraft,
     flowPhaseModels: state.flowPhaseModels,
     flowAvailableModels: state.flowAvailableModels,
@@ -2613,6 +2489,14 @@ function currentBottomStatus() {
     (state.llamaRuntimeSelectedEngineId
       ? state.llamaRuntime?.engines.find((engine) => engine.engineId === state.llamaRuntimeSelectedEngineId)
       : undefined);
+  const hasLoadedLlamaModel =
+    state.llamaRuntime?.state === "healthy" &&
+    Boolean(state.llamaRuntime.activeEngineId) &&
+    Boolean(state.llamaRuntime.pid) &&
+    Boolean(state.llamaRuntimeModelPath.trim());
+  const loadedLlamaModelLabel = hasLoadedLlamaModel
+    ? `Llama.cpp: ${modelNameFromPath(state.llamaRuntimeModelPath)}`
+    : null;
   return buildBottomStatus({
     activeEngineBackend: activeEngine?.backend ?? null,
     showBottomEngine: state.showBottomEngine,
@@ -2623,7 +2507,8 @@ function currentBottomStatus() {
     showAppResourceCpu: state.showAppResourceCpu,
     showAppResourceMemory: state.showAppResourceMemory,
     showAppResourceNetwork: state.showAppResourceNetwork,
-    modelPath: state.llamaRuntimeModelPath,
+    modelPath: hasLoadedLlamaModel ? state.llamaRuntimeModelPath : "",
+    modelLabel: loadedLlamaModelLabel,
     contextTokens: state.llamaRuntimeContextTokens,
     contextCapacity: state.llamaRuntimeContextCapacity,
     tokensPerSecond: state.llamaRuntimeTokensPerSecond,
@@ -2703,7 +2588,6 @@ async function refreshApiConnections(): Promise<void> {
   const response = await clientRef.listApiConnections({ correlationId: nextCorrelationId() });
   state.apiConnections = response.connections;
   refreshChatModelProfile();
-  refreshCreateToolModelOptions();
 }
 
 function downloadTextFile(fileName: string, text: string, mimeType: string): void {
@@ -2943,8 +2827,37 @@ async function refreshTtsState(): Promise<void> {
   state.tts.voices = voices.voices.length ? voices.voices : status.availableVoices;
   state.tts.selectedVoice = status.selectedVoice || voices.selectedVoice || settings.voice;
   state.tts.speed = settings.speed || status.speed || state.tts.speed;
+  state.tts.lexiconStatus = status.lexiconStatus || "";
   state.tts.status = status.ready ? "ready" : "idle";
   state.tts.message = status.message;
+}
+
+function handleTtsDownloadProgressEvent(event: AppEvent, rerender: () => void): boolean {
+  if (event.action !== "tts.download_model") return false;
+  const payload = payloadAsRecord(event.payload);
+  if (event.stage === "start") {
+    state.tts.downloadReceivedBytes = 0;
+    state.tts.downloadTotalBytes = null;
+    state.tts.downloadPercent = null;
+    return false;
+  }
+  if (event.stage === "progress") {
+    const receivedBytes = Number(payload?.receivedBytes);
+    const totalBytes = Number(payload?.totalBytes);
+    const percent = Number(payload?.percent);
+    state.tts.downloadReceivedBytes = Number.isFinite(receivedBytes) ? receivedBytes : state.tts.downloadReceivedBytes;
+    state.tts.downloadTotalBytes = Number.isFinite(totalBytes) && totalBytes > 0 ? totalBytes : null;
+    state.tts.downloadPercent = Number.isFinite(percent) ? percent : null;
+    rerender();
+    return false;
+  }
+  if (event.stage === "complete" || event.stage === "error") {
+    state.tts.downloadReceivedBytes = null;
+    state.tts.downloadTotalBytes = null;
+    state.tts.downloadPercent = null;
+    return false;
+  }
+  return false;
 }
 
 function refreshChatModelProfile(): void {
@@ -3107,70 +3020,6 @@ function looksLikeIpv4(host: string): boolean {
   });
 }
 
-function refreshCreateToolModelOptions(): void {
-  const options: CreateToolModelOption[] = [
-    {
-      id: "primary-agent",
-      label: "Primary Agent",
-      source: "primary",
-      detail: "default routing"
-    }
-  ];
-  const seen = new Set<string>(["primary-agent"]);
-
-  for (const connection of state.apiConnections) {
-    if (connection.apiType !== "llm") continue;
-    if (connection.status !== "verified" && connection.status !== "warning") continue;
-    const discovered = (connection.availableModels || []).map((model) => model.trim()).filter(Boolean);
-    const fallback = (connection.modelName || "").trim();
-    const candidates = discovered.length ? discovered : (fallback ? [fallback] : []);
-    for (const candidate of candidates) {
-      const key = `api:${connection.id}:${candidate.toLowerCase()}`;
-      if (seen.has(key)) continue;
-      seen.add(key);
-      options.push({
-        id: key,
-        label: candidate,
-        source: "api",
-        detail: connection.name || connection.apiUrl
-      });
-    }
-  }
-
-  for (const model of state.modelManagerInstalled) {
-    const name = model.name.trim() || model.id.trim();
-    if (!name) continue;
-    const key = `mm:${name.toLowerCase()}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    options.push({
-      id: key,
-      label: name,
-      source: "model-manager",
-      detail: "installed"
-    });
-  }
-
-  for (const row of state.modelManagerUnslothUdCatalog) {
-    const name = row.modelName.trim();
-    if (!name) continue;
-    const key = `mm:${name.toLowerCase()}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    options.push({
-      id: key,
-      label: name,
-      source: "model-manager",
-      detail: "catalog"
-    });
-  }
-
-  state.createToolModelOptions = options;
-  if (!options.some((item) => item.id === state.createToolSelectedModelId)) {
-    state.createToolSelectedModelId = "primary-agent";
-  }
-}
-
 const workspaceToolsRuntime = createWorkspaceToolsRuntime(state, {
   getClient: () => clientRef,
   nextCorrelationId,
@@ -3187,7 +3036,6 @@ async function refreshModelManagerInstalled(): Promise<void> {
     correlationId: nextCorrelationId()
   });
   state.modelManagerInstalled = response.models;
-  refreshCreateToolModelOptions();
 }
 
 async function refreshModelManagerUnslothUdCatalog(): Promise<void> {
@@ -3254,7 +3102,6 @@ async function refreshModelManagerUnslothUdCatalog(): Promise<void> {
     state.modelManagerMessage = "Failed to load UD CSV catalog.";
   }
   state.modelManagerUnslothUdLoading = false;
-  refreshCreateToolModelOptions();
 }
 
 async function refreshLlamaRuntime(): Promise<void> {
@@ -3684,7 +3531,6 @@ function renderAndBind(sendMessage: (text: string) => Promise<void>): void {
     }
   };
 
-  persistCreateToolDraft(state);
   render();
   syncOverlayScrollbars();
   scrollConsoleToBottom();
@@ -3836,7 +3682,6 @@ function renderAndBind(sendMessage: (text: string) => Promise<void>): void {
         });
         state.apiConnections = imported.connections;
         refreshChatModelProfile();
-        refreshCreateToolModelOptions();
         state.apiMessage = `Imported API connections from ${selected.name}.`;
       } catch (error) {
         state.apiMessage = `Failed importing API connections JSON: ${String(error)}`;
@@ -3856,7 +3701,6 @@ function renderAndBind(sendMessage: (text: string) => Promise<void>): void {
         });
         state.apiConnections = imported.connections;
         refreshChatModelProfile();
-        refreshCreateToolModelOptions();
         state.apiMessage = `Imported API connections from ${selected.name}.`;
       } catch (error) {
         state.apiMessage = `Failed importing API connections CSV: ${String(error)}`;
@@ -4020,7 +3864,6 @@ function renderAndBind(sendMessage: (text: string) => Promise<void>): void {
             record.id === state.apiEditingId ? verified.connection : record
           );
           refreshChatModelProfile();
-          refreshCreateToolModelOptions();
           state.apiFormOpen = false;
           state.apiEditingId = null;
           state.apiDraft = defaultApiConnectionDraft();
@@ -4039,7 +3882,6 @@ function renderAndBind(sendMessage: (text: string) => Promise<void>): void {
           });
           state.apiConnections = [created.connection, ...state.apiConnections];
           refreshChatModelProfile();
-          refreshCreateToolModelOptions();
           state.apiFormOpen = false;
           state.apiEditingId = null;
           state.apiDraft = defaultApiConnectionDraft();
@@ -4061,7 +3903,6 @@ function renderAndBind(sendMessage: (text: string) => Promise<void>): void {
           record.id === id ? verified.connection : record
         );
         refreshChatModelProfile();
-        refreshCreateToolModelOptions();
         state.apiMessage = verified.connection.statusMessage;
       } catch (error) {
         state.apiMessage = `Failed re-verifying API: ${String(error)}`;
@@ -4080,7 +3921,6 @@ function renderAndBind(sendMessage: (text: string) => Promise<void>): void {
         if (response.deleted) {
           state.apiConnections = state.apiConnections.filter((record) => record.id !== id);
           refreshChatModelProfile();
-          refreshCreateToolModelOptions();
           state.apiMessage = "API connection removed.";
         } else {
           state.apiMessage = "API connection was not found.";
@@ -4653,6 +4493,9 @@ function renderAndBind(sendMessage: (text: string) => Promise<void>): void {
       }
       state.tts.status = "busy";
       state.tts.message = "Downloading sherpa Kokoro model bundle...";
+      state.tts.downloadReceivedBytes = 0;
+      state.tts.downloadTotalBytes = null;
+      state.tts.downloadPercent = null;
       renderAndBind(sendMessage);
       try {
         const response = await clientRef.ttsDownloadModel({
@@ -4663,6 +4506,10 @@ function renderAndBind(sendMessage: (text: string) => Promise<void>): void {
       } catch (error) {
         state.tts.status = "error";
         state.tts.message = `Model download failed: ${formatTtsError(error)}`;
+      } finally {
+        state.tts.downloadReceivedBytes = null;
+        state.tts.downloadTotalBytes = null;
+        state.tts.downloadPercent = null;
       }
       renderAndBind(sendMessage);
     },
@@ -4675,6 +4522,9 @@ function renderAndBind(sendMessage: (text: string) => Promise<void>): void {
       }
       state.tts.status = "busy";
       state.tts.message = "Downloading Kokoro model bundle...";
+      state.tts.downloadReceivedBytes = 0;
+      state.tts.downloadTotalBytes = null;
+      state.tts.downloadPercent = null;
       renderAndBind(sendMessage);
       try {
         const response = await clientRef.ttsDownloadModel({
@@ -4686,6 +4536,10 @@ function renderAndBind(sendMessage: (text: string) => Promise<void>): void {
       } catch (error) {
         state.tts.status = "error";
         state.tts.message = `Model download failed: ${formatTtsError(error)}`;
+      } finally {
+        state.tts.downloadReceivedBytes = null;
+        state.tts.downloadTotalBytes = null;
+        state.tts.downloadPercent = null;
       }
       renderAndBind(sendMessage);
     },
@@ -5900,6 +5754,39 @@ function attachWorkspaceInteractions(sendMessage: (text: string) => Promise<void
       });
     };
 
+    const sanitizeGeneratedToolId = (value: string): string => {
+      const normalized = value
+        .trim()
+        .toLowerCase()
+        .replace(/[^a-z0-9-]+/g, "-")
+        .replace(/--+/g, "-")
+        .replace(/^-+/, "")
+        .replace(/-+$/, "")
+        .slice(0, 40);
+      return /^[a-z][a-z0-9-]{1,40}$/.test(normalized) ? normalized : "new-app-tool";
+    };
+
+    const writeGeneratedAppToolScaffold = async (
+      toolId: string,
+      toolName: string,
+      toolIcon: string,
+      summary: string
+    ): Promise<void> => {
+      if (!clientRef) {
+        throw new Error("IPC client unavailable.");
+      }
+      if (state.workspaceTools.some((tool) => tool.toolId === toolId)) {
+        throw new Error(`App tool '${toolId}' already exists. Choose a different project name.`);
+      }
+      await clientRef.createWorkspaceAppPlugin({
+        correlationId: nextCorrelationId(),
+        toolId,
+        name: toolName || toolId,
+        icon: toolIcon || "wrench",
+        description: summary || "Generated workspace app tool"
+      });
+    };
+
     const deleteWorkspacePath = async (path: string, recursive = false): Promise<void> => {
       const correlationId = nextCorrelationId();
       await toolInvokeOrThrow("files", "delete-path", {
@@ -5913,6 +5800,13 @@ function attachWorkspaceInteractions(sendMessage: (text: string) => Promise<void
       nextCorrelationId,
       toolInvokeOrThrow,
       deleteWorkspacePath,
+      forgetWorkspaceTool: async (toolId: string) => {
+        if (!clientRef) return;
+        await clientRef.forgetWorkspaceTool({
+          correlationId: nextCorrelationId(),
+          toolId
+        });
+      },
       refreshTools,
       pushConsoleEntry
     });
@@ -5999,25 +5893,49 @@ function attachWorkspaceInteractions(sendMessage: (text: string) => Promise<void
           }
           persistFlowPhaseSessionMap(state.flowPhaseSessionByName);
         },
-        createProjectSetup: async (name: string, projectType: string, description: string) => {
-          const projectName = name.trim() || "new-project";
+        createProjectSetup: async (name: string, projectType: string, icon: string, description: string) => {
+          const rawProjectName = name.trim() || "new-project";
+          const projectName = projectType === "app-tool" ? sanitizeGeneratedToolId(rawProjectName) : rawProjectName;
           const summary = description.trim();
+          const toolIcon = icon.trim() || "wrench";
           const planPath = state.flowPlanPath?.trim() || "IMPLEMENTATION_PLAN.md";
           const promptPlanPath = state.flowPromptPlanPath?.trim() || "PROMPT_plan.md";
           const promptBuildPath = state.flowPromptBuildPath?.trim() || "PROMPT_build.md";
           await workspaceToolsRuntime.createNewFilesFolder("specs").catch(() => undefined);
+          if (projectType === "app-tool") {
+            state.flowBackpressureCommands = state.flowBackpressureCommands.trim()
+              ? state.flowBackpressureCommands
+              : "cd frontend && npm run check";
+          }
 
-          const planBody = `# Implementation Plan\n\nProject: ${projectName}\nType: ${projectType}\n${summary ? `Description: ${summary}\n` : ""}\n## Initial Tasks\n- [ ] Define project scope and first milestone\n- [ ] Scaffold baseline structure and dependencies\n- [ ] Implement first end-to-end vertical slice\n- [ ] Add/verify validation command coverage\n`;
-          const planPrompt = `You are planning implementation tasks for a ${projectType} project.\nProject name: ${projectName}\n${summary ? `Project description: ${summary}\n` : ""}Create concise, testable checklist items in ${planPath}.`;
-          const buildPrompt = `You are executing implementation tasks for a ${projectType} project.\nProject name: ${projectName}\n${summary ? `Project description: ${summary}\n` : ""}Implement one unchecked task from ${planPath}, then validate and update the plan.`;
-          const specSeed = `# ${projectName}\n\nType: ${projectType}\n\n${summary || "Describe goals, constraints, and first release scope."}\n`;
-          const readme = `# ${projectName}\n\nType: ${projectType}\n\n${summary || "Project scaffold created from Flow setup."}\n\n## Next Steps\n- Review IMPLEMENTATION_PLAN.md\n- Run Flow in dry mode for rehearsal\n- Run Flow in build mode for first task\n`;
+          const appToolContext =
+            projectType === "app-tool"
+              ? `\n## App Tool Context\n- Tool ID: ${projectName}\n- Icon: ${toolIcon}\n- Required architecture guide: docs/TOOLS_ARCHITECTURE.md\n- Build as a runtime plugin/custom tool under the app-managed plugins directory.\n- Include manifest.json, permissions.json, dist/index.html, dist/main.js, and any plugin assets needed by the tool.\n- Keep workspace UI, invoke tools, and agent tools separate. Do not bypass IPC or registry boundaries.\n- Validate that the tool can be discovered, enabled, opened, and deleted from within an installed app without rebuilding the app bundle.\n`
+              : "";
+          const projectDescriptionSection = summary ? `\n## Project Description\n${summary}\n` : "";
+          const planBody = `# Implementation Plan\n\nProject: ${projectName}\nType: ${projectType}\n${projectDescriptionSection}${appToolContext}\n## Initial Tasks\n- [ ] Define project scope and first milestone\n- [ ] Scaffold baseline structure and dependencies\n- [ ] Implement first end-to-end vertical slice\n- [ ] Add/verify validation command coverage\n`;
+          const planPrompt = `You are planning implementation tasks for a ${projectType} project.\nProject name: ${projectName}\n${summary ? `Project description: ${summary}\n` : ""}${
+            projectType === "app-tool"
+              ? `Read docs/TOOLS_ARCHITECTURE.md before planning. The app-tool icon is ${toolIcon}. Plan all files and registry/enable/launch wiring needed for an in-app workspace tool.\n`
+              : ""
+          }Create concise, testable checklist items in ${planPath}.`;
+          const buildPrompt = `You are executing implementation tasks for a ${projectType} project.\nProject name: ${projectName}\n${summary ? `Project description: ${summary}\n` : ""}${
+            projectType === "app-tool"
+              ? `Read docs/TOOLS_ARCHITECTURE.md before editing. Use icon ${toolIcon}. Ensure the tool is scaffolded, registered, enabled, and launchable from within the app.\n`
+              : ""
+          }Implement one unchecked task from ${planPath}, then validate and update the plan.`;
+          const specSeed = `# ${projectName}\n\nType: ${projectType}\n${projectType === "app-tool" ? `Icon: ${toolIcon}\nArchitecture: docs/TOOLS_ARCHITECTURE.md\n` : ""}\n${summary || "Describe goals, constraints, and first release scope."}\n`;
+          const readme = `# ${projectName}\n\nType: ${projectType}\n${projectType === "app-tool" ? `Icon: ${toolIcon}\n` : ""}\n${summary || "Project scaffold created from Flow setup."}\n\n## Next Steps\n- Review IMPLEMENTATION_PLAN.md\n- Run Flow in dry mode for rehearsal\n- Run Flow in build mode for first task\n`;
 
           await writeWorkspaceFile(planPath, planBody);
           await writeWorkspaceFile(promptPlanPath, planPrompt);
           await writeWorkspaceFile(promptBuildPath, buildPrompt);
           await writeWorkspaceFile("specs/overview.md", specSeed);
           await writeWorkspaceFile("README.md", readme).catch(() => undefined);
+          if (projectType === "app-tool") {
+            await writeGeneratedAppToolScaffold(projectName, rawProjectName, toolIcon, summary);
+          }
+          await refreshTools();
 
           state.flowProjectSetupOpen = false;
           state.flowProjectSetupDismissed = false;
@@ -6051,20 +5969,6 @@ function attachWorkspaceInteractions(sendMessage: (text: string) => Promise<void
         persistWebSearchHistory,
         withActiveWebTab: workspaceToolsRuntime.withActiveWebTab,
         saveWebSearchSetup: workspaceToolsRuntime.saveWebSearchSetup
-      },
-      createTool: {
-        createScaffold: workspaceToolsRuntime.createToolScaffold,
-        browseIcons: workspaceToolsRuntime.browseCreateToolIcons,
-        generatePrd: workspaceToolsRuntime.generateCreateToolPrd,
-        generatePrdSection: async (section: CreateToolPrdSection, onUpdate?: () => void) => {
-          await workspaceToolsRuntime.generateCreateToolPrdSection(section, () => {
-            onUpdate?.();
-            renderAndBind(sendMessage);
-          });
-        },
-        runPrdReview: workspaceToolsRuntime.runCreateToolPrdReview,
-        generateDevPlan: workspaceToolsRuntime.generateCreateToolDevPlan,
-        registerTool: workspaceToolsRuntime.registerCreateToolInWorkspace
       }
     };
     workspacePane.onclick = async (event) => {
@@ -6189,7 +6093,6 @@ function attachWorkspaceInteractions(sendMessage: (text: string) => Promise<void
       dispatchWorkspaceToolInput,
       dispatchWorkspaceToolKeyDown,
       dispatchWorkspaceToolDoubleClick,
-      persistCreateToolDraft: () => persistCreateToolDraft(state),
       persistFlowWorkspacePrefs: () => persistFlowWorkspacePrefs(state),
       rerender: () => renderAndBind(sendMessage)
     });
@@ -6310,6 +6213,7 @@ async function bootstrap(): Promise<void> {
   registerClientEventBridge({
     client,
     handleCoreEvent: (event) => {
+      handleTtsDownloadProgressEvent(event, () => renderAndBind(sendMessage));
       if (event.action === "chart.definition.set") {
         const payload = payloadAsRecord(event.payload);
         const definition = typeof payload?.definition === "string" ? payload.definition.trim() : "";

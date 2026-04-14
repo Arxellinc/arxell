@@ -7,7 +7,6 @@ const PROTECTED_TOOL_IDS = new Set([
   "webSearch",
   "flow",
   "tasks",
-  "createTool",
   "memory",
   "skills"
 ]);
@@ -30,6 +29,7 @@ interface WorkspaceToolManagerActionsDeps {
     payload: Record<string, unknown>
   ) => Promise<Record<string, unknown>>;
   deleteWorkspacePath: (path: string, recursive?: boolean) => Promise<void>;
+  forgetWorkspaceTool: (toolId: string) => Promise<void>;
   refreshTools: () => Promise<void>;
   pushConsoleEntry: (
     level: "log" | "info" | "warn" | "error" | "debug",
@@ -139,11 +139,20 @@ export function createWorkspaceToolManagerActions(deps: WorkspaceToolManagerActi
     if (!confirmed) return;
 
     const root = await resolveWorkspaceRootPath(deps.toolInvokeOrThrow, deps.nextCorrelationId);
-    const pluginDir = `${root}/plugins/${toolId}`;
+    const row = deps.state.workspaceTools.find((item) => item.toolId === toolId) || null;
+    const entryPath = String(row?.entry ?? "").replace(/\\/g, "/");
+    const pluginDirFromEntry = entryPath.includes("/dist/")
+      ? entryPath.slice(0, entryPath.indexOf("/dist/"))
+      : "";
+    const pluginDir = pluginDirFromEntry || `${root}/plugins/${toolId}`;
     const legacyToolDir = `${root}/frontend/src/tools/${toolId}`;
 
     await deps.deleteWorkspacePath(pluginDir, true).catch(() => undefined);
     await deps.deleteWorkspacePath(legacyToolDir, true).catch(() => undefined);
+    await deps.forgetWorkspaceTool(toolId).catch((error) => {
+      const message = error instanceof Error ? error.message : String(error);
+      deps.pushConsoleEntry("warn", "browser", `Removed files for '${toolId}' but could not clear tool registry state: ${message}`);
+    });
     deps.state.workspaceTools = deps.state.workspaceTools.filter((tool) => tool.toolId !== toolId);
     if (deps.state.workspaceTab === (`${toolId}-tool` as WorkspaceTab)) {
       deps.state.workspaceTab = "manager-tool";

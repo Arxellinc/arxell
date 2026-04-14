@@ -1,6 +1,6 @@
 use crate::api_registry::ApiRegistryService;
 use crate::contracts::{
-    ApiConnectionType, EventSeverity, EventStage, FlowIterationStatus, FlowListRunsRequest,
+    ApiConnectionStatus, ApiConnectionType, EventSeverity, EventStage, FlowIterationStatus, FlowListRunsRequest,
     FlowListRunsResponse, FlowMode, FlowNudgeRequest, FlowNudgeResponse, FlowPauseRequest,
     FlowPauseResponse, FlowRerunValidationRequest, FlowRerunValidationResponse,
     FlowRerunValidationResult, FlowRunRecord, FlowRunStatus, FlowStartRequest, FlowStartResponse,
@@ -1247,7 +1247,7 @@ impl FlowService {
         let run = state.runs.iter().find(|run| &run.run_id == run_id)?;
         run.phase_models
             .get(phase)
-            .map(|value| normalize_phase_model_value(value.trim()))
+            .map(|value| value.trim().to_string())
             .filter(|value| !value.is_empty() && value != "auto")
     }
 
@@ -1408,10 +1408,16 @@ impl FlowService {
         max_tokens: Option<u32>,
         temperature: Option<f32>,
     ) -> Result<String, String> {
-        let (endpoint, mut model, api_key) = resolve_flow_provider(self.api_registry.as_ref())?;
+        let (mut endpoint, mut model, mut api_key) = resolve_flow_provider(self.api_registry.as_ref())?;
         if let Some(phase_name) = phase {
-            if let Some(override_model) = self.resolve_phase_model_override(phase_name) {
-                model = override_model;
+            if let Some(override_value) = self.resolve_phase_model_override(phase_name) {
+                let resolved = resolve_flow_provider_for_model_id(
+                    self.api_registry.as_ref(),
+                    override_value.as_str(),
+                )?;
+                endpoint = resolved.0;
+                model = resolved.1;
+                api_key = resolved.2;
             }
         }
         let payload = FlowOpenAiRequest {
@@ -1954,7 +1960,8 @@ fn flow_git_native_enabled() -> bool {
             let normalized = value.trim().to_lowercase();
             !matches!(normalized.as_str(), "0" | "false" | "no" | "off")
         }
-        Err(_) => true,
+        // Default to disabled for safety; git operations can stage/commit all files
+        Err(_) => false,
     }
 }
 
@@ -1990,6 +1997,71 @@ fn resolve_flow_provider(
     Ok((
         fallback_flow_endpoint(),
         fallback_flow_model_name(),
+        std::env::var("OPENAI_API_KEY").ok(),
+    ))
+}
+
+fn resolve_flow_provider_for_model_id(
+    api_registry: Option<&Arc<ApiRegistryService>>,
+    model_id: &str,
+) -> Result<(String, String, Option<String>), String> {
+    let trimmed = model_id.trim();
+    if trimmed.is_empty() || trimmed == "auto" {
+        return resolve_flow_provider(api_registry);
+    }
+
+    if let Some(rest) = trimmed.strip_prefix("api:") {
+        let mut parts = rest.splitn(2, ':');
+        let connection_id = parts.next().unwrap_or("").trim();
+        let selected_model = parts.next().unwrap_or("").trim();
+        if connection_id.is_empty() {
+            return Err("invalid API model selection".to_string());
+        }
+        let Some(registry) = api_registry else {
+            return Err("API registry unavailable for selected phase model".to_string());
+        };
+        let record = registry
+            .list()
+            .into_iter()
+            .find(|item| item.id == connection_id)
+            .ok_or_else(|| format!("API connection not found: {connection_id}"))?;
+        if !matches!(record.api_type, ApiConnectionType::Llm) {
+            return Err(format!("API connection is not an LLM endpoint: {connection_id}"));
+        }
+        if !matches!(
+            record.status,
+            ApiConnectionStatus::Verified | ApiConnectionStatus::Warning
+        ) {
+            return Err(format!("API connection is not usable: {connection_id}"));
+        }
+        let endpoint = resolve_flow_chat_endpoint(
+            record.api_url.as_str(),
+            record.api_standard_path.as_deref(),
+        );
+        let api_key = registry.get_secret_api_key(connection_id)?;
+        let model = if selected_model.is_empty() {
+            record.model_name.unwrap_or_else(fallback_flow_model_name)
+        } else {
+            selected_model.to_string()
+        };
+        return Ok((endpoint, model, Some(api_key)));
+    }
+
+    if let Some(model) = trimmed.strip_prefix("mm:") {
+        let normalized = model.trim();
+        if normalized.is_empty() {
+            return Err("invalid model-manager model selection".to_string());
+        }
+        return Ok((
+            fallback_flow_endpoint(),
+            normalized.to_string(),
+            std::env::var("OPENAI_API_KEY").ok(),
+        ));
+    }
+
+    Ok((
+        fallback_flow_endpoint(),
+        normalize_phase_model_value(trimmed),
         std::env::var("OPENAI_API_KEY").ok(),
     ))
 }

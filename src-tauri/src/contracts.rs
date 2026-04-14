@@ -304,6 +304,38 @@ pub struct WorkspaceToolSetIconResponse {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct WorkspaceToolForgetRequest {
+    pub correlation_id: String,
+    pub tool_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceToolForgetResponse {
+    pub correlation_id: String,
+    pub tool_id: String,
+    pub forgotten: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceToolCreateAppPluginRequest {
+    pub correlation_id: String,
+    pub tool_id: String,
+    pub name: String,
+    pub icon: String,
+    pub description: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceToolCreateAppPluginResponse {
+    pub correlation_id: String,
+    pub tool: WorkspaceToolRecord,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct WorkspaceToolsExportRequest {
     pub correlation_id: String,
 }
@@ -376,25 +408,6 @@ pub struct PluginCapabilityInvokeResponse {
     pub data: Value,
     pub error: Option<String>,
     pub code: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct CreateToolGenerateTextRequest {
-    pub correlation_id: String,
-    pub model_id: String,
-    pub prompt: String,
-    pub max_tokens: Option<u32>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct CreateToolGenerateTextResponse {
-    pub correlation_id: String,
-    pub model_id: String,
-    pub resolved_model: String,
-    pub resolved_endpoint: String,
-    pub text: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1180,6 +1193,7 @@ pub struct TtsStatusResponse {
     pub available_voices: Vec<String>,
     pub selected_voice: String,
     pub speed: f32,
+    pub lexicon_status: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

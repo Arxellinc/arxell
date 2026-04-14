@@ -53,10 +53,14 @@ export interface TtsEngineResettableState {
   voices: string[];
   selectedVoice: string;
   speed: number;
+  lexiconStatus?: string;
   testText: string;
   lastDurationMs: number | null;
   lastBytes: number | null;
   lastSampleRate: number | null;
+  downloadReceivedBytes?: number | null;
+  downloadTotalBytes?: number | null;
+  downloadPercent?: number | null;
 }
 
 export const TTS_ENGINE_OPTIONS: readonly TtsEngineOption[] = [
@@ -155,8 +159,12 @@ export function resetTtsStateForEngine<T extends TtsEngineResettableState>(
     voices,
     selectedVoice: voices[0] ?? defaultVoiceForEngine(engine),
     speed: 1,
+    lexiconStatus: "",
     lastBytes: null,
     lastDurationMs: null,
-    lastSampleRate: null
+    lastSampleRate: null,
+    downloadReceivedBytes: null,
+    downloadTotalBytes: null,
+    downloadPercent: null
   };
 }

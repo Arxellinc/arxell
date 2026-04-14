@@ -99,7 +99,6 @@ interface WorkspaceDelegatedEventsDeps<StateT, ToolDepsT> {
     state: StateT,
     deps: ToolDepsT
   ) => Promise<boolean>;
-  persistCreateToolDraft: () => void;
   persistFlowWorkspacePrefs: () => void;
   rerender: () => void;
 }
@@ -138,6 +137,14 @@ export function bindWorkspaceToolDelegatedEvents<StateT, ToolDepsT>(
       await deps.refreshTools();
     }
 
+    const inputResult = deps.dispatchWorkspaceToolInput(
+      event.target as HTMLElement,
+      deps.state,
+      deps.workspaceToolDeps
+    );
+    if (inputResult.handled) {
+      deps.persistFlowWorkspacePrefs();
+    }
     deps.dispatchWorkspaceToolChange(event.target as HTMLElement, deps.state, deps.workspaceToolDeps);
     deps.rerender();
   };
@@ -156,7 +163,6 @@ export function bindWorkspaceToolDelegatedEvents<StateT, ToolDepsT>(
       deps.workspaceToolDeps
     );
     if (toolInput.handled) {
-      deps.persistCreateToolDraft();
       deps.persistFlowWorkspacePrefs();
     }
     if (toolInput.handled && toolInput.rerender) {

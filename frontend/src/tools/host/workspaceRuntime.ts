@@ -41,16 +41,6 @@ import {
   withActiveWebTab
 } from "../webSearch/actions";
 import type { WebSearchHistoryItem, WebSearchSlice, WebTabState } from "../webSearch/state";
-import {
-  createToolScaffold,
-  browseCreateToolIcons,
-  generateCreateToolDevPlanFromModel,
-  generateCreateToolPrdFromModel,
-  generateCreateToolPrdSectionFromModel,
-  runCreateToolPrdReview,
-  registerCreateToolInWorkspace
-} from "../createTool/actions";
-import type { CreateToolPrdSection, CreateToolRuntimeSlice } from "../createTool/state";
 
 interface FilesRuntimeSlice {
   filesRootPath: string | null;
@@ -76,8 +66,7 @@ interface FilesRuntimeSlice {
 export interface WorkspaceToolsRuntimeState
   extends FlowRuntimeSlice,
     FilesRuntimeSlice,
-    Omit<WebSearchSlice, "apiConnections">,
-    CreateToolRuntimeSlice {
+    Omit<WebSearchSlice, "apiConnections"> {
   apiConnections: ApiConnectionRecord[];
 }
 
@@ -127,16 +116,6 @@ export interface WorkspaceToolsRuntime {
   createAndActivateWebTab: () => void;
   runWebSearch: () => Promise<void>;
   saveWebSearchSetup: () => Promise<void>;
-  createToolScaffold: () => Promise<void>;
-  browseCreateToolIcons: () => Promise<void>;
-  generateCreateToolPrd: () => Promise<void>;
-  generateCreateToolPrdSection: (
-    section: CreateToolPrdSection,
-    onUpdate?: () => void
-  ) => Promise<void>;
-  runCreateToolPrdReview: () => Promise<void>;
-  generateCreateToolDevPlan: () => Promise<void>;
-  registerCreateToolInWorkspace: () => Promise<void>;
 }
 
 export function createWorkspaceToolsRuntime(
@@ -260,60 +239,6 @@ export function createWorkspaceToolsRuntime(
     },
     saveWebSearchSetup: async () => {
       await saveWebSearchSetup(state, webDeps);
-    },
-    createToolScaffold: async () => {
-      await createToolScaffold(state, {
-        client: deps.getClient(),
-        nextCorrelationId: deps.nextCorrelationId,
-        refreshTools: deps.refreshTools
-      });
-    },
-    browseCreateToolIcons: async () => {
-      await browseCreateToolIcons(state, {
-        client: deps.getClient(),
-        nextCorrelationId: deps.nextCorrelationId,
-        refreshTools: deps.refreshTools
-      });
-    },
-    generateCreateToolPrd: async () => {
-      await generateCreateToolPrdFromModel(state, {
-        client: deps.getClient(),
-        nextCorrelationId: deps.nextCorrelationId,
-        refreshTools: deps.refreshTools
-      });
-    },
-    generateCreateToolPrdSection: async (section, onUpdate) => {
-      const createToolDeps = {
-        client: deps.getClient(),
-        nextCorrelationId: deps.nextCorrelationId,
-        refreshTools: deps.refreshTools
-      } as const;
-      await generateCreateToolPrdSectionFromModel(
-        state,
-        onUpdate ? { ...createToolDeps, onUpdate } : createToolDeps,
-        section
-      );
-    },
-    runCreateToolPrdReview: async () => {
-      await runCreateToolPrdReview(state, {
-        client: deps.getClient(),
-        nextCorrelationId: deps.nextCorrelationId,
-        refreshTools: deps.refreshTools
-      });
-    },
-    generateCreateToolDevPlan: async () => {
-      await generateCreateToolDevPlanFromModel(state, {
-        client: deps.getClient(),
-        nextCorrelationId: deps.nextCorrelationId,
-        refreshTools: deps.refreshTools
-      });
-    },
-    registerCreateToolInWorkspace: async () => {
-      await registerCreateToolInWorkspace(state, {
-        client: deps.getClient(),
-        nextCorrelationId: deps.nextCorrelationId,
-        refreshTools: deps.refreshTools
-      });
     }
   };
 }

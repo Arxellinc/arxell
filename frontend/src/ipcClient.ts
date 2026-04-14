@@ -85,6 +85,10 @@ import type {
   WorkspaceToolsListResponse,
   WorkspaceToolSetEnabledRequest,
   WorkspaceToolSetEnabledResponse,
+  WorkspaceToolCreateAppPluginRequest,
+  WorkspaceToolCreateAppPluginResponse,
+  WorkspaceToolForgetRequest,
+  WorkspaceToolForgetResponse,
   WorkspaceToolSetIconRequest,
   WorkspaceToolSetIconResponse,
   WorkspaceToolsExportRequest,
@@ -93,8 +97,6 @@ import type {
   WorkspaceToolsImportResponse,
   CustomToolCapabilityInvokeRequest,
   CustomToolCapabilityInvokeResponse,
-  CreateToolGenerateTextRequest,
-  CreateToolGenerateTextResponse,
   PluginCapabilityInvokeRequest,
   PluginCapabilityInvokeResponse,
   FilesListDirectoryRequest,
@@ -140,13 +142,16 @@ export interface ChatIpcClient {
   setWorkspaceToolIcon(
     request: WorkspaceToolSetIconRequest
   ): Promise<WorkspaceToolSetIconResponse>;
+  forgetWorkspaceTool(
+    request: WorkspaceToolForgetRequest
+  ): Promise<WorkspaceToolForgetResponse>;
+  createWorkspaceAppPlugin(
+    request: WorkspaceToolCreateAppPluginRequest
+  ): Promise<WorkspaceToolCreateAppPluginResponse>;
   toolInvoke(request: ToolInvokeRequest): Promise<ToolInvokeResponse>;
   customToolCapabilityInvoke(
     request: CustomToolCapabilityInvokeRequest
   ): Promise<CustomToolCapabilityInvokeResponse>;
-  createToolGenerateText(
-    request: CreateToolGenerateTextRequest
-  ): Promise<CreateToolGenerateTextResponse>;
   pluginCapabilityInvoke(
     request: PluginCapabilityInvokeRequest
   ): Promise<PluginCapabilityInvokeResponse>;
@@ -337,6 +342,22 @@ class TauriChatIpcClient implements ChatIpcClient {
     });
   }
 
+  forgetWorkspaceTool(
+    request: WorkspaceToolForgetRequest
+  ): Promise<WorkspaceToolForgetResponse> {
+    return this.invokeFn<WorkspaceToolForgetResponse>("cmd_workspace_tool_forget", {
+      request
+    });
+  }
+
+  createWorkspaceAppPlugin(
+    request: WorkspaceToolCreateAppPluginRequest
+  ): Promise<WorkspaceToolCreateAppPluginResponse> {
+    return this.invokeFn<WorkspaceToolCreateAppPluginResponse>("cmd_workspace_tool_create_app_plugin", {
+      request
+    });
+  }
+
   toolInvoke(request: ToolInvokeRequest): Promise<ToolInvokeResponse> {
     return this.invokeFn<ToolInvokeResponse>("cmd_tool_invoke", { request });
   }
@@ -345,14 +366,6 @@ class TauriChatIpcClient implements ChatIpcClient {
     request: CustomToolCapabilityInvokeRequest
   ): Promise<CustomToolCapabilityInvokeResponse> {
     return this.invokeFn<CustomToolCapabilityInvokeResponse>("cmd_custom_tool_capability_invoke", {
-      request
-    });
-  }
-
-  createToolGenerateText(
-    request: CreateToolGenerateTextRequest
-  ): Promise<CreateToolGenerateTextResponse> {
-    return this.invokeFn<CreateToolGenerateTextResponse>("cmd_create_tool_generate_text", {
       request
     });
   }
@@ -840,6 +853,41 @@ export class MockChatIpcClient implements ChatIpcClient {
     };
   }
 
+  async forgetWorkspaceTool(
+    request: WorkspaceToolForgetRequest
+  ): Promise<WorkspaceToolForgetResponse> {
+    this.tools.delete(request.toolId);
+    return {
+      toolId: request.toolId,
+      forgotten: true,
+      correlationId: request.correlationId
+    };
+  }
+
+  async createWorkspaceAppPlugin(
+    request: WorkspaceToolCreateAppPluginRequest
+  ): Promise<WorkspaceToolCreateAppPluginResponse> {
+    const tool: WorkspaceToolRecord = {
+      toolId: request.toolId,
+      title: request.name || request.toolId,
+      description: request.description || "Generated workspace app tool",
+      category: "workspace",
+      core: false,
+      optional: true,
+      version: "1.0.0",
+      source: "custom",
+      enabled: true,
+      icon: true,
+      status: "ready",
+      entry: `/mock/plugins/${request.toolId}/dist/index.html`
+    };
+    this.tools.set(request.toolId, tool);
+    return {
+      correlationId: request.correlationId,
+      tool
+    };
+  }
+
   async toolInvoke(request: ToolInvokeRequest): Promise<ToolInvokeResponse> {
     const payload = request.payload as Record<string, unknown>;
     try {
@@ -1002,19 +1050,6 @@ export class MockChatIpcClient implements ChatIpcClient {
       data: {},
       error: "Mock runtime does not implement this custom tool capability.",
       code: "capability_unavailable"
-    };
-  }
-
-  async createToolGenerateText(
-    request: CreateToolGenerateTextRequest
-  ): Promise<CreateToolGenerateTextResponse> {
-    const snippet = request.prompt.trim().slice(0, 220);
-    return {
-      correlationId: request.correlationId,
-      modelId: request.modelId,
-      resolvedModel: request.modelId === "primary-agent" ? "primary-agent" : request.modelId,
-      resolvedEndpoint: "mock://create-tool",
-      text: `Mock generated content for ${request.modelId}:\n\n${snippet}`
     };
   }
 
@@ -1667,7 +1702,8 @@ export class MockChatIpcClient implements ChatIpcClient {
       availableModelPaths: this.mockTts.modelPath ? [this.mockTts.modelPath] : [],
       availableVoices: voices,
       selectedVoice: voices.includes(this.mockTts.voice) ? this.mockTts.voice : fallbackVoice,
-      speed: this.mockTts.speed
+      speed: this.mockTts.speed,
+      lexiconStatus: ""
     };
   }
 

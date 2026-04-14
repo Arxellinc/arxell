@@ -20,6 +20,7 @@ import minus from "./minus.svg?raw";
 import monitor from "./monitor.svg?raw";
 import moon from "./moon.svg?raw";
 import newIcon from "./new.svg?raw";
+import network from "./network.svg?raw";
 import octagonPause from "./octagon-pause.svg?raw";
 import packageSearch from "./package-search.svg?raw";
 import play from "./play.svg?raw";
@@ -75,6 +76,7 @@ const ICON_SVGS = {
   monitor,
   moon,
   new: newIcon,
+  network,
   "octagon-pause": octagonPause,
   "package-search": packageSearch,
   play,

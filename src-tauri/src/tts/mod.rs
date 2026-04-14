@@ -17,8 +17,10 @@ use sherpa_onnx::{
 };
 use std::collections::HashMap;
 use std::fs;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 use tar::Archive;
 use tauri::{AppHandle, Emitter, Manager};
 
@@ -26,7 +28,10 @@ const DEFAULT_VOICE: &str = "af_heart";
 const DEFAULT_SPEED: f32 = 1.0;
 const DEFAULT_PROVIDER: &str = "cpu";
 const DEFAULT_ENGINE: &str = "kokoro";
+const DEFAULT_NUM_THREADS: i32 = 4;
+const MAX_NUM_THREADS: i32 = 4;
 const DEFAULT_SHERPA_KOKORO_INT8_URL: &str = "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/kokoro-int8-multi-lang-v1_1.tar.bz2";
+const DOWNLOAD_PROGRESS_INTERVAL_MS: u128 = 250;
 
 #[derive(Default)]
 pub struct TTSState {
@@ -243,6 +248,67 @@ fn emit_tts_event(
     let _ = app.emit("app:event", event);
 }
 
+fn copy_response_with_progress(
+    app: &AppHandle,
+    correlation_id: &str,
+    response: &mut reqwest::blocking::Response,
+    out: &mut fs::File,
+    url: &str,
+) -> Result<(), String> {
+    let total_bytes = response.content_length();
+    let mut received_bytes = 0_u64;
+    let mut buffer = [0_u8; 64 * 1024];
+    let mut last_emit = Instant::now();
+
+    loop {
+        let read = response
+            .read(&mut buffer)
+            .map_err(|e| format!("failed reading downloaded archive: {e}"))?;
+        if read == 0 {
+            break;
+        }
+        out.write_all(&buffer[..read])
+            .map_err(|e| format!("failed writing downloaded archive: {e}"))?;
+        received_bytes = received_bytes.saturating_add(read as u64);
+
+        if last_emit.elapsed().as_millis() >= DOWNLOAD_PROGRESS_INTERVAL_MS {
+            emit_tts_event(
+                app,
+                correlation_id,
+                "tts.download_model",
+                EventStage::Progress,
+                EventSeverity::Info,
+                json!({
+                    "url": url,
+                    "receivedBytes": received_bytes,
+                    "totalBytes": total_bytes,
+                    "percent": total_bytes
+                        .filter(|total| *total > 0)
+                        .map(|total| (received_bytes as f64 / total as f64 * 100.0).min(100.0)),
+                }),
+            );
+            last_emit = Instant::now();
+        }
+    }
+
+    emit_tts_event(
+        app,
+        correlation_id,
+        "tts.download_model",
+        EventStage::Progress,
+        EventSeverity::Info,
+        json!({
+            "url": url,
+            "receivedBytes": received_bytes,
+            "totalBytes": total_bytes,
+            "percent": total_bytes
+                .filter(|total| *total > 0)
+                .map(|total| (received_bytes as f64 / total as f64 * 100.0).min(100.0)),
+        }),
+    );
+    Ok(())
+}
+
 fn now_ms() -> i64 {
     use std::time::{SystemTime, UNIX_EPOCH};
     SystemTime::now()
@@ -404,6 +470,8 @@ fn resolve_paths_for_settings(
     settings: &PersistedTtsSettings,
 ) -> KokoroPaths {
     let engine = resolve_engine(settings);
+    let engine_dir = kokoro_dir.join(engine.as_key());
+    let tts_engine_dir = app_data_dir.join("tts").join(engine.as_key());
     let engine_paths = active_engine_paths(settings);
     let configured_voices_path = engine_paths
         .secondary_path
@@ -445,24 +513,36 @@ fn resolve_paths_for_settings(
         .and_then(|p| file_size(p))
         .map(|len| len < 15 * 1024 * 1024)
         .unwrap_or(false);
-    let model_candidates = if matches!(engine, TtsEngine::Kokoro) {
-        if prefer_v019 {
-            vec![
-                kokoro_dir.join("kokoro-v0_19.int8.onnx"),
-                kokoro_dir.join("model.int8.onnx"),
-                kokoro_dir.join("model.onnx"),
-                kokoro_dir.join("model_quantized.onnx"),
-            ]
-        } else {
-            vec![
-                kokoro_dir.join("model.int8.onnx"),
-                kokoro_dir.join("kokoro-v0_19.int8.onnx"),
-                kokoro_dir.join("model.onnx"),
-                kokoro_dir.join("model_quantized.onnx"),
-            ]
+    let model_candidates = match engine {
+        TtsEngine::Kokoro => {
+            if prefer_v019 {
+                vec![
+                    kokoro_dir.join("kokoro-v0_19.int8.onnx"),
+                    kokoro_dir.join("model.int8.onnx"),
+                    kokoro_dir.join("model.onnx"),
+                    kokoro_dir.join("model_quantized.onnx"),
+                ]
+            } else {
+                vec![
+                    kokoro_dir.join("model.int8.onnx"),
+                    kokoro_dir.join("kokoro-v0_19.int8.onnx"),
+                    kokoro_dir.join("model.onnx"),
+                    kokoro_dir.join("model_quantized.onnx"),
+                ]
+            }
         }
-    } else {
-        Vec::new()
+        TtsEngine::Piper => vec![
+            tts_engine_dir.join("model.onnx"),
+            engine_dir.join("model.onnx"),
+        ],
+        TtsEngine::Matcha => vec![
+            tts_engine_dir.join("model.onnx"),
+            engine_dir.join("model.onnx"),
+        ],
+        TtsEngine::Kitten => vec![
+            tts_engine_dir.join("model.fp16.onnx"),
+            engine_dir.join("model.fp16.onnx"),
+        ],
     };
     let configured_model_path = engine_paths
         .model_path
@@ -479,12 +559,18 @@ fn resolve_paths_for_settings(
             companion_file_from_model_dirs(engine_paths.model_path.as_deref(), &["tokens.txt"])
         })
         .or_else(|| {
-            if matches!(engine, TtsEngine::Kokoro) {
-                first_existing_file(&[kokoro_dir.join("tokens.txt")])
-                    .or_else(|| recursive_find_file_named(&kokoro_dir, "tokens.txt", 4))
-            } else {
-                None
-            }
+            first_existing_file(&[
+                tts_engine_dir.join("tokens.txt"),
+                engine_dir.join("tokens.txt"),
+                kokoro_dir.join("tokens.txt"),
+            ])
+            .or_else(|| {
+                if matches!(engine, TtsEngine::Kokoro) {
+                    recursive_find_file_named(&kokoro_dir, "tokens.txt", 4)
+                } else {
+                    None
+                }
+            })
         });
     let data_dir = engine_paths
         .data_dir
@@ -495,11 +581,15 @@ fn resolve_paths_for_settings(
             companion_dir_from_model_dirs(engine_paths.model_path.as_deref(), &["espeak-ng-data"])
         })
         .or_else(|| {
-            if matches!(engine, TtsEngine::Kokoro) {
-                first_existing_dir(&[kokoro_dir.join("espeak-ng-data")])
-            } else {
-                None
-            }
+            first_existing_dir(&[
+                tts_engine_dir.join("espeak-ng-data"),
+                engine_dir.join("espeak-ng-data"),
+                app_data_dir
+                    .join("tts")
+                    .join("shared")
+                    .join("espeak-ng-data"),
+                kokoro_dir.join("espeak-ng-data"),
+            ])
         });
     let dict_dir = first_existing_dir(&[kokoro_dir.join("dict")]);
     let lexicon_us_path = first_existing_file(&[kokoro_dir.join("lexicon-us-en.txt")]);
@@ -568,10 +658,9 @@ fn normalize_provider(provider: Option<&str>) -> String {
 }
 
 fn normalize_num_threads(num_threads: Option<u32>) -> i32 {
-    let fallback = std::cmp::max(1, num_cpus::get() as i32);
     match num_threads {
-        Some(value) if value > 0 => value as i32,
-        _ => fallback,
+        Some(value) if value > 0 => (value as i32).clamp(1, MAX_NUM_THREADS),
+        _ => DEFAULT_NUM_THREADS,
     }
 }
 
@@ -680,6 +769,43 @@ fn known_kokoro_voices() -> Vec<String> {
     .into_iter()
     .map(ToString::to_string)
     .collect()
+}
+
+fn generic_speaker_voices(num_speakers: Option<usize>) -> Vec<String> {
+    let count = num_speakers.filter(|count| *count > 0).unwrap_or(1);
+    (0..count).map(|index| format!("speaker_{index}")).collect()
+}
+
+fn is_known_kokoro_voice_pack(signature: &EngineSignature) -> bool {
+    if !matches!(signature.engine, TtsEngine::Kokoro) {
+        return false;
+    }
+    let voices_path = Path::new(&signature.voices_path);
+    if file_name(voices_path) != "voices.bin" {
+        return false;
+    }
+    let size = file_size(voices_path).unwrap_or(0);
+    // Known sherpa Kokoro bundles currently ship either a compact v0.19 voice
+    // pack or a larger multi-language v1.1 pack. Unknown custom packs should
+    // not inherit these labels just because they have the same speaker count.
+    (10 * 1024 * 1024..=15 * 1024 * 1024).contains(&size) || size >= 20 * 1024 * 1024
+}
+
+fn voices_for_signature(signature: &EngineSignature, num_speakers: Option<usize>) -> Vec<String> {
+    if is_known_kokoro_voice_pack(signature) {
+        let mut voices = known_kokoro_voices();
+        if let Some(count) = num_speakers.filter(|count| *count > 0) {
+            if count < voices.len() {
+                voices.truncate(count);
+            } else {
+                for index in voices.len()..count {
+                    voices.push(format!("speaker_{index}"));
+                }
+            }
+        }
+        return voices;
+    }
+    generic_speaker_voices(num_speakers)
 }
 
 fn voice_to_sid(voices: &[String], voice: &str) -> i32 {
@@ -927,22 +1053,11 @@ fn create_sherpa_engine(signature: &EngineSignature) -> Result<SherpaEngine, Str
     let config = build_offline_tts_config(signature);
     let tts = OfflineTts::create(&config)
         .ok_or_else(|| "failed creating sherpa tts engine".to_string())?;
-    let mut voices = if matches!(signature.engine, TtsEngine::Kokoro) {
-        known_kokoro_voices()
-    } else {
-        vec!["speaker_0".to_string()]
-    };
     let num_speakers = tts.num_speakers();
-    if num_speakers > 0 {
-        let n = num_speakers as usize;
-        if n < voices.len() {
-            voices.truncate(n);
-        } else if n > voices.len() {
-            for index in voices.len()..n {
-                voices.push(format!("speaker_{index}"));
-            }
-        }
-    }
+    let voices = voices_for_signature(
+        signature,
+        (num_speakers > 0).then_some(num_speakers as usize),
+    );
     Ok(SherpaEngine {
         tts,
         signature: signature.clone(),
@@ -963,14 +1078,26 @@ pub fn status(app: &AppHandle, request: TtsStatusRequest) -> Result<TtsStatusRes
     let paths = ensure_assets(app)?;
     let settings = load_settings(&paths.app_data_dir);
     let engine = resolve_engine(&settings);
-    let available_voices = if matches!(engine, TtsEngine::Kokoro) {
-        known_kokoro_voices()
-    } else {
-        vec!["speaker_0".to_string()]
-    };
+    let signature = build_signature(&paths, &settings).ok();
+    let available_voices = signature
+        .as_ref()
+        .map(|signature| voices_for_signature(signature, None))
+        .unwrap_or_else(|| {
+            if matches!(engine, TtsEngine::Kokoro) {
+                known_kokoro_voices()
+            } else {
+                generic_speaker_voices(None)
+            }
+        });
     let selected_voice = resolve_selected_voice(&available_voices, &settings.voice);
     let speed = normalize_speed(settings.speed);
-    let ready = build_signature(&paths, &settings).is_ok();
+    let ready = signature.is_some();
+    let lexicon_status = if paths.lexicon_us_path.is_some() || paths.lexicon_zh_path.is_some() {
+        "Lexicon files were detected but are disabled by a compatibility guard because some sherpa-onnx bundles crash when lexicon tokens do not match tokens.txt."
+            .to_string()
+    } else {
+        String::new()
+    };
     let message = if ready {
         format!("Sherpa ONNX {} ready", engine.as_key())
     } else {
@@ -1014,9 +1141,15 @@ pub fn status(app: &AppHandle, request: TtsStatusRequest) -> Result<TtsStatusRes
         python_path: String::new(),
         script_path: String::new(),
         runtime_archive_present: false,
+        available_model_paths: paths
+            .model_path
+            .as_ref()
+            .map(|p| vec![p.to_string_lossy().to_string()])
+            .unwrap_or_default(),
         available_voices,
         selected_voice,
         speed,
+        lexicon_status,
     };
 
     emit_tts_event(
@@ -1038,11 +1171,16 @@ pub fn list_voices(
     let paths = ensure_assets(app)?;
     let settings = load_settings(&paths.app_data_dir);
     let engine = resolve_engine(&settings);
-    let voices = if matches!(engine, TtsEngine::Kokoro) {
-        known_kokoro_voices()
-    } else {
-        vec!["speaker_0".to_string()]
-    };
+    let voices = build_signature(&paths, &settings)
+        .ok()
+        .map(|signature| voices_for_signature(&signature, None))
+        .unwrap_or_else(|| {
+            if matches!(engine, TtsEngine::Kokoro) {
+                known_kokoro_voices()
+            } else {
+                generic_speaker_voices(None)
+            }
+        });
     let selected = resolve_selected_voice(&voices, &settings.voice);
     Ok(TtsListVoicesResponse {
         correlation_id: request.correlation_id,
@@ -1270,11 +1408,7 @@ pub async fn speak(
     let mut settings = load_settings(&paths.app_data_dir);
     let signature = build_signature(&paths, &settings)?;
     let engine = signature.engine;
-    let selectable_voices = if matches!(engine, TtsEngine::Kokoro) {
-        known_kokoro_voices()
-    } else {
-        vec!["speaker_0".to_string()]
-    };
+    let selectable_voices = voices_for_signature(&signature, None);
     let selected_voice = resolve_selected_voice(
         &selectable_voices,
         request.voice.as_deref().unwrap_or(settings.voice.as_str()),
@@ -1414,9 +1548,13 @@ pub async fn download_model(
         .to_string();
     let archive_path = paths.kokoro_dir.join("model-download.tar.bz2");
     let extract_dir = paths.kokoro_dir.clone();
+    let app_for_download = app.clone();
+    let correlation_id = request.correlation_id.clone();
 
     tokio::task::spawn_blocking(move || -> Result<(), String> {
         let mut response = reqwest::blocking::Client::builder()
+            .connect_timeout(Duration::from_secs(30))
+            .timeout(Duration::from_secs(15 * 60))
             .build()
             .map_err(|e| format!("failed creating HTTP client: {e}"))?
             .get(&target_url)
@@ -1428,8 +1566,13 @@ pub async fn download_model(
 
         let mut out = fs::File::create(&archive_path)
             .map_err(|e| format!("failed creating archive path: {e}"))?;
-        std::io::copy(&mut response, &mut out)
-            .map_err(|e| format!("failed writing downloaded archive: {e}"))?;
+        copy_response_with_progress(
+            &app_for_download,
+            &correlation_id,
+            &mut response,
+            &mut out,
+            &target_url,
+        )?;
 
         let archive_file = fs::File::open(&archive_path)
             .map_err(|e| format!("failed opening downloaded archive: {e}"))?;

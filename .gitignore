@@ -10,6 +10,17 @@ frontend/.tmp-tests/
 src-tauri/target/
 copy/
 
+# Large runtime/model artifacts
+src-tauri/resources/voice/*.onnx
+src-tauri/resources/voice/*/*.onnx
+src-tauri/resources/whisper/*.bin
+src-tauri/resources/whisper-server/*
+!src-tauri/resources/whisper-server/README.md
+src-tauri/resources/llama-runtime/**
+!src-tauri/resources/llama-runtime/
+!src-tauri/resources/llama-runtime/.gitkeep
+!src-tauri/resources/llama-runtime/README.md
+
 # Logs
 *.log
 npm-debug.log*

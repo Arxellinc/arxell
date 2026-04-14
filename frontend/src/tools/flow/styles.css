@@ -11,12 +11,6 @@
   height: 20px;
 }
 
-.flow-status-line {
-  border: 1px solid var(--line);
-  background: var(--surface-strong);
-  padding: 0.32rem 0.5rem;
-}
-
 .flow-controls {
   border: 1px solid var(--line);
   background: var(--surface-strong);
@@ -55,6 +49,11 @@
   border-radius: 6px;
 }
 
+.flow-project-description-input {
+  min-height: 12rem;
+  resize: vertical;
+}
+
 .flow-toggle {
   flex-direction: row;
   align-items: center;
@@ -89,15 +88,6 @@
   border-radius: 6px;
   font-size: 11px;
   cursor: pointer;
-}
-
-.flow-run-summary {
-  font-size: 11px;
-  color: var(--muted);
-  min-width: 0;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 
 .flow-workspace {
@@ -199,16 +189,16 @@
 .flow-terminal-header {
   border-bottom: 1px solid var(--line);
   padding: 0.35rem 0.45rem;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 0.5rem;
-  align-items: center;
+  min-width: 0;
 }
 
 .flow-phase-tabs {
   display: flex;
   gap: 0.35rem;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: thin;
 }
 
 .flow-phase-tab {
@@ -246,32 +236,6 @@
 }
 
 .flow-phase-missing {
-  color: var(--muted);
-}
-
-.flow-terminal-actions {
-  display: flex;
-  align-items: center;
-  gap: 0.35rem;
-}
-
-.flow-terminal-actions button {
-  border: 1px solid var(--line);
-  background: var(--surface-soft);
-  color: var(--ink);
-  border-radius: 6px;
-  padding: 0.2rem 0.45rem;
-  font-size: 10px;
-  cursor: pointer;
-}
-
-.flow-terminal-actions button:disabled {
-  opacity: 0.5;
-  cursor: default;
-}
-
-.flow-terminal-meta {
-  font-size: 10px;
   color: var(--muted);
 }
 
