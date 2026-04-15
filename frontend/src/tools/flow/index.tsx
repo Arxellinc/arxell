@@ -61,6 +61,7 @@ export interface FlowToolViewState {
   phaseModels: Record<string, string>;
   availableModels: Array<{ id: string; label: string }>;
   paused: boolean;
+  useAgent: boolean;
   modelUnavailableOpen: boolean;
   modelUnavailablePhase: string;
   modelUnavailableModel: string;
@@ -120,6 +121,16 @@ export function renderFlowToolActions(view: FlowToolViewState): string {
         className: "is-text is-compact",
         buttonAttrs: {
           [FLOW_DATA_ATTR.action]: "toggle-dry-run"
+        }
+      },
+      {
+        id: "flow-use-agent",
+        title: "Toggle agent-driven implementation",
+        label: "Agent",
+        active: view.useAgent,
+        className: "is-text is-compact",
+        buttonAttrs: {
+          [FLOW_DATA_ATTR.action]: "toggle-use-agent"
         }
       },
       {

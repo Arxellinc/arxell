@@ -44,7 +44,7 @@ pub async fn invoke_tool(
     if request.tool_id == "flow" {
         match request.action.as_str() {
             "start" => {
-                // dryRun=false or autoPush=true require non-sandbox mode
+                // dryRun=false requires non-sandbox mode
                 if let Some(dry_run) = request.payload.get("dryRun").and_then(|v| v.as_bool()) {
                     if !dry_run && matches!(request.mode, ToolMode::Sandbox) {
                         return Ok(tool_invoke_err(
@@ -53,6 +53,7 @@ pub async fn invoke_tool(
                         ));
                     }
                 }
+                // autoPush=true requires non-sandbox mode
                 if let Some(auto_push) = request.payload.get("autoPush").and_then(|v| v.as_bool()) {
                     if auto_push && matches!(request.mode, ToolMode::Sandbox) {
                         return Ok(tool_invoke_err(
@@ -61,9 +62,17 @@ pub async fn invoke_tool(
                         ));
                     }
                 }
+                // useAgent=true requires non-sandbox mode (agent can write/execute files)
+                if let Some(use_agent) = request.payload.get("useAgent").and_then(|v| v.as_bool()) {
+                    if use_agent && matches!(request.mode, ToolMode::Sandbox) {
+                        return Ok(tool_invoke_err(
+                            &request,
+                            "flow.start with useAgent=true requires mode other than sandbox".to_string(),
+                        ));
+                    }
+                }
             }
             "rerun-validation" => {
-                // Validation rerun executes commands, requires non-sandbox
                 if matches!(request.mode, ToolMode::Sandbox) {
                     return Ok(tool_invoke_err(
                         &request,
@@ -72,6 +81,24 @@ pub async fn invoke_tool(
                 }
             }
             _ => {}
+        }
+    }
+
+    // Gate tool invocation by workspace-tool enablement
+    let tool_enablement_map: &[(&str, &str)] = &[
+        ("flow", "flow"),
+        ("files", "files"),
+        ("webSearch", "webSearch"),
+        ("web", "webSearch"),
+    ];
+    if let Some(&(_, workspace_tool_id)) = tool_enablement_map.iter().find(|(id, _)| *id == request.tool_id) {
+        let enabled = state.workspace_tools.list().into_iter()
+            .any(|tool| tool.tool_id == workspace_tool_id && tool.enabled);
+        if !enabled {
+            return Ok(tool_invoke_err(
+                &request,
+                format!("tool '{}' is disabled in workspace settings", workspace_tool_id),
+            ));
         }
     }
 

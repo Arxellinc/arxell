@@ -1,4 +1,7 @@
+use crate::agent_tools::chart::ChartTool;
+use crate::agent_tools::web_search::WebSearchTool;
 use crate::api_registry::ApiRegistryService;
+use crate::app::web_search_service::WebSearchService;
 use crate::contracts::{
     ApiConnectionStatus, ApiConnectionType, EventSeverity, EventStage, FlowIterationStatus, FlowListRunsRequest,
     FlowListRunsResponse, FlowMode, FlowNudgeRequest, FlowNudgeResponse, FlowPauseRequest,
@@ -8,7 +11,14 @@ use crate::contracts::{
     FlowStopResponse, Subsystem,
 };
 use crate::observability::EventHub;
-use git2::{Cred, IndexAddOption, PushOptions, RemoteCallbacks, Repository, Signature};
+use crate::workspace_tools::WorkspaceToolsService;
+use arx_rs::events::Event as AgentEvent;
+use arx_rs::provider::openai_compatible::OpenAiCompatibleProvider;
+use arx_rs::provider::ProviderConfig;
+use arx_rs::tools::Tool as AgentTool;
+use arx_rs::types::StopReason as AgentStopReason;
+use arx_rs::{Agent, AgentConfig, Session};
+use git2::{Cred, PushOptions, RemoteCallbacks, Repository, Signature};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 use std::collections::{HashMap, HashSet};
@@ -66,6 +76,8 @@ pub struct ValidationExecutionResult {
 pub struct FlowService {
     hub: EventHub,
     api_registry: Option<Arc<ApiRegistryService>>,
+    workspace_tools: Option<Arc<WorkspaceToolsService>>,
+    web_search: Option<Arc<WebSearchService>>,
     state: Arc<Mutex<FlowRuntimeState>>,
     persist_path: PathBuf,
 }
@@ -90,10 +102,15 @@ struct FlowOpenAiRequest {
 
 impl FlowService {
     pub fn new(hub: EventHub) -> Self {
-        Self::new_with_registry(hub, None)
+        Self::new_with_registry(hub, None, None, None)
     }
 
-    pub fn new_with_registry(hub: EventHub, api_registry: Option<Arc<ApiRegistryService>>) -> Self {
+    pub fn new_with_registry(
+        hub: EventHub,
+        api_registry: Option<Arc<ApiRegistryService>>,
+        workspace_tools: Option<Arc<WorkspaceToolsService>>,
+        web_search: Option<Arc<WebSearchService>>,
+    ) -> Self {
         let persist_path = default_persist_path();
         let runs = load_runs(&persist_path);
         let active_run_id = runs
@@ -103,6 +120,8 @@ impl FlowService {
         Self {
             hub,
             api_registry,
+            workspace_tools,
+            web_search,
             state: Arc::new(Mutex::new(FlowRuntimeState {
                 runs,
                 active_run_id,
@@ -143,6 +162,7 @@ impl FlowService {
         let backpressure_commands = request.backpressure_commands.clone().unwrap_or_default();
         let implement_command = request.implement_command.clone().unwrap_or_default();
         let phase_models = request.phase_models.clone().unwrap_or_default();
+        let use_agent = request.use_agent.unwrap_or(false);
 
         let mut state = self
             .state
@@ -173,6 +193,7 @@ impl FlowService {
             backpressure_commands,
             implement_command,
             phase_models,
+            use_agent,
             summary: None,
             iterations: vec![],
         };
@@ -575,7 +596,8 @@ impl FlowService {
                     &run,
                     selected_task.clone(),
                     correlation_id.as_str(),
-                );
+                    &cancel_rx,
+                ).await;
 
                 match step_result {
                     Ok(result) => {
@@ -673,7 +695,7 @@ impl FlowService {
         );
     }
 
-    fn execute_step(
+    async fn execute_step(
         &self,
         _run_id: &str,
         iteration: u32,
@@ -681,6 +703,7 @@ impl FlowService {
         run: &FlowRunRecord,
         selected_task: Option<String>,
         correlation_id: &str,
+        cancel_rx: &watch::Receiver<bool>,
     ) -> Result<Option<String>, String> {
         match step {
             "orient" => {
@@ -719,7 +742,7 @@ impl FlowService {
                     return Ok(task);
                 }
                 if let Some(candidate) =
-                    self.llm_select_task(plan_path.as_path(), run, iteration, correlation_id)?
+                    self.llm_select_task(plan_path.as_path(), run, iteration, correlation_id).await?
                 {
                     return Ok(Some(candidate));
                 }
@@ -731,19 +754,90 @@ impl FlowService {
                 }
                 let plan_path = resolve_workspace_path(run.plan_path.as_str());
                 let specs = collect_spec_files(run.specs_glob.as_str())?;
-                let strategy = self.llm_investigate(
-                    run,
-                    iteration,
-                    selected_task.as_deref(),
-                    plan_path.as_path(),
-                    specs.as_slice(),
-                    correlation_id,
-                )?;
-                Ok(Some(strategy))
+                if self.workspace_tools.is_some() {
+                    let plan_excerpt = std::fs::read_to_string(plan_path).unwrap_or_default();
+                    let spec_preview = specs
+                        .iter()
+                        .take(6)
+                        .map(|p| p.to_string_lossy().to_string())
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    let nudges = self.recent_nudges(run.run_id.as_str());
+                    let system = "You are a pragmatic staff engineer investigating a task for implementation. Use available tools to read source files, search code, and explore the codebase. Return concise, high-signal findings with:\n1) assumptions\n2) implementation approach\n3) risks\n4) validation focus";
+                    let user = format!(
+                        "Run: {}\nMode: {:?}\nIteration: {}\nSelected task: {}\nRecent nudges: {}\nPlan:\n{}\nSpecs: {}\n\nInvestigate the task. Read relevant source files and provide implementation guidance.",
+                        run.run_id,
+                        run.mode,
+                        iteration,
+                        selected_task.as_deref().unwrap_or("(none)"),
+                        if nudges.is_empty() { "(none)".to_string() } else { nudges.join(" | ") },
+                        plan_excerpt,
+                        if spec_preview.is_empty() { "(none)".to_string() } else { spec_preview },
+                    );
+                    let result = self
+                        .agent_loop(
+                            system,
+                            user.as_str(),
+                            "investigate",
+                            6,
+                            cancel_rx,
+                            correlation_id,
+                        )
+                        .await?;
+                    Ok(Some(result))
+                } else {
+                    let strategy = self.llm_investigate(
+                        run,
+                        iteration,
+                        selected_task.as_deref(),
+                        plan_path.as_path(),
+                        specs.as_slice(),
+                        correlation_id,
+                    ).await?;
+                    Ok(Some(strategy))
+                }
             }
             "implement" => {
                 if run.dry_run {
                     Ok(Some("Dry run: implementation skipped".to_string()))
+                } else if run.use_agent {
+                    if self.workspace_tools.is_none() {
+                        return Err(
+                            "agent-driven implementation requires workspace tools".to_string(),
+                        );
+                    }
+                    let plan_excerpt = std::fs::read_to_string(resolve_workspace_path(
+                        run.plan_path.as_str(),
+                    ))
+                    .unwrap_or_default()
+                    .lines()
+                    .take(80)
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                    let system = "You are a software engineer implementing a specific task. Use available tools to read, edit, and write source files. Implement the changes needed for the specified task. Be precise and focused.";
+                    let user = format!(
+                        "Run: {}\nIteration: {}\nTask: {}\nPlan context:\n{}\n\nImplement this task using the available tools. Make focused, correct changes.",
+                        run.run_id,
+                        iteration,
+                        selected_task.as_deref().unwrap_or("(none)"),
+                        plan_excerpt,
+                    );
+                    let result = self
+                        .agent_loop(
+                            system,
+                            user.as_str(),
+                            "implement",
+                            10,
+                            cancel_rx,
+                            correlation_id,
+                        )
+                        .await?;
+                    let changed_count = count_changed_files().unwrap_or(0);
+                    Ok(Some(format!(
+                        "Agent implementation complete: changedFiles={} result={}",
+                        changed_count,
+                        result.chars().take(500).collect::<String>()
+                    )))
                 } else {
                     if run.implement_command.trim().is_empty() {
                         return Err(
@@ -863,7 +957,7 @@ impl FlowService {
                     if flow_llm_enabled() {
                         let specs = collect_spec_files(run.specs_glob.as_str())?;
                         let generated =
-                            self.llm_generate_plan_seed(run, specs.as_slice(), correlation_id)?;
+                            self.llm_generate_plan_seed(run, specs.as_slice(), correlation_id).await?;
                         std::fs::write(plan_path.as_path(), generated)
                             .map_err(|e| format!("failed writing plan file: {e}"))?;
                     } else if !plan_path.exists() {
@@ -1251,7 +1345,7 @@ impl FlowService {
             .filter(|value| !value.is_empty() && value != "auto")
     }
 
-    fn llm_select_task(
+    async fn llm_select_task(
         &self,
         plan_path: &Path,
         run: &FlowRunRecord,
@@ -1297,7 +1391,7 @@ impl FlowService {
             Some("select_task"),
             Some(220),
             Some(0.2),
-        )?;
+        ).await?;
         let selected = text.lines().next().unwrap_or("").trim().to_string();
         if selected.is_empty() {
             return Ok(None);
@@ -1315,7 +1409,7 @@ impl FlowService {
         Ok(None)
     }
 
-    fn llm_investigate(
+    async fn llm_investigate(
         &self,
         run: &FlowRunRecord,
         iteration: u32,
@@ -1361,10 +1455,10 @@ impl FlowService {
             Some("investigate"),
             Some(700),
             Some(0.25),
-        )
+        ).await
     }
 
-    fn llm_generate_plan_seed(
+    async fn llm_generate_plan_seed(
         &self,
         run: &FlowRunRecord,
         specs: &[PathBuf],
@@ -1395,10 +1489,230 @@ impl FlowService {
             Some("update_plan"),
             Some(900),
             Some(0.2),
-        )
+        ).await
     }
 
-    fn llm_generate_text(
+    fn resolve_flow_agent_tools(&self, correlation_id: &str) -> Vec<Box<dyn AgentTool>> {
+        let Some(wt) = &self.workspace_tools else {
+            return vec![];
+        };
+        let enabled_ids: HashSet<String> = wt
+            .list()
+            .into_iter()
+            .filter(|tool| tool.enabled)
+            .map(|tool| tool.tool_id)
+            .collect();
+
+        let mut tools = Vec::<Box<dyn AgentTool>>::new();
+
+        if enabled_ids.contains("files") {
+            tools.extend(arx_rs::tools::default_tools().into_iter().filter(|tool| {
+                matches!(
+                    tool.name(),
+                    "read" | "edit" | "write" | "ls" | "mkdir" | "move" | "chmod" | "grep"
+                        | "find"
+                )
+            }));
+        }
+        if enabled_ids.contains("terminal") {
+            tools.extend(
+                arx_rs::tools::default_tools()
+                    .into_iter()
+                    .filter(|tool| matches!(tool.name(), "bash")),
+            );
+        }
+        if enabled_ids.contains("webSearch") {
+            if let Some(ws) = &self.web_search {
+                tools.push(Box::new(WebSearchTool::new(Arc::clone(ws))));
+            }
+        }
+        if enabled_ids.contains("chart") {
+            tools.push(Box::new(ChartTool::new(
+                self.hub.clone(),
+                correlation_id.to_string(),
+            )));
+        }
+
+        tools
+    }
+
+    fn resolve_flow_provider_config(
+        &self,
+        phase: Option<&str>,
+    ) -> Result<ProviderConfig, String> {
+        let (mut endpoint, mut model, mut api_key) =
+            resolve_flow_provider(self.api_registry.as_ref())?;
+        if let Some(phase_name) = phase {
+            if let Some(override_value) = self.resolve_phase_model_override(phase_name) {
+                let resolved = resolve_flow_provider_for_model_id(
+                    self.api_registry.as_ref(),
+                    override_value.as_str(),
+                )?;
+                endpoint = resolved.0;
+                model = resolved.1;
+                api_key = resolved.2;
+            }
+        }
+        Ok(ProviderConfig {
+            api_key,
+            base_url: Some(endpoint),
+            model,
+            max_tokens: 4096,
+            temperature: Some(0.25),
+            thinking_level: "none".to_string(),
+            provider: Some("openai-compatible".to_string()),
+        })
+    }
+
+    async fn agent_loop(
+        &self,
+        system_prompt: &str,
+        user_prompt: &str,
+        phase: &str,
+        max_turns: i64,
+        cancel_rx: &watch::Receiver<bool>,
+        correlation_id: &str,
+    ) -> Result<String, String> {
+        let provider_config = self.resolve_flow_provider_config(Some(phase))?;
+        let cwd = std::env::current_dir()
+            .unwrap_or_default()
+            .display()
+            .to_string();
+        let session = Session::in_memory(
+            cwd.clone(),
+            provider_config.provider.clone(),
+            Some(provider_config.model.clone()),
+            "none".to_string(),
+        );
+        let provider = OpenAiCompatibleProvider::new(provider_config);
+        let tools = self.resolve_flow_agent_tools(correlation_id);
+
+        self.hub.emit(self.hub.make_event(
+            correlation_id,
+            Subsystem::Service,
+            "flow.agent.start",
+            EventStage::Start,
+            EventSeverity::Info,
+            json!({
+                "phase": phase,
+                "toolCount": tools.len(),
+                "maxTurns": max_turns,
+            }),
+        ));
+
+        let mut agent = Agent::new(
+            Box::new(provider),
+            tools,
+            session,
+            AgentConfig {
+                max_turns: Some(max_turns),
+                context_window: None,
+                max_output_tokens: None,
+            },
+            Some(cwd),
+        )
+        .map_err(|e| format!("failed creating flow agent: {e}"))?;
+
+        agent.system_prompt = system_prompt.to_string();
+
+        let assistant = Arc::new(Mutex::new(String::new()));
+        let tool_call_count = Arc::new(std::sync::atomic::AtomicU32::new(0));
+
+        let hub = self.hub.clone();
+        let corr_id = correlation_id.to_string();
+        let phase_name = phase.to_string();
+        let assistant_clone = Arc::clone(&assistant);
+        let tool_count_clone = Arc::clone(&tool_call_count);
+
+        agent
+            .run_collect_with_callback(
+                user_prompt.to_string(),
+                None,
+                Some(cancel_rx.clone()),
+                move |event| match event {
+                    AgentEvent::TextDelta { delta } => {
+                        if let Ok(mut a) = assistant_clone.lock() {
+                            a.push_str(delta.as_str());
+                        }
+                    }
+                    AgentEvent::ToolStart { tool_name, .. } => {
+                        tool_count_clone.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        hub.emit(hub.make_event(
+                            corr_id.as_str(),
+                            Subsystem::Tool,
+                            "flow.agent.tool.start",
+                            EventStage::Start,
+                            EventSeverity::Info,
+                            json!({ "phase": phase_name, "toolName": tool_name }),
+                        ));
+                    }
+                    AgentEvent::ToolEnd {
+                        tool_name, display, ..
+                    } => {
+                        hub.emit(hub.make_event(
+                            corr_id.as_str(),
+                            Subsystem::Tool,
+                            "flow.agent.tool.end",
+                            EventStage::Complete,
+                            EventSeverity::Info,
+                            json!({ "phase": phase_name, "toolName": tool_name, "display": display }),
+                        ));
+                    }
+                    AgentEvent::Error { error } => {
+                        hub.emit(hub.make_event(
+                            corr_id.as_str(),
+                            Subsystem::Tool,
+                            "flow.agent.error",
+                            EventStage::Error,
+                            EventSeverity::Error,
+                            json!({ "phase": phase_name, "error": error }),
+                        ));
+                    }
+                    AgentEvent::AgentEnd { stop_reason, .. } => {
+                        if *stop_reason == AgentStopReason::Interrupted {
+                            hub.emit(hub.make_event(
+                                corr_id.as_str(),
+                                Subsystem::Service,
+                                "flow.agent.interrupted",
+                                EventStage::Progress,
+                                EventSeverity::Warn,
+                                json!({ "phase": phase_name }),
+                            ));
+                        }
+                    }
+                    _ => {}
+                },
+            )
+            .await;
+
+        let assistant_text = assistant
+            .lock()
+            .map(|a| a.trim().to_string())
+            .unwrap_or_default();
+        let total_tool_calls = tool_call_count
+            .load(std::sync::atomic::Ordering::Relaxed);
+
+        self.hub.emit(self.hub.make_event(
+            correlation_id,
+            Subsystem::Service,
+            "flow.agent.complete",
+            EventStage::Complete,
+            EventSeverity::Info,
+            json!({
+                "phase": phase,
+                "toolCalls": total_tool_calls,
+                "resultLength": assistant_text.len(),
+            }),
+        ));
+
+        if assistant_text.is_empty() {
+            Err("flow agent produced no output".to_string())
+        } else {
+            Ok(assistant_text)
+        }
+    }
+
+    async fn llm_generate_text(
         &self,
         run_id: &str,
         correlation_id: &str,
@@ -1436,7 +1750,7 @@ impl FlowService {
             max_tokens: max_tokens.or(Some(900)),
             temperature,
         };
-        let client = reqwest::blocking::Client::builder()
+        let client = reqwest::Client::builder()
             .connect_timeout(std::time::Duration::from_secs(8))
             .timeout(std::time::Duration::from_secs(70))
             .build()
@@ -1450,41 +1764,46 @@ impl FlowService {
                 .header("Authorization", format!("Bearer {key}"))
                 .header("x-api-key", key);
         }
-        let request_once = |model_name: &str| -> Result<String, String> {
+        let request_once = |model_name: &str, request_builder: reqwest::RequestBuilder| -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<String, String>> + Send>> {
             let mut request_payload = payload.clone();
             request_payload.model = model_name.to_string();
-            let response = req
-                .try_clone()
-                .ok_or_else(|| "failed cloning flow LLM request".to_string())?
-                .json(&request_payload)
-                .send()
-                .map_err(|e| format!("flow LLM request failed: {e}"))?;
-            if !response.status().is_success() {
-                let status = response.status();
+            Box::pin(async move {
+                let response = request_builder
+                    .json(&request_payload)
+                    .send()
+                    .await
+                    .map_err(|e| format!("flow LLM request failed: {e}"))?;
+                if !response.status().is_success() {
+                    let status = response.status();
+                    let body = response
+                        .text()
+                        .await
+                        .unwrap_or_else(|_| "<unreadable body>".to_string());
+                    return Err(format!(
+                        "flow LLM request failed (HTTP {}): {}",
+                        status.as_u16(),
+                        body.chars().take(260).collect::<String>()
+                    ));
+                }
                 let body = response
-                    .text()
-                    .unwrap_or_else(|_| "<unreadable body>".to_string());
-                return Err(format!(
-                    "flow LLM request failed (HTTP {}): {}",
-                    status.as_u16(),
-                    body.chars().take(260).collect::<String>()
-                ));
-            }
-            let body = response
-                .json::<Value>()
-                .map_err(|e| format!("failed parsing flow LLM response: {e}"))?;
-            let text = extract_generated_text_from_value(&body);
-            if text.trim().is_empty() {
-                return Err("flow LLM response was empty".to_string());
-            }
-            Ok(text.trim().to_string())
+                    .json::<Value>()
+                    .await
+                    .map_err(|e| format!("failed parsing flow LLM response: {e}"))?;
+                let text = extract_generated_text_from_value(&body);
+                if text.trim().is_empty() {
+                    return Err("flow LLM response was empty".to_string());
+                }
+                Ok(text.trim().to_string())
+            })
         };
 
         let max_retries = 2u32;
         let phase_name = phase.unwrap_or("unknown");
         let mut last_error: Option<String> = None;
         for attempt in 0..=max_retries {
-            match request_once(model.as_str()) {
+            let cloned = req.try_clone()
+                .ok_or_else(|| "failed cloning flow LLM request".to_string())?;
+            match request_once(model.as_str(), cloned).await {
                 Ok(text) => return Ok(text),
                 Err(error) => {
                     if !is_model_unavailable_error(error.as_str()) {
@@ -1503,7 +1822,7 @@ impl FlowService {
                         "retrying",
                     );
                     if attempt < max_retries {
-                        std::thread::sleep(std::time::Duration::from_millis(1000));
+                        tokio::time::sleep(std::time::Duration::from_millis(1000)).await;
                     }
                 }
             }
@@ -1542,7 +1861,9 @@ impl FlowService {
                 if let Some(phase_value) = phase {
                     self.set_phase_model_override(run_id, phase_value, fallback_model.as_str());
                 }
-                let text = request_once(fallback_model.as_str())?;
+                let cloned = req.try_clone()
+                    .ok_or_else(|| "failed cloning flow LLM request".to_string())?;
+                let text = request_once(fallback_model.as_str(), cloned).await?;
                 self.emit_model_recovery_event(
                     correlation_id,
                     run_id,
@@ -2209,9 +2530,21 @@ fn perform_native_git_commit(run_id: &str, iteration: u32) -> Result<String, Str
     let mut index = repo
         .index()
         .map_err(|e| format!("failed loading git index: {e}"))?;
-    index
-        .add_all(["*"], IndexAddOption::DEFAULT, None)
-        .map_err(|e| format!("failed staging files: {e}"))?;
+    let statuses = repo
+        .statuses(Some(
+            git2::StatusOptions::new()
+                .include_untracked(true)
+                .recurse_untracked_dirs(true),
+        ))
+        .map_err(|e| format!("failed reading git status: {e}"))?;
+    for entry in statuses.iter() {
+        let path = entry
+            .path()
+            .ok_or_else(|| "failed reading file path from git status".to_string())?;
+        index
+            .add_path(Path::new(path))
+            .map_err(|e| format!("failed staging file '{}': {e}", path))?;
+    }
     index
         .write()
         .map_err(|e| format!("failed writing git index: {e}"))?;
@@ -2377,8 +2710,8 @@ mod tests {
         assert_eq!(resolved, "echo run-1 3 fix-bug");
     }
 
-    #[test]
-    fn implement_step_requires_command_when_not_dry_run() {
+    #[tokio::test]
+    async fn implement_step_requires_command_when_not_dry_run() {
         let service = FlowService::default();
         let run = FlowRunRecord {
             run_id: "run-test".to_string(),
@@ -2397,22 +2730,250 @@ mod tests {
             backpressure_commands: vec!["echo ok".to_string()],
             implement_command: String::new(),
             phase_models: HashMap::new(),
+            use_agent: false,
             summary: None,
             iterations: vec![],
         };
 
-        let result = service.execute_step(
-            "run-test",
-            1,
-            "implement",
-            &run,
-            Some("task-1".to_string()),
-            "corr-1",
-        );
+        let (_, cancel_rx) = watch::channel(false);
+        let result = service
+            .execute_step(
+                "run-test",
+                1,
+                "implement",
+                &run,
+                Some("task-1".to_string()),
+                "corr-1",
+                &cancel_rx,
+            )
+            .await;
         assert!(result.is_err());
         assert!(result
             .err()
             .unwrap_or_default()
             .contains("implementCommand"));
+    }
+
+    #[tokio::test]
+    async fn implement_step_agent_mode_requires_workspace_tools() {
+        let service = FlowService::default();
+        let run = FlowRunRecord {
+            run_id: "run-test".to_string(),
+            mode: FlowMode::Build,
+            status: FlowRunStatus::Running,
+            max_iterations: Some(1),
+            current_iteration: 1,
+            started_at_ms: now_ms(),
+            completed_at_ms: None,
+            dry_run: false,
+            auto_push: false,
+            prompt_plan_path: "PROMPT_plan.md".to_string(),
+            prompt_build_path: "PROMPT_build.md".to_string(),
+            plan_path: "IMPLEMENTATION_PLAN.md".to_string(),
+            specs_glob: "specs/*.md".to_string(),
+            backpressure_commands: vec!["echo ok".to_string()],
+            implement_command: String::new(),
+            phase_models: HashMap::new(),
+            use_agent: true,
+            summary: None,
+            iterations: vec![],
+        };
+
+        let (_, cancel_rx) = watch::channel(false);
+        let result = service
+            .execute_step(
+                "run-test",
+                1,
+                "implement",
+                &run,
+                Some("task-1".to_string()),
+                "corr-1",
+                &cancel_rx,
+            )
+            .await;
+        assert!(result.is_err());
+        assert!(result
+            .err()
+            .unwrap_or_default()
+            .contains("workspace tools"));
+    }
+
+    #[tokio::test]
+    async fn implement_step_dry_run_skips() {
+        let service = FlowService::default();
+        let run = FlowRunRecord {
+            run_id: "run-test".to_string(),
+            mode: FlowMode::Build,
+            status: FlowRunStatus::Running,
+            max_iterations: Some(1),
+            current_iteration: 1,
+            started_at_ms: now_ms(),
+            completed_at_ms: None,
+            dry_run: true,
+            auto_push: false,
+            prompt_plan_path: "PROMPT_plan.md".to_string(),
+            prompt_build_path: "PROMPT_build.md".to_string(),
+            plan_path: "IMPLEMENTATION_PLAN.md".to_string(),
+            specs_glob: "specs/*.md".to_string(),
+            backpressure_commands: vec![],
+            implement_command: String::new(),
+            phase_models: HashMap::new(),
+            use_agent: true,
+            summary: None,
+            iterations: vec![],
+        };
+
+        let (_, cancel_rx) = watch::channel(false);
+        let result = service
+            .execute_step(
+                "run-test",
+                1,
+                "implement",
+                &run,
+                Some("task-1".to_string()),
+                "corr-1",
+                &cancel_rx,
+            )
+            .await
+            .expect("dry run should succeed");
+        assert_eq!(result.as_deref(), Some("Dry run: implementation skipped"));
+    }
+
+    #[test]
+    fn orient_step_collects_specs() {
+        let service = FlowService::default();
+        let dir = std::env::temp_dir().join(format!("flow-orient-test-{}", now_ms()));
+        let _ = std::fs::create_dir_all(dir.join("specs"));
+        let _ = std::fs::write(dir.join("specs").join("feature.md"), "# spec");
+        let plan_path = dir.join("IMPLEMENTATION_PLAN.md");
+        let _ = std::fs::write(plan_path.as_path(), "- [ ] task\n");
+
+        let run = FlowRunRecord {
+            run_id: "run-orient".to_string(),
+            mode: FlowMode::Plan,
+            status: FlowRunStatus::Running,
+            max_iterations: Some(1),
+            current_iteration: 1,
+            started_at_ms: now_ms(),
+            completed_at_ms: None,
+            dry_run: true,
+            auto_push: false,
+            prompt_plan_path: "PROMPT_plan.md".to_string(),
+            prompt_build_path: "PROMPT_build.md".to_string(),
+            plan_path: plan_path.to_string_lossy().to_string(),
+            specs_glob: dir.join("specs").join("*.md").to_string_lossy().to_string(),
+            backpressure_commands: vec![],
+            implement_command: String::new(),
+            phase_models: HashMap::new(),
+            use_agent: false,
+            summary: None,
+            iterations: vec![],
+        };
+
+        let rt = tokio::runtime::Runtime::new().expect("runtime");
+        let (_, cancel_rx) = watch::channel(false);
+        let result = rt
+            .block_on(service.execute_step(
+                "run-orient",
+                1,
+                "orient",
+                &run,
+                None,
+                "corr-1",
+                &cancel_rx,
+            ))
+            .expect("orient should succeed");
+        assert!(result.unwrap().contains("spec files"));
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn unknown_step_returns_error() {
+        let service = FlowService::default();
+        let run = FlowRunRecord {
+            run_id: "run-unknown".to_string(),
+            mode: FlowMode::Build,
+            status: FlowRunStatus::Running,
+            max_iterations: Some(1),
+            current_iteration: 1,
+            started_at_ms: now_ms(),
+            completed_at_ms: None,
+            dry_run: true,
+            auto_push: false,
+            prompt_plan_path: "PROMPT_plan.md".to_string(),
+            prompt_build_path: "PROMPT_build.md".to_string(),
+            plan_path: "IMPLEMENTATION_PLAN.md".to_string(),
+            specs_glob: "specs/*.md".to_string(),
+            backpressure_commands: vec![],
+            implement_command: String::new(),
+            phase_models: HashMap::new(),
+            use_agent: false,
+            summary: None,
+            iterations: vec![],
+        };
+
+        let rt = tokio::runtime::Runtime::new().expect("runtime");
+        let (_, cancel_rx) = watch::channel(false);
+        let result = rt.block_on(service.execute_step(
+            "run-unknown",
+            1,
+            "nonexistent",
+            &run,
+            None,
+            "corr-1",
+            &cancel_rx,
+        ));
+        assert!(result.is_err());
+        assert!(result.err().unwrap().contains("unknown flow step"));
+    }
+
+    #[test]
+    fn flow_service_default_has_no_workspace_tools() {
+        let service = FlowService::default();
+        assert!(service.workspace_tools.is_none());
+        assert!(service.web_search.is_none());
+    }
+
+    #[tokio::test]
+    async fn investigate_step_skips_without_llm() {
+        let service = FlowService::default();
+        let run = FlowRunRecord {
+            run_id: "run-investigate".to_string(),
+            mode: FlowMode::Plan,
+            status: FlowRunStatus::Running,
+            max_iterations: Some(1),
+            current_iteration: 1,
+            started_at_ms: now_ms(),
+            completed_at_ms: None,
+            dry_run: true,
+            auto_push: false,
+            prompt_plan_path: "PROMPT_plan.md".to_string(),
+            prompt_build_path: "PROMPT_build.md".to_string(),
+            plan_path: "IMPLEMENTATION_PLAN.md".to_string(),
+            specs_glob: "specs/*.md".to_string(),
+            backpressure_commands: vec![],
+            implement_command: String::new(),
+            phase_models: HashMap::new(),
+            use_agent: false,
+            summary: None,
+            iterations: vec![],
+        };
+
+        std::env::set_var("FLOW_LLM_ENABLED", "0");
+        let (_, cancel_rx) = watch::channel(false);
+        let result = service
+            .execute_step(
+                "run-investigate",
+                1,
+                "investigate",
+                &run,
+                Some("task".to_string()),
+                "corr-1",
+                &cancel_rx,
+            )
+            .await
+            .expect("should succeed");
+        std::env::remove_var("FLOW_LLM_ENABLED");
+        assert_eq!(result.as_deref(), Some("Investigation completed"));
     }
 }

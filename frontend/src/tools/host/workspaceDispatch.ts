@@ -18,12 +18,20 @@ import {
 } from "../webSearch/bindings";
 import { handleChartClick, handleChartInput } from "../chart/bindings";
 import { handleTasksChange, handleTasksClick, handleTasksInput } from "../tasks/bindings";
+import { handleOpenCodeClick } from "../opencode/bindings";
+import type { OpenCodeToolState } from "../opencode/state";
+import type { OpenCodeActionsDeps } from "../opencode/actions";
+import { handleLooperClick, handleLooperInput } from "../looper/bindings";
+import type { LooperToolState } from "../looper/state";
+import type { LooperActionsDeps } from "../looper/actions";
 import {
   FILES_DATA_ATTR,
   FILES_UI_ID,
   FLOW_DATA_ATTR,
+  LOOPER_DATA_ATTR,
   MANAGER_DATA_ATTR,
   MANAGER_UI_ID,
+  OPENCODE_DATA_ATTR,
   TASKS_DATA_ATTR,
   TERMINAL_DATA_ATTR,
   TERMINAL_UI_ID,
@@ -54,7 +62,11 @@ export const WORKSPACE_TOOL_TARGET_SELECTOR = [
   `[${TASKS_DATA_ATTR.field}]`,
   `[${FLOW_DATA_ATTR.action}]`,
   `[${FLOW_DATA_ATTR.runId}]`,
-  "[data-chart-action]"
+  "[data-chart-action]",
+  `[${OPENCODE_DATA_ATTR.action}]`,
+  `[${LOOPER_DATA_ATTR.action}]`,
+  `[${LOOPER_DATA_ATTR.loopId}]`,
+  `[${LOOPER_DATA_ATTR.phase}]`
 ].join(", ");
 
 export interface WorkspaceToolDispatchDeps {
@@ -107,6 +119,14 @@ export interface WorkspaceToolDispatchDeps {
     withActiveWebTab: (mutator: any) => void;
     saveWebSearchSetup: () => Promise<void>;
   };
+  opencode: {
+    state: OpenCodeToolState;
+    actionsDeps: OpenCodeActionsDeps;
+  };
+  looper: {
+    state: LooperToolState;
+    actionsDeps: LooperActionsDeps;
+  };
 }
 
 export async function dispatchWorkspaceToolClick(
@@ -127,6 +147,12 @@ export async function dispatchWorkspaceToolClick(
     return true;
   }
   if (await handleWebClick(target, state as any, deps.web as any)) {
+    return true;
+  }
+  if (handleOpenCodeClick(target, deps.opencode.state, deps.opencode.actionsDeps)) {
+    return true;
+  }
+  if (handleLooperClick(target, deps.looper.state, deps.looper.actionsDeps)) {
     return true;
   }
   return false;
@@ -153,18 +179,21 @@ export function dispatchWorkspaceToolInput(
   const webHandled = handleWebInput(target, state as any, { withActiveWebTab: deps.web.withActiveWebTab as any });
   const flowResult = handleFlowInput(target, state as any);
   const chartResult = handleChartInput(target, state as any);
+  const looperResult = handleLooperInput(target, deps.looper.state);
   return {
     handled:
       filesResult.handled ||
       tasksHandled ||
       webHandled ||
       flowResult.handled ||
-      chartResult.handled,
+      chartResult.handled ||
+      looperResult.handled,
     rerender:
       filesResult.rerender ||
       tasksHandled ||
       flowResult.rerender ||
-      chartResult.rerender
+      chartResult.rerender ||
+      looperResult.rerender
   };
 }
 

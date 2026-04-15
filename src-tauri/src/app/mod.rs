@@ -57,6 +57,8 @@ impl AppContext {
         let flow = Arc::new(flow_service::FlowService::new_with_registry(
             hub.clone(),
             Some(Arc::clone(&api_registry)),
+            Some(Arc::clone(&workspace_tools)),
+            Some(Arc::clone(&web_search)),
         ));
 
         let ipc = IpcLayer::new(hub, service, terminal, Arc::clone(&flow));

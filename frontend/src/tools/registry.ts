@@ -41,6 +41,8 @@ export const TOOL_REGISTRY: Record<string, ToolManifest> = buildRegistry();
 
 const PREFERRED_TOOL_ORDER = [
   "terminal",
+  "opencode",
+  "looper",
   "files",
   "webSearch",
   "chart",

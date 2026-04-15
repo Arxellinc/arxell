@@ -101,7 +101,7 @@ export function getPanelDefinition(
       title: "Model Manager",
       icon: APP_ICON.sidebar.modelManager,
       renderBody: () => renderModelManagerBody(state),
-      renderActions: renderModelManagerActions
+      renderActions: () => renderModelManagerActions(state)
     };
   }
 

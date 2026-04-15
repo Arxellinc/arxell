@@ -52,6 +52,13 @@ import filePlus from "./file-plus.svg?raw";
 import files from "./files.svg?raw";
 import x from "./x.svg?raw";
 import replace from "./replace.svg?raw";
+import botMessageSquare from "./bot-message-square.svg?raw";
+import refreshCw from "./refresh-cw.svg?raw";
+import info from "./info.svg?raw";
+import code from "./code.svg?raw";
+import eye from "./eye.svg?raw";
+import squareCheck from "./square-check.svg?raw";
+import squareDashed from "./square-dashed.svg?raw";
 
 const ICON_SVGS = {
   bot,
@@ -107,7 +114,14 @@ const ICON_SVGS = {
   cpu,
   wrench,
   audioLines,
-  "database-zap": databaseZap
+  "database-zap": databaseZap,
+  "bot-message-square": botMessageSquare,
+  "refresh-cw": refreshCw,
+  info,
+  code,
+  eye,
+  "square-check": squareCheck,
+  "square-dashed": squareDashed
 } as const;
 
 export type IconName = keyof typeof ICON_SVGS;

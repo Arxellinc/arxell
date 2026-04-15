@@ -100,6 +100,7 @@ interface WorkspaceDelegatedEventsDeps<StateT, ToolDepsT> {
     deps: ToolDepsT
   ) => Promise<boolean>;
   persistFlowWorkspacePrefs: () => void;
+  persistWorkspaceTab: (tab: string) => void;
   rerender: () => void;
 }
 
@@ -211,6 +212,7 @@ interface WorkspacePreClickDeps {
   maybeOpenFlowProjectSetup: () => Promise<void>;
   dispatchWorkspaceToolClick: (target: HTMLElement) => Promise<boolean>;
   persistFlowWorkspacePrefs: () => void;
+  persistWorkspaceTab: (tab: string) => void;
 }
 
 export async function handleWorkspacePaneClickPrelude(
@@ -251,6 +253,7 @@ export async function handleWorkspacePaneClickPrelude(
   const nextWorkspaceTab = target.getAttribute("data-workspace-tab");
   if (nextWorkspaceTab && deps.isWorkspaceTab(nextWorkspaceTab)) {
     deps.state.workspaceTab = nextWorkspaceTab;
+    deps.persistWorkspaceTab(nextWorkspaceTab);
     if (nextWorkspaceTab === "terminal") {
       await deps.ensureTerminalSession();
     }

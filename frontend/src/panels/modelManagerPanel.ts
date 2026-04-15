@@ -1,4 +1,5 @@
 import { escapeHtml } from "./utils";
+import { iconHtml } from "../icons";
 import type { PrimaryPanelBindings, PrimaryPanelRenderState } from "./types";
 
 const MODEL_COLLECTIONS: Array<{ id: string; label: string }> = [
@@ -13,11 +14,16 @@ const MODEL_COLLECTIONS: Array<{ id: string; label: string }> = [
 const UNSLOTH_UD_COLLECTION_URL =
   "https://huggingface.co/collections/unsloth/unsloth-dynamic-20-quants";
 
-export function renderModelManagerActions(): string {
+export function renderModelManagerActions(state: PrimaryPanelRenderState): string {
+  const activeTab = state.modelManagerActiveTab;
+  const tabAllModelsClass = activeTab === "all_models" ? " is-active" : "";
+  const tabDownloadClass = activeTab === "download" ? " is-active" : "";
   return `
-    <div class="llama-actions">
-      <button type="button" class="topbar-icon-btn" id="modelManagerRefreshBtn" aria-label="Refresh models" data-title="Refresh Models" title="Refresh Models">↻</button>
+    <div class="mm-tab-bar">
+      <button type="button" class="mm-tab-btn${tabAllModelsClass}" data-mm-tab="all_models">All Available Models</button>
+      <button type="button" class="mm-tab-btn${tabDownloadClass}" data-mm-tab="download">Download Models</button>
     </div>
+    <button type="button" class="topbar-icon-btn" id="modelManagerRefreshBtn" aria-label="Refresh models" data-title="Refresh Models" title="Refresh Models">↻</button>
   `;
 }
 
@@ -49,6 +55,15 @@ function capabilityIconsForModel(modelName: string): string {
   if (lowered.includes("coder") || lowered.includes("code")) {
     caps.push({ icon: "⌨", label: "Coding" });
   }
+  if (
+    lowered.includes("gpt-4o") ||
+    lowered.includes("omni") ||
+    lowered.includes("tool") ||
+    lowered.includes("function") ||
+    !lowered.includes("base")
+  ) {
+    caps.push({ icon: "🔧", label: "Tool Use" });
+  }
   return caps
     .map(
       (cap) =>
@@ -57,11 +72,217 @@ function capabilityIconsForModel(modelName: string): string {
     .join("");
 }
 
+function allModelsCapabilityIcons(modelName: string): string {
+  const lowered = modelName.toLowerCase();
+  const icons: string[] = [];
+  const hasVision =
+    lowered.includes("vision") ||
+    lowered.includes("-vl") ||
+    lowered.includes("llava") ||
+    lowered.includes("minicpm-v") ||
+    lowered.includes("gpt-4o") ||
+    lowered.includes("gemini") ||
+    lowered.includes("claude-3") ||
+    lowered.includes("claude-4") ||
+    lowered.includes("omni");
+  const hasThinking =
+    lowered.includes("thinking") ||
+    lowered.includes("reasoning") ||
+    lowered.includes("deepseek-r1") ||
+    lowered.includes("qwq") ||
+    lowered.includes("o1") ||
+    lowered.includes("o3") ||
+    lowered.includes("o4");
+  const hasCoding =
+    lowered.includes("coder") || lowered.includes("code");
+  const hasToolUse = true;
+  if (hasThinking) icons.push(`<span class="mm-cap-icon is-thinking" title="Thinking / Reasoning">${iconHtml("brain", { size: 16, tone: "dark" })}</span>`);
+  if (hasCoding) icons.push(`<span class="mm-cap-icon is-coding" title="Coding">${iconHtml("code", { size: 16, tone: "dark" })}</span>`);
+  if (hasToolUse) icons.push(`<span class="mm-cap-icon" title="Tool Use">${iconHtml("wrench", { size: 16, tone: "dark" })}</span>`);
+  if (hasVision) icons.push(`<span class="mm-cap-icon is-vision" title="Vision">${iconHtml("eye", { size: 16, tone: "dark" })}</span>`);
+  return icons.join("");
+}
+
+function extractProviderFromLabel(label: string): string {
+  const slashIdx = label.indexOf("/");
+  if (slashIdx < 0) return "local";
+  return label.slice(0, slashIdx);
+}
+
+function extractModelNameFromLabel(label: string): string {
+  const slashIdx = label.indexOf("/");
+  if (slashIdx < 0) return label;
+  return label.slice(slashIdx + 1);
+}
+
+function estimateParameterCount(modelName: string): string {
+  const lower = modelName.toLowerCase();
+  const match = lower.match(/(\d+(?:\.\d+)?)\s*[xb]/);
+  if (match && match[1]) {
+    const num = parseFloat(match[1]);
+    if (num >= 1) return num >= 100 ? `${(num / 1000).toFixed(1)}T` : `${num}B`;
+  }
+  const tMatch = lower.match(/(\d+(?:\.\d+)?)\s*t/);
+  if (tMatch && tMatch[1]) return `${parseFloat(tMatch[1])}T`;
+  if (lower.includes("mini") || lower.includes("micro") || lower.includes("nano")) return "<1B";
+  if (lower.includes("flash")) return "-";
+  if (lower.includes("gpt-4")) return "-";
+  if (lower.includes("claude")) return "-";
+  if (lower.includes("o1") || lower.includes("o3") || lower.includes("o4")) return "-";
+  return "-";
+}
+
+function renderAllModelsTable(state: PrimaryPanelRenderState): string {
+  const allOptions = state.allModelsList;
+  if (!allOptions.length) {
+    return `<div class="mm-all-table"><div class="mm-all-row is-empty"><span>No models available. Connect an API or load a local model.</span></div></div>
+      <div class="mm-action-btns">
+        <button type="button" class="mm-action-btn" data-mm-nav="apis">+ Add New API Model</button>
+        <button type="button" class="mm-action-btn" data-mm-nav="download">Download Local Model</button>
+      </div>`;
+  }
+
+  const headerHtml = `
+    <div class="mm-all-header">
+      <span>Provider</span>
+      <span>Model</span>
+      <span>Params</span>
+      <span>Cap</span>
+      <span></span>
+      <span></span>
+    </div>
+  `;
+
+  const rowsHtml = allOptions
+    .map((opt) => {
+      const provider = extractProviderFromLabel(opt.label);
+      const modelName = extractModelNameFromLabel(opt.label);
+      const params = estimateParameterCount(opt.modelName);
+      const isDisabled = state.modelManagerDisabledModelIds.includes(opt.id);
+      const dimClass = isDisabled ? " is-dimmed" : "";
+      const checkedAttr = isDisabled ? "" : " checked";
+      const checkIcon = isDisabled
+        ? iconHtml("square", { size: 16, tone: "dark" })
+        : iconHtml("square-check-big", { size: 16, tone: "dark" });
+      const capIcons = allModelsCapabilityIcons(opt.modelName);
+      const infoAttrs = `data-model-info-id="${escapeHtml(opt.id)}"`;
+
+      return `
+        <div class="mm-all-row${dimClass}">
+          <span class="mm-all-provider">${escapeHtml(provider)}</span>
+          <span class="mm-all-model-name is-clickable" ${infoAttrs} title="${escapeHtml(opt.detail)}">${escapeHtml(modelName)}</span>
+          <span class="mm-all-params">${escapeHtml(params)}</span>
+          <span class="mm-all-caps">${capIcons}</span>
+          <span class="mm-all-check">
+            <span class="mm-check-toggle ${isDisabled ? "is-off" : "is-on"}" data-model-avail-id="${escapeHtml(opt.id)}" title="${isDisabled ? "Enable model" : "Disable model"}" aria-label="${isDisabled ? "Enable model" : "Disable model"}" role="checkbox" aria-checked="${isDisabled ? "false" : "true"}">${checkIcon}</span>
+          </span>
+          <span class="mm-all-info">
+            <span class="mm-action-icon" ${infoAttrs} title="Model details" aria-label="Model details">${iconHtml("info", { size: 16, tone: "dark" })}</span>
+          </span>
+        </div>
+      `;
+    })
+    .join("");
+
+  return `
+    <div class="mm-all-table">
+      ${headerHtml}
+      ${rowsHtml}
+    </div>
+    <div class="mm-action-btns">
+      <button type="button" class="mm-action-btn" data-mm-nav="apis">+ Add New API Model</button>
+      <button type="button" class="mm-action-btn" data-mm-nav="download">Download Local Model</button>
+    </div>
+  `;
+}
+
+function renderModelInfoModal(state: PrimaryPanelRenderState): string {
+  const modelId = state.modelManagerInfoModalModelId;
+  if (!modelId) return "";
+
+  const opt = state.allModelsList.find((o) => o.id === modelId);
+  if (!opt) return "";
+
+  const provider = extractProviderFromLabel(opt.label);
+  const modelName = extractModelNameFromLabel(opt.label);
+  const params = estimateParameterCount(opt.modelName);
+  const isDisabled = state.modelManagerDisabledModelIds.includes(opt.id);
+  const source = opt.source === "local" ? "Local (llama.cpp)" : "API";
+  const capIcons = allModelsCapabilityIcons(opt.modelName);
+
+  const detailRows: Array<{ label: string; value: string }> = [
+    { label: "Source", value: source },
+    { label: "Provider", value: provider },
+    { label: "Model ID", value: opt.modelName },
+    { label: "Parameters (est.)", value: params || "Unknown" },
+    { label: "Detail", value: opt.detail },
+    { label: "Status", value: isDisabled ? "Disabled" : "Enabled" }
+  ];
+
+  if (opt.source === "api") {
+    detailRows.push({ label: "API Standard", value: "OpenAI-compatible" });
+    const curlCmd = `curl ${escapeHtml(opt.detail)}/v1/chat/completions -H "Authorization: Bearer $API_KEY" -H "Content-Type: application/json" -d '{"model":"${escapeHtml(opt.modelName)}","messages":[{"role":"user","content":"Hello"}]}'`;
+    detailRows.push({ label: "Verify (curl)", value: curlCmd });
+  }
+
+  const detailsHtml = detailRows
+    .map(
+      (row) => `
+      <div class="mm-info-row">
+        <span class="mm-info-label">${escapeHtml(row.label)}</span>
+        <span class="mm-info-value${row.label === "Verify (curl)" ? " is-code" : ""}">${escapeHtml(row.value)}</span>
+      </div>
+    `
+    )
+    .join("");
+
+  return `
+    <div class="mm-modal-overlay" id="mmInfoModalOverlay">
+      <div class="mm-modal">
+        <div class="mm-modal-header">
+          <h3>${escapeHtml(modelName)}</h3>
+          <button type="button" class="mm-modal-close" id="mmInfoModalClose" aria-label="Close">✕</button>
+        </div>
+        <div class="mm-modal-caps">${capIcons}</div>
+        <div class="mm-modal-details">
+          ${detailsHtml}
+        </div>
+        <div class="mm-modal-actions">
+          <button type="button" class="mm-modal-btn" id="mmInfoModalDone">Close</button>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
 export function renderModelManagerBody(state: PrimaryPanelRenderState): string {
+  const activeTab = state.modelManagerActiveTab;
+
+  const allModelsContent = activeTab === "all_models" ? renderAllModelsTable(state) : "";
+  const downloadContent = activeTab === "download" ? renderDownloadTab(state) : "";
+  const messageHtml =
+    activeTab === "download" && state.modelManagerMessage
+      ? `<div class="llama-runtime-console"><div class="llama-runtime-line">${escapeHtml(state.modelManagerMessage)}</div></div>`
+      : "";
+
+  return `
+    <div class="primary-pane-body">
+      <div class="mm-tab-content">
+        ${allModelsContent}
+        ${downloadContent}
+      </div>
+      ${messageHtml}
+      ${renderModelInfoModal(state)}
+    </div>
+  `;
+}
+
+function renderDownloadTab(state: PrimaryPanelRenderState): string {
   const collectionOptions = MODEL_COLLECTIONS.map((item) => {
     const selected = item.id === state.modelManagerCollection ? " selected" : "";
     return `<option value="${escapeHtml(item.id)}"${selected}>${escapeHtml(item.label)}</option>`;
   }).join("");
+
   const installedRows = state.modelManagerInstalled.length
     ? state.modelManagerInstalled
         .map(
@@ -105,11 +326,13 @@ export function renderModelManagerBody(state: PrimaryPanelRenderState): string {
         )
         .join("")
     : "";
+
   const filteredUnslothUdRows = state.modelManagerUnslothUdCatalog.filter((row) => {
     const query = state.modelManagerQuery.trim().toLowerCase();
     if (!query) return true;
     return row.repoId.toLowerCase().includes(query) || row.modelName.toLowerCase().includes(query);
   });
+
   const unslothTableHtml =
     state.modelManagerCollection === "unsloth_ud"
       ? `
@@ -177,46 +400,37 @@ export function renderModelManagerBody(state: PrimaryPanelRenderState): string {
       : "";
 
   return `
-    <div class="primary-pane-body">
-      <div class="llama-form">
-        <h3 class="model-manager-title">Available Models</h3>
-        <div class="model-manager-installed-table">
-          <div class="model-manager-installed-header">
-            <span>Model</span>
-            <span>Size</span>
-            <span>Capabilities</span>
-            <span>Action</span>
-          </div>
-          ${installedRows}
+    <div class="llama-form">
+      <h3 class="model-manager-title">My Local Models</h3>
+      <div class="model-manager-installed-table">
+        <div class="model-manager-installed-header">
+          <span>Model</span>
+          <span>Size</span>
+          <span>Capabilities</span>
+          <span>Action</span>
         </div>
+        ${installedRows}
       </div>
+    </div>
 
-      <div class="llama-form">
-        <h3 class="model-manager-title">Download Models</h3>
-        <label class="config-row">
-          <select id="modelManagerCollectionSelect" class="llama-input model-manager-collection-select">${collectionOptions}</select>
-          <input
-            id="modelManagerQueryInput"
-            class="llama-input"
-            value="${escapeHtml(state.modelManagerQuery)}"
-            placeholder="Search query"
-          />
-          <span class="config-meta"><button type="button" class="tool-action-btn" id="modelManagerSearchBtn">Search</button></span>
-        </label>
-        ${
-          state.modelManagerCollection === "unsloth_ud"
-            ? ""
-            : `<div class="config-table">${searchRows}</div>`
-        }
-      </div>
-      ${unslothTableHtml}
-
+    <div class="llama-form">
+      <label class="config-row">
+        <select id="modelManagerCollectionSelect" class="llama-input model-manager-collection-select">${collectionOptions}</select>
+        <input
+          id="modelManagerQueryInput"
+          class="llama-input"
+          value="${escapeHtml(state.modelManagerQuery)}"
+          placeholder="Search query"
+        />
+        <span class="config-meta"><button type="button" class="tool-action-btn" id="modelManagerSearchBtn">Search</button></span>
+      </label>
       ${
-        state.modelManagerMessage
-          ? `<div class="llama-runtime-console"><div class="llama-runtime-line">${escapeHtml(state.modelManagerMessage)}</div></div>`
-          : ""
+        state.modelManagerCollection === "unsloth_ud"
+          ? ""
+          : `<div class="config-table">${searchRows}</div>`
       }
     </div>
+    ${unslothTableHtml}
   `;
 }
 
@@ -225,6 +439,63 @@ export function bindModelManagerPanel(bindings: PrimaryPanelBindings): void {
   if (refreshBtn) {
     refreshBtn.onclick = async () => {
       await bindings.onModelManagerRefreshInstalled();
+    };
+  }
+
+  document.querySelectorAll<HTMLButtonElement>("[data-mm-tab]").forEach((btn) => {
+    btn.onclick = async () => {
+      const tab = btn.dataset.mmTab;
+      if (tab === "all_models" || tab === "download") {
+        await bindings.onModelManagerSetActiveTab(tab);
+      }
+    };
+  });
+
+  document.querySelectorAll<HTMLButtonElement>("[data-mm-nav]").forEach((btn) => {
+    btn.onclick = async () => {
+      const target = btn.dataset.mmNav;
+      if (target === "apis") {
+        await bindings.onModelManagerNavigateToApis();
+      } else if (target === "download") {
+        await bindings.onModelManagerSetActiveTab("download");
+      }
+    };
+  });
+
+  document.querySelectorAll<HTMLSpanElement>("[data-model-avail-id]").forEach((el) => {
+    el.onclick = async () => {
+      const modelId = el.dataset.modelAvailId;
+      if (!modelId) return;
+      await bindings.onModelManagerToggleModelAvailability(modelId);
+    };
+  });
+
+  document.querySelectorAll<HTMLElement>("[data-model-info-id]").forEach((el) => {
+    el.onclick = async () => {
+      const modelId = el.dataset.modelInfoId;
+      if (!modelId) return;
+      await bindings.onModelManagerSetInfoModalModelId(modelId);
+    };
+  });
+
+  const modalCloseBtn = document.querySelector<HTMLButtonElement>("#mmInfoModalClose");
+  if (modalCloseBtn) {
+    modalCloseBtn.onclick = async () => {
+      await bindings.onModelManagerSetInfoModalModelId(null);
+    };
+  }
+  const modalDoneBtn = document.querySelector<HTMLButtonElement>("#mmInfoModalDone");
+  if (modalDoneBtn) {
+    modalDoneBtn.onclick = async () => {
+      await bindings.onModelManagerSetInfoModalModelId(null);
+    };
+  }
+  const modalOverlay = document.querySelector<HTMLElement>("#mmInfoModalOverlay");
+  if (modalOverlay) {
+    modalOverlay.onclick = async (e) => {
+      if (e.target === modalOverlay) {
+        await bindings.onModelManagerSetInfoModalModelId(null);
+      }
     };
   }
 

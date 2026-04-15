@@ -83,6 +83,23 @@ const WORKSPACE_TOOL_MANIFESTS: &[WorkspaceToolManifest] = &[
         core: false,
         default_enabled: true,
     },
+    WorkspaceToolManifest {
+        tool_id: "opencode",
+        title: "OpenCode",
+        description: "AI-powered coding agent in your terminal",
+        category: "workspace",
+        core: false,
+        default_enabled: true,
+    },
+    WorkspaceToolManifest {
+        tool_id: "looper",
+        title: "Looper",
+        description:
+            "Multi-agent Ralph loop orchestration with Planner, Executor, Validator, and Critic",
+        category: "workspace",
+        core: false,
+        default_enabled: true,
+    },
 ];
 
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -258,7 +275,11 @@ impl WorkspaceToolsService {
             .map_err(|e| format!("failed creating plugin directory: {e}"))?;
 
         let title = name.trim();
-        let title = if title.is_empty() { tool_id.as_str() } else { title };
+        let title = if title.is_empty() {
+            tool_id.as_str()
+        } else {
+            title
+        };
         let description = description.trim();
         let description = if description.is_empty() {
             "Generated workspace app tool"

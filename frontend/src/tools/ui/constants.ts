@@ -81,6 +81,7 @@ export const FLOW_UI_ID = {
   maxIterationsInput: "flowMaxIterationsInput",
   dryRunToggle: "flowDryRunToggle",
   autoPushToggle: "flowAutoPushToggle",
+  useAgentToggle: "flowUseAgentToggle",
   promptPlanPath: "flowPromptPlanPath",
   promptBuildPath: "flowPromptBuildPath",
   planPath: "flowPlanPath",
@@ -93,4 +94,39 @@ export const FLOW_UI_ID = {
   projectTypeSelect: "flowProjectTypeSelect",
   projectIconInput: "flowProjectIconInput",
   projectDescriptionInput: "flowProjectDescriptionInput"
+} as const;
+
+export const OPENCODE_DATA_ATTR = {
+  action: "data-opencode-action",
+  agentId: "data-opencode-agent-id",
+  closeAgentId: "data-opencode-close-agent-id"
+} as const;
+
+export const OPENCODE_UI_ID = {
+  terminalHost: "opencodeTerminalHost",
+  installModalOverlay: "opencodeInstallModalOverlay",
+  spawnLabelInput: "opencodeSpawnLabelInput",
+  spawnCwdInput: "opencodeSpawnCwdInput",
+  spawnPromptInput: "opencodeSpawnPromptInput"
+} as const;
+
+export const LOOPER_DATA_ATTR = {
+  action: "data-looper-action",
+  loopId: "data-looper-loop-id",
+  closeLoopId: "data-looper-close-loop-id",
+  phase: "data-looper-phase",
+  activeLoop: "data-looper-active-loop"
+} as const;
+
+export const LOOPER_UI_ID = {
+  terminalHostPrefix: "looperTerminalHost-",
+  installModalOverlay: "looperInstallModalOverlay",
+  configCwd: "looperConfigCwd",
+  configTaskPath: "looperConfigTaskPath",
+  configSpecsGlob: "looperConfigSpecsGlob",
+  configMaxIter: "looperConfigMaxIter",
+  splashProjectName: "looperSplashProjectName",
+  splashProjectType: "looperSplashProjectType",
+  splashProjectIcon: "looperSplashProjectIcon",
+  splashProjectDescription: "looperSplashProjectDescription"
 } as const;

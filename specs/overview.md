@@ -2,10 +2,6 @@
 
 Type: app-tool
 Icon: wrench
+Architecture: docs/TOOLS_ARCHITECTURE.md
 
 Create a tool to specifically engage with children about age 5 and teach them good things
-
-## Next Steps
-- Review IMPLEMENTATION_PLAN.md
-- Run Flow in dry mode for rehearsal
-- Run Flow in build mode for first task

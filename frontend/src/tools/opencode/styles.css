@@ -1,0 +1,184 @@
+.opencode-workspace {
+  min-height: 0;
+  height: 100%;
+  display: grid;
+  grid-template-rows: auto 1fr;
+  gap: 0;
+}
+
+.opencode-breadcrumb {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 4px 12px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  min-height: 28px;
+}
+
+.opencode-breadcrumb-segment {
+  color: var(--text-muted);
+}
+
+.opencode-breadcrumb-segment:last-child {
+  color: var(--text);
+  font-weight: 500;
+}
+
+.opencode-breadcrumb-sep {
+  color: var(--text-muted);
+  opacity: 0.5;
+  margin: 0 1px;
+}
+
+.opencode-host {
+  min-height: 0;
+  border: none;
+  border-radius: 0;
+  background: var(--surface-strong);
+  overflow: hidden;
+}
+
+.opencode-host .xterm {
+  height: 100%;
+  padding: 0.25rem;
+}
+
+.opencode-placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  color: var(--text-muted);
+  font-size: 0.9rem;
+}
+
+.opencode-modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(4px);
+}
+
+.opencode-modal {
+  width: 100%;
+  max-width: 520px;
+  margin: 0 1rem;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+  padding: 1.5rem;
+  display: grid;
+  gap: 1rem;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+}
+
+.opencode-modal h2 {
+  margin: 0;
+  font-size: 1.1rem;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.opencode-modal p {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 0.85rem;
+  line-height: 1.5;
+}
+
+.opencode-install-cmd {
+  background: var(--surface-strong);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.75rem 1rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.82rem;
+  color: var(--text);
+  user-select: all;
+  word-break: break-all;
+}
+
+.opencode-modal-actions {
+  display: flex;
+  gap: 0.5rem;
+  justify-content: flex-end;
+}
+
+.opencode-modal-actions button {
+  height: 32px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--surface-strong);
+  color: var(--text);
+  padding: 0 14px;
+  font-size: 0.82rem;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.opencode-modal-actions button:hover {
+  background: var(--surface-hover);
+}
+
+.opencode-modal-actions button.is-primary {
+  background: var(--accent);
+  color: var(--text-on-accent);
+  border-color: var(--accent);
+}
+
+.opencode-modal-actions button.is-primary:hover {
+  opacity: 0.9;
+}
+
+.opencode-modal-actions button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.opencode-field {
+  display: grid;
+  gap: 4px;
+}
+
+.opencode-field label {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  font-weight: 500;
+}
+
+.opencode-field input,
+.opencode-field textarea {
+  width: 100%;
+  box-sizing: border-box;
+  height: 32px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--surface-strong);
+  color: var(--text);
+  padding: 0 10px;
+  font-size: 0.82rem;
+  font-family: inherit;
+}
+
+.opencode-field textarea {
+  height: 64px;
+  padding: 8px 10px;
+  resize: vertical;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+.opencode-field input:focus,
+.opencode-field textarea:focus {
+  outline: none;
+  border-color: var(--accent);
+}

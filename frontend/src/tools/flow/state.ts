@@ -64,6 +64,7 @@ export interface FlowRuntimeSlice {
   flowPhaseModels: Record<string, string>;
   flowAvailableModels: Array<{ id: string; label: string }>;
   flowPaused: boolean;
+  flowUseAgent: boolean;
   flowModelUnavailableOpen: boolean;
   flowModelUnavailablePhase: string;
   flowModelUnavailableModel: string;

@@ -83,6 +83,10 @@ export async function handleFlowClick(
     slice.flowDryRun = !slice.flowDryRun;
     return true;
   }
+  if (flowAction === "toggle-use-agent") {
+    slice.flowUseAgent = !slice.flowUseAgent;
+    return true;
+  }
   if (flowAction === "toggle-phase-follow") {
     slice.flowAutoFocusPhaseTerminal = !slice.flowAutoFocusPhaseTerminal;
     return true;

@@ -296,8 +296,8 @@ export function composePrimaryPaneHtml(input: {
     <section class="pane primary-pane ${input.isChatTab ? "chat-pane" : ""}">
       <header class="pane-topbar">
         <span class="pane-title">${input.paneTitleHtml}</span>
-        ${input.panelActionsHtml}
       </header>
+      <div class="primary-panel-actions">${input.panelActionsHtml}</div>
       ${input.panelBodyHtml}
     </section>
   `;

@@ -4,6 +4,8 @@ export interface WorkspaceToolLifecycleState {
   workspaceTab: WorkspaceTab;
   webSetupModalOpen: boolean;
   webSetupMessage: string | null;
+  opencodeNeedsInit: boolean;
+  looperNeedsInit: boolean;
 }
 
 export interface WorkspaceToolLifecycleDeps {
@@ -12,6 +14,8 @@ export interface WorkspaceToolLifecycleDeps {
   hasVerifiedSearchConnection: () => boolean;
   ensureFilesExplorerLoaded: () => Promise<void>;
   refreshFlowRuns: () => Promise<void>;
+  ensureOpenCodeInit: () => Promise<void>;
+  ensureLooperInit: () => Promise<void>;
 }
 
 export async function handleWorkspaceToolTabActivation(
@@ -37,6 +41,22 @@ export async function handleWorkspaceToolTabActivation(
 
   if (workspaceTab === "flow-tool") {
     await deps.refreshFlowRuns();
+    return true;
+  }
+
+  if (workspaceTab === "opencode-tool") {
+    if (state.opencodeNeedsInit) {
+      state.opencodeNeedsInit = false;
+      await deps.ensureOpenCodeInit();
+    }
+    return true;
+  }
+
+  if (workspaceTab === "looper-tool") {
+    if (state.looperNeedsInit) {
+      state.looperNeedsInit = false;
+      await deps.ensureLooperInit();
+    }
     return true;
   }
 

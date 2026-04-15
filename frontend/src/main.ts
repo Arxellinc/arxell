@@ -83,6 +83,16 @@ import {
   persistWebSearchHistory
 } from "./tools/webSearch/runtime";
 import type { WebSearchHistoryItem, WebTabState } from "./tools/webSearch/state";
+import { getInitialOpenCodeState } from "./tools/opencode/state";
+import type { OpenCodeToolState } from "./tools/opencode/state";
+import { checkOpenCodeInstalled, spawnAgent } from "./tools/opencode/actions";
+import type { OpenCodeActionsDeps } from "./tools/opencode/actions";
+import { OPENCODE_UI_ID } from "./tools/ui/constants";
+import { getInitialLooperState } from "./tools/looper/state";
+import type { LooperToolState } from "./tools/looper/state";
+import { ensureLooperInit } from "./tools/looper/actions";
+import type { LooperActionsDeps } from "./tools/looper/actions";
+import { LOOPER_UI_ID } from "./tools/ui/constants";
 import { loadPersistedTasksById } from "./tools/tasks/actions";
 import type { TaskFolder, TaskSortDirection, TaskSortKey, TaskRecord } from "./tools/tasks/state";
 import { resetTtsStateForEngine, type TtsEngine } from "./tts/engineRules";
@@ -138,6 +148,10 @@ import {
   persistSttModel,
   persistSttThreads,
   resolveSystemDisplayMode,
+  loadPersistedWorkspaceTab,
+  persistWorkspaceTab,
+  loadPersistedModelManagerDisabledModelIds,
+  persistModelManagerDisabledModelIds,
   type ChatRoutePreference,
   type SttBackend
 } from "./app/persistence";
@@ -245,6 +259,7 @@ const state: {
   chatActiveModelLabel: string;
   chatActiveModelCapabilities: ChatModelCapabilities;
   chatModelOptions: ChatModelOption[];
+  allModelsList: ChatModelOption[];
   chatTtsEnabled: boolean;
   chatTtsPlaying: boolean;
   activeChatCorrelationId: string | null;
@@ -275,6 +290,10 @@ const state: {
   layoutOrientation: LayoutOrientation;
   activeTerminalSessionId: string | null;
   terminalShellProfile: TerminalShellProfile;
+  opencodeState: OpenCodeToolState;
+  opencodeNeedsInit: boolean;
+  looperState: LooperToolState;
+  looperNeedsInit: boolean;
   conversations: ConversationSummaryRecord[];
   workspaceTools: WorkspaceToolRecord[];
   chartSource: string;
@@ -377,6 +396,7 @@ const state: {
   flowPhaseModels: Record<string, string>;
   flowAvailableModels: Array<{ id: string; label: string }>;
   flowPaused: boolean;
+  flowUseAgent: boolean;
   flowModelUnavailableOpen: boolean;
   flowModelUnavailablePhase: string;
   flowModelUnavailableModel: string;
@@ -426,6 +446,9 @@ const state: {
   llamaRuntimeContextCapacity: number | null;
   llamaRuntimeTokensPerSecond: number | null;
   modelManagerInstalled: ModelManagerInstalledModel[];
+  modelManagerActiveTab: "all_models" | "download";
+  modelManagerDisabledModelIds: string[];
+  modelManagerInfoModalModelId: string | null;
   modelManagerQuery: string;
   modelManagerCollection: string;
   modelManagerSearchResults: ModelManagerHfCandidate[];
@@ -516,6 +539,7 @@ const state: {
   chatActiveModelLabel: "local-model",
   chatActiveModelCapabilities: inferChatModelCapabilities("local-model"),
   chatModelOptions: [],
+  allModelsList: [],
   chatTtsEnabled: false,
   chatTtsPlaying: false,
   activeChatCorrelationId: null,
@@ -537,10 +561,14 @@ const state: {
   chatPanePercent: 35,
   portraitWorkspacePercent: 46,
   sidebarTab: "chat",
-  workspaceTab: "events",
+  workspaceTab: loadPersistedWorkspaceTab("events"),
   layoutOrientation: "landscape",
   activeTerminalSessionId: null,
   terminalShellProfile: "default",
+  opencodeState: getInitialOpenCodeState(),
+  opencodeNeedsInit: true,
+  looperState: getInitialLooperState(),
+  looperNeedsInit: true,
   conversations: [],
   workspaceTools: [],
   chartSource: DEFAULT_CHART_SOURCE,
@@ -643,6 +671,7 @@ const state: {
   flowPhaseModels: {},
   flowAvailableModels: [],
   flowPaused: false,
+  flowUseAgent: false,
   flowModelUnavailableOpen: false,
   flowModelUnavailablePhase: "",
   flowModelUnavailableModel: "",
@@ -692,6 +721,9 @@ const state: {
   llamaRuntimeContextCapacity: null,
   llamaRuntimeTokensPerSecond: null,
   modelManagerInstalled: [],
+  modelManagerActiveTab: "all_models",
+  modelManagerDisabledModelIds: loadPersistedModelManagerDisabledModelIds(),
+  modelManagerInfoModalModelId: null,
   modelManagerQuery: "",
   modelManagerCollection: "unsloth_ud",
   modelManagerSearchResults: [],
@@ -1930,6 +1962,7 @@ function render(): void {
     id: item.id,
     label: item.label
   }));
+  state.looperState.availableModels = state.flowAvailableModels;
   const toolViews = buildWorkspaceToolViews({
     chartSource: state.chartSource,
     chartRenderSource: state.chartRenderSource,
@@ -2023,6 +2056,7 @@ function render(): void {
     flowPhaseModels: state.flowPhaseModels,
     flowAvailableModels: state.flowAvailableModels,
     flowPaused: state.flowPaused,
+    flowUseAgent: state.flowUseAgent,
     flowModelUnavailableOpen: state.flowModelUnavailableOpen,
     flowModelUnavailablePhase: state.flowModelUnavailablePhase,
     flowModelUnavailableModel: state.flowModelUnavailableModel,
@@ -2037,7 +2071,9 @@ function render(): void {
       title: session.title,
       status: session.status
     })),
-    filteredFlowEvents: filteredFlow.forRender
+    filteredFlowEvents: filteredFlow.forRender,
+    opencodeState: state.opencodeState,
+    looperState: state.looperState
   });
 
   const panel = getPanelDefinition(state.sidebarTab, {
@@ -2102,6 +2138,11 @@ function render(): void {
     llamaRuntimeBusy: state.llamaRuntimeBusy,
     llamaRuntimeLogs: state.llamaRuntimeLogs,
     modelManagerInstalled: state.modelManagerInstalled,
+    modelManagerActiveTab: state.modelManagerActiveTab,
+    modelManagerDisabledModelIds: state.modelManagerDisabledModelIds,
+    modelManagerInfoModalModelId: state.modelManagerInfoModalModelId,
+    chatModelOptions: state.chatModelOptions,
+    allModelsList: state.allModelsList,
     modelManagerQuery: state.modelManagerQuery,
     modelManagerCollection: state.modelManagerCollection,
     modelManagerSearchResults: state.modelManagerSearchResults,
@@ -2968,7 +3009,9 @@ function buildChatModelOptions(): ChatModelOption[] {
     }
   }
 
-  return options.sort((a, b) => a.label.localeCompare(b.label));
+  const sorted = options.sort((a, b) => a.label.localeCompare(b.label));
+  state.allModelsList = sorted;
+  return sorted.filter((opt) => !state.modelManagerDisabledModelIds.includes(opt.id));
 }
 
 function resolveApiProviderLabel(name: string | null, apiUrl: string): string {
@@ -4183,6 +4226,30 @@ function renderAndBind(sendMessage: (text: string) => Promise<void>): void {
       } finally {
         state.modelManagerBusy = false;
       }
+      renderAndBind(sendMessage);
+    },
+    onModelManagerSetActiveTab: async (tab: "all_models" | "download") => {
+      state.modelManagerActiveTab = tab;
+      renderAndBind(sendMessage);
+    },
+    onModelManagerToggleModelAvailability: async (modelId: string) => {
+      const idx = state.modelManagerDisabledModelIds.indexOf(modelId);
+      if (idx >= 0) {
+        state.modelManagerDisabledModelIds = state.modelManagerDisabledModelIds.filter((id) => id !== modelId);
+      } else {
+        state.modelManagerDisabledModelIds = [...state.modelManagerDisabledModelIds, modelId];
+      }
+      persistModelManagerDisabledModelIds(state.modelManagerDisabledModelIds);
+      refreshChatModelProfile();
+      renderAndBind(sendMessage);
+    },
+    onModelManagerSetInfoModalModelId: async (modelId: string | null) => {
+      state.modelManagerInfoModalModelId = modelId;
+      renderAndBind(sendMessage);
+    },
+    onModelManagerNavigateToApis: async () => {
+      state.sidebarTab = "apis";
+      await refreshApiConnections();
       renderAndBind(sendMessage);
     },
     onModelManagerSetQuery: async (query: string) => {
@@ -5529,6 +5596,11 @@ function currentPrimaryPanelRenderState() {
     llamaRuntimeBusy: state.llamaRuntimeBusy,
     llamaRuntimeLogs: state.llamaRuntimeLogs,
     modelManagerInstalled: state.modelManagerInstalled,
+    modelManagerActiveTab: state.modelManagerActiveTab,
+    modelManagerDisabledModelIds: state.modelManagerDisabledModelIds,
+    modelManagerInfoModalModelId: state.modelManagerInfoModalModelId,
+    chatModelOptions: state.chatModelOptions,
+    allModelsList: state.allModelsList,
     modelManagerQuery: state.modelManagerQuery,
     modelManagerCollection: state.modelManagerCollection,
     modelManagerSearchResults: state.modelManagerSearchResults,
@@ -5827,6 +5899,7 @@ function attachWorkspaceInteractions(sendMessage: (text: string) => Promise<void
         input: `cd "${targetDir.replaceAll('"', '\\"')}"\n`
       });
       state.workspaceTab = "terminal";
+      persistWorkspaceTab("terminal");
     };
 
     const flowPlanExists = async (): Promise<boolean> => {
@@ -5969,6 +6042,24 @@ function attachWorkspaceInteractions(sendMessage: (text: string) => Promise<void
         persistWebSearchHistory,
         withActiveWebTab: workspaceToolsRuntime.withActiveWebTab,
         saveWebSearchSetup: workspaceToolsRuntime.saveWebSearchSetup
+      },
+      opencode: {
+        state: state.opencodeState,
+        actionsDeps: {
+          terminalManager,
+          client: clientRef!,
+          nextCorrelationId,
+          renderAndBind: () => renderAndBind(sendMessage)
+        }
+      },
+      looper: {
+        state: state.looperState,
+        actionsDeps: {
+          terminalManager,
+          client: clientRef!,
+          nextCorrelationId,
+          renderAndBind: () => renderAndBind(sendMessage)
+        }
       }
     };
     workspacePane.onclick = async (event) => {
@@ -5986,12 +6077,34 @@ function attachWorkspaceInteractions(sendMessage: (text: string) => Promise<void
             refreshApiConnections,
             hasVerifiedSearchConnection: workspaceToolsRuntime.hasVerifiedSearchConnection,
             ensureFilesExplorerLoaded: workspaceToolsRuntime.ensureFilesExplorerLoaded,
-            refreshFlowRuns
+            refreshFlowRuns,
+            ensureOpenCodeInit: async () => {
+              const opencodeDeps: OpenCodeActionsDeps = {
+                terminalManager,
+                client: clientRef!,
+                nextCorrelationId,
+                renderAndBind: () => renderAndBind(sendMessage)
+              };
+              const installed = await checkOpenCodeInstalled(state.opencodeState, opencodeDeps);
+              if (installed) {
+                await spawnAgent(state.opencodeState, opencodeDeps, { label: "Agent 1" });
+              }
+            },
+            ensureLooperInit: async () => {
+              const looperDeps: LooperActionsDeps = {
+                terminalManager,
+                client: clientRef!,
+                nextCorrelationId,
+                renderAndBind: () => renderAndBind(sendMessage)
+              };
+              await ensureLooperInit(state.looperState, looperDeps);
+            }
           });
         },
         maybeOpenFlowProjectSetup,
         dispatchWorkspaceToolClick: async (target) => dispatchWorkspaceToolClick(target, state, workspaceToolDeps),
-        persistFlowWorkspacePrefs: () => persistFlowWorkspacePrefs(state)
+        persistFlowWorkspacePrefs: () => persistFlowWorkspacePrefs(state),
+        persistWorkspaceTab: (tab: string) => persistWorkspaceTab(tab)
       });
       if (prelude.handled) return;
       const target = prelude.target;
@@ -6094,6 +6207,7 @@ function attachWorkspaceInteractions(sendMessage: (text: string) => Promise<void
       dispatchWorkspaceToolKeyDown,
       dispatchWorkspaceToolDoubleClick,
       persistFlowWorkspacePrefs: () => persistFlowWorkspacePrefs(state),
+      persistWorkspaceTab: (tab: string) => persistWorkspaceTab(tab),
       rerender: () => renderAndBind(sendMessage)
     });
   }
@@ -6106,6 +6220,37 @@ function attachWorkspaceInteractions(sendMessage: (text: string) => Promise<void
   void renderChartCanvasIfNeeded(sendMessage);
 
   mountWorkspaceTerminalHosts(state, terminalManager, persistFlowPhaseSessionMap);
+
+  if (state.workspaceTab === "opencode-tool") {
+    const activeAgent = state.opencodeState.agents.find(
+      (a: { id: string }) => a.id === state.opencodeState.activeAgentId
+    );
+    if (activeAgent) {
+      const opencodeHost = document.querySelector<HTMLElement>(`#${OPENCODE_UI_ID.terminalHost}`);
+      if (opencodeHost) {
+        terminalManager.mountSession(activeAgent.sessionId, opencodeHost);
+      }
+    }
+  }
+
+  if (state.workspaceTab === "looper-tool") {
+    const activeLoop = state.looperState.loops.find(
+      (l: { id: string }) => l.id === state.looperState.activeLoopId
+    );
+    if (activeLoop) {
+      const phases: string[] = ["planner", "executor", "validator", "critic"];
+      for (const phase of phases) {
+        const sessionId = activeLoop.phases[phase as keyof typeof activeLoop.phases]?.sessionId;
+        if (sessionId) {
+          const hostId = `${LOOPER_UI_ID.terminalHostPrefix}${activeLoop.id}-${phase}`;
+          const host = document.querySelector<HTMLElement>(`#${hostId}`);
+          if (host) {
+            terminalManager.mountSession(sessionId, host);
+          }
+        }
+      }
+    }
+  }
   bindConsoleInteractions({
     consoleEntries: state.consoleEntries,
     consoleView: state.consoleView,
@@ -6222,6 +6367,7 @@ async function bootstrap(): Promise<void> {
           state.chartRenderSource = definition;
           state.chartError = null;
           state.workspaceTab = "chart-tool";
+          persistWorkspaceTab("chart-tool");
           chartLastRenderedSource = null;
           renderAndBind(sendMessage);
         }

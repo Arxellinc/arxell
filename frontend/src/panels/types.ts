@@ -188,6 +188,23 @@ export interface PrimaryPanelRenderState {
   llamaRuntimeBusy: boolean;
   llamaRuntimeLogs: string[];
   modelManagerInstalled: ModelManagerInstalledModel[];
+  modelManagerActiveTab: "all_models" | "download";
+  modelManagerDisabledModelIds: string[];
+  modelManagerInfoModalModelId: string | null;
+  chatModelOptions: Array<{
+    id: string;
+    label: string;
+    source: "api" | "local";
+    modelName: string;
+    detail: string;
+  }>;
+  allModelsList: Array<{
+    id: string;
+    label: string;
+    source: "api" | "local";
+    modelName: string;
+    detail: string;
+  }>;
   modelManagerQuery: string;
   modelManagerCollection: string;
   modelManagerSearchResults: ModelManagerHfCandidate[];
@@ -272,6 +289,10 @@ export interface PrimaryPanelBindings {
   }) => Promise<void>;
   onLlamaRuntimeStop: () => Promise<void>;
   onModelManagerRefreshInstalled: () => Promise<void>;
+  onModelManagerSetActiveTab: (tab: "all_models" | "download") => Promise<void>;
+  onModelManagerToggleModelAvailability: (modelId: string) => Promise<void>;
+  onModelManagerSetInfoModalModelId: (modelId: string | null) => Promise<void>;
+  onModelManagerNavigateToApis: () => Promise<void>;
   onModelManagerSetQuery: (query: string) => Promise<void>;
   onModelManagerSetCollection: (collection: string) => Promise<void>;
   onModelManagerSearchHf: () => Promise<void>;

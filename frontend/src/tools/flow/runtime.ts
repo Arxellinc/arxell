@@ -334,6 +334,7 @@ export function buildFlowStartRequest(
     | "flowImplementCommand"
     | "flowBackpressureCommands"
     | "flowPhaseModels"
+    | "flowUseAgent"
   >,
   correlationId: string
 ): FlowStartRequest {
@@ -355,6 +356,7 @@ export function buildFlowStartRequest(
     specsGlob: slice.flowSpecsGlob.trim() || "specs/*.md",
     backpressureCommands,
     phaseModels: { ...slice.flowPhaseModels },
+    useAgent: slice.flowUseAgent,
     ...(implementCommand ? { implementCommand } : {})
   };
 }
@@ -371,4 +373,5 @@ export function applyFlowRunSettingsFromRecord(slice: FlowRuntimeSlice, run: Flo
   slice.flowImplementCommand = run.implementCommand ?? "";
   slice.flowBackpressureCommands = run.backpressureCommands.join("\n");
   slice.flowPhaseModels = { ...(run.phaseModels ?? {}) };
+  slice.flowUseAgent = run.useAgent ?? false;
 }

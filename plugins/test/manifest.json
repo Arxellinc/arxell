@@ -1,0 +1,8 @@
+{
+  "category": "workspace",
+  "entry": "dist/index.html",
+  "icon": "wrench",
+  "id": "test",
+  "name": "test",
+  "version": "1.0.0"
+}

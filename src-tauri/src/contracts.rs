@@ -996,6 +996,7 @@ pub struct FlowStartRequest {
     pub backpressure_commands: Option<Vec<String>>,
     pub implement_command: Option<String>,
     pub phase_models: Option<std::collections::HashMap<String, String>>,
+    pub use_agent: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1149,6 +1150,8 @@ pub struct FlowRunRecord {
     pub implement_command: String,
     #[serde(default)]
     pub phase_models: std::collections::HashMap<String, String>,
+    #[serde(default)]
+    pub use_agent: bool,
     pub summary: Option<String>,
     pub iterations: Vec<FlowIterationStatus>,
 }

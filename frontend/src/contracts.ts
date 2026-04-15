@@ -816,6 +816,7 @@ export interface FlowStartRequest {
   backpressureCommands?: string[];
   implementCommand?: string;
   phaseModels?: Record<string, string>;
+  useAgent?: boolean;
 }
 
 export interface FlowStartResponse {
@@ -927,6 +928,7 @@ export interface FlowRunRecord {
   backpressureCommands: string[];
   implementCommand: string;
   phaseModels?: Record<string, string>;
+  useAgent?: boolean;
   summary: string | null;
   iterations: FlowIterationStatus[];
 }

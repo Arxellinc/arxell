@@ -20,6 +20,8 @@ const FLOW_SPLIT_STORAGE_KEY = "arxell.flow.split";
 const FLOW_ACTIVE_PHASE_STORAGE_KEY = "arxell.flow.activePhase";
 const FLOW_PHASE_SESSION_MAP_STORAGE_KEY = "arxell.flow.phaseSessions";
 const FLOW_AUTO_FOLLOW_STORAGE_KEY = "arxell.flow.autoFollow";
+const WORKSPACE_TAB_STORAGE_KEY = "arxell.workspaceTab";
+const MODEL_MANAGER_DISABLED_MODEL_IDS_KEY = "arxell.modelManager.disabledModelIds";
 
 export const BOTTOM_BAR_PREF_KEYS = {
   showBottomEngine: SHOW_BOTTOM_ENGINE_STORAGE_KEY,
@@ -377,6 +379,22 @@ export function persistFlowWorkspacePrefs(slice: {
   persistFlowAutoFollow(slice.flowAutoFocusPhaseTerminal);
 }
 
+export function loadPersistedWorkspaceTab(fallback: string): string {
+  try {
+    const raw = window.localStorage.getItem(WORKSPACE_TAB_STORAGE_KEY);
+    if (raw && (raw === "events" || raw === "terminal" || raw === "manager-tool" || raw.endsWith("-tool"))) {
+      return raw;
+    }
+  } catch {}
+  return fallback;
+}
+
+export function persistWorkspaceTab(tab: string): void {
+  try {
+    window.localStorage.setItem(WORKSPACE_TAB_STORAGE_KEY, tab);
+  } catch {}
+}
+
 export function resolveSystemDisplayMode(): DisplayMode {
   try {
     if (window.matchMedia && window.matchMedia("(prefers-color-scheme: light)").matches) {
@@ -384,4 +402,22 @@ export function resolveSystemDisplayMode(): DisplayMode {
     }
   } catch {}
   return "dark";
+}
+
+export function loadPersistedModelManagerDisabledModelIds(): string[] {
+  try {
+    const raw = window.localStorage.getItem(MODEL_MANAGER_DISABLED_MODEL_IDS_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter((v) => typeof v === "string");
+  } catch {
+    return [];
+  }
+}
+
+export function persistModelManagerDisabledModelIds(modelIds: string[]): void {
+  try {
+    window.localStorage.setItem(MODEL_MANAGER_DISABLED_MODEL_IDS_KEY, JSON.stringify(modelIds));
+  } catch {}
 }

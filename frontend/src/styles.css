@@ -1015,13 +1015,28 @@ body {
   background: var(--panel);
 }
 
+.primary-pane {
+  grid-template-rows: var(--pane-bar-h) var(--tool-toolbar-h) 1fr;
+}
+
+.primary-panel-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.35rem;
+  padding: 0 0.6rem;
+  min-height: var(--tool-toolbar-h);
+  overflow: hidden;
+}
+
 .primary-pane-body {
   min-height: 0;
+  padding: 1rem 0.5rem 0 0.5rem; 
   overflow: auto;
 }
 
 .primary-pane:not(.chat-pane) .primary-pane-body {
-  padding: 15px;
+  padding: 1rem 12px 0 12px;
 }
 
 .pane-topbar {
@@ -1199,7 +1214,7 @@ body {
 }
 
 .chat-pane {
-  grid-template-rows: var(--pane-bar-h) 1fr auto;
+  grid-template-rows: var(--pane-bar-h) var(--tool-toolbar-h) 1fr auto;
 }
 
 .messages {
@@ -2288,8 +2303,9 @@ body {
 .model-manager-simple-table {
   display: grid;
   gap: 0;
-  border: 1px solid #2a3342;
+  border: 1px solid var(--line);
   border-radius: 8px;
+  background: var(--surface-strong);
   overflow: hidden;
 }
 
@@ -2303,16 +2319,16 @@ body {
 }
 
 .model-manager-simple-header {
-  background: #141c28;
-  color: #9db2cf;
-  font-size: var(--text-xs);
+  background: var(--surface-soft);
+  color: var(--muted);
+  font-size: 0.66rem;
   font-weight: 600;
   text-transform: uppercase;
-  letter-spacing: 0.03em;
+  letter-spacing: 0.05em;
 }
 
 .model-manager-simple-row {
-  border-top: 1px solid #2a3342;
+  border-top: 1px solid var(--line);
   font-size: var(--text-sm);
   color: #d2deef;
 }
@@ -2369,8 +2385,9 @@ body {
 
 .model-manager-installed-table {
   display: grid;
-  border: 1px solid #2a3342;
+  border: 1px solid var(--line);
   border-radius: 8px;
+  background: var(--surface-strong);
   overflow: hidden;
 }
 
@@ -2384,16 +2401,17 @@ body {
 }
 
 .model-manager-installed-header {
-  background: #141c28;
-  color: #9db2cf;
-  font-size: var(--text-xs);
+  background: var(--surface-soft);
+  border-bottom: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 0.66rem;
   font-weight: 600;
   text-transform: uppercase;
-  letter-spacing: 0.03em;
+  letter-spacing: 0.05em;
 }
 
 .model-manager-installed-row {
-  border-top: 1px solid #2a3342;
+  border-top: 1px solid var(--line);
   font-size: var(--text-sm);
   color: #d2deef;
 }
@@ -2571,8 +2589,8 @@ body {
 
 [data-theme="light"] .model-manager-simple-header,
 [data-theme="light"] .model-manager-installed-header {
-  background: #eef2f7;
-  color: #5b6676;
+  background: var(--surface-soft);
+  color: var(--muted);
 }
 
 [data-theme="light"] .model-manager-simple-row,
@@ -2611,6 +2629,428 @@ body {
 
 [data-theme="light"] .model-manager-active-check {
   color: #258848;
+}
+
+/* Model Manager Tab Bar */
+.mm-tab-bar {
+  display: flex;
+  gap: 0;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.mm-tab-btn {
+  padding: 4px 10px;
+  border: none;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--muted);
+  font-size: var(--text-sm);
+  font-weight: 500;
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s;
+  white-space: nowrap;
+}
+
+.mm-tab-btn:hover {
+  color: var(--ink);
+}
+
+.mm-tab-btn.is-active {
+  color: var(--ink);
+  border-bottom-color: rgba(117, 200, 224, 0.65);
+}
+
+[data-theme="light"] .mm-tab-btn {
+  color: var(--muted);
+}
+
+[data-theme="light"] .mm-tab-btn:hover {
+  color: #3a4756;
+}
+
+[data-theme="light"] .mm-tab-btn.is-active {
+  color: #1f2933;
+  border-bottom-color: #2d5f9a;
+}
+
+/* All Available Models Table */
+.mm-all-table {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-strong);
+  overflow: hidden;
+}
+
+.mm-all-header,
+.mm-all-row {
+  display: grid;
+  grid-template-columns: 68px minmax(120px, 2fr) 52px minmax(60px, 0.8fr) 28px 28px;
+  gap: 6px;
+  align-items: center;
+  padding: 0.5rem 0.62rem;
+}
+
+.mm-all-header {
+  background: var(--surface-soft);
+  border-bottom: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 0.66rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.mm-all-row {
+  border-bottom: 1px solid var(--line);
+  font-size: var(--text-sm);
+  color: #d2deef;
+}
+
+.mm-all-row:last-child {
+  border-bottom: none;
+}
+
+.mm-all-row.is-empty {
+  color: #9db2cf;
+  grid-column: 1 / -1;
+}
+
+.mm-all-row.is-dimmed,
+.mm-all-row.is-dimmed .mm-all-provider,
+.mm-all-row.is-dimmed .mm-all-model-name,
+.mm-all-row.is-dimmed .mm-all-params,
+.mm-all-row.is-dimmed .mm-all-caps,
+.mm-all-row.is-dimmed .mm-cap-icon,
+.mm-all-row.is-dimmed .mm-action-icon {
+  color: var(--icon-inactive);
+}
+
+.mm-all-row.is-dimmed .mm-check-toggle {
+  color: var(--icon-inactive);
+}
+
+.mm-all-provider {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mm-all-model-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mm-all-model-name.is-clickable {
+  cursor: pointer;
+}
+
+.mm-all-model-name.is-clickable:hover {
+  text-decoration: underline;
+}
+
+.mm-all-params {
+  text-align: center;
+}
+
+.mm-all-caps {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.mm-cap-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: inherit;
+}
+
+.mm-cap-icon .icon-dark,
+.mm-cap-icon .icon-light {
+  color: inherit;
+}
+
+.mm-cap-icon.is-thinking {
+  color: #c4a0f5;
+}
+
+.mm-cap-icon.is-coding {
+  color: #57d786;
+}
+
+.mm-cap-icon.is-vision {
+  color: #60b5f0;
+}
+
+.mm-all-check {
+  justify-self: center;
+}
+
+.mm-check-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  border-radius: 4px;
+  padding: 0.15rem;
+  transition: background-color 0.15s ease;
+}
+
+.mm-check-toggle:hover {
+  background-color: var(--surface-soft);
+}
+
+.mm-check-toggle .icon-dark,
+.mm-check-toggle .icon-light {
+  color: inherit;
+}
+
+.mm-check-toggle.is-on {
+  color: #57d786;
+}
+
+.mm-check-toggle.is-off {
+  color: var(--icon-inactive);
+}
+
+.mm-all-info {
+  justify-self: end;
+}
+
+.mm-action-icon {
+  cursor: pointer;
+  padding: 0.2rem;
+  border-radius: 4px;
+  transition: background-color 0.15s ease;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--muted);
+}
+
+.mm-action-icon .icon-dark,
+.mm-action-icon .icon-light {
+  color: inherit;
+}
+
+.mm-action-icon:hover {
+  background-color: var(--surface-soft);
+  color: var(--ink);
+}
+
+[data-theme="light"] .mm-all-table {
+  border-color: var(--line);
+}
+
+[data-theme="light"] .mm-all-header {
+  background: var(--surface-soft);
+  color: var(--muted);
+}
+
+[data-theme="light"] .mm-all-row {
+  border-bottom-color: var(--line);
+  color: #1f2933;
+}
+
+[data-theme="light"] .mm-all-row.is-empty {
+  color: #6b7888;
+}
+
+[data-theme="light"] .mm-all-provider {
+  color: #5b6676;
+}
+
+[data-theme="light"] .mm-all-params {
+  color: #5b6676;
+}
+
+[data-theme="light"] .mm-all-model-name.is-clickable:hover {
+  color: #2d5f9a;
+}
+
+[data-theme="light"] .mm-cap-icon.is-thinking {
+  color: #8b5cf6;
+}
+
+[data-theme="light"] .mm-cap-icon.is-coding {
+  color: #16a34a;
+}
+
+[data-theme="light"] .mm-cap-icon.is-vision {
+  color: #2563eb;
+}
+
+[data-theme="light"] .mm-action-icon {
+  color: #5b6676;
+}
+
+[data-theme="light"] .mm-action-icon:hover {
+  color: #1f2933;
+}
+
+/* Model Manager Action Buttons */
+.mm-action-btns {
+  display: flex;
+  justify-content: center;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.mm-action-btn {
+  height: 28px;
+  padding: 0 14px;
+  border-radius: 6px;
+  border: 1px solid var(--line);
+  background: var(--surface-strong);
+  color: var(--muted);
+  font-size: var(--text-sm);
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+  white-space: nowrap;
+}
+
+.mm-action-btn:hover {
+  background: var(--surface-hover);
+  color: var(--ink);
+}
+
+[data-theme="light"] .mm-action-btn {
+  background: #f4f7fb;
+  border-color: #d7dde7;
+  color: #5b6676;
+}
+
+[data-theme="light"] .mm-action-btn:hover {
+  background: #e6edf6;
+  color: #1f2933;
+}
+
+/* Model Info Modal */
+.mm-modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(4px);
+}
+
+.mm-modal {
+  width: 100%;
+  max-width: 480px;
+  margin: 0 1rem;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+  padding: 1.25rem;
+  display: grid;
+  gap: 0.75rem;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+}
+
+.mm-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.mm-modal-header h3 {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mm-modal-close {
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--surface-strong);
+  color: var(--text-muted);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.mm-modal-close:hover {
+  background: var(--surface-hover);
+  color: var(--text);
+}
+
+.mm-modal-caps {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.mm-modal-details {
+  display: grid;
+  gap: 6px;
+}
+
+.mm-info-row {
+  display: grid;
+  grid-template-columns: 130px minmax(0, 1fr);
+  gap: 8px;
+  align-items: start;
+  font-size: var(--text-sm);
+}
+
+.mm-info-label {
+  color: var(--text-muted);
+  font-weight: 500;
+  flex-shrink: 0;
+}
+
+.mm-info-value {
+  color: var(--text);
+  word-break: break-all;
+  min-width: 0;
+}
+
+.mm-info-value.is-code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: var(--text-xs);
+  background: var(--surface-strong);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 8px;
+  user-select: all;
+  line-height: 1.4;
+}
+
+.mm-modal-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.mm-modal-btn {
+  height: 30px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--surface-strong);
+  color: var(--text);
+  padding: 0 14px;
+  font-size: var(--text-sm);
+  cursor: pointer;
+}
+
+.mm-modal-btn:hover {
+  background: var(--surface-hover);
 }
 
 /* STT Panel Styles */

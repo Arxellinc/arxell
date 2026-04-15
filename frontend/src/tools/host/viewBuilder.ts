@@ -10,6 +10,10 @@ import { renderTasksToolActions, renderTasksToolBody } from "../tasks";
 import type { TaskFolder, TaskSortDirection, TaskSortKey, TaskRecord } from "../tasks/state";
 import { renderWebToolActions, renderWebToolBody } from "../webSearch";
 import type { WebSearchHistoryItem, WebTabState } from "../webSearch/state";
+import { renderOpenCodeToolActions, renderOpenCodeToolBody, renderOpenCodeInstallModal, renderOpenCodeSpawnModal } from "../opencode";
+import type { OpenCodeToolState } from "../opencode/state";
+import { renderLooperToolActions, renderLooperToolBody } from "../looper";
+import type { LooperToolState } from "../looper/state";
 
 export interface ToolViewHtml {
   actionsHtml: string;
@@ -110,6 +114,7 @@ export interface WorkspaceToolViewInput {
   flowPhaseModels: Record<string, string>;
   flowAvailableModels: Array<{ id: string; label: string }>;
   flowPaused: boolean;
+  flowUseAgent: boolean;
   flowModelUnavailableOpen: boolean;
   flowModelUnavailablePhase: string;
   flowModelUnavailableModel: string;
@@ -120,6 +125,8 @@ export interface WorkspaceToolViewInput {
   flowModelUnavailableStatus: string;
   terminalSessions: FlowTerminalSessionView[];
   filteredFlowEvents: AppEvent[];
+  opencodeState: OpenCodeToolState;
+  looperState: LooperToolState;
 }
 
 export function buildWorkspaceToolViews(input: WorkspaceToolViewInput): Record<string, ToolViewHtml> {
@@ -292,6 +299,7 @@ export function buildWorkspaceToolViews(input: WorkspaceToolViewInput): Record<s
         phaseModels: input.flowPhaseModels,
         availableModels: input.flowAvailableModels,
         paused: input.flowPaused,
+        useAgent: input.flowUseAgent,
         modelUnavailableOpen: input.flowModelUnavailableOpen,
         modelUnavailablePhase: input.flowModelUnavailablePhase,
         modelUnavailableModel: input.flowModelUnavailableModel,
@@ -337,6 +345,7 @@ export function buildWorkspaceToolViews(input: WorkspaceToolViewInput): Record<s
         phaseModels: input.flowPhaseModels,
         availableModels: input.flowAvailableModels,
         paused: input.flowPaused,
+        useAgent: input.flowUseAgent,
         modelUnavailableOpen: input.flowModelUnavailableOpen,
         modelUnavailablePhase: input.flowModelUnavailablePhase,
         modelUnavailableModel: input.flowModelUnavailableModel,
@@ -381,6 +390,16 @@ export function buildWorkspaceToolViews(input: WorkspaceToolViewInput): Record<s
     skills: {
       actionsHtml: renderSkillsToolActions(),
       bodyHtml: renderSkillsToolBody()
+    },
+    opencode: {
+      actionsHtml: renderOpenCodeToolActions(input.opencodeState),
+      bodyHtml: renderOpenCodeToolBody(input.opencodeState) +
+        renderOpenCodeInstallModal(input.opencodeState) +
+        renderOpenCodeSpawnModal(input.opencodeState)
+    },
+    looper: {
+      actionsHtml: renderLooperToolActions(input.looperState),
+      bodyHtml: renderLooperToolBody(input.looperState)
     }
   };
 }
