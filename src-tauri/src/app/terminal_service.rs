@@ -55,6 +55,9 @@ impl TerminalService {
         if let Some(cwd) = req.cwd {
             command.cwd(PathBuf::from(cwd));
         }
+        if let Some(model) = req.model {
+            command.env("OPENCODE_MODEL", model);
+        }
         #[cfg(not(target_os = "windows"))]
         command.arg("-i");
         command.env("TERM", "xterm-256color");

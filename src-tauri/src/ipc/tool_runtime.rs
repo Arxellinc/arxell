@@ -88,6 +88,7 @@ pub async fn invoke_tool(
     let tool_enablement_map: &[(&str, &str)] = &[
         ("flow", "flow"),
         ("files", "files"),
+        ("looper", "looper"),
         ("webSearch", "webSearch"),
         ("web", "webSearch"),
     ];

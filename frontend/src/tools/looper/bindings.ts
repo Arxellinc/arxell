@@ -18,7 +18,7 @@ export function handleLooperClick(
       return true;
     }
     if (actionValue === "start-loop") {
-      const loopId = getActiveLoopId();
+      const loopId = state.activeLoopId;
       if (loopId) {
         void import("./actions").then(({ startLoop }) => {
           void startLoop(state, deps, loopId);
@@ -27,27 +27,34 @@ export function handleLooperClick(
       return true;
     }
     if (actionValue === "pause-loop") {
-      const loopId = getActiveLoopId();
+      const loopId = state.activeLoopId;
       if (loopId) {
-        void import("./actions").then(({ pauseLoop }) => {
-          pauseLoop(state, loopId);
-          deps.renderAndBind();
+        void import("./actions").then(({ setLoopPaused }) => {
+          void setLoopPaused(state, deps, loopId, true);
+        });
+      }
+      return true;
+    }
+    if (actionValue === "resume-loop") {
+      const loopId = state.activeLoopId;
+      if (loopId) {
+        void import("./actions").then(({ setLoopPaused }) => {
+          void setLoopPaused(state, deps, loopId, false);
         });
       }
       return true;
     }
     if (actionValue === "stop-loop") {
-      const loopId = getActiveLoopId();
+      const loopId = state.activeLoopId;
       if (loopId) {
         void import("./actions").then(({ stopLoop }) => {
-          stopLoop(state, loopId);
-          deps.renderAndBind();
+          void stopLoop(state, deps, loopId);
         });
       }
       return true;
     }
     if (actionValue === "close-loop") {
-      const loopId = getActiveLoopId();
+      const loopId = state.activeLoopId;
       if (loopId) {
         void import("./actions").then(({ closeLoop }) => {
           void closeLoop(state, deps, loopId);
@@ -92,7 +99,7 @@ export function handleLooperClick(
     if (actionValue === "toggle-prompt") {
       const phase = (actionEl as HTMLElement).getAttribute(LOOPER_DATA_ATTR.phase);
       if (phase) {
-        const loopId = getActiveLoopId();
+        const loopId = state.activeLoopId;
         if (loopId) {
           void import("./actions").then(({ togglePhasePromptEdit }) => {
             togglePhasePromptEdit(state, loopId, phase as any);
@@ -210,12 +217,6 @@ export function handleLooperInput(
 
   return { handled: false, rerender: false };
 }
-
-function getActiveLoopId(): string | null {
-  const el = document.querySelector(`[${LOOPER_DATA_ATTR.activeLoop}]`);
-  return el?.getAttribute(LOOPER_DATA_ATTR.activeLoop) ?? null;
-}
-
 function input(target: HTMLElement): HTMLInputElement {
   return target as HTMLInputElement;
 }

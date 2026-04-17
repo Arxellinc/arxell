@@ -1,0 +1,318 @@
+.notepad-tool {
+  min-height: 0;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  background: var(--surface-strong);
+}
+
+.notepad-empty-state,
+.notepad-editor-empty {
+  min-height: 0;
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--muted);
+  font-size: var(--text-sm);
+  border-bottom: 1px solid var(--line);
+}
+
+.notepad-empty-state {
+  flex-direction: column;
+  gap: 0.55rem;
+}
+
+.notepad-empty-actions {
+  display: inline-flex;
+  gap: 0.45rem;
+}
+
+.notepad-editor-panel {
+  min-height: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface);
+}
+
+.notepad-findbar {
+  display: grid;
+  grid-template-columns: minmax(160px, 1.2fr) minmax(160px, 1.2fr) auto auto auto auto auto auto auto;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.35rem 0.55rem;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface-soft);
+}
+
+.notepad-findbar-field {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: var(--text-xs);
+  color: var(--ink);
+  min-width: 0;
+}
+
+.notepad-findbar-input {
+  width: 100%;
+  border: 1px solid var(--line);
+  background: var(--surface-strong);
+  color: var(--ink);
+  border-radius: 4px;
+  height: 24px;
+  padding: 0 0.45rem;
+  font-size: var(--text-xs);
+}
+
+.notepad-findbar-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.2rem;
+  font-size: var(--text-xs);
+  color: var(--ink);
+}
+
+.notepad-findbar-count {
+  font-size: var(--text-xs);
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.notepad-findbar-btn {
+  height: 24px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--ink);
+  border-radius: 4px;
+  padding: 0 0.45rem;
+  font-size: var(--text-xs);
+  cursor: pointer;
+}
+
+.notepad-findbar-btn:hover {
+  background: var(--surface-hover);
+}
+
+.notepad-editor-scroll {
+  min-height: 0;
+  flex: 1 1 auto;
+  overflow: auto;
+  outline: none;
+  display: grid;
+  grid-template-columns: var(--notepad-editor-gutter-width, 4ch) minmax(0, 1fr);
+  align-items: start;
+}
+
+.notepad-editor-lines,
+.notepad-editor-highlight,
+.notepad-editor-input {
+  margin: 0;
+  font-family:
+    "Cascadia Mono",
+    "Cascadia Code",
+    "JetBrains Mono",
+    "SF Mono",
+    Menlo,
+    Monaco,
+    Consolas,
+    "Liberation Mono",
+    "Courier New",
+    monospace;
+  font-size: 13px;
+  line-height: 19px;
+  font-variant-ligatures: none;
+  letter-spacing: 0;
+  box-sizing: border-box;
+}
+
+.notepad-editor-lines {
+  grid-column: 1;
+  grid-row: 1;
+  width: var(--notepad-editor-gutter-width, 4ch);
+  min-width: var(--notepad-editor-gutter-width, 4ch);
+  max-width: var(--notepad-editor-gutter-width, 4ch);
+  min-inline-size: 0;
+  overflow: hidden;
+  color: var(--muted);
+  text-align: right;
+  white-space: pre;
+  padding: 0.6rem 0.5rem calc(0.6rem + 14px) 0.55rem;
+  user-select: none;
+  border-right: 1px solid var(--line);
+  background: var(--surface);
+}
+
+.notepad-editor-code-wrap {
+  grid-column: 2;
+  grid-row: 1;
+  align-self: start;
+  position: relative;
+  min-width: 0;
+  height: var(--notepad-editor-height, 220px);
+}
+
+.notepad-editor-highlight,
+.notepad-editor-input {
+  width: 100%;
+  min-width: 100%;
+  padding: 0.6rem 0.75rem calc(0.6rem + 14px) 0.75rem;
+  white-space: pre;
+  tab-size: 4;
+}
+
+.notepad-editor-panel.is-wrap .notepad-editor-highlight,
+.notepad-editor-panel.is-wrap .notepad-editor-input {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.notepad-editor-highlight {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 1;
+  color: var(--ink);
+}
+
+.notepad-editor-panel.is-plain-text .notepad-editor-highlight {
+  display: none;
+}
+
+.notepad-editor-highlight .hljs {
+  color: var(--ink);
+  background: transparent;
+}
+
+.notepad-editor-input {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  border: none;
+  outline: none;
+  background: transparent;
+  color: transparent;
+  caret-color: var(--ink);
+  resize: none;
+  overflow: hidden;
+  -webkit-text-fill-color: transparent;
+}
+
+.notepad-editor-panel.is-plain-text .notepad-editor-input {
+  color: var(--ink);
+  -webkit-text-fill-color: var(--ink);
+}
+
+.notepad-editor-input::selection {
+  background: var(--active-line);
+}
+
+.notepad-editor-highlight .hljs-keyword,
+.notepad-editor-highlight .hljs-selector-tag,
+.notepad-editor-highlight .hljs-literal,
+.notepad-editor-highlight .hljs-meta-keyword {
+  color: #569cd6;
+}
+
+.notepad-editor-highlight .hljs-string,
+.notepad-editor-highlight .hljs-attr,
+.notepad-editor-highlight .hljs-template-tag,
+.notepad-editor-highlight .hljs-template-variable {
+  color: #ce9178;
+}
+
+.notepad-editor-highlight .hljs-number {
+  color: #b5cea8;
+}
+
+.notepad-editor-highlight .hljs-comment,
+.notepad-editor-highlight .hljs-quote {
+  color: #6a9955;
+}
+
+.notepad-editor-highlight .hljs-regexp,
+.notepad-editor-highlight .hljs-symbol,
+.notepad-editor-highlight .hljs-link {
+  color: #d16969;
+}
+
+.notepad-editor-highlight .hljs-type,
+.notepad-editor-highlight .hljs-class .hljs-title,
+.notepad-editor-highlight .hljs-title.class_ {
+  color: #4ec9b0;
+}
+
+.notepad-editor-highlight .hljs-title.function_,
+.notepad-editor-highlight .hljs-function .hljs-title,
+.notepad-editor-highlight .hljs-title {
+  color: #dcdcaa;
+}
+
+.notepad-editor-highlight .hljs-variable,
+.notepad-editor-highlight .hljs-params,
+.notepad-editor-highlight .hljs-property,
+.notepad-editor-highlight .hljs-attribute,
+.notepad-editor-highlight .hljs-name {
+  color: #9cdcfe;
+}
+
+.notepad-editor-highlight .hljs-built_in,
+.notepad-editor-highlight .hljs-builtin-name {
+  color: #4fc1ff;
+}
+
+.notepad-editor-highlight .hljs-meta {
+  color: #d7ba7d;
+}
+
+.notepad-editor-highlight .hljs-doctag {
+  color: #608b4e;
+}
+
+.notepad-editor-highlight .hljs-addition {
+  color: #b5cea8;
+}
+
+.notepad-editor-highlight .hljs-deletion {
+  color: #ce9178;
+}
+
+.notepad-editor-highlight .hljs-operator,
+.notepad-editor-highlight .hljs-punctuation {
+  color: var(--ink);
+}
+
+.notepad-editor-highlight .hljs-section,
+.notepad-editor-highlight .hljs-title {
+  color: #4fc1ff;
+  font-weight: 600;
+}
+
+.notepad-editor-highlight .hljs-bullet {
+  color: #d7ba7d;
+}
+
+.notepad-editor-highlight .hljs-strong {
+  color: #dcdcaa;
+  font-weight: 700;
+}
+
+.notepad-editor-highlight .hljs-emphasis {
+  color: #c586c0;
+  font-style: italic;
+}
+
+.notepad-editor-highlight .hljs-code {
+  color: #ce9178;
+}
+
+.notepad-error {
+  border-top: 1px solid var(--line);
+  padding: 0.35rem 0.55rem;
+  color: var(--error);
+  font-size: var(--text-xs);
+}

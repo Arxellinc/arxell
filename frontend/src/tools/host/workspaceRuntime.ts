@@ -41,6 +41,19 @@ import {
   withActiveWebTab
 } from "../webSearch/actions";
 import type { WebSearchHistoryItem, WebSearchSlice, WebTabState } from "../webSearch/state";
+import {
+  activateNotepadTab,
+  closeNotepadTab,
+  createUntitledNotepadTab,
+  deleteActiveNotepadFile,
+  duplicateActiveNotepadTab,
+  ensureNotepadReady,
+  openNotepadFile,
+  saveActiveNotepadTab,
+  saveActiveNotepadTabAs,
+  saveAllNotepadTabs,
+  updateNotepadBuffer
+} from "../notepad/actions";
 
 interface FilesRuntimeSlice {
   filesRootPath: string | null;
@@ -63,9 +76,26 @@ interface FilesRuntimeSlice {
   filesLineWrap: boolean;
 }
 
+interface NotepadRuntimeSlice {
+  notepadOpenTabs: string[];
+  notepadActiveTabId: string | null;
+  notepadPathByTabId: Record<string, string | null>;
+  notepadTitleByTabId: Record<string, string>;
+  notepadContentByTabId: Record<string, string>;
+  notepadSavedContentByTabId: Record<string, string>;
+  notepadDirtyByTabId: Record<string, boolean>;
+  notepadLoadingByTabId: Record<string, boolean>;
+  notepadSavingByTabId: Record<string, boolean>;
+  notepadReadOnlyByTabId: Record<string, boolean>;
+  notepadSizeByTabId: Record<string, number>;
+  notepadNextUntitledIndex: number;
+  notepadError: string | null;
+}
+
 export interface WorkspaceToolsRuntimeState
   extends FlowRuntimeSlice,
     FilesRuntimeSlice,
+    NotepadRuntimeSlice,
     Omit<WebSearchSlice, "apiConnections"> {
   apiConnections: ApiConnectionRecord[];
 }
@@ -113,6 +143,17 @@ export interface WorkspaceToolsRuntime {
     resolveConflictChoice?: (name: string) => Promise<FilesConflictResolution>
   ) => Promise<void>;
   undoLastFilesDelete: () => Promise<void>;
+  ensureNotepadReady: () => Promise<void>;
+  createUntitledNotepadTab: () => string;
+  openNotepadFile: (path: string) => Promise<void>;
+  activateNotepadTab: (tabId: string) => void;
+  closeNotepadTab: (tabId: string) => void;
+  updateNotepadBuffer: (tabId: string, content: string) => void;
+  saveActiveNotepadTab: () => Promise<void>;
+  saveActiveNotepadTabAs: (path: string) => Promise<void>;
+  saveAllNotepadTabs: () => Promise<void>;
+  duplicateActiveNotepadTab: (path: string) => Promise<void>;
+  deleteActiveNotepadFile: () => Promise<void>;
   createAndActivateWebTab: () => void;
   runWebSearch: () => Promise<void>;
   saveWebSearchSetup: () => Promise<void>;
@@ -145,6 +186,13 @@ export function createWorkspaceToolsRuntime(
     refreshApiConnections: deps.refreshApiConnections,
     persistWebSearchHistory: deps.persistWebSearchHistory,
     createWebTab: deps.createWebTab
+  };
+
+  const notepadDeps = {
+    get client() {
+      return deps.getClient();
+    },
+    nextCorrelationId: deps.nextCorrelationId
   };
 
   return {
@@ -230,6 +278,37 @@ export function createWorkspaceToolsRuntime(
     },
     undoLastFilesDelete: async () => {
       await undoLastFilesDelete(state, filesDeps);
+    },
+    ensureNotepadReady: async () => {
+      await ensureNotepadReady(state);
+    },
+    createUntitledNotepadTab: () => createUntitledNotepadTab(state),
+    openNotepadFile: async (path) => {
+      await openNotepadFile(state, notepadDeps, path);
+    },
+    activateNotepadTab: (tabId) => {
+      activateNotepadTab(state, tabId);
+    },
+    closeNotepadTab: (tabId) => {
+      closeNotepadTab(state, tabId);
+    },
+    updateNotepadBuffer: (tabId, content) => {
+      updateNotepadBuffer(state, tabId, content);
+    },
+    saveActiveNotepadTab: async () => {
+      await saveActiveNotepadTab(state, notepadDeps);
+    },
+    saveActiveNotepadTabAs: async (path) => {
+      await saveActiveNotepadTabAs(state, notepadDeps, path);
+    },
+    saveAllNotepadTabs: async () => {
+      await saveAllNotepadTabs(state, notepadDeps);
+    },
+    duplicateActiveNotepadTab: async (path) => {
+      await duplicateActiveNotepadTab(state, notepadDeps, path);
+    },
+    deleteActiveNotepadFile: async () => {
+      await deleteActiveNotepadFile(state, notepadDeps);
     },
     createAndActivateWebTab: () => {
       createAndActivateWebTab(state, { createWebTab: deps.createWebTab });

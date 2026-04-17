@@ -9,5 +9,13 @@
     "outDir": ".tmp-tests",
     "noEmit": false
   },
-  "include": ["src/tts/**/*.ts", "src/app/chatSend.ts", "src/app/sendMessageBootstrap.ts", "src/contracts.ts", "tests/**/*.ts"]
+  "include": [
+    "src/tts/**/*.ts",
+    "src/app/chatSend.ts",
+    "src/app/sendMessageBootstrap.ts",
+    "src/contracts.ts",
+    "src/tools/looper/state.ts",
+    "src/tools/looper/runtime.ts",
+    "tests/**/*.ts"
+  ]
 }

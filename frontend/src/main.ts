@@ -58,6 +58,7 @@ import {
 } from "./tools/flow/runtime";
 import type { FlowPhaseTranscriptEntry, FlowRunView } from "./tools/flow/state";
 import { applyFlowRuntimeEvent } from "./tools/host/flowEvents";
+import { applyLooperRuntimeEvent } from "./tools/host/looperEvents";
 import {
   dispatchWorkspaceToolChange,
   dispatchWorkspaceToolClick,
@@ -356,6 +357,24 @@ const state: {
   filesSelectionJustDragged: boolean;
   filesSelectionGesture: "single" | "toggle" | "range" | null;
   filesError: string | null;
+  notepadOpenTabs: string[];
+  notepadActiveTabId: string | null;
+  notepadPathByTabId: Record<string, string | null>;
+  notepadTitleByTabId: Record<string, string>;
+  notepadContentByTabId: Record<string, string>;
+  notepadSavedContentByTabId: Record<string, string>;
+  notepadDirtyByTabId: Record<string, boolean>;
+  notepadLoadingByTabId: Record<string, boolean>;
+  notepadSavingByTabId: Record<string, boolean>;
+  notepadReadOnlyByTabId: Record<string, boolean>;
+  notepadSizeByTabId: Record<string, number>;
+  notepadNextUntitledIndex: number;
+  notepadFindOpen: boolean;
+  notepadFindQuery: string;
+  notepadReplaceQuery: string;
+  notepadFindCaseSensitive: boolean;
+  notepadLineWrap: boolean;
+  notepadError: string | null;
   tasksById: Record<string, TaskRecord>;
   tasksSelectedId: string | null;
   tasksFolder: TaskFolder;
@@ -631,6 +650,24 @@ const state: {
   filesSelectionJustDragged: false,
   filesSelectionGesture: null,
   filesError: null,
+  notepadOpenTabs: [],
+  notepadActiveTabId: null,
+  notepadPathByTabId: {},
+  notepadTitleByTabId: {},
+  notepadContentByTabId: {},
+  notepadSavedContentByTabId: {},
+  notepadDirtyByTabId: {},
+  notepadLoadingByTabId: {},
+  notepadSavingByTabId: {},
+  notepadReadOnlyByTabId: {},
+  notepadSizeByTabId: {},
+  notepadNextUntitledIndex: 1,
+  notepadFindOpen: false,
+  notepadFindQuery: "",
+  notepadReplaceQuery: "",
+  notepadFindCaseSensitive: false,
+  notepadLineWrap: false,
+  notepadError: null,
   tasksById: loadPersistedTasksById(),
   tasksSelectedId: null,
   tasksFolder: "inbox",
@@ -2018,6 +2055,22 @@ function render(): void {
     filesSelectionJustDragged: state.filesSelectionJustDragged,
     filesSelectionGesture: state.filesSelectionGesture,
     filesError: state.filesError,
+    notepadOpenTabs: state.notepadOpenTabs,
+    notepadActiveTabId: state.notepadActiveTabId,
+    notepadPathByTabId: state.notepadPathByTabId,
+    notepadTitleByTabId: state.notepadTitleByTabId,
+    notepadContentByTabId: state.notepadContentByTabId,
+    notepadDirtyByTabId: state.notepadDirtyByTabId,
+    notepadLoadingByTabId: state.notepadLoadingByTabId,
+    notepadSavingByTabId: state.notepadSavingByTabId,
+    notepadReadOnlyByTabId: state.notepadReadOnlyByTabId,
+    notepadSizeByTabId: state.notepadSizeByTabId,
+    notepadFindOpen: state.notepadFindOpen,
+    notepadFindQuery: state.notepadFindQuery,
+    notepadReplaceQuery: state.notepadReplaceQuery,
+    notepadFindCaseSensitive: state.notepadFindCaseSensitive,
+    notepadLineWrap: state.notepadLineWrap,
+    notepadError: state.notepadError,
     tasksById: state.tasksById,
     tasksSelectedId: state.tasksSelectedId,
     tasksFolder: state.tasksFolder,
@@ -2301,6 +2354,7 @@ function resetCurrentConversationUiState(): void {
 function normalizeChatText(input: string): string {
   return input
     .replace(/\r\n/g, "\n")
+    .replace(/(^|\s)[\[(<]\s*(?:blank[_ ]audio|silence|no[_ ]speech|no[_ ]audio|inaudible|noise|music|applause|laughter|laughing|cough(?:ing)?|breathing|typing)\s*[\])>](?=\s|$)/gi, " ")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
 }
@@ -2899,6 +2953,39 @@ function handleTtsDownloadProgressEvent(event: AppEvent, rerender: () => void): 
     return false;
   }
   return false;
+}
+
+function syncNotepadDocumentFromEvent(payload: Record<string, unknown> | null): boolean {
+  const path = typeof payload?.path === "string" ? payload.path.trim() : "";
+  const content = typeof payload?.content === "string" ? payload.content : "";
+  if (!path) return false;
+  const titleRaw = typeof payload?.title === "string" ? payload.title.trim() : "";
+  const title = titleRaw || path.split(/[\\/]/).pop() || path;
+  const readOnly = payload?.readOnly === true;
+  const sizeBytes = Number(payload?.sizeBytes);
+  const activate = payload?.activate !== false;
+  const focusTool = payload?.focusTool !== false;
+  if (!state.notepadOpenTabs.includes(path)) {
+    state.notepadOpenTabs = [...state.notepadOpenTabs, path];
+  }
+  state.notepadPathByTabId[path] = path;
+  state.notepadTitleByTabId[path] = title;
+  state.notepadContentByTabId[path] = content;
+  state.notepadSavedContentByTabId[path] = content;
+  state.notepadDirtyByTabId[path] = false;
+  state.notepadLoadingByTabId[path] = false;
+  state.notepadSavingByTabId[path] = false;
+  state.notepadReadOnlyByTabId[path] = readOnly;
+  state.notepadSizeByTabId[path] = Number.isFinite(sizeBytes) ? sizeBytes : content.length;
+  state.notepadError = null;
+  if (activate) {
+    state.notepadActiveTabId = path;
+  }
+  if (focusTool) {
+    state.workspaceTab = "notepad-tool";
+    persistWorkspaceTab("notepad-tool");
+  }
+  return true;
 }
 
 function refreshChatModelProfile(): void {
@@ -5054,12 +5141,15 @@ function clampSttSetting(value: number, min: number, max: number, fallback: numb
 function isIgnorableSttTranscript(raw: string): boolean {
   const transcript = raw.trim();
   if (!transcript) return true;
-  if (/^\[?\s*blank_audio\s*\]?$/i.test(transcript)) return true;
+  if (/^[\[(<]?\s*(?:blank[_ ]audio|silence|no[_ ]speech|no[_ ]audio|inaudible)\s*[\])>]?$/.test(transcript.toLowerCase())) {
+    return true;
+  }
 
   // Strip non-verbal annotations commonly emitted by STT models:
   // [typing], [Music], (cough), *laughs*, etc.
   const stripped = transcript
     .replace(/[\[(][^\])\n]{1,80}[\])]/g, " ")
+    .replace(/<[^>\n]{1,80}>/g, " ")
     .replace(/\*[^*\n]{1,80}\*/g, " ")
     .replace(/[\s,.;:!?'"`~\-_/\\|()\[\]*]+/g, "")
     .trim();
@@ -6035,6 +6125,19 @@ function attachWorkspaceInteractions(sendMessage: (text: string) => Promise<void
         undoLastFilesDelete: workspaceToolsRuntime.undoLastFilesDelete,
         openPathInTerminal
       },
+      notepad: {
+        ensureNotepadReady: workspaceToolsRuntime.ensureNotepadReady,
+        createUntitledNotepadTab: workspaceToolsRuntime.createUntitledNotepadTab,
+        openNotepadFile: workspaceToolsRuntime.openNotepadFile,
+        activateNotepadTab: workspaceToolsRuntime.activateNotepadTab,
+        closeNotepadTab: workspaceToolsRuntime.closeNotepadTab,
+        updateNotepadBuffer: workspaceToolsRuntime.updateNotepadBuffer,
+        saveActiveNotepadTab: workspaceToolsRuntime.saveActiveNotepadTab,
+        saveActiveNotepadTabAs: workspaceToolsRuntime.saveActiveNotepadTabAs,
+        saveAllNotepadTabs: workspaceToolsRuntime.saveAllNotepadTabs,
+        duplicateActiveNotepadTab: workspaceToolsRuntime.duplicateActiveNotepadTab,
+        deleteActiveNotepadFile: workspaceToolsRuntime.deleteActiveNotepadFile
+      },
       web: {
         runWebSearch: workspaceToolsRuntime.runWebSearch,
         createAndActivateWebTab: workspaceToolsRuntime.createAndActivateWebTab,
@@ -6077,6 +6180,7 @@ function attachWorkspaceInteractions(sendMessage: (text: string) => Promise<void
             refreshApiConnections,
             hasVerifiedSearchConnection: workspaceToolsRuntime.hasVerifiedSearchConnection,
             ensureFilesExplorerLoaded: workspaceToolsRuntime.ensureFilesExplorerLoaded,
+            ensureNotepadReady: workspaceToolsRuntime.ensureNotepadReady,
             refreshFlowRuns,
             ensureOpenCodeInit: async () => {
               const opencodeDeps: OpenCodeActionsDeps = {
@@ -6346,6 +6450,16 @@ async function bootstrap(): Promise<void> {
     delayMs: 250
   });
 
+  let looperRefreshScheduled = false;
+  const scheduleLooperRefresh = () => {
+    if (looperRefreshScheduled) return;
+    looperRefreshScheduled = true;
+    window.setTimeout(() => {
+      looperRefreshScheduled = false;
+      renderAndBind(sendMessage);
+    }, 0);
+  };
+
   const maybeHandleFlowPhaseTerminalEvent = createFlowPhaseTerminalEventHandler({
     state,
     terminalManager,
@@ -6373,6 +6487,13 @@ async function bootstrap(): Promise<void> {
         }
         return true;
       }
+      if (event.action === "notepad.document.sync") {
+        const payload = payloadAsRecord(event.payload);
+        if (syncNotepadDocumentFromEvent(payload)) {
+          renderAndBind(sendMessage);
+        }
+        return true;
+      }
       return handleCoreAppEvent(event, {
         onChatTtsStreamChunkEvent,
         formatAgentEventLine,
@@ -6387,6 +6508,14 @@ async function bootstrap(): Promise<void> {
         refreshLlamaRuntime,
         state,
         applyFlowRuntimeEvent: (eventItem) => applyFlowRuntimeEvent(state, eventItem, scheduleFlowRunsRefresh),
+        applyLooperRuntimeEvent: (eventItem) =>
+          applyLooperRuntimeEvent(state.looperState, eventItem, scheduleLooperRefresh, (_loopId, phase, sessionId) => {
+            terminalManager.ensureSession({
+              sessionId,
+              title: `Looper ${phase}`,
+              shell: "remote"
+            });
+          }),
         maybeHandleFlowPhaseTerminalEvent
       });
     },

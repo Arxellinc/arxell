@@ -138,6 +138,7 @@ fn main() {
         chat: std::sync::Arc::new(app_context.ipc.chat.clone()),
         terminal: std::sync::Arc::new(app_context.ipc.terminal.clone()),
         flow_handler: std::sync::Arc::new(app_context.ipc.flow.clone()),
+        looper_handler: std::sync::Arc::new(app_context.ipc.looper.clone()),
         hub: hub.clone(),
         workspace_tools: std::sync::Arc::clone(&app_context.workspace_tools),
         api_registry: std::sync::Arc::clone(&app_context.api_registry),

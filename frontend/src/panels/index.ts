@@ -9,7 +9,7 @@ import {
   renderModelManagerActions,
   renderModelManagerBody
 } from "./modelManagerPanel";
-import { renderSttActions, renderSttBody } from "./sttPanel";
+import { renderSttActions, renderSttBody, renderVadActions, renderVadBody } from "./sttPanel";
 import { renderSettingsActions, renderSettingsBody } from "./settingsPanel";
 import type {
   PrimaryPanelBindings,
@@ -84,6 +84,15 @@ export function getPanelDefinition(
       icon: APP_ICON.sidebar.stt,
       renderBody: () => renderSttBody(state),
       renderActions: renderSttActions
+    };
+  }
+
+  if (tab === "vad") {
+    return {
+      title: "VAD",
+      icon: APP_ICON.sidebar.vad,
+      renderBody: () => renderVadBody(state),
+      renderActions: renderVadActions
     };
   }
 
@@ -324,7 +333,7 @@ export function attachPrimaryPanelInteractions(
     bindModelManagerPanel(bindings);
   }
 
-  if (tab === "stt") {
+  if (tab === "stt" || tab === "vad") {
     const toggleBtn = document.querySelector<HTMLButtonElement>("#sttToggleBtn");
     if (toggleBtn) {
       toggleBtn.onclick = async () => {

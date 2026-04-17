@@ -26,6 +26,17 @@ export interface LooperLoopRun {
   activePhase: LooperPhase | null;
   phases: Record<LooperPhase, LooperPhaseState>;
   reviewResult: "ship" | "revise" | null;
+  launchConfig?: {
+    cwd: string;
+    taskPath: string;
+    specsGlob: string;
+    maxIterations: number;
+    phaseModels: Record<string, string>;
+    projectName: string;
+    projectType: string;
+    projectIcon: string;
+    projectDescription: string;
+  };
 }
 
 export interface LooperToolState {

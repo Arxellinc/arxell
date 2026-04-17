@@ -1,10 +1,15 @@
 import type { FilesListDirectoryEntry } from "../../contracts";
 import { iconHtml } from "../../icons";
 import { escapeHtml } from "../../panels/utils";
-import { renderHighlightedHtml } from "./highlight";
+import {
+  computeNotepadFindStats,
+  renderNotepadEditorPane,
+  renderNotepadFindBar
+} from "../notepad/shared";
 import { FILES_DATA_ATTR, FILES_UI_ID } from "../ui/constants";
 import { renderToolToolbar } from "../ui/toolbar";
 import "./styles.css";
+import "../notepad/styles.css";
 
 export type FilesColumnKey = "name" | "type" | "size" | "modified";
 
@@ -114,7 +119,7 @@ export function renderFilesToolActions(view: FilesExplorerViewState): string {
       {
         id: "files-save-as",
         title: "Save As",
-        icon: "file-output",
+        icon: "save",
         disabled: !active || activeSaving,
         buttonAttrs: {
           [FILES_DATA_ATTR.action]: "save-file-as"
@@ -226,18 +231,20 @@ export function renderFilesToolBody(view: FilesExplorerViewState): string {
   const findOpen = view.findOpen === true;
   const findQuery = view.findQuery ?? "";
   const replaceQuery = view.replaceQuery ?? "";
-  const findStats = activePath ? computeFindStats(activeContent, findQuery, view.findCaseSensitive === true) : { count: 0 };
+  const findStats = activePath
+    ? computeNotepadFindStats(activeContent, findQuery, view.findCaseSensitive === true)
+    : { count: 0 };
 
   return `<div class="files-tool primary-pane-body ${sidebarCollapsed ? "is-sidebar-collapsed" : ""}" style="${rootStyle}">
     <section class="files-tool-left ${view.rootSelectorOpen ? "is-root-selector-open" : ""}">
       <div class="files-tool-pane-title files-tool-left-title">
         <span class="files-tool-left-title-text">${sidebarCollapsed ? "" : "Folders"}</span>
-        <button type="button" class="files-tool-sidebar-toggle" ${FILES_DATA_ATTR.action}="toggle-sidebar-collapse" aria-label="${sidebarCollapsed ? "Expand folders sidebar" : "Collapse folders sidebar"}">${sidebarCollapsed ? "▸" : "◂"}</button>
+        <button type="button" class="files-tool-sidebar-toggle" ${FILES_DATA_ATTR.action}="toggle-sidebar-collapse" aria-label="${sidebarCollapsed ? "Expand folders sidebar" : "Collapse folders sidebar"}">${iconHtml("chevron-left", { size: 12, tone: "dark" })}</button>
       </div>
       ${sidebarCollapsed ? "" : `<div class="files-tool-root-row">${rootSelectorHtml}</div>`}
       <div class="files-tool-tree">${leftTree}</div>
     </section>
-    <button type="button" class="files-tool-pane-resizer" aria-label="Resize folders pane" ${FILES_DATA_ATTR.action}="resize-sidebar"></button>
+    <button type="button" class="tool-sidebar-resizer" aria-label="Resize folders pane" data-tool-action="resize-sidebar"></button>
     <section class="files-tool-right">
       <div class="files-tool-pane-title files-tool-right-title">
         <span class="files-tool-path-cluster">
@@ -256,24 +263,35 @@ export function renderFilesToolBody(view: FilesExplorerViewState): string {
       </div>
       ${
         activePath
-          ? renderEditorPane({
-              activePath,
-              activeContent,
+          ? renderNotepadEditorPane({
+              documentId: activePath,
+              filePath: activePath,
+              content: activeContent,
               lineCount: activeLineCount,
               wrap: lineWrap,
               readOnly: activeReadOnly,
               loading: activeLoading,
-              sizeBytes: view.sizeByPath[activePath] ?? 0
+              sizeBytes: view.sizeByPath[activePath] ?? 0,
+              dataAttrs: {
+                action: FILES_DATA_ATTR.action,
+                document: FILES_DATA_ATTR.path,
+                path: FILES_DATA_ATTR.path
+              }
             })
           : ""
       }
       ${
         activePath && findOpen
-          ? renderFindBar({
+          ? renderNotepadFindBar({
               query: findQuery,
               replace: replaceQuery,
               caseSensitive: view.findCaseSensitive === true,
-              matchCount: findStats.count
+              matchCount: findStats.count,
+              dataAttrs: {
+                action: FILES_DATA_ATTR.action,
+                document: FILES_DATA_ATTR.path,
+                path: FILES_DATA_ATTR.path
+              }
             })
           : ""
       }
@@ -493,91 +511,6 @@ function normalizePickerPath(path: string): string {
   return normalized.replace(/\/+$/, "");
 }
 
-function renderFindBar(input: {
-  query: string;
-  replace: string;
-  caseSensitive: boolean;
-  matchCount: number;
-}): string {
-  return `<div class="files-findbar">
-    <label class="files-findbar-field">
-      <span>Find</span>
-      <input type="text" class="files-findbar-input" value="${escapeHtml(input.query)}" ${FILES_DATA_ATTR.action}="find-query-input" placeholder="Find text" />
-    </label>
-    <label class="files-findbar-field">
-      <span>Replace</span>
-      <input type="text" class="files-findbar-input" value="${escapeHtml(input.replace)}" ${FILES_DATA_ATTR.action}="replace-query-input" placeholder="Replace with" />
-    </label>
-    <label class="files-findbar-toggle">
-      <input type="checkbox" ${FILES_DATA_ATTR.action}="find-case-sensitive" ${input.caseSensitive ? "checked" : ""} />
-      <span>Case</span>
-    </label>
-    <span class="files-findbar-count">${input.matchCount} match${input.matchCount === 1 ? "" : "es"}</span>
-    <button type="button" class="files-findbar-btn" ${FILES_DATA_ATTR.action}="find-prev">Prev</button>
-    <button type="button" class="files-findbar-btn" ${FILES_DATA_ATTR.action}="find-next">Next</button>
-    <button type="button" class="files-findbar-btn" ${FILES_DATA_ATTR.action}="replace-one">Replace</button>
-    <button type="button" class="files-findbar-btn" ${FILES_DATA_ATTR.action}="replace-all">Replace All</button>
-    <button type="button" class="files-findbar-btn" ${FILES_DATA_ATTR.action}="find-close" aria-label="Close find and replace">Close</button>
-  </div>`;
-}
-
-function computeFindStats(content: string, query: string, caseSensitive: boolean): { count: number } {
-  if (!query) return { count: 0 };
-  if (!caseSensitive) {
-    const source = content.toLowerCase();
-    const needle = query.toLowerCase();
-    return { count: countNeedle(source, needle) };
-  }
-  return { count: countNeedle(content, query) };
-}
-
-function countNeedle(source: string, needle: string): number {
-  if (!needle) return 0;
-  let count = 0;
-  let offset = 0;
-  while (offset <= source.length - needle.length) {
-    const index = source.indexOf(needle, offset);
-    if (index < 0) break;
-    count += 1;
-    offset = index + needle.length;
-  }
-  return count;
-}
-
-function renderEditorPane(input: {
-  activePath: string;
-  activeContent: string;
-  lineCount: number;
-  wrap: boolean;
-  readOnly: boolean;
-  loading: boolean;
-  sizeBytes: number;
-}): string {
-  if (input.loading) {
-    return '<div class="files-editor-empty">Loading file...</div>';
-  }
-  if (input.readOnly && !input.activeContent) {
-    return `<div class="files-editor-empty">This file is read-only or binary (${formatSize(
-      input.sizeBytes
-    )}).</div>`;
-  }
-  const lineNumbers = createLineNumbers(input.lineCount);
-  const highlighted = highlightCode(input.activeContent, input.activePath);
-  const editorHeight = Math.max(220, input.lineCount * 20 + 20);
-  return `<div class="files-editor-panel ${input.wrap ? "is-wrap" : ""}">
-    <div class="files-editor-scroll">
-      <pre class="files-editor-lines">${escapeHtml(lineNumbers)}</pre>
-      <div class="files-editor-code-wrap" style="--files-editor-height:${editorHeight}px;">
-        <pre class="files-editor-highlight">${highlighted}</pre>
-        <textarea class="files-editor-input" ${FILES_DATA_ATTR.action}="editor-input" ${FILES_DATA_ATTR.path}="${escapeHtml(
-          input.activePath
-        )}" style="height:${editorHeight}px;" spellcheck="false" ${input.readOnly ? "readonly" : ""}>${escapeHtml(
-          input.activeContent
-        )}</textarea>
-      </div>
-    </div>
-  </div>`;
-}
 
 function renderTree(view: FilesExplorerViewState, rootPath: string | null): string {
   if (!rootPath) {
@@ -727,19 +660,3 @@ const KNOWN_FILE_TYPES: Record<string, string> = {
   yaml: "YAML config",
   yml: "YAML config"
 };
-
-function createLineNumbers(lineCount: number): string {
-  let value = "";
-  for (let i = 1; i <= lineCount; i += 1) {
-    value += `${i}${i === lineCount ? "" : "\n"}`;
-  }
-  return value;
-}
-
-function highlightCode(input: string, filePath: string): string {
-  const MAX_HIGHLIGHT_CHARS = 200_000;
-  if (input.length > MAX_HIGHLIGHT_CHARS) {
-    return escapeHtml(input);
-  }
-  return renderHighlightedHtml(input, filePath);
-}

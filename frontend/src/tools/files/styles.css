@@ -1,6 +1,6 @@
 .files-tool {
   display: grid;
-  grid-template-columns: var(--files-sidebar-width, 320px) 12px minmax(0, 1fr);
+  grid-template-columns: var(--files-sidebar-width, 320px) 1px minmax(0, 1fr);
   min-height: 0;
   height: 100%;
   border-top: 1px solid var(--line);
@@ -36,12 +36,12 @@
 
 .files-tool-root-row {
   position: static;
-  padding: 0 0.45rem 0 0.45rem;
-  border-bottom: 1px solid color-mix(in oklab, var(--line) 70%, transparent 30%);
+  padding: 0.5rem;
 }
 
 .files-root-selector {
   position: static;
+  background: var(--surface-hover);
 }
 
 .files-root-selector-trigger {
@@ -61,7 +61,8 @@
 }
 
 .files-root-selector-trigger:hover {
-  background: color-mix(in oklab, var(--surface-hover) 92%, var(--surface-strong) 8%);
+  background: var(--surface-hover);
+  border: 1px solid var(--line);
 }
 
 .files-root-selector-label {
@@ -288,19 +289,23 @@
 .files-tool-sidebar-toggle {
   width: 20px;
   height: 20px;
-  border: 1px solid var(--line);
-  background: var(--surface-strong);
+  border: none;
+  background: transparent;
   color: var(--muted);
-  border-radius: 4px;
   padding: 0;
-  font-size: 12px;
-  line-height: 1;
   cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: transform 0.15s ease;
 }
 
 .files-tool-sidebar-toggle:hover {
-  background: var(--surface-hover);
   color: var(--ink);
+}
+
+.files-tool.is-sidebar-collapsed .files-tool-sidebar-toggle {
+  transform: rotate(-90deg);
 }
 
 .files-tool.is-sidebar-collapsed .files-tool-tree {
@@ -315,22 +320,23 @@
   touch-action: none;
   padding: 0;
   position: relative;
+  width: 1px;
 }
 
 .files-tool-pane-resizer::after {
   content: "";
   position: absolute;
-  left: 0;
+  left: -2px;
   top: 50%;
-  transform: translate(-50%, -50%);
   width: 4px;
-  height: 42px;
-  background: color-mix(in oklab, var(--line) 55%, var(--muted) 45%);
-  border-radius: 999px;
+  height: 48px;
+  background: var(--line);
+  transform: translateY(-50%);
 }
 
-.files-tool-pane-resizer:hover::after {
+.files-tool-pane-resizer:hover, .files-tool-pane-resizer:hover::after {
   background: var(--active-line);
+  border-color: var(--active-line);
 }
 
 .files-tool.is-resizing,
@@ -412,7 +418,7 @@
 
 .files-tool-tree-row {
   width: 100%;
-  border: 1px solid transparent;
+  border: none;
   background: transparent;
   color: var(--ink);
   cursor: pointer;
@@ -424,12 +430,11 @@
   padding: 0 0.35rem;
   padding-left: calc(0.35rem + (var(--depth) * 0.7rem));
   text-align: left;
-  border-radius: 6px;
+  border-radius: 0;
 }
 
 .files-tool-tree-node.is-selected > .files-tool-tree-row {
   background: var(--active-bg);
-  border-color: var(--active-line);
 }
 
 .files-tool-tree-row:hover {
@@ -785,7 +790,7 @@
   scrollbar-width: thin;
   scrollbar-color: #6f7780 transparent;
   display: grid;
-  grid-template-columns: max-content minmax(0, 1fr);
+  grid-template-columns: 8ch minmax(0, 1fr);
   align-items: start;
 }
 
@@ -845,9 +850,9 @@
 .files-editor-lines {
   grid-column: 1;
   grid-row: 1;
-  width: max-content;
-  min-width: max-content;
-  max-width: max-content;
+  width: 8ch;
+  min-width: 8ch;
+  max-width: 8ch;
   color: #858585;
   text-align: right;
   padding: 0.6rem 0.5rem calc(0.6rem + 14px) 0.55rem;
@@ -859,6 +864,7 @@
 .files-editor-code-wrap {
   grid-column: 2;
   grid-row: 1;
+  align-self: start;
   position: relative;
   min-width: 0;
   height: var(--files-editor-height, 220px);

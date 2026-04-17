@@ -13,6 +13,7 @@ export interface WorkspaceToolLifecycleDeps {
   refreshApiConnections: () => Promise<void>;
   hasVerifiedSearchConnection: () => boolean;
   ensureFilesExplorerLoaded: () => Promise<void>;
+  ensureNotepadReady: () => Promise<void>;
   refreshFlowRuns: () => Promise<void>;
   ensureOpenCodeInit: () => Promise<void>;
   ensureLooperInit: () => Promise<void>;
@@ -36,6 +37,11 @@ export async function handleWorkspaceToolTabActivation(
 
   if (workspaceTab === "files-tool") {
     await deps.ensureFilesExplorerLoaded();
+    return true;
+  }
+
+  if (workspaceTab === "notepad-tool") {
+    await deps.ensureNotepadReady();
     return true;
   }
 

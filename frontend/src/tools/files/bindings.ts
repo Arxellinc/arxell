@@ -1,6 +1,6 @@
 import { FILES_DATA_ATTR, FILES_UI_ID } from "../ui/constants";
+import { handleToolSidebarResize } from "../ui/sidebarResize";
 import type { FilesListDirectoryEntry } from "../../contracts";
-import { renderHighlightedHtml } from "./highlight";
 import {
   closeFilesContextMenu,
   openFilesContextMenu,
@@ -8,6 +8,19 @@ import {
   selectAllFilesInDirectory,
   setFilesClipboard
 } from "./actions";
+import {
+  copyText,
+  duplicatePathWithCopySuffix,
+  focusNotepadMatch,
+  getSelectedNotepadText,
+  pickOpenFilePath,
+  pickSaveFilePath,
+  scheduleNotepadEditorRefresh,
+  refreshNotepadEditorDecorations,
+  replaceAllInNotepad,
+  replaceOneInNotepad,
+  type NotepadDataAttrs
+} from "../notepad/shared";
 
 type FilesColumnKey = "name" | "type" | "size" | "modified";
 
@@ -98,6 +111,11 @@ interface FilesDeps {
 
 type FilesConflictChoice = "replace" | "copy" | "cancel";
 let pendingConflictResolver: ((resolution: FilesConflictResolution) => void) | null = null;
+const FILES_EDITOR_ATTRS: NotepadDataAttrs = {
+  action: FILES_DATA_ATTR.action,
+  document: FILES_DATA_ATTR.path,
+  path: FILES_DATA_ATTR.path
+};
 
 function requestConflictChoice(slice: FilesSlice, name: string): Promise<FilesConflictResolution> {
   if (pendingConflictResolver) {
@@ -574,7 +592,7 @@ export function handleFilesInput(
     slice.filesContentByPath[path] = content;
     const saved = slice.filesSavedContentByPath[path] ?? "";
     slice.filesDirtyByPath[path] = saved !== content;
-    refreshEditorDecorations(editorInput, content);
+    scheduleNotepadEditorRefresh(editorInput, content, FILES_EDITOR_ATTRS);
     return { handled: true, rerender: false };
   }
 
@@ -786,7 +804,7 @@ export async function handleFilesKeyDown(
     editorInput.value = next;
     editorInput.selectionStart = editorInput.selectionEnd = start + 1;
     deps.updateFilesBuffer(path, next);
-    refreshEditorDecorations(editorInput, next);
+    scheduleNotepadEditorRefresh(editorInput, next, FILES_EDITOR_ATTRS);
     return true;
   }
   if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "s") {
@@ -821,7 +839,14 @@ function runFindStep(slice: FilesSlice, backwards: boolean, selectFromStart = fa
   const active = slice.filesActiveTabPath;
   const query = slice.filesFindQuery ?? "";
   if (!active || !query) return;
-  const matched = focusEditorMatch(active, query, backwards, selectFromStart, slice.filesFindCaseSensitive === true);
+  const matched = focusNotepadMatch(
+    active,
+    query,
+    FILES_EDITOR_ATTRS,
+    backwards,
+    selectFromStart,
+    slice.filesFindCaseSensitive === true
+  );
   slice.filesError = matched ? null : `No matches for "${query}"`;
 }
 
@@ -833,44 +858,20 @@ function runReplaceOne(
   if (!active) return;
   const find = slice.filesFindQuery ?? "";
   if (!find) return;
-  const replaceWith = slice.filesReplaceQuery ?? "";
-  const selector = `[${FILES_DATA_ATTR.action}="editor-input"][${FILES_DATA_ATTR.path}="${escapeAttr(
-    active
-  )}"]`;
-  const textarea = document.querySelector<HTMLTextAreaElement>(selector);
-  const source = textarea ? textarea.value : slice.filesContentByPath[active] ?? "";
-  const haystack = slice.filesFindCaseSensitive ? source : source.toLowerCase();
-  const needle = slice.filesFindCaseSensitive ? find : find.toLowerCase();
-  if (!haystack.includes(needle)) {
+  const source = slice.filesContentByPath[active] ?? "";
+  const result = replaceOneInNotepad(
+    active,
+    source,
+    find,
+    slice.filesReplaceQuery ?? "",
+    FILES_EDITOR_ATTRS,
+    slice.filesFindCaseSensitive === true
+  );
+  if (!result.replaced) {
     slice.filesError = `No matches for "${find}"`;
     return;
   }
-  const selected = textarea
-    ? source.slice(textarea.selectionStart, textarea.selectionEnd)
-    : "";
-  const selectedNorm = slice.filesFindCaseSensitive ? selected : selected.toLowerCase();
-  let index = -1;
-  if (selectedNorm === needle && textarea) {
-    index = textarea.selectionStart;
-  } else if (textarea) {
-    index = findMatchIndex(source, find, textarea.selectionEnd, false, false, slice.filesFindCaseSensitive === true);
-  } else {
-    index = findMatchIndex(source, find, 0, false, true, slice.filesFindCaseSensitive === true);
-  }
-  if (index < 0) {
-    slice.filesError = `No matches for "${find}"`;
-    return;
-  }
-  const next = `${source.slice(0, index)}${replaceWith}${source.slice(index + find.length)}`;
-
-  if (textarea) {
-    textarea.value = next;
-    refreshEditorDecorations(textarea, next);
-    const cursor = index + replaceWith.length;
-    textarea.selectionStart = cursor;
-    textarea.selectionEnd = cursor;
-  }
-  updateFilesBuffer(active, next);
+  updateFilesBuffer(active, result.content);
   slice.filesError = null;
   runFindStep(slice, false, true);
 }
@@ -883,31 +884,20 @@ function runReplaceAll(
   if (!active) return;
   const find = slice.filesFindQuery ?? "";
   if (!find) return;
-  const replaceWith = slice.filesReplaceQuery ?? "";
-  const selector = `[${FILES_DATA_ATTR.action}="editor-input"][${FILES_DATA_ATTR.path}="${escapeAttr(
-    active
-  )}"]`;
-  const textarea = document.querySelector<HTMLTextAreaElement>(selector);
-  const source = textarea ? textarea.value : slice.filesContentByPath[active] ?? "";
-  const matches = findAllMatchRanges(source, find, slice.filesFindCaseSensitive === true);
-  if (!matches.length) {
+  const source = slice.filesContentByPath[active] ?? "";
+  const result = replaceAllInNotepad(
+    active,
+    source,
+    find,
+    slice.filesReplaceQuery ?? "",
+    FILES_EDITOR_ATTRS,
+    slice.filesFindCaseSensitive === true
+  );
+  if (!result.replaced) {
     slice.filesError = `No matches for "${find}"`;
     return;
   }
-  let next = "";
-  let cursor = 0;
-  for (const index of matches) {
-    next += source.slice(cursor, index);
-    next += replaceWith;
-    cursor = index + find.length;
-  }
-  next += source.slice(cursor);
-  if (textarea) {
-    textarea.value = next;
-    refreshEditorDecorations(textarea, next);
-    textarea.selectionStart = textarea.selectionEnd = 0;
-  }
-  updateFilesBuffer(active, next);
+  updateFilesBuffer(active, result.content);
   slice.filesError = null;
   runFindStep(slice, false, true);
 }
@@ -972,40 +962,20 @@ export function handleFilesPointerDown(
     }
   }
 
-  if (event.button !== 0) return false;
-  const sidebarHandle = target.closest<HTMLElement>(
-    `[${FILES_DATA_ATTR.action}="resize-sidebar"]`
-  );
-  if (sidebarHandle) {
-    if (slice.filesSidebarCollapsed) return true;
-    const root = sidebarHandle.closest<HTMLElement>(".files-tool");
-    const leftPane = sidebarHandle.previousElementSibling as HTMLElement | null;
-    if (!root || !leftPane) return true;
-    event.preventDefault();
-    event.stopPropagation();
-    const startX = event.clientX;
-    const startWidth = Math.max(180, Math.round(leftPane.getBoundingClientRect().width));
-    const minWidth = 180;
-    const minRightPaneWidth = 260;
-    root.classList.add("is-resizing");
-    const onMove = (moveEvent: MouseEvent) => {
-      const delta = moveEvent.clientX - startX;
-      const maxWidth = Math.max(
-        minWidth,
-        Math.round(root.getBoundingClientRect().width - 12 - minRightPaneWidth)
-      );
-      const nextWidth = Math.max(minWidth, Math.min(maxWidth, Math.round(startWidth + delta)));
-      slice.filesSidebarWidth = nextWidth;
-      root.style.setProperty("--files-sidebar-width", `${nextWidth}px`);
-    };
-    const onUp = () => {
-      window.removeEventListener("mousemove", onMove);
-      root.classList.remove("is-resizing");
-    };
-    window.addEventListener("mousemove", onMove);
-    window.addEventListener("mouseup", onUp, { once: true });
-    return true;
-  }
+  const sidebarResult = handleToolSidebarResize({
+    event,
+    target,
+    rootSelector: ".files-tool",
+    panelSelector: ".files-tool-left",
+    collapsed: slice.filesSidebarCollapsed ?? false,
+    minWidth: 180,
+    maxWidth: 600,
+    widthCssVar: "--files-sidebar-width",
+    onWidthChange: (width) => { slice.filesSidebarWidth = width; },
+    onResizeStart: () => {},
+    onResizeEnd: () => {}
+  });
+  if (sidebarResult) return true;
 
   const resizeHandle = target.closest<HTMLElement>(
     `[${FILES_DATA_ATTR.action}="resize-column"][${FILES_DATA_ATTR.column}]`
@@ -1113,218 +1083,8 @@ function parentDir(path: string): string {
   return normalized.slice(0, idx);
 }
 
-function duplicatePathWithCopySuffix(path: string): string {
-  const normalized = path.replace(/\\/g, "/");
-  const slashIndex = normalized.lastIndexOf("/");
-  const dir = slashIndex >= 0 ? normalized.slice(0, slashIndex + 1) : "";
-  const name = slashIndex >= 0 ? normalized.slice(slashIndex + 1) : normalized;
-  const dotIndex = name.lastIndexOf(".");
-  if (dotIndex > 0) {
-    const stem = name.slice(0, dotIndex);
-    const ext = name.slice(dotIndex);
-    return `${dir}${stem}(copy)${ext}`;
-  }
-  return `${dir}${name}(copy)`;
-}
-
-function refreshEditorDecorations(textarea: HTMLTextAreaElement, content: string): void {
-  const panel = textarea.closest<HTMLElement>(".files-editor-panel");
-  if (!panel) return;
-  const lineNumbers = panel.querySelector<HTMLElement>(".files-editor-lines");
-  const highlight = panel.querySelector<HTMLElement>(".files-editor-highlight");
-  const lineCount = Math.max(1, content.split("\n").length);
-  if (lineNumbers) {
-    lineNumbers.textContent = createLineNumbers(lineCount);
-  }
-  if (highlight) {
-    const path = textarea.getAttribute(FILES_DATA_ATTR.path) || undefined;
-    highlight.innerHTML = highlightCode(content, path);
-  }
-  textarea.style.height = "0px";
-  const measuredHeight = textarea.scrollHeight;
-  const fallback = lineCount * 20 + 20;
-  const height = Math.max(220, measuredHeight || fallback);
-  textarea.style.height = `${height}px`;
-  textarea.closest<HTMLElement>(".files-editor-code-wrap")?.style.setProperty(
-    "--files-editor-height",
-    `${height}px`
-  );
-}
-
-function createLineNumbers(lineCount: number): string {
-  let value = "";
-  for (let i = 1; i <= lineCount; i += 1) {
-    value += `${i}${i === lineCount ? "" : "\n"}`;
-  }
-  return value;
-}
-
-function highlightCode(input: string, filePath?: string): string {
-  const MAX_HIGHLIGHT_CHARS = 200_000;
-  if (input.length > MAX_HIGHLIGHT_CHARS) {
-    return escapeHtml(input);
-  }
-  return renderHighlightedHtml(input, filePath);
-}
-
-function escapeHtml(input: string): string {
-  return input
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#39;");
-}
-
-async function copyText(value: string): Promise<void> {
-  try {
-    await navigator.clipboard.writeText(value);
-  } catch {
-    const input = document.createElement("textarea");
-    input.value = value;
-    input.style.position = "fixed";
-    input.style.opacity = "0";
-    document.body.appendChild(input);
-    input.focus();
-    input.select();
-    document.execCommand("copy");
-    document.body.removeChild(input);
-  }
-}
-
 function getSelectedEditorText(path: string): string {
-  const selector = `[${FILES_DATA_ATTR.action}="editor-input"][${FILES_DATA_ATTR.path}="${escapeAttr(
-    path
-  )}"]`;
-  const textarea = document.querySelector<HTMLTextAreaElement>(selector);
-  if (!textarea) return "";
-  const start = Math.min(textarea.selectionStart, textarea.selectionEnd);
-  const end = Math.max(textarea.selectionStart, textarea.selectionEnd);
-  if (end <= start) return "";
-  return textarea.value.slice(start, end);
-}
-
-function focusEditorMatch(
-  path: string,
-  query: string,
-  backwards = false,
-  selectFromStart = false,
-  caseSensitive = false
-): boolean {
-  const selector = `[${FILES_DATA_ATTR.action}="editor-input"][${FILES_DATA_ATTR.path}="${escapeAttr(
-    path
-  )}"]`;
-  const textarea = document.querySelector<HTMLTextAreaElement>(selector);
-  if (!textarea) return false;
-  const source = textarea.value;
-  const from = backwards
-    ? Math.max(0, textarea.selectionStart - 1)
-    : Math.max(0, textarea.selectionEnd);
-  const index = findMatchIndex(source, query, from, backwards, selectFromStart, caseSensitive);
-  if (index < 0) return false;
-  textarea.focus();
-  textarea.selectionStart = index;
-  textarea.selectionEnd = index + query.length;
-  return true;
-}
-
-function findMatchIndex(
-  source: string,
-  query: string,
-  from: number,
-  backwards: boolean,
-  selectFromStart: boolean,
-  caseSensitive: boolean
-): number {
-  if (!query) return -1;
-  const haystack = caseSensitive ? source : source.toLowerCase();
-  const needle = caseSensitive ? query : query.toLowerCase();
-  if (backwards) {
-    if (selectFromStart) {
-      return haystack.lastIndexOf(needle, haystack.length - 1);
-    }
-    const at = Math.min(from, haystack.length - 1);
-    let index = haystack.lastIndexOf(needle, at);
-    if (index < 0) {
-      index = haystack.lastIndexOf(needle, haystack.length - 1);
-    }
-    return index;
-  }
-  if (selectFromStart) {
-    return haystack.indexOf(needle, 0);
-  }
-  let index = haystack.indexOf(needle, from);
-  if (index < 0 && from > 0) {
-    index = haystack.indexOf(needle, 0);
-  }
-  return index;
-}
-
-function findAllMatchRanges(source: string, query: string, caseSensitive: boolean): number[] {
-  if (!query) return [];
-  const haystack = caseSensitive ? source : source.toLowerCase();
-  const needle = caseSensitive ? query : query.toLowerCase();
-  const indices: number[] = [];
-  let offset = 0;
-  while (offset <= haystack.length - needle.length) {
-    const index = haystack.indexOf(needle, offset);
-    if (index < 0) break;
-    indices.push(index);
-    offset = index + needle.length;
-  }
-  return indices;
-}
-
-function escapeAttr(input: string): string {
-  return input
-    .replaceAll("&", "&amp;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#39;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;");
-}
-
-async function pickOpenFilePath(defaultPath?: string): Promise<string | null> {
-  if ((window as any).__TAURI_INTERNALS__) {
-    try {
-      const { invoke } = await import("@tauri-apps/api/core");
-      const selected = await invoke<string | string[] | null>("plugin:dialog|open", {
-        options: {
-          title: "Open File",
-          directory: false,
-          multiple: false,
-          defaultPath
-        }
-      });
-      if (Array.isArray(selected)) {
-        return selected[0] ?? null;
-      }
-      return selected;
-    } catch {
-      // Fall through to manual prompt.
-    }
-  }
-  const entered = window.prompt("Open file path", defaultPath ?? "")?.trim();
-  return entered || null;
-}
-
-async function pickSaveFilePath(defaultPath: string, title = "Save File As"): Promise<string | null> {
-  if ((window as any).__TAURI_INTERNALS__) {
-    try {
-      const { invoke } = await import("@tauri-apps/api/core");
-      const selected = await invoke<string | null>("plugin:dialog|save", {
-        options: {
-          title,
-          defaultPath
-        }
-      });
-      return selected;
-    } catch {
-      // Fall through to manual prompt.
-    }
-  }
-  const entered = window.prompt(title, defaultPath)?.trim();
-  return entered || null;
+  return getSelectedNotepadText(path, FILES_EDITOR_ATTRS);
 }
 
 function hasUnsavedTabs(slice: FilesSlice): boolean {

@@ -18,6 +18,7 @@ export type SidebarTab =
   | "apis"
   | "tts"
   | "stt"
+  | "vad"
   | "llama_cpp"
   | "model_manager"
   | "settings";

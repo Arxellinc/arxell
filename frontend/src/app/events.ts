@@ -77,6 +77,7 @@ export function handleCoreAppEvent(
       events: AppEvent[];
     };
     applyFlowRuntimeEvent: (event: AppEvent) => void;
+    applyLooperRuntimeEvent: (event: AppEvent) => void;
     maybeHandleFlowPhaseTerminalEvent: (event: AppEvent) => Promise<void>;
   }
 ): boolean {
@@ -214,6 +215,7 @@ export function handleCoreAppEvent(
 
   deps.state.events.push(event);
   deps.applyFlowRuntimeEvent(event);
+  deps.applyLooperRuntimeEvent(event);
   void deps.maybeHandleFlowPhaseTerminalEvent(event);
   return false;
 }

@@ -77,6 +77,9 @@ export function renderHighlightedHtml(input: string, filePath?: string | null): 
         ignoreIllegals: true
       }).value;
     }
+    if (filePath) {
+      return escapeHtml(input);
+    }
     return hljs.highlightAuto(input).value;
   } catch {
     return escapeHtml(input);

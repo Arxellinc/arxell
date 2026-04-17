@@ -2,6 +2,7 @@
 
 pub mod files;
 pub mod flow;
+pub mod looper;
 pub mod registry;
 pub mod web_search;
 
@@ -11,6 +12,7 @@ pub fn build_registry() -> InvokeRegistry {
     let mut registry = InvokeRegistry::new();
     flow::register(&mut registry);
     files::register(&mut registry);
+    looper::register(&mut registry);
     web_search::register(&mut registry);
     registry
 }

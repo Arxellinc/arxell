@@ -10,6 +10,7 @@ use crate::app::web_search_service::WebSearchService;
 use crate::contracts::AppEvent;
 use crate::ipc::chat::ChatCommandHandler;
 use crate::ipc::flow::FlowCommandHandler;
+use crate::ipc::looper::LooperCommandHandler;
 use crate::ipc::terminal::TerminalCommandHandler;
 use crate::observability::EventHub;
 use crate::workspace_tools::WorkspaceToolsService;
@@ -20,6 +21,7 @@ pub struct TauriBridgeState {
     pub chat: Arc<ChatCommandHandler>,
     pub terminal: Arc<TerminalCommandHandler>,
     pub flow_handler: Arc<FlowCommandHandler>,
+    pub looper_handler: Arc<LooperCommandHandler>,
     pub hub: EventHub,
     pub workspace_tools: Arc<WorkspaceToolsService>,
     pub api_registry: Arc<ApiRegistryService>,

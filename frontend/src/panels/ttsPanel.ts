@@ -30,6 +30,7 @@ function bundleLabelFromModelPath(modelPath: string): string {
   const parts = normalized.split("/").filter(Boolean);
   const file = parts[parts.length - 1] || normalized;
   const parent = parts.length >= 2 ? parts[parts.length - 2] : "";
+  if (file === "model.onnx" && parent === "base") return "base";
   return parent ? `${parent} (${file})` : file;
 }
 
@@ -50,6 +51,12 @@ export function renderTtsBody(state: PrimaryPanelRenderState): string {
   const tts = state.tts;
   const engineUi = getTtsEngineUiConfig(tts.engine);
   const voices = tts.voices.length ? tts.voices : [tts.engine === "kokoro" ? "af_heart" : "speaker_0"];
+  const voiceMeta =
+    tts.engine === "piper" && voices.length <= 1
+      ? "Single-speaker model"
+      : tts.engine === "piper"
+      ? `${voices.length} speakers`
+      : "Selected";
   const busy = tts.status === "busy";
   const compatHint = resolveTtsCompatHint(tts.message, tts.engine);
   const engineLabel = engineUi.engineLabel;
@@ -170,7 +177,7 @@ export function renderTtsBody(state: PrimaryPanelRenderState): string {
                 .join("")}
             </select>
           </span>
-          <span class="config-meta">Selected</span>
+          <span class="config-meta">${escapeHtml(voiceMeta)}</span>
         </div>
         <div class="config-row tts-config-row">
           <label class="config-key" for="ttsSpeedInput">Speed</label>

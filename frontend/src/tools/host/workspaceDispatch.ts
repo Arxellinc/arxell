@@ -24,6 +24,10 @@ import type { OpenCodeActionsDeps } from "../opencode/actions";
 import { handleLooperClick, handleLooperInput } from "../looper/bindings";
 import type { LooperToolState } from "../looper/state";
 import type { LooperActionsDeps } from "../looper/actions";
+import { handleSkillsClick, handleSkillsPointerDown } from "../skills/bindings";
+import type { SkillsToolViewState } from "../skills/state";
+import { SKILLS_DATA_ATTR } from "../skills/constants";
+import { handleNotepadClick, handleNotepadInput, handleNotepadKeyDown } from "../notepad/bindings";
 import {
   FILES_DATA_ATTR,
   FILES_UI_ID,
@@ -31,6 +35,7 @@ import {
   LOOPER_DATA_ATTR,
   MANAGER_DATA_ATTR,
   MANAGER_UI_ID,
+  NOTEPAD_DATA_ATTR,
   OPENCODE_DATA_ATTR,
   TASKS_DATA_ATTR,
   TERMINAL_DATA_ATTR,
@@ -57,6 +62,8 @@ export const WORKSPACE_TOOL_TARGET_SELECTOR = [
   `[${FILES_DATA_ATTR.action}]`,
   `[${FILES_DATA_ATTR.path}]`,
   `#${FILES_UI_ID.refreshButton}`,
+  `[${NOTEPAD_DATA_ATTR.action}]`,
+  `[${NOTEPAD_DATA_ATTR.tabId}]`,
   `[${TASKS_DATA_ATTR.action}]`,
   `[${TASKS_DATA_ATTR.taskId}]`,
   `[${TASKS_DATA_ATTR.field}]`,
@@ -66,7 +73,9 @@ export const WORKSPACE_TOOL_TARGET_SELECTOR = [
   `[${OPENCODE_DATA_ATTR.action}]`,
   `[${LOOPER_DATA_ATTR.action}]`,
   `[${LOOPER_DATA_ATTR.loopId}]`,
-  `[${LOOPER_DATA_ATTR.phase}]`
+  `[${LOOPER_DATA_ATTR.phase}]`,
+  `[${SKILLS_DATA_ATTR.action}]`,
+  `[${SKILLS_DATA_ATTR.skillId}]`
 ].join(", ");
 
 export interface WorkspaceToolDispatchDeps {
@@ -111,6 +120,19 @@ export interface WorkspaceToolDispatchDeps {
     undoLastFilesDelete: () => Promise<void>;
     openPathInTerminal: (path: string) => Promise<void>;
   };
+  notepad: {
+    ensureNotepadReady: () => Promise<void>;
+    createUntitledNotepadTab: () => string;
+    openNotepadFile: (path: string) => Promise<void>;
+    activateNotepadTab: (tabId: string) => void;
+    closeNotepadTab: (tabId: string) => void;
+    updateNotepadBuffer: (tabId: string, content: string) => void;
+    saveActiveNotepadTab: () => Promise<void>;
+    saveActiveNotepadTabAs: (path: string) => Promise<void>;
+    saveAllNotepadTabs: () => Promise<void>;
+    duplicateActiveNotepadTab: (path: string) => Promise<void>;
+    deleteActiveNotepadFile: () => Promise<void>;
+  };
   web: {
     runWebSearch: () => Promise<void>;
     createAndActivateWebTab: () => void;
@@ -140,6 +162,9 @@ export async function dispatchWorkspaceToolClick(
   if (await handleFilesClick(target, state as any, deps.files)) {
     return true;
   }
+  if (await handleNotepadClick(target, state as any, deps.notepad)) {
+    return true;
+  }
   if (await handleTasksClick(target, state as any)) {
     return true;
   }
@@ -153,6 +178,9 @@ export async function dispatchWorkspaceToolClick(
     return true;
   }
   if (handleLooperClick(target, deps.looper.state, deps.looper.actionsDeps)) {
+    return true;
+  }
+  if (await handleSkillsClick(target, state as unknown as SkillsToolViewState)) {
     return true;
   }
   return false;
@@ -175,6 +203,7 @@ export function dispatchWorkspaceToolInput(
   deps: WorkspaceToolDispatchDeps
 ): { handled: boolean; rerender: boolean } {
   const filesResult = handleFilesInput(target, state as any);
+  const notepadResult = handleNotepadInput(target, state as any);
   const tasksHandled = handleTasksInput(target, state as any);
   const webHandled = handleWebInput(target, state as any, { withActiveWebTab: deps.web.withActiveWebTab as any });
   const flowResult = handleFlowInput(target, state as any);
@@ -183,6 +212,7 @@ export function dispatchWorkspaceToolInput(
   return {
     handled:
       filesResult.handled ||
+      notepadResult.handled ||
       tasksHandled ||
       webHandled ||
       flowResult.handled ||
@@ -190,6 +220,7 @@ export function dispatchWorkspaceToolInput(
       looperResult.handled,
     rerender:
       filesResult.rerender ||
+      notepadResult.rerender ||
       tasksHandled ||
       flowResult.rerender ||
       chartResult.rerender ||
@@ -220,6 +251,20 @@ export async function dispatchWorkspaceToolKeyDown(
       updateFilesBuffer: deps.files.updateFilesBuffer,
       pasteFilesClipboard: deps.files.pasteFilesClipboard,
       undoLastFilesDelete: deps.files.undoLastFilesDelete
+    })
+  ) {
+    return true;
+  }
+  if (
+    await handleNotepadKeyDown(event, state as any, {
+      ensureNotepadReady: deps.notepad.ensureNotepadReady,
+      createUntitledNotepadTab: deps.notepad.createUntitledNotepadTab,
+      openNotepadFile: deps.notepad.openNotepadFile,
+      saveActiveNotepadTab: deps.notepad.saveActiveNotepadTab,
+      saveActiveNotepadTabAs: deps.notepad.saveActiveNotepadTabAs,
+      saveAllNotepadTabs: deps.notepad.saveAllNotepadTabs,
+      updateNotepadBuffer: deps.notepad.updateNotepadBuffer,
+      closeNotepadTab: deps.notepad.closeNotepadTab
     })
   ) {
     return true;
@@ -261,5 +306,11 @@ export function dispatchWorkspaceToolPointerDown(
   target: HTMLElement,
   state: WorkspaceToolState
 ): boolean {
-  return handleFilesPointerDown(event, target, state as any);
+  if (handleFilesPointerDown(event, target, state as any)) {
+    return true;
+  }
+  if (handleSkillsPointerDown(event, target, state as unknown as SkillsToolViewState)) {
+    return true;
+  }
+  return false;
 }

@@ -36,6 +36,14 @@ const WORKSPACE_TOOL_MANIFESTS: &[WorkspaceToolManifest] = &[
         default_enabled: true,
     },
     WorkspaceToolManifest {
+        tool_id: "notepad",
+        title: "Notepad",
+        description: "Tabbed text editor for workspace files and scratch buffers",
+        category: "workspace",
+        core: false,
+        default_enabled: true,
+    },
+    WorkspaceToolManifest {
         tool_id: "webSearch",
         title: "WebSearch",
         description: "Search and fetch web context for tasks",
@@ -202,6 +210,17 @@ impl WorkspaceToolsService {
         let mut records: Vec<_> = state.tools.values().cloned().collect();
         records.sort_by(|a, b| a.tool_id.cmp(&b.tool_id));
         records
+    }
+
+    pub fn plugins_root_path(&self) -> PathBuf {
+        self.plugins_root.clone()
+    }
+
+    pub fn state_root_path(&self) -> PathBuf {
+        self.registry_path
+            .parent()
+            .unwrap_or_else(|| Path::new("."))
+            .to_path_buf()
     }
 
     pub fn set_enabled(&self, tool_id: &str, enabled: bool) -> Result<(), String> {

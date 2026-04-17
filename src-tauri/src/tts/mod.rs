@@ -15,7 +15,7 @@ use sherpa_onnx::{
     OfflineTtsKokoroModelConfig, OfflineTtsMatchaModelConfig, OfflineTtsModelConfig,
     OfflineTtsVitsModelConfig,
 };
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::fs;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
@@ -425,6 +425,187 @@ fn recursive_find_file_named(root: &Path, file_name: &str, max_depth: usize) -> 
     None
 }
 
+fn recursive_find_file_with_ext(root: &Path, ext: &str, max_depth: usize) -> Option<PathBuf> {
+    if max_depth == 0 || !root.is_dir() {
+        return None;
+    }
+    let entries = fs::read_dir(root).ok()?;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_file() {
+            if path
+                .extension()
+                .and_then(|value| value.to_str())
+                .map(|value| value.eq_ignore_ascii_case(ext))
+                .unwrap_or(false)
+            {
+                return Some(path);
+            }
+            continue;
+        }
+        if path.is_dir() {
+            if let Some(found) = recursive_find_file_with_ext(&path, ext, max_depth - 1) {
+                return Some(found);
+            }
+        }
+    }
+    None
+}
+
+fn recursive_find_dir_named(root: &Path, dir_name: &str, max_depth: usize) -> Option<PathBuf> {
+    if max_depth == 0 || !root.is_dir() {
+        return None;
+    }
+    let entries = fs::read_dir(root).ok()?;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path.is_dir() {
+            continue;
+        }
+        if path
+            .file_name()
+            .and_then(|value| value.to_str())
+            .map(|value| value.eq_ignore_ascii_case(dir_name))
+            .unwrap_or(false)
+        {
+            return Some(path);
+        }
+        if let Some(found) = recursive_find_dir_named(&path, dir_name, max_depth - 1) {
+            return Some(found);
+        }
+    }
+    None
+}
+
+fn recursive_collect_files_named(
+    root: &Path,
+    file_names: &[&str],
+    max_depth: usize,
+    out: &mut BTreeSet<PathBuf>,
+) {
+    if max_depth == 0 || !root.is_dir() {
+        return;
+    }
+    let Ok(entries) = fs::read_dir(root) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_file() {
+            let matches = path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .map(|name| file_names.iter().any(|candidate| name.eq_ignore_ascii_case(candidate)))
+                .unwrap_or(false);
+            if matches {
+                out.insert(path);
+            }
+            continue;
+        }
+        if path.is_dir() {
+            recursive_collect_files_named(&path, file_names, max_depth - 1, out);
+        }
+    }
+}
+
+fn recursive_collect_files_with_ext(
+    root: &Path,
+    ext: &str,
+    max_depth: usize,
+    out: &mut BTreeSet<PathBuf>,
+) {
+    if max_depth == 0 || !root.is_dir() {
+        return;
+    }
+    let Ok(entries) = fs::read_dir(root) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_file() {
+            let matches = path
+                .extension()
+                .and_then(|value| value.to_str())
+                .map(|value| value.eq_ignore_ascii_case(ext))
+                .unwrap_or(false);
+            if matches {
+                out.insert(path);
+            }
+            continue;
+        }
+        if path.is_dir() {
+            recursive_collect_files_with_ext(&path, ext, max_depth - 1, out);
+        }
+    }
+}
+
+fn canonicalize_piper_model_path(model_path: PathBuf, engine_dir: &Path) -> PathBuf {
+    let Some(parent) = model_path.parent() else {
+        return model_path;
+    };
+    let is_root_piper_model = parent == engine_dir
+        && model_path
+            .file_name()
+            .and_then(|value| value.to_str())
+            .map(|value| value.eq_ignore_ascii_case("model.onnx"))
+            .unwrap_or(false);
+    if !is_root_piper_model {
+        return model_path;
+    }
+    let base_model = engine_dir.join("base").join("model.onnx");
+    if base_model.is_file() {
+        base_model
+    } else {
+        model_path
+    }
+}
+
+fn discover_available_model_paths(paths: &KokoroPaths, settings: &PersistedTtsSettings) -> Vec<String> {
+    let engine = resolve_engine(settings);
+    let engine_dir = paths.kokoro_dir.join(engine.as_key());
+    let tts_engine_dir = paths.app_data_dir.join("tts").join(engine.as_key());
+    let file_names: &[&str] = match engine {
+        TtsEngine::Kokoro => &["model.int8.onnx", "kokoro-v0_19.int8.onnx", "model.onnx", "model_quantized.onnx"],
+        TtsEngine::Piper | TtsEngine::Matcha => &["model.onnx"],
+        TtsEngine::Kitten => &["model.fp16.onnx"],
+    };
+    let mut found = BTreeSet::new();
+    if let Some(model_path) = active_engine_paths(settings).model_path.filter(|path| !path.trim().is_empty()) {
+        let path = PathBuf::from(model_path);
+        found.insert(if matches!(engine, TtsEngine::Piper) {
+            canonicalize_piper_model_path(path, &engine_dir)
+        } else {
+            path
+        });
+    }
+    for root in [&tts_engine_dir, &engine_dir] {
+        if matches!(engine, TtsEngine::Piper) {
+            recursive_collect_files_with_ext(root, "onnx", 4, &mut found);
+        } else {
+            recursive_collect_files_named(root, file_names, 4, &mut found);
+        }
+    }
+    if matches!(engine, TtsEngine::Piper) {
+        let nested_models: BTreeSet<PathBuf> = found
+            .iter()
+            .filter(|path| path.parent().map(|parent| parent != engine_dir).unwrap_or(false))
+            .cloned()
+            .collect();
+        if !nested_models.is_empty() {
+            found = nested_models;
+        }
+        found = found
+            .into_iter()
+            .map(|path| canonicalize_piper_model_path(path, &engine_dir))
+            .collect();
+    }
+    found
+        .into_iter()
+        .filter(|path| path.is_file())
+        .map(|path| path.to_string_lossy().to_string())
+        .collect()
+}
+
 fn model_parent_dir(model_path: Option<&str>) -> Option<PathBuf> {
     let model = model_path?.trim();
     if model.is_empty() {
@@ -462,6 +643,29 @@ fn companion_dir_from_model_dirs(
         candidates.extend(candidate_names.iter().map(|name| parent.join(name)));
     }
     first_existing_dir(&candidates)
+}
+
+fn discovered_model_candidates(
+    engine: TtsEngine,
+    tts_engine_dir: &Path,
+    engine_dir: &Path,
+) -> Option<PathBuf> {
+    match engine {
+        TtsEngine::Piper => recursive_find_file_with_ext(tts_engine_dir, "onnx", 4)
+            .or_else(|| recursive_find_file_with_ext(engine_dir, "onnx", 4)),
+        TtsEngine::Kokoro => recursive_find_file_named(tts_engine_dir, "model.int8.onnx", 4)
+            .or_else(|| recursive_find_file_named(tts_engine_dir, "kokoro-v0_19.int8.onnx", 4))
+            .or_else(|| recursive_find_file_named(tts_engine_dir, "model.onnx", 4))
+            .or_else(|| recursive_find_file_named(tts_engine_dir, "model_quantized.onnx", 4))
+            .or_else(|| recursive_find_file_named(engine_dir, "model.int8.onnx", 4))
+            .or_else(|| recursive_find_file_named(engine_dir, "kokoro-v0_19.int8.onnx", 4))
+            .or_else(|| recursive_find_file_named(engine_dir, "model.onnx", 4))
+            .or_else(|| recursive_find_file_named(engine_dir, "model_quantized.onnx", 4)),
+        TtsEngine::Matcha => recursive_find_file_named(tts_engine_dir, "model.onnx", 4)
+            .or_else(|| recursive_find_file_named(engine_dir, "model.onnx", 4)),
+        TtsEngine::Kitten => recursive_find_file_named(tts_engine_dir, "model.fp16.onnx", 4)
+            .or_else(|| recursive_find_file_named(engine_dir, "model.fp16.onnx", 4)),
+    }
 }
 
 fn resolve_paths_for_settings(
@@ -548,15 +752,26 @@ fn resolve_paths_for_settings(
         .model_path
         .as_ref()
         .map(PathBuf::from)
+        .map(|path| {
+            if matches!(engine, TtsEngine::Piper) {
+                canonicalize_piper_model_path(path, &engine_dir)
+            } else {
+                path
+            }
+        })
         .filter(|path| path.is_file());
-    let model_path = configured_model_path.or_else(|| first_existing_file(&model_candidates));
+    let model_path = configured_model_path.or_else(|| {
+        first_existing_file(&model_candidates)
+            .or_else(|| discovered_model_candidates(engine, &tts_engine_dir, &engine_dir))
+    });
+    let model_path_for_companions = model_path.as_ref().map(|path| path.to_string_lossy().to_string());
     let tokens_path = engine_paths
         .tokens_path
         .as_ref()
         .map(PathBuf::from)
         .filter(|path| path.is_file())
         .or_else(|| {
-            companion_file_from_model_dirs(engine_paths.model_path.as_deref(), &["tokens.txt"])
+            companion_file_from_model_dirs(model_path_for_companions.as_deref(), &["tokens.txt"])
         })
         .or_else(|| {
             first_existing_file(&[
@@ -565,11 +780,9 @@ fn resolve_paths_for_settings(
                 kokoro_dir.join("tokens.txt"),
             ])
             .or_else(|| {
-                if matches!(engine, TtsEngine::Kokoro) {
-                    recursive_find_file_named(&kokoro_dir, "tokens.txt", 4)
-                } else {
-                    None
-                }
+                recursive_find_file_named(&tts_engine_dir, "tokens.txt", 4)
+                    .or_else(|| recursive_find_file_named(&engine_dir, "tokens.txt", 4))
+                    .or_else(|| recursive_find_file_named(&kokoro_dir, "tokens.txt", 4))
             })
         });
     let data_dir = engine_paths
@@ -578,7 +791,7 @@ fn resolve_paths_for_settings(
         .map(PathBuf::from)
         .filter(|path| path.is_dir())
         .or_else(|| {
-            companion_dir_from_model_dirs(engine_paths.model_path.as_deref(), &["espeak-ng-data"])
+            companion_dir_from_model_dirs(model_path_for_companions.as_deref(), &["espeak-ng-data"])
         })
         .or_else(|| {
             first_existing_dir(&[
@@ -590,10 +803,22 @@ fn resolve_paths_for_settings(
                     .join("espeak-ng-data"),
                 kokoro_dir.join("espeak-ng-data"),
             ])
+            .or_else(|| recursive_find_dir_named(&tts_engine_dir, "espeak-ng-data", 4))
+            .or_else(|| recursive_find_dir_named(&engine_dir, "espeak-ng-data", 4))
+            .or_else(|| recursive_find_dir_named(&kokoro_dir, "espeak-ng-data", 4))
         });
-    let dict_dir = first_existing_dir(&[kokoro_dir.join("dict")]);
-    let lexicon_us_path = first_existing_file(&[kokoro_dir.join("lexicon-us-en.txt")]);
-    let lexicon_zh_path = first_existing_file(&[kokoro_dir.join("lexicon-zh.txt")]);
+    let dict_dir = companion_dir_from_model_dirs(model_path_for_companions.as_deref(), &["dict"])
+        .or_else(|| first_existing_dir(&[kokoro_dir.join("dict")]));
+    let lexicon_us_path = companion_file_from_model_dirs(
+        model_path_for_companions.as_deref(),
+        &["lexicon-us-en.txt"],
+    )
+    .or_else(|| first_existing_file(&[kokoro_dir.join("lexicon-us-en.txt")]));
+    let lexicon_zh_path = companion_file_from_model_dirs(
+        model_path_for_companions.as_deref(),
+        &["lexicon-zh.txt"],
+    )
+    .or_else(|| first_existing_file(&[kokoro_dir.join("lexicon-zh.txt")]));
 
     KokoroPaths {
         app_data_dir,
@@ -1065,6 +1290,13 @@ fn create_sherpa_engine(signature: &EngineSignature) -> Result<SherpaEngine, Str
     })
 }
 
+fn detect_num_speakers(signature: &EngineSignature) -> Option<usize> {
+    let config = build_offline_tts_config(signature);
+    let tts = OfflineTts::create(&config)?;
+    let num_speakers = tts.num_speakers();
+    (num_speakers > 0).then_some(num_speakers as usize)
+}
+
 pub fn status(app: &AppHandle, request: TtsStatusRequest) -> Result<TtsStatusResponse, String> {
     emit_tts_event(
         app,
@@ -1079,9 +1311,10 @@ pub fn status(app: &AppHandle, request: TtsStatusRequest) -> Result<TtsStatusRes
     let settings = load_settings(&paths.app_data_dir);
     let engine = resolve_engine(&settings);
     let signature = build_signature(&paths, &settings).ok();
+    let available_model_paths = discover_available_model_paths(&paths, &settings);
     let available_voices = signature
         .as_ref()
-        .map(|signature| voices_for_signature(signature, None))
+        .map(|signature| voices_for_signature(signature, detect_num_speakers(signature)))
         .unwrap_or_else(|| {
             if matches!(engine, TtsEngine::Kokoro) {
                 known_kokoro_voices()
@@ -1141,11 +1374,7 @@ pub fn status(app: &AppHandle, request: TtsStatusRequest) -> Result<TtsStatusRes
         python_path: String::new(),
         script_path: String::new(),
         runtime_archive_present: false,
-        available_model_paths: paths
-            .model_path
-            .as_ref()
-            .map(|p| vec![p.to_string_lossy().to_string()])
-            .unwrap_or_default(),
+        available_model_paths,
         available_voices,
         selected_voice,
         speed,
@@ -1173,7 +1402,10 @@ pub fn list_voices(
     let engine = resolve_engine(&settings);
     let voices = build_signature(&paths, &settings)
         .ok()
-        .map(|signature| voices_for_signature(&signature, None))
+        .map(|signature| {
+            let num_speakers = detect_num_speakers(&signature);
+            voices_for_signature(&signature, num_speakers)
+        })
         .unwrap_or_else(|| {
             if matches!(engine, TtsEngine::Kokoro) {
                 known_kokoro_voices()

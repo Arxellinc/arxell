@@ -7,6 +7,10 @@ export function renderSttActions(): string {
   `;
 }
 
+export function renderVadActions(): string {
+  return "";
+}
+
 function renderVadRow(args: {
   id: string;
   label: string;
@@ -205,26 +209,38 @@ export function renderSttBody(state: PrimaryPanelRenderState): string {
         </button>
       </div>
 
-      <section class="stt-vad-section" aria-label="VAD Settings">
-        <h3 class="stt-vad-title">VAD Settings</h3>
-        <p class="stt-vad-note">All settings below are active immediately for detection and chunking.</p>
-        <div class="config-table stt-vad-table">
-          ${renderVadRow({ id: "sttVadBaseThresholdInput", label: "Base Threshold", value: stt.vadBaseThreshold, step: "0.0005", min: "0", max: "0.2", hint: "RMS floor" })}
-          ${renderVadRow({ id: "sttVadDynamicMultiplierInput", label: "Dynamic Multiplier", value: stt.vadDynamicMultiplier, step: "0.1", min: "1", max: "10", hint: "noise floor factor" })}
-          ${renderVadRow({ id: "sttVadNoiseAdaptationAlphaInput", label: "Noise Adaptation Alpha", value: stt.vadNoiseAdaptationAlpha, step: "0.01", min: "0", max: "1", hint: "EMA blend" })}
-          ${renderVadRow({ id: "sttVadStartFramesInput", label: "Start Frames", value: stt.vadStartFrames, step: "1", min: "1", max: "100", hint: "speech-on hysteresis" })}
-          ${renderVadRow({ id: "sttVadEndFramesInput", label: "End Frames", value: stt.vadEndFrames, step: "1", min: "1", max: "200", hint: "speech-off hysteresis" })}
-          ${renderVadRow({ id: "sttVadPreSpeechMsInput", label: "Pre-Speech (ms)", value: stt.vadPreSpeechMs, step: "10", min: "0", max: "2000", hint: "prefix capture" })}
-          ${renderVadRow({ id: "sttVadMinUtteranceMsInput", label: "Min Utterance (ms)", value: stt.vadMinUtteranceMs, step: "10", min: "0", max: "5000", hint: "drop too-short segments" })}
-          ${renderVadRow({ id: "sttVadForceFlushSInput", label: "Force Flush (s)", value: stt.vadForceFlushS, step: "0.25", min: "0.25", max: "30", hint: "chunk while speaking" })}
-          ${renderVadRow({ id: "sttVadMaxUtteranceSInput", label: "Max Utterance (s)", value: stt.vadMaxUtteranceS, step: "1", min: "1", max: "120", hint: "hard cap" })}
-        </div>
-      </section>
-
       <section class="stt-console-section" aria-label="STT Console">
         <h3 class="stt-console-title">STT Console</h3>
         <div class="stt-console-panel">${sttConsoleHtml}</div>
       </section>
+    </div>
+  `;
+}
+
+function renderVadSettingsSection(stt: PrimaryPanelRenderState["stt"]): string {
+  return `
+    <section class="stt-vad-section" aria-label="VAD Settings">
+      <h3 class="stt-vad-title">VAD Settings</h3>
+      <p class="stt-vad-note">All settings below are active immediately for detection and chunking.</p>
+      <div class="config-table stt-vad-table">
+        ${renderVadRow({ id: "sttVadBaseThresholdInput", label: "Base Threshold", value: stt.vadBaseThreshold, step: "0.0005", min: "0", max: "0.2", hint: "RMS floor" })}
+        ${renderVadRow({ id: "sttVadDynamicMultiplierInput", label: "Dynamic Multiplier", value: stt.vadDynamicMultiplier, step: "0.1", min: "1", max: "10", hint: "noise floor factor" })}
+        ${renderVadRow({ id: "sttVadNoiseAdaptationAlphaInput", label: "Noise Adaptation Alpha", value: stt.vadNoiseAdaptationAlpha, step: "0.01", min: "0", max: "1", hint: "EMA blend" })}
+        ${renderVadRow({ id: "sttVadStartFramesInput", label: "Start Frames", value: stt.vadStartFrames, step: "1", min: "1", max: "100", hint: "speech-on hysteresis" })}
+        ${renderVadRow({ id: "sttVadEndFramesInput", label: "End Frames", value: stt.vadEndFrames, step: "1", min: "1", max: "200", hint: "speech-off hysteresis" })}
+        ${renderVadRow({ id: "sttVadPreSpeechMsInput", label: "Pre-Speech (ms)", value: stt.vadPreSpeechMs, step: "10", min: "0", max: "2000", hint: "prefix capture" })}
+        ${renderVadRow({ id: "sttVadMinUtteranceMsInput", label: "Min Utterance (ms)", value: stt.vadMinUtteranceMs, step: "10", min: "0", max: "5000", hint: "drop too-short segments" })}
+        ${renderVadRow({ id: "sttVadForceFlushSInput", label: "Force Flush (s)", value: stt.vadForceFlushS, step: "0.25", min: "0.25", max: "30", hint: "chunk while speaking" })}
+        ${renderVadRow({ id: "sttVadMaxUtteranceSInput", label: "Max Utterance (s)", value: stt.vadMaxUtteranceS, step: "1", min: "1", max: "120", hint: "hard cap" })}
+      </div>
+    </section>
+  `;
+}
+
+export function renderVadBody(state: PrimaryPanelRenderState): string {
+  return `
+    <div class="primary-pane-body">
+      ${renderVadSettingsSection(state.stt)}
     </div>
   `;
 }

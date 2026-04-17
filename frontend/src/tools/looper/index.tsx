@@ -22,6 +22,7 @@ const LOOPER_ALL_PHASES_KEY = "__all";
 export function renderLooperToolActions(state: LooperToolState): string {
   const activeLoop = state.loops.find((l) => l.id === state.activeLoopId);
   const isRunning = activeLoop?.status === "running";
+  const isPaused = activeLoop?.status === "paused";
 
   const toolbar = renderToolToolbar({
     tabsMode: "dynamic",
@@ -69,6 +70,22 @@ export function renderLooperToolActions(state: LooperToolState): string {
             },
             {
               id: "stop",
+              title: "Stop loop",
+              icon: "square" as const,
+              buttonAttrs: { [LOOPER_DATA_ATTR.action]: "stop-loop" }
+            }
+          ]
+        : []),
+      ...(isPaused
+        ? [
+            {
+              id: "resume",
+              title: "Resume loop",
+              icon: "play" as const,
+              buttonAttrs: { [LOOPER_DATA_ATTR.action]: "resume-loop" }
+            },
+            {
+              id: "stop-paused",
               title: "Stop loop",
               icon: "square" as const,
               buttonAttrs: { [LOOPER_DATA_ATTR.action]: "stop-loop" }
@@ -158,7 +175,9 @@ export function renderLooperToolBody(state: LooperToolState): string {
           ${iconHtml("plus", { size: 16, tone: "dark" })} New Loop
         </button>
       </div>
-    </div>`;
+    </div>
+    ${renderConfigModal(state)}
+    ${renderInstallModal(state)}`;
   }
 
   const loop = state.loops.find((l) => l.id === state.activeLoopId);

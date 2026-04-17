@@ -126,6 +126,7 @@ pub struct TerminalOpenSessionRequest {
     pub rows: Option<u16>,
     pub shell: Option<String>,
     pub cwd: Option<String>,
+    pub model: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1168,6 +1169,251 @@ pub struct FlowStatusResponse {
 pub struct FlowListRunsResponse {
     pub correlation_id: String,
     pub runs: Vec<FlowRunRecord>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum LooperLoopType {
+    Prd,
+    Build,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum LooperLoopStatus {
+    Idle,
+    Running,
+    Paused,
+    Completed,
+    Failed,
+    Blocked,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum LooperPhaseStatus {
+    Idle,
+    Running,
+    Complete,
+    Error,
+    Blocked,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LooperSubStepStatus {
+    pub id: String,
+    pub label: String,
+    pub status: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LooperPhaseState {
+    pub phase: String,
+    pub status: LooperPhaseStatus,
+    pub session_id: Option<String>,
+    pub substeps: Vec<LooperSubStepStatus>,
+    pub prompt: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LooperQuestionOption {
+    pub id: String,
+    pub label: String,
+    pub summary: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LooperQuestion {
+    pub id: String,
+    pub title: String,
+    pub prompt: String,
+    #[serde(default)]
+    pub options: Vec<LooperQuestionOption>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LooperLoopRecord {
+    pub id: String,
+    pub iteration: i32,
+    pub loop_type: LooperLoopType,
+    pub status: LooperLoopStatus,
+    pub active_phase: Option<String>,
+    pub started_at_ms: i64,
+    pub completed_at_ms: Option<i64>,
+    pub phases: std::collections::HashMap<String, LooperPhaseState>,
+    pub review_result: Option<String>,
+    pub cwd: String,
+    pub task_path: String,
+    pub specs_glob: String,
+    pub max_iterations: i32,
+    #[serde(default)]
+    pub phase_models: std::collections::HashMap<String, String>,
+    pub project_name: String,
+    pub project_type: String,
+    pub project_icon: String,
+    pub project_description: String,
+    #[serde(default)]
+    pub pending_questions: Vec<LooperQuestion>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LooperStartRequest {
+    pub correlation_id: String,
+    pub loop_id: String,
+    pub iteration: i32,
+    pub loop_type: LooperLoopType,
+    pub cwd: String,
+    pub task_path: String,
+    pub specs_glob: String,
+    pub max_iterations: i32,
+    pub phase_models: Option<std::collections::HashMap<String, String>>,
+    pub phase_prompts: Option<std::collections::HashMap<String, String>>,
+    pub project_name: String,
+    pub project_type: String,
+    pub project_icon: String,
+    pub project_description: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LooperStartResponse {
+    pub correlation_id: String,
+    pub loop_id: String,
+    pub status: LooperLoopStatus,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LooperStopRequest {
+    pub correlation_id: String,
+    pub loop_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LooperStopResponse {
+    pub correlation_id: String,
+    pub loop_id: String,
+    pub stopped: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LooperPauseRequest {
+    pub correlation_id: String,
+    pub loop_id: String,
+    pub paused: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LooperPauseResponse {
+    pub correlation_id: String,
+    pub loop_id: String,
+    pub paused: bool,
+    pub updated: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LooperAdvanceRequest {
+    pub correlation_id: String,
+    pub loop_id: String,
+    pub next_phase: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LooperAdvanceResponse {
+    pub correlation_id: String,
+    pub loop_id: String,
+    pub active_phase: String,
+    pub session_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LooperStatusRequest {
+    pub correlation_id: String,
+    pub loop_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LooperStatusResponse {
+    pub correlation_id: String,
+    pub loop_record: Option<LooperLoopRecord>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LooperListRequest {
+    pub correlation_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LooperListResponse {
+    pub correlation_id: String,
+    pub loops: Vec<LooperLoopRecord>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LooperCloseRequest {
+    pub correlation_id: String,
+    pub loop_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LooperCloseResponse {
+    pub correlation_id: String,
+    pub loop_id: String,
+    pub closed: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LooperCheckOpenCodeRequest {
+    pub correlation_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LooperCheckOpenCodeResponse {
+    pub correlation_id: String,
+    pub installed: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LooperQuestionAnswer {
+    pub question_id: String,
+    pub selected_option_id: String,
+    pub freeform_text: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LooperSubmitQuestionsRequest {
+    pub correlation_id: String,
+    pub loop_id: String,
+    pub answers: Vec<LooperQuestionAnswer>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LooperSubmitQuestionsResponse {
+    pub correlation_id: String,
+    pub loop_id: String,
+    pub submitted: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

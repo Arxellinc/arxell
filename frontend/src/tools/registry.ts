@@ -44,6 +44,7 @@ const PREFERRED_TOOL_ORDER = [
   "opencode",
   "looper",
   "files",
+  "notepad",
   "webSearch",
   "chart",
   "flow",

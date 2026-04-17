@@ -1,4 +1,5 @@
 use crate::agent_tools::chart::ChartTool;
+use crate::agent_tools::notepad::{NotepadEditLinesTool, NotepadReadTool, NotepadWriteTool};
 use crate::agent_tools::web_search::WebSearchTool;
 use crate::api_registry::ApiRegistryService;
 use crate::app::web_search_service::WebSearchService;
@@ -75,6 +76,22 @@ fn bind_files_tools(
     }));
 }
 
+fn bind_notepad_tools(
+    chat: &ChatService,
+    resolved: &mut Vec<Box<dyn AgentTool>>,
+    correlation_id: &str,
+) {
+    resolved.push(Box::new(NotepadReadTool));
+    resolved.push(Box::new(NotepadWriteTool::new(
+        chat.hub.clone(),
+        correlation_id.to_string(),
+    )));
+    resolved.push(Box::new(NotepadEditLinesTool::new(
+        chat.hub.clone(),
+        correlation_id.to_string(),
+    )));
+}
+
 fn bind_terminal_tools(
     _chat: &ChatService,
     resolved: &mut Vec<Box<dyn AgentTool>>,
@@ -111,6 +128,10 @@ fn agent_tool_bindings() -> &'static [AgentToolBinding] {
         AgentToolBinding {
             workspace_tool_id: "files",
             bind: bind_files_tools,
+        },
+        AgentToolBinding {
+            workspace_tool_id: "notepad",
+            bind: bind_notepad_tools,
         },
         AgentToolBinding {
             workspace_tool_id: "terminal",
@@ -1713,6 +1734,11 @@ impl ChatService {
 }
 
 fn apply_tool_routing_hints(system_prompt: &mut String, enabled_tool_names: &[String]) {
+    if enabled_tool_names.iter().any(|name| name == "notepad_write") {
+        system_prompt.push_str(
+            "\n\nTool routing hint:\n- If the user asks you to create, draft, revise, or maintain a document in the Notepad workspace tool, prefer the dedicated Notepad tools over generic file tools.\n- Use `notepad_read` to inspect a document or a specific line range.\n- Use `notepad_write` to create or fully replace a document when appropriate.\n- Use `notepad_edit_lines` when the user requests targeted edits to specific lines or a narrow section so you do not rewrite the whole document unnecessarily.",
+        );
+    }
     if enabled_tool_names.iter().any(|name| name == "chart_set") {
         system_prompt.push_str(
             "\n\nTool routing hint:\n- If the user asks for a flowchart, diagram, architecture map, process map, or system overview, use `chart_set` with a valid Mermaid definition and present the result in the Chart workspace tool.\n- For Mermaid flowcharts, start with `flowchart TD` or `flowchart LR`. Use edge labels like `A -->|label| B`, `A -- text --> B`, or dotted arrows like `A -.->|label| B`. Do not use invalid dotted-label forms such as `A -.|label|-. B`.",

@@ -5,6 +5,7 @@ import chevronLeft from "./chevron-left.svg?raw";
 import columns2 from "./columns-2.svg?raw";
 import edit from "./edit.svg?raw";
 import fileBadge from "./file-badge.svg?raw";
+import fileText from "./file-text.svg?raw";
 import folder from "./folder.svg?raw";
 import gitCompareArrows from "./git-compare-arrows.svg?raw";
 import globe from "./globe.svg?raw";
@@ -68,6 +69,7 @@ const ICON_SVGS = {
   "columns-2": columns2,
   edit,
   "file-badge": fileBadge,
+  "file-text": fileText,
   folder,
   "git-compare-arrows": gitCompareArrows,
   globe,

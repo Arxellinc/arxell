@@ -109,6 +109,7 @@ export interface TerminalOpenSessionRequest {
   rows?: number;
   shell?: string;
   cwd?: string;
+  model?: string;
 }
 
 export interface TerminalOpenSessionResponse {
@@ -941,6 +942,176 @@ export interface FlowStatusResponse {
 export interface FlowListRunsResponse {
   correlationId: string;
   runs: FlowRunRecord[];
+}
+
+export type LooperLoopType = "prd" | "build";
+export type LooperLoopStatus = "idle" | "running" | "paused" | "completed" | "failed" | "blocked";
+export type LooperPhaseStatus = "idle" | "running" | "complete" | "error" | "blocked";
+
+export interface LooperSubStepStatus {
+  id: string;
+  label: string;
+  status: string;
+}
+
+export interface LooperPhaseRecord {
+  phase: string;
+  status: LooperPhaseStatus;
+  sessionId: string | null;
+  substeps: LooperSubStepStatus[];
+  prompt: string;
+}
+
+export interface LooperQuestionOption {
+  id: string;
+  label: string;
+  summary?: string;
+}
+
+export interface LooperQuestion {
+  id: string;
+  title: string;
+  prompt: string;
+  options: LooperQuestionOption[];
+}
+
+export interface LooperLoopRecord {
+  id: string;
+  iteration: number;
+  loopType: LooperLoopType;
+  status: LooperLoopStatus;
+  activePhase: string | null;
+  startedAtMs: number;
+  completedAtMs: number | null;
+  phases: Record<string, LooperPhaseRecord>;
+  reviewResult: string | null;
+  cwd: string;
+  taskPath: string;
+  specsGlob: string;
+  maxIterations: number;
+  phaseModels: Record<string, string>;
+  projectName: string;
+  projectType: string;
+  projectIcon: string;
+  projectDescription: string;
+  pendingQuestions: LooperQuestion[];
+}
+
+export interface LooperStartRequest {
+  correlationId: string;
+  loopId: string;
+  iteration: number;
+  loopType: LooperLoopType;
+  cwd: string;
+  taskPath: string;
+  specsGlob: string;
+  maxIterations: number;
+  phaseModels?: Record<string, string>;
+  phasePrompts?: Record<string, string>;
+  projectName: string;
+  projectType: string;
+  projectIcon: string;
+  projectDescription: string;
+}
+
+export interface LooperStartResponse {
+  correlationId: string;
+  loopId: string;
+  status: LooperLoopStatus;
+}
+
+export interface LooperStopRequest {
+  correlationId: string;
+  loopId: string;
+}
+
+export interface LooperStopResponse {
+  correlationId: string;
+  loopId: string;
+  stopped: boolean;
+}
+
+export interface LooperPauseRequest {
+  correlationId: string;
+  loopId: string;
+  paused: boolean;
+}
+
+export interface LooperPauseResponse {
+  correlationId: string;
+  loopId: string;
+  paused: boolean;
+  updated: boolean;
+}
+
+export interface LooperAdvanceRequest {
+  correlationId: string;
+  loopId: string;
+  nextPhase: string;
+}
+
+export interface LooperAdvanceResponse {
+  correlationId: string;
+  loopId: string;
+  activePhase: string;
+  sessionId: string | null;
+}
+
+export interface LooperStatusRequest {
+  correlationId: string;
+  loopId: string;
+}
+
+export interface LooperStatusResponse {
+  correlationId: string;
+  loopRecord: LooperLoopRecord | null;
+}
+
+export interface LooperListRequest {
+  correlationId: string;
+}
+
+export interface LooperListResponse {
+  correlationId: string;
+  loops: LooperLoopRecord[];
+}
+
+export interface LooperCloseRequest {
+  correlationId: string;
+  loopId: string;
+}
+
+export interface LooperCloseResponse {
+  correlationId: string;
+  loopId: string;
+  closed: boolean;
+}
+
+export interface LooperCheckOpenCodeRequest {
+  correlationId: string;
+}
+
+export interface LooperCheckOpenCodeResponse {
+  correlationId: string;
+  installed: boolean;
+}
+
+export interface LooperQuestionAnswer {
+  questionId: string;
+  selectedOptionId: string;
+  freeformText?: string;
+}
+
+export interface LooperSubmitQuestionsRequest {
+  correlationId: string;
+  loopId: string;
+  answers: LooperQuestionAnswer[];
+}
+
+export interface LooperSubmitQuestionsResponse {
+  correlationId: string;
+  loopId: string;
+  submitted: boolean;
 }
 
 export interface ChatStreamStartPayload {

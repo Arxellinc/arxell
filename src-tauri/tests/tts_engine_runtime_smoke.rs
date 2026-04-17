@@ -19,6 +19,71 @@ fn assert_exists(path: &Path) {
     );
 }
 
+fn find_first_file_with_ext(root: &Path, ext: &str) -> Option<PathBuf> {
+    let entries = std::fs::read_dir(root).ok()?;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_file()
+            && path
+                .extension()
+                .and_then(|value| value.to_str())
+                .map(|value| value.eq_ignore_ascii_case(ext))
+                .unwrap_or(false)
+        {
+            return Some(path);
+        }
+        if path.is_dir() {
+            if let Some(found) = find_first_file_with_ext(&path, ext) {
+                return Some(found);
+            }
+        }
+    }
+    None
+}
+
+fn find_first_file_named(root: &Path, file_name: &str) -> Option<PathBuf> {
+    let entries = std::fs::read_dir(root).ok()?;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_file()
+            && path
+                .file_name()
+                .and_then(|value| value.to_str())
+                .map(|value| value.eq_ignore_ascii_case(file_name))
+                .unwrap_or(false)
+        {
+            return Some(path);
+        }
+        if path.is_dir() {
+            if let Some(found) = find_first_file_named(&path, file_name) {
+                return Some(found);
+            }
+        }
+    }
+    None
+}
+
+fn find_first_dir_named(root: &Path, dir_name: &str) -> Option<PathBuf> {
+    let entries = std::fs::read_dir(root).ok()?;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            if path
+                .file_name()
+                .and_then(|value| value.to_str())
+                .map(|value| value.eq_ignore_ascii_case(dir_name))
+                .unwrap_or(false)
+            {
+                return Some(path);
+            }
+            if let Some(found) = find_first_dir_named(&path, dir_name) {
+                return Some(found);
+            }
+        }
+    }
+    None
+}
+
 fn synthesize_and_assert(tts: OfflineTts, text: &str) {
     let mut cfg = GenerationConfig::default();
     cfg.speed = 1.0;
@@ -62,9 +127,13 @@ fn build_kokoro() -> OfflineTts {
 
 fn build_piper() -> OfflineTts {
     let root = voice_root();
-    let espeak = root.join("espeak-ng-data");
-    let model = root.join("piper").join("model.onnx");
-    let tokens = root.join("piper").join("tokens.txt");
+    let piper_root = root.join("piper");
+    let model = find_first_file_with_ext(&piper_root, "onnx")
+        .expect("missing expected Piper ONNX model under resources/voice/piper");
+    let tokens = find_first_file_named(&piper_root, "tokens.txt")
+        .expect("missing expected Piper tokens.txt under resources/voice/piper");
+    let espeak = find_first_dir_named(&piper_root, "espeak-ng-data")
+        .unwrap_or_else(|| root.join("espeak-ng-data"));
     assert_exists(&espeak);
     assert_exists(&model);
     assert_exists(&tokens);

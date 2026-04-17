@@ -1031,7 +1031,7 @@ body {
 
 .primary-pane-body {
   min-height: 0;
-  padding: 1rem 0.5rem 0 0.5rem; 
+  padding: 0; 
   overflow: auto;
 }
 
@@ -2033,6 +2033,117 @@ body {
 
 .primary-pane.selection-guard {
   user-select: none;
+}
+
+/* ==========================================================================
+   Tool Sidebar Layout
+   Generic sidebar pattern for tools with collapsible resizable sidebars
+   ========================================================================== */
+
+.tool-with-sidebar {
+  display: grid;
+  grid-template-columns: var(--tool-sidebar-width, 320px) 1px minmax(0, 1fr);
+  min-height: 0;
+  height: 100%;
+  border-top: 1px solid var(--line);
+  position: relative;
+}
+
+.tool-with-sidebar-main,
+.tool-with-sidebar-panel {
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.tool-with-sidebar-main {
+  overflow: hidden;
+}
+
+.tool-with-sidebar-panel {
+  background: color-mix(in oklab, var(--surface-soft) 88%, var(--surface-strong) 12%);
+  overflow: hidden;
+  position: relative;
+}
+
+.tool-sidebar-resizer {
+  border: none;
+  border-left: 1px solid var(--line);
+  background: transparent;
+  cursor: col-resize;
+  touch-action: none;
+  padding: 0;
+  position: relative;
+  width: 1px;
+}
+
+.tool-sidebar-resizer::after {
+  content: "";
+  position: absolute;
+  left: -2px;
+  top: 50%;
+  width: 4px;
+  height: 48px;
+  background: var(--line);
+  transform: translateY(-50%);
+}
+
+.tool-sidebar-resizer:hover,
+.tool-sidebar-resizer:hover::after {
+  background: var(--active-line);
+  border-color: var(--active-line);
+}
+
+.tool-with-sidebar.is-resizing,
+.tool-with-sidebar.is-resizing * {
+  cursor: col-resize !important;
+  user-select: none;
+}
+
+.tool-sidebar-header {
+  justify-content: space-between;
+}
+
+.tool-sidebar-header-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tool-sidebar-content {
+  overflow: auto;
+  flex: 1;
+  padding: 0.3rem;
+}
+
+.tool-sidebar-toggle {
+  width: 20px;
+  height: 20px;
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  padding: 0;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: transform 0.15s ease;
+}
+
+.tool-sidebar-toggle:hover {
+  color: var(--ink);
+}
+
+.tool-with-sidebar.is-sidebar-collapsed .tool-sidebar-toggle {
+  transform: rotate(-90deg);
+}
+
+.tool-with-sidebar.is-sidebar-collapsed .tool-sidebar-content {
+  display: none;
+}
+
+.tool-with-sidebar.is-sidebar-collapsed .tool-sidebar-header-text {
+  display: none;
 }
 
 .icon {

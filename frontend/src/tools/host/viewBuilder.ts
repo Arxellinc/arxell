@@ -14,6 +14,7 @@ import { renderOpenCodeToolActions, renderOpenCodeToolBody, renderOpenCodeInstal
 import type { OpenCodeToolState } from "../opencode/state";
 import { renderLooperToolActions, renderLooperToolBody } from "../looper";
 import type { LooperToolState } from "../looper/state";
+import { renderNotepadToolActions, renderNotepadToolBody } from "../notepad";
 
 export interface ToolViewHtml {
   actionsHtml: string;
@@ -127,6 +128,22 @@ export interface WorkspaceToolViewInput {
   filteredFlowEvents: AppEvent[];
   opencodeState: OpenCodeToolState;
   looperState: LooperToolState;
+  notepadOpenTabs: string[];
+  notepadActiveTabId: string | null;
+  notepadPathByTabId: Record<string, string | null>;
+  notepadTitleByTabId: Record<string, string>;
+  notepadContentByTabId: Record<string, string>;
+  notepadDirtyByTabId: Record<string, boolean>;
+  notepadLoadingByTabId: Record<string, boolean>;
+  notepadSavingByTabId: Record<string, boolean>;
+  notepadReadOnlyByTabId: Record<string, boolean>;
+  notepadSizeByTabId: Record<string, number>;
+  notepadFindOpen: boolean;
+  notepadFindQuery: string;
+  notepadReplaceQuery: string;
+  notepadFindCaseSensitive: boolean;
+  notepadLineWrap: boolean;
+  notepadError: string | null;
 }
 
 export function buildWorkspaceToolViews(input: WorkspaceToolViewInput): Record<string, ToolViewHtml> {
@@ -389,7 +406,23 @@ export function buildWorkspaceToolViews(input: WorkspaceToolViewInput): Record<s
     },
     skills: {
       actionsHtml: renderSkillsToolActions(),
-      bodyHtml: renderSkillsToolBody()
+      bodyHtml: renderSkillsToolBody({
+        skills: [],
+        selectedSkillId: null,
+        contentById: {},
+        dirtyById: {},
+        savedContentById: {},
+        loading: false,
+        error: null,
+        sidebarWidth: 280,
+        sidebarCollapsed: false,
+        settingsOpen: false,
+        settings: { autoLoad: true, permissionDefault: "allow", showDescriptions: true },
+        newSkillModalOpen: false,
+        newSkillName: "",
+        newSkillDescription: "",
+        confirmDeleteId: null
+      })
     },
     opencode: {
       actionsHtml: renderOpenCodeToolActions(input.opencodeState),
@@ -400,6 +433,44 @@ export function buildWorkspaceToolViews(input: WorkspaceToolViewInput): Record<s
     looper: {
       actionsHtml: renderLooperToolActions(input.looperState),
       bodyHtml: renderLooperToolBody(input.looperState)
+    },
+    notepad: {
+      actionsHtml: renderNotepadToolActions({
+        openTabs: input.notepadOpenTabs,
+        activeTabId: input.notepadActiveTabId,
+        pathByTabId: input.notepadPathByTabId,
+        titleByTabId: input.notepadTitleByTabId,
+        contentByTabId: input.notepadContentByTabId,
+        dirtyByTabId: input.notepadDirtyByTabId,
+        loadingByTabId: input.notepadLoadingByTabId,
+        savingByTabId: input.notepadSavingByTabId,
+        readOnlyByTabId: input.notepadReadOnlyByTabId,
+        sizeByTabId: input.notepadSizeByTabId,
+        findOpen: input.notepadFindOpen,
+        findQuery: input.notepadFindQuery,
+        replaceQuery: input.notepadReplaceQuery,
+        findCaseSensitive: input.notepadFindCaseSensitive,
+        lineWrap: input.notepadLineWrap,
+        error: input.notepadError
+      }),
+      bodyHtml: renderNotepadToolBody({
+        openTabs: input.notepadOpenTabs,
+        activeTabId: input.notepadActiveTabId,
+        pathByTabId: input.notepadPathByTabId,
+        titleByTabId: input.notepadTitleByTabId,
+        contentByTabId: input.notepadContentByTabId,
+        dirtyByTabId: input.notepadDirtyByTabId,
+        loadingByTabId: input.notepadLoadingByTabId,
+        savingByTabId: input.notepadSavingByTabId,
+        readOnlyByTabId: input.notepadReadOnlyByTabId,
+        sizeByTabId: input.notepadSizeByTabId,
+        findOpen: input.notepadFindOpen,
+        findQuery: input.notepadFindQuery,
+        replaceQuery: input.notepadReplaceQuery,
+        findCaseSensitive: input.notepadFindCaseSensitive,
+        lineWrap: input.notepadLineWrap,
+        error: input.notepadError
+      })
     }
   };
 }

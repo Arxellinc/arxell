@@ -235,7 +235,7 @@ export async function handleWorkspacePaneClickPrelude(
     if (clickedInsideFiles) {
       const clickedInteractiveFilesElement = Boolean(
         rawTarget?.closest(
-          '[data-files-action], .files-tool-grid-row, .files-tool-tree-row, .files-findbar, .files-editor-panel, .files-editor-input'
+          '[data-files-action], .files-tool-grid-row, .files-tool-tree-row, .files-findbar, .files-editor-panel, .files-editor-input, .notepad-findbar, .notepad-editor-panel, .notepad-editor-input'
         )
       );
       if (!clickedInteractiveFilesElement) {

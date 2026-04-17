@@ -39,6 +39,63 @@ export class TerminalManager {
   private client: ChatIpcClient | null = null;
   private mode: DisplayMode = "dark";
 
+  ensureSession(meta: {
+    sessionId: string;
+    title?: string;
+    shell?: string;
+    createdAtMs?: number;
+    status?: "running" | "exited";
+  }): TerminalSessionMeta {
+    const existing = this.sessions.get(meta.sessionId);
+    if (existing) {
+      existing.meta.title = meta.title ?? existing.meta.title;
+      existing.meta.shell = meta.shell ?? existing.meta.shell;
+      existing.meta.status = meta.status ?? existing.meta.status;
+      return existing.meta;
+    }
+
+    const fit = new FitAddon();
+    const terminal = new Terminal({
+      convertEol: false,
+      cursorBlink: true,
+      scrollback: 10000,
+      fontSize: 12,
+      fontFamily: "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace",
+      theme: this.themeForMode(this.mode)
+    });
+    terminal.loadAddon(fit);
+    terminal.loadAddon(new WebLinksAddon());
+
+    terminal.onData((input) => {
+      if (!this.client) return;
+      void this.client.sendTerminalInput({
+        sessionId: meta.sessionId,
+        input,
+        correlationId: nextCorrelationId()
+      });
+    });
+
+    const sessionMeta: TerminalSessionMeta = {
+      sessionId: meta.sessionId,
+      title: meta.title ?? `Terminal ${this.sessions.size + 1}`,
+      shell: meta.shell ?? "remote",
+      createdAtMs: meta.createdAtMs ?? Date.now(),
+      status: meta.status ?? "running"
+    };
+    this.sessions.set(meta.sessionId, {
+      meta: sessionMeta,
+      term: terminal,
+      fit,
+      resizeObserver: null,
+      resizeScheduled: false,
+      lastCols: -1,
+      lastRows: -1,
+      lastHostWidth: -1,
+      lastHostHeight: -1
+    });
+    return sessionMeta;
+  }
+
   setClient(client: ChatIpcClient): void {
     this.client = client;
   }
@@ -75,47 +132,13 @@ export class TerminalManager {
       ...openRequest
     });
 
-    const fit = new FitAddon();
-    const terminal = new Terminal({
-      convertEol: false,
-      cursorBlink: true,
-      scrollback: 10000,
-      fontSize: 12,
-      fontFamily: "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace",
-      theme: this.themeForMode(this.mode)
-    });
-    terminal.loadAddon(fit);
-    terminal.loadAddon(new WebLinksAddon());
-
-    terminal.onData((input) => {
-      if (!this.client) return;
-      void this.client.sendTerminalInput({
-        sessionId: response.sessionId,
-        input,
-        correlationId: nextCorrelationId()
-      });
-    });
-
-    const meta: TerminalSessionMeta = {
+    return this.ensureSession({
       sessionId: response.sessionId,
       title: `Terminal ${this.sessions.size + 1}`,
       shell: opts?.shell ?? "default",
       createdAtMs: Date.now(),
       status: "running"
-    };
-    this.sessions.set(response.sessionId, {
-      meta,
-      term: terminal,
-      fit,
-      resizeObserver: null,
-      resizeScheduled: false,
-      lastCols: -1,
-      lastRows: -1,
-      lastHostWidth: -1,
-      lastHostHeight: -1
     });
-
-    return meta;
   }
 
   mountSession(sessionId: string, host: HTMLElement): void {

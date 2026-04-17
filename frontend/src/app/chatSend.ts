@@ -54,8 +54,11 @@ export function createSendMessageHandler(
 
     deps.clearVoicePrefillState();
 
-    const correlationId = deps.nextCorrelationId();
     const normalizedUserText = deps.normalizeChatText(text);
+    if (!normalizedUserText && !attachments?.length) {
+      return;
+    }
+    const correlationId = deps.nextCorrelationId();
     deps.state.messages.push({ role: "user", text: normalizedUserText });
     deps.state.chatDraft = "";
     deps.state.chatStreaming = true;

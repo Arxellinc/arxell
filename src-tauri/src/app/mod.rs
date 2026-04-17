@@ -12,6 +12,7 @@ use crate::ipc::IpcLayer;
 use crate::memory::InMemoryMemoryManager;
 use crate::observability::EventHub;
 use crate::persistence::SqliteConversationRepository;
+use crate::tools::looper_handler::LooperHandler;
 use crate::workspace_tools::WorkspaceToolsService;
 use std::sync::Arc;
 
@@ -25,6 +26,7 @@ pub struct AppContext {
     pub model_manager: Arc<model_manager_service::ModelManagerService>,
     pub files: Arc<files_service::FilesService>,
     pub flow: Arc<flow_service::FlowService>,
+    pub looper: Arc<LooperHandler>,
 }
 
 impl AppContext {
@@ -60,8 +62,23 @@ impl AppContext {
             Some(Arc::clone(&workspace_tools)),
             Some(Arc::clone(&web_search)),
         ));
+        let looper = Arc::new(LooperHandler::new(
+            hub.clone(),
+            Arc::clone(&terminal),
+            Arc::clone(&workspace_tools),
+        ));
+        looper.set_data_path(workspace_tools.state_root_path().join("looper-state.json"));
+        looper.load_from_disk();
+        #[cfg(feature = "tauri-runtime")]
+        looper.start_event_listener();
 
-        let ipc = IpcLayer::new(hub, service, terminal, Arc::clone(&flow));
+        let ipc = IpcLayer::new(
+            hub,
+            service,
+            Arc::clone(&terminal),
+            Arc::clone(&flow),
+            Arc::clone(&looper),
+        );
         Self {
             ipc,
             workspace_tools,
@@ -72,6 +89,7 @@ impl AppContext {
             model_manager,
             files,
             flow,
+            looper,
         }
     }
 }
@@ -89,6 +107,7 @@ impl AppContext {
             chat: Arc::new(self.ipc.chat.clone()),
             terminal: Arc::new(self.ipc.terminal.clone()),
             flow_handler: Arc::new(self.ipc.flow.clone()),
+            looper_handler: Arc::new(self.ipc.looper.clone()),
             hub: self.ipc.event_hub(),
             workspace_tools: Arc::clone(&self.workspace_tools),
             api_registry: Arc::clone(&self.api_registry),

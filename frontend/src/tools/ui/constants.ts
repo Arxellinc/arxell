@@ -59,6 +59,12 @@ export const FILES_UI_ID = {
   refreshButton: "filesToolRefreshBtn"
 } as const;
 
+export const NOTEPAD_DATA_ATTR = {
+  action: "data-notepad-action",
+  tabId: "data-notepad-tab-id",
+  path: "data-notepad-path"
+} as const;
+
 export const TASKS_DATA_ATTR = {
   action: "data-tasks-action",
   taskId: "data-tasks-id",
