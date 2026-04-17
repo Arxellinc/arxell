@@ -1618,3 +1618,74 @@ pub struct AppEvent {
     pub severity: EventSeverity,
     pub payload: Value,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VoiceListVadMethodsRequest {
+    pub correlation_id: String,
+    pub include_experimental: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VoiceListVadMethodsResponse {
+    pub correlation_id: String,
+    pub methods: Vec<crate::voice::vad::contracts::VadManifest>,
+    pub selected_vad_method: String,
+    pub state: crate::voice::session::VoiceRuntimeState,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VoiceGetVadSettingsRequest {
+    pub correlation_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VoiceGetVadSettingsResponse {
+    pub correlation_id: String,
+    pub settings: crate::voice::settings::PersistedVoiceSettings,
+    pub state: crate::voice::session::VoiceRuntimeState,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VoiceSetVadMethodRequest {
+    pub correlation_id: String,
+    pub method_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VoiceRuntimeSnapshotResponse {
+    pub correlation_id: String,
+    pub snapshot: crate::app::voice_runtime_service::VoiceRuntimeSnapshot,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VoiceUpdateVadConfigRequest {
+    pub correlation_id: String,
+    pub method_id: String,
+    pub config: Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VoiceUpdateVadConfigResponse {
+    pub correlation_id: String,
+    pub settings: crate::voice::settings::PersistedVoiceSettings,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VoiceStartSessionRequest {
+    pub correlation_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VoiceStopSessionRequest {
+    pub correlation_id: String,
+}

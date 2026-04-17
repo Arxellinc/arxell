@@ -3514,6 +3514,18 @@ body {
   color: var(--muted);
 }
 
+.vad-capability-badge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 18px;
+  padding: 0 0.4rem;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: var(--ink);
+  background: var(--surface-soft);
+  font-size: var(--text-xs);
+}
+
 .stt-vad-table .stt-vad-row:last-child {
   border-bottom: none;
 }

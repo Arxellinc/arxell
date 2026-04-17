@@ -49,7 +49,8 @@ pub async fn invoke_tool(
                     if !dry_run && matches!(request.mode, ToolMode::Sandbox) {
                         return Ok(tool_invoke_err(
                             &request,
-                            "flow.start with dryRun=false requires mode other than sandbox".to_string(),
+                            "flow.start with dryRun=false requires mode other than sandbox"
+                                .to_string(),
                         ));
                     }
                 }
@@ -58,7 +59,8 @@ pub async fn invoke_tool(
                     if auto_push && matches!(request.mode, ToolMode::Sandbox) {
                         return Ok(tool_invoke_err(
                             &request,
-                            "flow.start with autoPush=true requires mode other than sandbox".to_string(),
+                            "flow.start with autoPush=true requires mode other than sandbox"
+                                .to_string(),
                         ));
                     }
                 }
@@ -67,7 +69,8 @@ pub async fn invoke_tool(
                     if use_agent && matches!(request.mode, ToolMode::Sandbox) {
                         return Ok(tool_invoke_err(
                             &request,
-                            "flow.start with useAgent=true requires mode other than sandbox".to_string(),
+                            "flow.start with useAgent=true requires mode other than sandbox"
+                                .to_string(),
                         ));
                     }
                 }
@@ -92,13 +95,22 @@ pub async fn invoke_tool(
         ("webSearch", "webSearch"),
         ("web", "webSearch"),
     ];
-    if let Some(&(_, workspace_tool_id)) = tool_enablement_map.iter().find(|(id, _)| *id == request.tool_id) {
-        let enabled = state.workspace_tools.list().into_iter()
+    if let Some(&(_, workspace_tool_id)) = tool_enablement_map
+        .iter()
+        .find(|(id, _)| *id == request.tool_id)
+    {
+        let enabled = state
+            .workspace_tools
+            .list()
+            .into_iter()
             .any(|tool| tool.tool_id == workspace_tool_id && tool.enabled);
         if !enabled {
             return Ok(tool_invoke_err(
                 &request,
-                format!("tool '{}' is disabled in workspace settings", workspace_tool_id),
+                format!(
+                    "tool '{}' is disabled in workspace settings",
+                    workspace_tool_id
+                ),
             ));
         }
     }

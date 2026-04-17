@@ -495,7 +495,11 @@ fn recursive_collect_files_named(
             let matches = path
                 .file_name()
                 .and_then(|n| n.to_str())
-                .map(|name| file_names.iter().any(|candidate| name.eq_ignore_ascii_case(candidate)))
+                .map(|name| {
+                    file_names
+                        .iter()
+                        .any(|candidate| name.eq_ignore_ascii_case(candidate))
+                })
                 .unwrap_or(false);
             if matches {
                 out.insert(path);
@@ -560,17 +564,28 @@ fn canonicalize_piper_model_path(model_path: PathBuf, engine_dir: &Path) -> Path
     }
 }
 
-fn discover_available_model_paths(paths: &KokoroPaths, settings: &PersistedTtsSettings) -> Vec<String> {
+fn discover_available_model_paths(
+    paths: &KokoroPaths,
+    settings: &PersistedTtsSettings,
+) -> Vec<String> {
     let engine = resolve_engine(settings);
     let engine_dir = paths.kokoro_dir.join(engine.as_key());
     let tts_engine_dir = paths.app_data_dir.join("tts").join(engine.as_key());
     let file_names: &[&str] = match engine {
-        TtsEngine::Kokoro => &["model.int8.onnx", "kokoro-v0_19.int8.onnx", "model.onnx", "model_quantized.onnx"],
+        TtsEngine::Kokoro => &[
+            "model.int8.onnx",
+            "kokoro-v0_19.int8.onnx",
+            "model.onnx",
+            "model_quantized.onnx",
+        ],
         TtsEngine::Piper | TtsEngine::Matcha => &["model.onnx"],
         TtsEngine::Kitten => &["model.fp16.onnx"],
     };
     let mut found = BTreeSet::new();
-    if let Some(model_path) = active_engine_paths(settings).model_path.filter(|path| !path.trim().is_empty()) {
+    if let Some(model_path) = active_engine_paths(settings)
+        .model_path
+        .filter(|path| !path.trim().is_empty())
+    {
         let path = PathBuf::from(model_path);
         found.insert(if matches!(engine, TtsEngine::Piper) {
             canonicalize_piper_model_path(path, &engine_dir)
@@ -588,7 +603,11 @@ fn discover_available_model_paths(paths: &KokoroPaths, settings: &PersistedTtsSe
     if matches!(engine, TtsEngine::Piper) {
         let nested_models: BTreeSet<PathBuf> = found
             .iter()
-            .filter(|path| path.parent().map(|parent| parent != engine_dir).unwrap_or(false))
+            .filter(|path| {
+                path.parent()
+                    .map(|parent| parent != engine_dir)
+                    .unwrap_or(false)
+            })
             .cloned()
             .collect();
         if !nested_models.is_empty() {
@@ -764,7 +783,9 @@ fn resolve_paths_for_settings(
         first_existing_file(&model_candidates)
             .or_else(|| discovered_model_candidates(engine, &tts_engine_dir, &engine_dir))
     });
-    let model_path_for_companions = model_path.as_ref().map(|path| path.to_string_lossy().to_string());
+    let model_path_for_companions = model_path
+        .as_ref()
+        .map(|path| path.to_string_lossy().to_string());
     let tokens_path = engine_paths
         .tokens_path
         .as_ref()
@@ -814,11 +835,9 @@ fn resolve_paths_for_settings(
         &["lexicon-us-en.txt"],
     )
     .or_else(|| first_existing_file(&[kokoro_dir.join("lexicon-us-en.txt")]));
-    let lexicon_zh_path = companion_file_from_model_dirs(
-        model_path_for_companions.as_deref(),
-        &["lexicon-zh.txt"],
-    )
-    .or_else(|| first_existing_file(&[kokoro_dir.join("lexicon-zh.txt")]));
+    let lexicon_zh_path =
+        companion_file_from_model_dirs(model_path_for_companions.as_deref(), &["lexicon-zh.txt"])
+            .or_else(|| first_existing_file(&[kokoro_dir.join("lexicon-zh.txt")]));
 
     KokoroPaths {
         app_data_dir,

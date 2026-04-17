@@ -238,9 +238,79 @@ function renderVadSettingsSection(stt: PrimaryPanelRenderState["stt"]): string {
 }
 
 export function renderVadBody(state: PrimaryPanelRenderState): string {
+  const selectedMethod = state.vadMethods.find((method) => method.id === state.vadSelectedMethod);
+  const statusText = selectedMethod?.status ?? "stable";
+  const config = state.vadSettings?.vadMethods[state.vadSelectedMethod] ?? selectedMethod?.defaultConfig ?? {};
+  const sessionActive = state.voiceRuntimeState !== "idle";
+  const capabilityLabels = selectedMethod
+    ? [
+        selectedMethod.capabilities.supportsEndpointing ? "endpointing" : null,
+        selectedMethod.capabilities.supportsInterruptionSignals ? "interruptions" : null,
+        selectedMethod.capabilities.supportsMicroTurns ? "micro-turns" : null,
+        selectedMethod.capabilities.supportsSpeechProbability ? "probability" : null,
+        selectedMethod.capabilities.supportsPartialSegmentation ? "partial segments" : null
+      ].filter((label): label is string => Boolean(label))
+    : [];
   return `
     <div class="primary-pane-body">
-      ${renderVadSettingsSection(state.stt)}
+      <section class="stt-vad-section" aria-label="VAD Method">
+        <h3 class="stt-vad-title">VAD Method</h3>
+        <p class="stt-vad-note">Switching is locked while a voice session is active.</p>
+        <div class="config-table stt-vad-table">
+          <div class="config-row stt-vad-row">
+            <label class="config-key stt-vad-label" for="vadMethodSelect">Method</label>
+            <span class="config-value stt-vad-value">
+              <select id="vadMethodSelect" class="control-select" ${sessionActive ? "disabled" : ""}>
+                ${state.vadMethods.map((method) => `<option value="${escapeHtml(method.id)}"${method.id === state.vadSelectedMethod ? " selected" : ""}>${escapeHtml(method.displayName)}</option>`).join("")}
+              </select>
+            </span>
+            <span class="config-meta stt-vad-hint">${escapeHtml(statusText)}</span>
+          </div>
+          <div class="config-row stt-vad-row">
+            <span class="config-key stt-vad-label">Runtime</span>
+            <span class="config-value stt-vad-value">${escapeHtml(state.voiceRuntimeState)}</span>
+            <span class="config-meta stt-vad-hint">${sessionActive ? "switching locked" : "switching available"}</span>
+          </div>
+          <div class="config-row stt-vad-row">
+            <label class="config-key stt-vad-label" for="vadExperimentalToggle">Experimental</label>
+            <span class="config-value stt-vad-value">
+              <input id="vadExperimentalToggle" type="checkbox" ${state.vadIncludeExperimental ? "checked" : ""} />
+            </span>
+            <span class="config-meta stt-vad-hint">show experimental methods</span>
+          </div>
+        </div>
+        ${selectedMethod ? `<p class="stt-vad-note">${escapeHtml(selectedMethod.description)}</p>` : ""}
+        ${capabilityLabels.length ? `<div class="stt-vad-note">${capabilityLabels.map((label) => `<span class="vad-capability-badge">${escapeHtml(label)}</span>`).join(" ")}</div>` : ""}
+        ${state.vadMessage ? `<p class="stt-vad-note">${escapeHtml(state.vadMessage)}</p>` : ""}
+      </section>
+      ${renderVadMethodConfigSection(config)}
     </div>
+  `;
+}
+
+function renderVadMethodConfigSection(config: Record<string, unknown>): string {
+  const rows = Object.entries(config).map(([key, raw]) => {
+    const value = typeof raw === "number" ? raw : Number(raw);
+    const safeValue = Number.isFinite(value) ? value : 0;
+    const label = key.replace(/([A-Z])/g, " $1").replace(/^./, (char) => char.toUpperCase());
+    return renderVadRow({
+      id: `vadConfig_${key}`,
+      label,
+      value: safeValue,
+      step: Number.isInteger(safeValue) ? "1" : "0.0005",
+      hint: key
+    }).replace("stt-vad-input", "stt-vad-input vad-method-config-input").replace(
+      "<input",
+      `<input data-vad-config-key="${escapeHtml(key)}"`
+    );
+  });
+  return `
+    <section class="stt-vad-section" aria-label="VAD Method Settings">
+      <h3 class="stt-vad-title">Method Settings</h3>
+      <p class="stt-vad-note">These settings are stored per method.</p>
+      <div class="config-table stt-vad-table">
+        ${rows.length ? rows.join("") : `<div class="config-row"><span class="config-key">No settings</span><span class="config-value">Defaults</span><span class="config-meta">method</span></div>`}
+      </div>
+    </section>
   `;
 }

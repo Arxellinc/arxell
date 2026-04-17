@@ -8,8 +8,8 @@ use crate::contracts::{
     LooperCheckOpenCodeRequest, LooperCheckOpenCodeResponse, LooperCloseRequest,
     LooperCloseResponse, LooperListRequest, LooperListResponse, LooperPauseRequest,
     LooperPauseResponse, LooperStartRequest, LooperStartResponse, LooperStatusRequest,
-    LooperStatusResponse, LooperStopRequest, LooperStopResponse,
-    LooperSubmitQuestionsRequest, LooperSubmitQuestionsResponse, Subsystem,
+    LooperStatusResponse, LooperStopRequest, LooperStopResponse, LooperSubmitQuestionsRequest,
+    LooperSubmitQuestionsResponse, Subsystem,
 };
 use crate::observability::EventHub;
 use crate::tools::looper_handler::LooperHandler;

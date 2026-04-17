@@ -1734,7 +1734,10 @@ impl ChatService {
 }
 
 fn apply_tool_routing_hints(system_prompt: &mut String, enabled_tool_names: &[String]) {
-    if enabled_tool_names.iter().any(|name| name == "notepad_write") {
+    if enabled_tool_names
+        .iter()
+        .any(|name| name == "notepad_write")
+    {
         system_prompt.push_str(
             "\n\nTool routing hint:\n- If the user asks you to create, draft, revise, or maintain a document in the Notepad workspace tool, prefer the dedicated Notepad tools over generic file tools.\n- Use `notepad_read` to inspect a document or a specific line range.\n- Use `notepad_write` to create or fully replace a document when appropriate.\n- Use `notepad_edit_lines` when the user requests targeted edits to specific lines or a narrow section so you do not rewrite the whole document unnecessarily.",
         );

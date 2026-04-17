@@ -26,17 +26,16 @@
 //! the handler automatically advances to the next phase. The critic phase produces
 //! a `SHIP` or `REVISE` decision which controls iteration looping.
 
+use crate::app::terminal_service::TerminalService;
 use crate::contracts::{
     EventSeverity, EventStage, LooperAdvanceRequest, LooperAdvanceResponse,
     LooperCheckOpenCodeRequest, LooperCheckOpenCodeResponse, LooperCloseRequest,
-    LooperCloseResponse, LooperListRequest, LooperListResponse, LooperLoopRecord,
-    LooperLoopStatus, LooperLoopType, LooperPauseRequest, LooperPauseResponse,
-    LooperPhaseState, LooperPhaseStatus, LooperQuestion, LooperStartRequest,
-    LooperStartResponse, LooperStatusRequest, LooperStatusResponse, LooperStopRequest,
-    LooperStopResponse, LooperSubStepStatus, Subsystem, TerminalCloseSessionRequest,
-    TerminalInputRequest, TerminalOpenSessionRequest,
+    LooperCloseResponse, LooperListRequest, LooperListResponse, LooperLoopRecord, LooperLoopStatus,
+    LooperLoopType, LooperPauseRequest, LooperPauseResponse, LooperPhaseState, LooperPhaseStatus,
+    LooperQuestion, LooperStartRequest, LooperStartResponse, LooperStatusRequest,
+    LooperStatusResponse, LooperStopRequest, LooperStopResponse, LooperSubStepStatus, Subsystem,
+    TerminalCloseSessionRequest, TerminalInputRequest, TerminalOpenSessionRequest,
 };
-use crate::app::terminal_service::TerminalService;
 use crate::observability::EventHub;
 use crate::workspace_tools::WorkspaceToolsService;
 use serde_json::json;
@@ -50,56 +49,200 @@ use std::time::{SystemTime, UNIX_EPOCH};
 pub fn get_substeps(phase: &str, loop_type: &LooperLoopType) -> Vec<SubStepState> {
     match (phase, loop_type) {
         ("planner", LooperLoopType::Prd) => vec![
-            SubStepState { id: "p-read-task".into(), label: "Read task.md".into(), status: "pending".into() },
-            SubStepState { id: "p-research".into(), label: "Web research".into(), status: "pending".into() },
-            SubStepState { id: "p-analyze".into(), label: "Analyze decisions".into(), status: "pending".into() },
-            SubStepState { id: "p-questions".into(), label: "Write questions".into(), status: "pending".into() },
-            SubStepState { id: "p-plan".into(), label: "Write plan".into(), status: "pending".into() },
+            SubStepState {
+                id: "p-read-task".into(),
+                label: "Read task.md".into(),
+                status: "pending".into(),
+            },
+            SubStepState {
+                id: "p-research".into(),
+                label: "Web research".into(),
+                status: "pending".into(),
+            },
+            SubStepState {
+                id: "p-analyze".into(),
+                label: "Analyze decisions".into(),
+                status: "pending".into(),
+            },
+            SubStepState {
+                id: "p-questions".into(),
+                label: "Write questions".into(),
+                status: "pending".into(),
+            },
+            SubStepState {
+                id: "p-plan".into(),
+                label: "Write plan".into(),
+                status: "pending".into(),
+            },
         ],
         ("executor", LooperLoopType::Prd) => vec![
-            SubStepState { id: "e-read-answers".into(), label: "Read answers".into(), status: "pending".into() },
-            SubStepState { id: "e-overview".into(), label: "Write overview.md".into(), status: "pending".into() },
-            SubStepState { id: "e-features".into(), label: "Write features.md".into(), status: "pending".into() },
-            SubStepState { id: "e-architecture".into(), label: "Write architecture.md".into(), status: "pending".into() },
-            SubStepState { id: "e-ux".into(), label: "Write ux.md".into(), status: "pending".into() },
-            SubStepState { id: "e-api".into(), label: "Write api.md".into(), status: "pending".into() },
-            SubStepState { id: "e-summary".into(), label: "Write summary".into(), status: "pending".into() },
+            SubStepState {
+                id: "e-read-answers".into(),
+                label: "Read answers".into(),
+                status: "pending".into(),
+            },
+            SubStepState {
+                id: "e-overview".into(),
+                label: "Write overview.md".into(),
+                status: "pending".into(),
+            },
+            SubStepState {
+                id: "e-features".into(),
+                label: "Write features.md".into(),
+                status: "pending".into(),
+            },
+            SubStepState {
+                id: "e-architecture".into(),
+                label: "Write architecture.md".into(),
+                status: "pending".into(),
+            },
+            SubStepState {
+                id: "e-ux".into(),
+                label: "Write ux.md".into(),
+                status: "pending".into(),
+            },
+            SubStepState {
+                id: "e-api".into(),
+                label: "Write api.md".into(),
+                status: "pending".into(),
+            },
+            SubStepState {
+                id: "e-summary".into(),
+                label: "Write summary".into(),
+                status: "pending".into(),
+            },
         ],
         ("validator", LooperLoopType::Prd) => vec![
-            SubStepState { id: "v-completeness".into(), label: "Check completeness".into(), status: "pending".into() },
-            SubStepState { id: "v-consistency".into(), label: "Check consistency".into(), status: "pending".into() },
-            SubStepState { id: "v-crossref".into(), label: "Cross-reference".into(), status: "pending".into() },
-            SubStepState { id: "v-report".into(), label: "Write report".into(), status: "pending".into() },
+            SubStepState {
+                id: "v-completeness".into(),
+                label: "Check completeness".into(),
+                status: "pending".into(),
+            },
+            SubStepState {
+                id: "v-consistency".into(),
+                label: "Check consistency".into(),
+                status: "pending".into(),
+            },
+            SubStepState {
+                id: "v-crossref".into(),
+                label: "Cross-reference".into(),
+                status: "pending".into(),
+            },
+            SubStepState {
+                id: "v-report".into(),
+                label: "Write report".into(),
+                status: "pending".into(),
+            },
         ],
         ("critic", LooperLoopType::Prd) => vec![
-            SubStepState { id: "c-review".into(), label: "Review specs".into(), status: "pending".into() },
-            SubStepState { id: "c-validate".into(), label: "Check validation".into(), status: "pending".into() },
-            SubStepState { id: "c-decide".into(), label: "Ship or Revise".into(), status: "pending".into() },
+            SubStepState {
+                id: "c-review".into(),
+                label: "Review specs".into(),
+                status: "pending".into(),
+            },
+            SubStepState {
+                id: "c-validate".into(),
+                label: "Check validation".into(),
+                status: "pending".into(),
+            },
+            SubStepState {
+                id: "c-decide".into(),
+                label: "Ship or Revise".into(),
+                status: "pending".into(),
+            },
         ],
         ("planner", LooperLoopType::Build) => vec![
-            SubStepState { id: "p-read-task".into(), label: "Read task.md".into(), status: "pending".into() },
-            SubStepState { id: "p-read-specs".into(), label: "Read specs".into(), status: "pending".into() },
-            SubStepState { id: "p-read-code".into(), label: "Read codebase".into(), status: "pending".into() },
-            SubStepState { id: "p-read-plan".into(), label: "Read plan".into(), status: "pending".into() },
-            SubStepState { id: "p-gap-analysis".into(), label: "Gap analysis".into(), status: "pending".into() },
-            SubStepState { id: "p-write-plan".into(), label: "Write plan".into(), status: "pending".into() },
+            SubStepState {
+                id: "p-read-task".into(),
+                label: "Read task.md".into(),
+                status: "pending".into(),
+            },
+            SubStepState {
+                id: "p-read-specs".into(),
+                label: "Read specs".into(),
+                status: "pending".into(),
+            },
+            SubStepState {
+                id: "p-read-code".into(),
+                label: "Read codebase".into(),
+                status: "pending".into(),
+            },
+            SubStepState {
+                id: "p-read-plan".into(),
+                label: "Read plan".into(),
+                status: "pending".into(),
+            },
+            SubStepState {
+                id: "p-gap-analysis".into(),
+                label: "Gap analysis".into(),
+                status: "pending".into(),
+            },
+            SubStepState {
+                id: "p-write-plan".into(),
+                label: "Write plan".into(),
+                status: "pending".into(),
+            },
         ],
         ("executor", LooperLoopType::Build) => vec![
-            SubStepState { id: "e-pick-task".into(), label: "Pick task".into(), status: "pending".into() },
-            SubStepState { id: "e-inspect".into(), label: "Inspect files".into(), status: "pending".into() },
-            SubStepState { id: "e-implement".into(), label: "Implement".into(), status: "pending".into() },
-            SubStepState { id: "e-summary".into(), label: "Write summary".into(), status: "pending".into() },
+            SubStepState {
+                id: "e-pick-task".into(),
+                label: "Pick task".into(),
+                status: "pending".into(),
+            },
+            SubStepState {
+                id: "e-inspect".into(),
+                label: "Inspect files".into(),
+                status: "pending".into(),
+            },
+            SubStepState {
+                id: "e-implement".into(),
+                label: "Implement".into(),
+                status: "pending".into(),
+            },
+            SubStepState {
+                id: "e-summary".into(),
+                label: "Write summary".into(),
+                status: "pending".into(),
+            },
         ],
         ("validator", LooperLoopType::Build) => vec![
-            SubStepState { id: "v-tests".into(), label: "Run tests".into(), status: "pending".into() },
-            SubStepState { id: "v-lint".into(), label: "Run lint".into(), status: "pending".into() },
-            SubStepState { id: "v-typecheck".into(), label: "Run type-check".into(), status: "pending".into() },
-            SubStepState { id: "v-acceptance".into(), label: "Acceptance checks".into(), status: "pending".into() },
+            SubStepState {
+                id: "v-tests".into(),
+                label: "Run tests".into(),
+                status: "pending".into(),
+            },
+            SubStepState {
+                id: "v-lint".into(),
+                label: "Run lint".into(),
+                status: "pending".into(),
+            },
+            SubStepState {
+                id: "v-typecheck".into(),
+                label: "Run type-check".into(),
+                status: "pending".into(),
+            },
+            SubStepState {
+                id: "v-acceptance".into(),
+                label: "Acceptance checks".into(),
+                status: "pending".into(),
+            },
         ],
         ("critic", LooperLoopType::Build) => vec![
-            SubStepState { id: "c-review".into(), label: "Review code".into(), status: "pending".into() },
-            SubStepState { id: "c-check-diffs".into(), label: "Check diffs".into(), status: "pending".into() },
-            SubStepState { id: "c-decide".into(), label: "Ship or Revise".into(), status: "pending".into() },
+            SubStepState {
+                id: "c-review".into(),
+                label: "Review code".into(),
+                status: "pending".into(),
+            },
+            SubStepState {
+                id: "c-check-diffs".into(),
+                label: "Check diffs".into(),
+                status: "pending".into(),
+            },
+            SubStepState {
+                id: "c-decide".into(),
+                label: "Ship or Revise".into(),
+                status: "pending".into(),
+            },
         ],
         _ => vec![],
     }
@@ -286,7 +429,11 @@ enum CriticDecision {
 }
 
 impl LooperHandler {
-    pub fn new(hub: EventHub, terminal: Arc<TerminalService>, workspace_tools: Arc<WorkspaceToolsService>) -> Self {
+    pub fn new(
+        hub: EventHub,
+        terminal: Arc<TerminalService>,
+        workspace_tools: Arc<WorkspaceToolsService>,
+    ) -> Self {
         Self {
             hub,
             terminal,
@@ -304,7 +451,12 @@ impl LooperHandler {
     }
 
     pub fn save_to_disk(&self) {
-        let path = match self.data_path.read().expect("data_path lock poisoned").as_ref() {
+        let path = match self
+            .data_path
+            .read()
+            .expect("data_path lock poisoned")
+            .as_ref()
+        {
             Some(p) => p.clone(),
             None => return,
         };
@@ -316,7 +468,12 @@ impl LooperHandler {
     }
 
     pub fn load_from_disk(&self) {
-        let path = match self.data_path.read().expect("data_path lock poisoned").as_ref() {
+        let path = match self
+            .data_path
+            .read()
+            .expect("data_path lock poisoned")
+            .as_ref()
+        {
             Some(p) => p.clone(),
             None => return,
         };
@@ -360,15 +517,14 @@ impl LooperHandler {
     ///
     /// Creates terminal sessions for all 4 phases and begins execution
     /// with the Planner phase.
-    pub async fn start(
-        &self,
-        req: LooperStartRequest,
-    ) -> Result<LooperStartResponse, String> {
+    pub async fn start(&self, req: LooperStartRequest) -> Result<LooperStartResponse, String> {
         let loop_id = req.loop_id.clone();
         let now_ms = now_ms();
 
         // For app-tool projects, create the plugin scaffold and set cwd to plugins/<tool_id>
-        let working_dir: Option<PathBuf> = if req.project_type == "app-tool" && !req.project_name.is_empty() {
+        let working_dir: Option<PathBuf> = if req.project_type == "app-tool"
+            && !req.project_name.is_empty()
+        {
             let tool_id = sanitize_tool_id(&req.project_name);
             if !tool_id.is_empty() {
                 match self.workspace_tools.create_app_tool_plugin(
@@ -513,9 +669,9 @@ impl LooperHandler {
 
         {
             let mut loops = self.loops.write().map_err(|e| e.to_string())?;
-            let loopy = loops.get_mut(&req.loop_id).ok_or_else(|| {
-                format!("loop not found: {}", req.loop_id)
-            })?;
+            let loopy = loops
+                .get_mut(&req.loop_id)
+                .ok_or_else(|| format!("loop not found: {}", req.loop_id))?;
             loopy.status = LooperLoopStatus::Failed;
             loopy.completed_at_ms = Some(now_ms());
 
@@ -580,7 +736,12 @@ impl LooperHandler {
                         (true, active_phase, session_to_close, false)
                     } else {
                         let active_phase = l.active_phase.clone();
-                        (false, active_phase, None, l.status == LooperLoopStatus::Paused)
+                        (
+                            false,
+                            active_phase,
+                            None,
+                            l.status == LooperLoopStatus::Paused,
+                        )
                     }
                 }
                 None => {
@@ -599,10 +760,14 @@ impl LooperHandler {
 
         if needs_resume {
             let Some(ref phase_name) = active_phase else {
-                return Err(format!("loop {} has no active phase to resume", req.loop_id));
+                return Err(format!(
+                    "loop {} has no active phase to resume",
+                    req.loop_id
+                ));
             };
             self.create_phase_session(&req.loop_id, phase_name).await?;
-            self.start_phase(&req.loop_id, phase_name, &req.correlation_id).await?;
+            self.start_phase(&req.loop_id, phase_name, &req.correlation_id)
+                .await?;
             let mut loops = self.loops.write().map_err(|e| e.to_string())?;
             if let Some(l) = loops.get_mut(&req.loop_id) {
                 l.status = LooperLoopStatus::Running;
@@ -642,9 +807,9 @@ impl LooperHandler {
         // Write answers to questions_answered.md in cwd
         let cwd = {
             let loops = self.loops.read().map_err(|e| e.to_string())?;
-            let loopy = loops.get(&req.loop_id).ok_or_else(|| {
-                format!("loop not found: {}", req.loop_id)
-            })?;
+            let loopy = loops
+                .get(&req.loop_id)
+                .ok_or_else(|| format!("loop not found: {}", req.loop_id))?;
             loopy.cwd.clone()
         };
 
@@ -652,7 +817,10 @@ impl LooperHandler {
         let mut answers_content = String::from("# User Answers to Questions\n\n");
         for answer in &req.answers {
             answers_content.push_str(&format!("## Question: {}\n\n", answer.question_id));
-            answers_content.push_str(&format!("**Selected Option:** {}\n\n", answer.selected_option_id));
+            answers_content.push_str(&format!(
+                "**Selected Option:** {}\n\n",
+                answer.selected_option_id
+            ));
             if let Some(ref freeform) = answer.freeform_text {
                 answers_content.push_str(&format!("**Additional Comments:**\n{}\n\n", freeform));
             }
@@ -747,9 +915,9 @@ impl LooperHandler {
         let session_ids: Vec<Option<String>>;
         {
             let loops = self.loops.read().map_err(|e| e.to_string())?;
-            let loopy = loops.get(&req.loop_id).ok_or_else(|| {
-                format!("loop not found: {}", req.loop_id)
-            })?;
+            let loopy = loops
+                .get(&req.loop_id)
+                .ok_or_else(|| format!("loop not found: {}", req.loop_id))?;
 
             // Collect session IDs
             session_ids = ["planner", "executor", "validator", "critic"]
@@ -1138,7 +1306,14 @@ impl LooperHandler {
         severity: EventSeverity,
         payload: serde_json::Value,
     ) {
-        let event = self.hub.make_event(correlation_id, Subsystem::Tool, action, stage, severity, payload);
+        let event = self.hub.make_event(
+            correlation_id,
+            Subsystem::Tool,
+            action,
+            stage,
+            severity,
+            payload,
+        );
         self.hub.emit(event);
     }
 
@@ -1276,7 +1451,10 @@ impl LooperHandler {
                         .args(["commit", "-m", &commit_msg])
                         .current_dir(cwd)
                         .output();
-                    println!("looper [{}]: auto-committed iteration {}", loop_id, iteration);
+                    println!(
+                        "looper [{}]: auto-committed iteration {}",
+                        loop_id, iteration
+                    );
                 }
             }
         }
@@ -1294,7 +1472,10 @@ impl LooperLoop {
         for (name, phase) in record.phases {
             let mut status = phase.status;
             if record.active_phase.as_deref() == Some(name.as_str())
-                && matches!(restored_status, LooperLoopStatus::Paused | LooperLoopStatus::Blocked)
+                && matches!(
+                    restored_status,
+                    LooperLoopStatus::Paused | LooperLoopStatus::Blocked
+                )
             {
                 status = LooperPhaseStatus::Blocked;
             }
@@ -1551,7 +1732,10 @@ mod tests {
         assert_eq!(record.task_path, "task.md");
         assert_eq!(record.specs_glob, "specs/*.md");
         assert_eq!(record.max_iterations, 8);
-        assert_eq!(record.phase_models.get("planner"), Some(&"gpt-5".to_string()));
+        assert_eq!(
+            record.phase_models.get("planner"),
+            Some(&"gpt-5".to_string())
+        );
         assert_eq!(record.project_name, "Looper Test");
         assert_eq!(record.project_icon, "wrench");
     }
@@ -1563,7 +1747,10 @@ mod tests {
 
         assert_eq!(restored.status, LooperLoopStatus::Paused);
         assert_eq!(restored.active_phase.as_deref(), Some("planner"));
-        assert_eq!(restored.phases["planner"].status, LooperPhaseStatus::Blocked);
+        assert_eq!(
+            restored.phases["planner"].status,
+            LooperPhaseStatus::Blocked
+        );
         assert_eq!(restored.phases["planner"].session_id, None);
         assert_eq!(restored.cwd, "/workspace");
         assert_eq!(restored.task_path, "task.md");
@@ -1574,7 +1761,10 @@ mod tests {
     fn apply_critic_decision_ship_completes_loop() {
         let handler = sample_handler();
         let mut loopy = sample_loop();
-        loopy.cwd = std::env::temp_dir().join("arxell-looper-ship-test").display().to_string();
+        loopy.cwd = std::env::temp_dir()
+            .join("arxell-looper-ship-test")
+            .display()
+            .to_string();
         loopy.active_phase = Some("critic".to_string());
         loopy.phases.get_mut("critic").unwrap().status = LooperPhaseStatus::Running;
         handler
@@ -1583,11 +1773,8 @@ mod tests {
             .unwrap()
             .insert(loopy.id.clone(), loopy);
 
-        let decision = handler.apply_critic_decision(
-            "loop-1",
-            "corr-ship",
-            Some("SHIP".to_string()),
-        );
+        let decision =
+            handler.apply_critic_decision("loop-1", "corr-ship", Some("SHIP".to_string()));
 
         let loops = handler.loops.read().unwrap();
         let loopy = loops.get("loop-1").unwrap();
@@ -1612,11 +1799,8 @@ mod tests {
             .unwrap()
             .insert(loopy.id.clone(), loopy);
 
-        let decision = handler.apply_critic_decision(
-            "loop-1",
-            "corr-revise",
-            Some("REVISE".to_string()),
-        );
+        let decision =
+            handler.apply_critic_decision("loop-1", "corr-revise", Some("REVISE".to_string()));
 
         let loops = handler.loops.read().unwrap();
         let loopy = loops.get("loop-1").unwrap();
@@ -1643,11 +1827,8 @@ mod tests {
             .unwrap()
             .insert(loopy.id.clone(), loopy);
 
-        let decision = handler.apply_critic_decision(
-            "loop-1",
-            "corr-revise-max",
-            Some("REVISE".to_string()),
-        );
+        let decision =
+            handler.apply_critic_decision("loop-1", "corr-revise-max", Some("REVISE".to_string()));
 
         let loops = handler.loops.read().unwrap();
         let loopy = loops.get("loop-1").unwrap();

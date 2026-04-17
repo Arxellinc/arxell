@@ -181,7 +181,11 @@ impl Tool for NotepadWriteTool {
             success: true,
             result: Some(format!("{} {}", action, resolved.display())),
             images: None,
-            display: Some(format!("{} document {} in Notepad", action, resolved.display())),
+            display: Some(format!(
+                "{} document {} in Notepad",
+                action,
+                resolved.display()
+            )),
         }
     }
 }
@@ -321,7 +325,12 @@ fn emit_notepad_sync(hub: &EventHub, correlation_id: &str, path: &Path, content:
     ));
 }
 
-fn replace_line_range(content: &str, start_line: usize, end_line: usize, replacement: &str) -> String {
+fn replace_line_range(
+    content: &str,
+    start_line: usize,
+    end_line: usize,
+    replacement: &str,
+) -> String {
     let had_trailing_newline = content.ends_with('\n');
     let mut original_lines: Vec<String> = content.lines().map(ToOwned::to_owned).collect();
     let replacement_lines: Vec<String> = replacement.lines().map(ToOwned::to_owned).collect();
@@ -355,7 +364,11 @@ fn render_line_range(content: &str, start_line: usize, end_line: usize) -> Strin
 
 fn count_lines(content: &str) -> usize {
     let count = content.lines().count();
-    if count == 0 { 1 } else { count }
+    if count == 0 {
+        1
+    } else {
+        count
+    }
 }
 
 fn tool_error(message: impl Into<String>) -> ToolResult {

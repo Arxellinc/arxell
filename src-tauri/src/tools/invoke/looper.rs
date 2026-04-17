@@ -10,10 +10,9 @@
 //! transitions. The frontend observes state via events emitted by this handler.
 
 use crate::contracts::{
-    LooperAdvanceRequest, LooperCheckOpenCodeRequest, LooperCloseRequest,
-    LooperListRequest, LooperPauseRequest,
-    LooperStartRequest, LooperStatusRequest,
-    LooperStopRequest, LooperSubmitQuestionsRequest,
+    LooperAdvanceRequest, LooperCheckOpenCodeRequest, LooperCloseRequest, LooperListRequest,
+    LooperPauseRequest, LooperStartRequest, LooperStatusRequest, LooperStopRequest,
+    LooperSubmitQuestionsRequest,
 };
 use crate::ipc::tauri_bridge::TauriBridgeState;
 use crate::tools::invoke::registry::{decode_payload, InvokeRegistry, ToolInvokeFuture};
@@ -109,10 +108,7 @@ fn invoke_close(state: &TauriBridgeState, payload: Value) -> ToolInvokeFuture {
     })
 }
 
-fn invoke_check_opencode(
-    state: &TauriBridgeState,
-    payload: Value,
-) -> ToolInvokeFuture {
+fn invoke_check_opencode(state: &TauriBridgeState, payload: Value) -> ToolInvokeFuture {
     let handler = state.looper_handler.clone();
     Box::pin(async move {
         let req: LooperCheckOpenCodeRequest = decode_payload(payload)?;
@@ -122,10 +118,7 @@ fn invoke_check_opencode(
     })
 }
 
-fn invoke_submit_questions(
-    state: &TauriBridgeState,
-    payload: Value,
-) -> ToolInvokeFuture {
+fn invoke_submit_questions(state: &TauriBridgeState, payload: Value) -> ToolInvokeFuture {
     let handler = state.looper_handler.clone();
     Box::pin(async move {
         let req: LooperSubmitQuestionsRequest = decode_payload(payload)?;

@@ -37,13 +37,16 @@ use arxell_lite::contracts::{
     TtsDownloadModelRequest, TtsDownloadModelResponse, TtsListVoicesRequest, TtsListVoicesResponse,
     TtsSelfTestRequest, TtsSelfTestResponse, TtsSettingsGetRequest, TtsSettingsGetResponse,
     TtsSettingsSetRequest, TtsSettingsSetResponse, TtsSpeakRequest, TtsSpeakResponse,
-    TtsStatusRequest, TtsStatusResponse, TtsStopRequest, TtsStopResponse, WebSearchRequest,
-    WebSearchResponse, WorkspaceToolSetEnabledRequest, WorkspaceToolSetEnabledResponse,
+    TtsStatusRequest, TtsStatusResponse, TtsStopRequest, TtsStopResponse,
+    VoiceGetVadSettingsRequest, VoiceGetVadSettingsResponse, VoiceListVadMethodsRequest,
+    VoiceListVadMethodsResponse, VoiceRuntimeSnapshotResponse, VoiceSetVadMethodRequest,
+    VoiceStartSessionRequest, VoiceStopSessionRequest, VoiceUpdateVadConfigRequest,
+    VoiceUpdateVadConfigResponse, WebSearchRequest, WebSearchResponse,
     WorkspaceToolCreateAppPluginRequest, WorkspaceToolCreateAppPluginResponse,
-    WorkspaceToolForgetRequest, WorkspaceToolForgetResponse,
-    WorkspaceToolSetIconRequest, WorkspaceToolSetIconResponse, WorkspaceToolsExportRequest,
-    WorkspaceToolsExportResponse, WorkspaceToolsImportRequest, WorkspaceToolsImportResponse,
-    WorkspaceToolsListRequest, WorkspaceToolsListResponse,
+    WorkspaceToolForgetRequest, WorkspaceToolForgetResponse, WorkspaceToolSetEnabledRequest,
+    WorkspaceToolSetEnabledResponse, WorkspaceToolSetIconRequest, WorkspaceToolSetIconResponse,
+    WorkspaceToolsExportRequest, WorkspaceToolsExportResponse, WorkspaceToolsImportRequest,
+    WorkspaceToolsImportResponse, WorkspaceToolsListRequest, WorkspaceToolsListResponse,
 };
 #[cfg(feature = "tauri-runtime")]
 use arxell_lite::ipc::tauri_bridge::{attach_event_forwarder, TauriBridgeState};
@@ -139,6 +142,7 @@ fn main() {
         terminal: std::sync::Arc::new(app_context.ipc.terminal.clone()),
         flow_handler: std::sync::Arc::new(app_context.ipc.flow.clone()),
         looper_handler: std::sync::Arc::new(app_context.ipc.looper.clone()),
+        voice_handler: std::sync::Arc::new(app_context.ipc.voice.clone()),
         hub: hub.clone(),
         workspace_tools: std::sync::Arc::clone(&app_context.workspace_tools),
         api_registry: std::sync::Arc::clone(&app_context.api_registry),
@@ -148,6 +152,7 @@ fn main() {
         model_manager: std::sync::Arc::clone(&app_context.model_manager),
         files: std::sync::Arc::clone(&app_context.files),
         flow: std::sync::Arc::clone(&app_context.flow),
+        voice: std::sync::Arc::clone(&app_context.voice),
     };
 
     tauri::Builder::default()
@@ -272,7 +277,13 @@ fn main() {
             cmd_tts_self_test,
             cmd_tts_settings_get,
             cmd_tts_settings_set,
-            cmd_tts_download_model
+            cmd_tts_download_model,
+            cmd_voice_list_vad_methods,
+            cmd_voice_get_vad_settings,
+            cmd_voice_set_vad_method,
+            cmd_voice_update_vad_config,
+            cmd_voice_start_session,
+            cmd_voice_stop_session
         ])
         .run(tauri::generate_context!())
         .expect("failed to run tauri app");
@@ -424,6 +435,60 @@ async fn cmd_tts_download_model(
     request: TtsDownloadModelRequest,
 ) -> Result<TtsDownloadModelResponse, String> {
     arxell_lite::tts::download_model(&app, request, &tts_state).await
+}
+
+#[cfg(feature = "tauri-runtime")]
+#[tauri::command]
+async fn cmd_voice_list_vad_methods(
+    state: State<'_, TauriBridgeState>,
+    request: VoiceListVadMethodsRequest,
+) -> Result<VoiceListVadMethodsResponse, String> {
+    state.voice_handler.list_vad_methods(request).await
+}
+
+#[cfg(feature = "tauri-runtime")]
+#[tauri::command]
+async fn cmd_voice_get_vad_settings(
+    state: State<'_, TauriBridgeState>,
+    request: VoiceGetVadSettingsRequest,
+) -> Result<VoiceGetVadSettingsResponse, String> {
+    state.voice_handler.get_vad_settings(request).await
+}
+
+#[cfg(feature = "tauri-runtime")]
+#[tauri::command]
+async fn cmd_voice_set_vad_method(
+    state: State<'_, TauriBridgeState>,
+    request: VoiceSetVadMethodRequest,
+) -> Result<VoiceRuntimeSnapshotResponse, String> {
+    state.voice_handler.set_vad_method(request).await
+}
+
+#[cfg(feature = "tauri-runtime")]
+#[tauri::command]
+async fn cmd_voice_update_vad_config(
+    state: State<'_, TauriBridgeState>,
+    request: VoiceUpdateVadConfigRequest,
+) -> Result<VoiceUpdateVadConfigResponse, String> {
+    state.voice_handler.update_vad_config(request).await
+}
+
+#[cfg(feature = "tauri-runtime")]
+#[tauri::command]
+async fn cmd_voice_start_session(
+    state: State<'_, TauriBridgeState>,
+    request: VoiceStartSessionRequest,
+) -> Result<VoiceRuntimeSnapshotResponse, String> {
+    state.voice_handler.start_session(request).await
+}
+
+#[cfg(feature = "tauri-runtime")]
+#[tauri::command]
+async fn cmd_voice_stop_session(
+    state: State<'_, TauriBridgeState>,
+    request: VoiceStopSessionRequest,
+) -> Result<VoiceRuntimeSnapshotResponse, String> {
+    state.voice_handler.stop_session(request).await
 }
 
 #[cfg(feature = "tauri-runtime")]

@@ -14,7 +14,10 @@ import type {
   LlamaRuntimeStatusResponse,
   ModelManagerHfCandidate,
   ModelManagerInstalledModel,
+  PersistedVoiceSettings,
   TtsSpeakResponse,
+  VadManifest,
+  VoiceRuntimeState,
   WorkspaceToolRecord
 } from "./contracts";
 import { iconHtml } from "./icons";
@@ -510,6 +513,12 @@ const state: {
     modelDownloadProgress: number | null;
     modelDownloadError: string | null;
   };
+  vadMethods: VadManifest[];
+  vadIncludeExperimental: boolean;
+  vadSelectedMethod: string;
+  vadSettings: PersistedVoiceSettings | null;
+  voiceRuntimeState: VoiceRuntimeState;
+  vadMessage: string | null;
   tts: {
     status: "idle" | "ready" | "busy" | "error";
     message: string | null;
@@ -793,6 +802,12 @@ const state: {
     modelDownloadProgress: null,
     modelDownloadError: null
   },
+  vadMethods: [],
+  vadIncludeExperimental: false,
+  vadSelectedMethod: "sherpa-silero",
+  vadSettings: null,
+  voiceRuntimeState: "idle",
+  vadMessage: null,
   tts: {
     status: "idle",
     message: null,
@@ -2204,6 +2219,12 @@ function render(): void {
     modelManagerUnslothUdCatalog: state.modelManagerUnslothUdCatalog,
     modelManagerUnslothUdLoading: state.modelManagerUnslothUdLoading,
     stt: state.stt,
+    vadMethods: state.vadMethods,
+    vadIncludeExperimental: state.vadIncludeExperimental,
+    vadSelectedMethod: state.vadSelectedMethod,
+    vadSettings: state.vadSettings,
+    voiceRuntimeState: state.voiceRuntimeState,
+    vadMessage: state.vadMessage,
     tts: state.tts,
     consoleEntries: state.consoleEntries
   });
@@ -2925,6 +2946,40 @@ async function refreshTtsState(): Promise<void> {
   state.tts.lexiconStatus = status.lexiconStatus || "";
   state.tts.status = status.ready ? "ready" : "idle";
   state.tts.message = status.message;
+}
+
+function applyVadSettingsToLegacyStt(): void {
+  const sherpa = state.vadSettings?.vadMethods["sherpa-silero"];
+  if (!sherpa) return;
+  const readNumber = (key: string, fallback: number) => {
+    const value = Number(sherpa[key]);
+    return Number.isFinite(value) ? value : fallback;
+  };
+  state.stt.vadBaseThreshold = readNumber("baseThreshold", state.stt.vadBaseThreshold);
+  state.stt.vadStartFrames = readNumber("startFrames", state.stt.vadStartFrames);
+  state.stt.vadEndFrames = readNumber("endFrames", state.stt.vadEndFrames);
+  state.stt.vadDynamicMultiplier = readNumber("dynamicMultiplier", state.stt.vadDynamicMultiplier);
+  state.stt.vadNoiseAdaptationAlpha = readNumber("noiseAdaptationAlpha", state.stt.vadNoiseAdaptationAlpha);
+  state.stt.vadPreSpeechMs = readNumber("preSpeechMs", state.stt.vadPreSpeechMs);
+  state.stt.vadMinUtteranceMs = readNumber("minUtteranceMs", state.stt.vadMinUtteranceMs);
+  state.stt.vadMaxUtteranceS = readNumber("maxUtteranceS", state.stt.vadMaxUtteranceS);
+  state.stt.vadForceFlushS = readNumber("forceFlushS", state.stt.vadForceFlushS);
+}
+
+async function refreshVadState(): Promise<void> {
+  if (!clientRef) return;
+  const [methods, settings] = await Promise.all([
+    clientRef.voiceListVadMethods({
+      correlationId: nextCorrelationId(),
+      includeExperimental: state.vadIncludeExperimental
+    }),
+    clientRef.voiceGetVadSettings({ correlationId: nextCorrelationId() })
+  ]);
+  state.vadMethods = methods.methods;
+  state.vadSelectedMethod = settings.settings.selectedVadMethod || methods.selectedVadMethod;
+  state.vadSettings = settings.settings;
+  state.voiceRuntimeState = settings.state;
+  applyVadSettingsToLegacyStt();
 }
 
 function handleTtsDownloadProgressEvent(event: AppEvent, rerender: () => void): boolean {
@@ -4844,6 +4899,53 @@ function renderAndBind(sendMessage: (text: string) => Promise<void>): void {
       state.stt[key] = normalized;
       renderAndBind(sendMessage);
     },
+    onSetVadMethod: async (methodId) => {
+      if (!clientRef) return;
+      try {
+        const response = await clientRef.voiceSetVadMethod({
+          correlationId: nextCorrelationId(),
+          methodId
+        });
+        state.vadSelectedMethod = response.snapshot.selectedVadMethod;
+        state.voiceRuntimeState = response.snapshot.state;
+        await refreshVadState();
+        state.vadMessage = `Selected ${state.vadSelectedMethod}.`;
+      } catch (error) {
+        state.vadMessage = `VAD method switch failed: ${String(error)}`;
+      }
+      renderAndBind(sendMessage);
+    },
+    onSetVadIncludeExperimental: async (value) => {
+      state.vadIncludeExperimental = value;
+      await refreshVadState();
+      renderAndBind(sendMessage);
+    },
+    onUpdateVadMethodConfig: async (key, value) => {
+      if (!clientRef) return;
+      const methodId = state.vadSelectedMethod;
+      const current = {
+        ...(state.vadSettings?.vadMethods[methodId] ?? state.vadMethods.find((method) => method.id === methodId)?.defaultConfig ?? {})
+      };
+      current[key] = value;
+      try {
+        const response = await clientRef.voiceUpdateVadConfig({
+          correlationId: nextCorrelationId(),
+          methodId,
+          config: current
+        });
+        state.vadSettings = response.settings;
+        state.vadSelectedMethod = response.settings.selectedVadMethod;
+        applyVadSettingsToLegacyStt();
+        state.vadMessage = `Saved ${methodId} settings.`;
+      } catch (error) {
+        state.vadMessage = `VAD settings save failed: ${String(error)}`;
+      }
+      renderAndBind(sendMessage);
+    },
+    onRefreshVadSettings: async () => {
+      await refreshVadState();
+      renderAndBind(sendMessage);
+    },
     onSetDisplayMode: async (mode) => {
       state.displayMode = mode;
       state.displayModePreference = mode;
@@ -6411,6 +6513,11 @@ async function bootstrap(): Promise<void> {
     autoStartLlamaRuntimeIfConfigured,
     loadConversation: () => loadConversation(state.conversationId)
   });
+  try {
+    await refreshVadState();
+  } catch (error) {
+    state.vadMessage = `VAD bootstrap failed: ${String(error)}`;
+  }
 
   appResourcePolling.restart(1000);
 

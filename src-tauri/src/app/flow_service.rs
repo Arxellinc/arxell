@@ -3,9 +3,9 @@ use crate::agent_tools::web_search::WebSearchTool;
 use crate::api_registry::ApiRegistryService;
 use crate::app::web_search_service::WebSearchService;
 use crate::contracts::{
-    ApiConnectionStatus, ApiConnectionType, EventSeverity, EventStage, FlowIterationStatus, FlowListRunsRequest,
-    FlowListRunsResponse, FlowMode, FlowNudgeRequest, FlowNudgeResponse, FlowPauseRequest,
-    FlowPauseResponse, FlowRerunValidationRequest, FlowRerunValidationResponse,
+    ApiConnectionStatus, ApiConnectionType, EventSeverity, EventStage, FlowIterationStatus,
+    FlowListRunsRequest, FlowListRunsResponse, FlowMode, FlowNudgeRequest, FlowNudgeResponse,
+    FlowPauseRequest, FlowPauseResponse, FlowRerunValidationRequest, FlowRerunValidationResponse,
     FlowRerunValidationResult, FlowRunRecord, FlowRunStatus, FlowStartRequest, FlowStartResponse,
     FlowStatusRequest, FlowStatusResponse, FlowStepState, FlowStepStatus, FlowStopRequest,
     FlowStopResponse, Subsystem,
@@ -589,15 +589,17 @@ impl FlowService {
                 );
 
                 let started = now_ms();
-                let step_result = self.execute_step(
-                    run_id.as_str(),
-                    iteration,
-                    step,
-                    &run,
-                    selected_task.clone(),
-                    correlation_id.as_str(),
-                    &cancel_rx,
-                ).await;
+                let step_result = self
+                    .execute_step(
+                        run_id.as_str(),
+                        iteration,
+                        step,
+                        &run,
+                        selected_task.clone(),
+                        correlation_id.as_str(),
+                        &cancel_rx,
+                    )
+                    .await;
 
                 match step_result {
                     Ok(result) => {
@@ -741,8 +743,9 @@ impl FlowService {
                 if !flow_llm_enabled() {
                     return Ok(task);
                 }
-                if let Some(candidate) =
-                    self.llm_select_task(plan_path.as_path(), run, iteration, correlation_id).await?
+                if let Some(candidate) = self
+                    .llm_select_task(plan_path.as_path(), run, iteration, correlation_id)
+                    .await?
                 {
                     return Ok(Some(candidate));
                 }
@@ -786,14 +789,16 @@ impl FlowService {
                         .await?;
                     Ok(Some(result))
                 } else {
-                    let strategy = self.llm_investigate(
-                        run,
-                        iteration,
-                        selected_task.as_deref(),
-                        plan_path.as_path(),
-                        specs.as_slice(),
-                        correlation_id,
-                    ).await?;
+                    let strategy = self
+                        .llm_investigate(
+                            run,
+                            iteration,
+                            selected_task.as_deref(),
+                            plan_path.as_path(),
+                            specs.as_slice(),
+                            correlation_id,
+                        )
+                        .await?;
                     Ok(Some(strategy))
                 }
             }
@@ -803,17 +808,16 @@ impl FlowService {
                 } else if run.use_agent {
                     if self.workspace_tools.is_none() {
                         return Err(
-                            "agent-driven implementation requires workspace tools".to_string(),
+                            "agent-driven implementation requires workspace tools".to_string()
                         );
                     }
-                    let plan_excerpt = std::fs::read_to_string(resolve_workspace_path(
-                        run.plan_path.as_str(),
-                    ))
-                    .unwrap_or_default()
-                    .lines()
-                    .take(80)
-                    .collect::<Vec<_>>()
-                    .join("\n");
+                    let plan_excerpt =
+                        std::fs::read_to_string(resolve_workspace_path(run.plan_path.as_str()))
+                            .unwrap_or_default()
+                            .lines()
+                            .take(80)
+                            .collect::<Vec<_>>()
+                            .join("\n");
                     let system = "You are a software engineer implementing a specific task. Use available tools to read, edit, and write source files. Implement the changes needed for the specified task. Be precise and focused.";
                     let user = format!(
                         "Run: {}\nIteration: {}\nTask: {}\nPlan context:\n{}\n\nImplement this task using the available tools. Make focused, correct changes.",
@@ -956,8 +960,9 @@ impl FlowService {
                     let plan_path = resolve_workspace_path(run.plan_path.as_str());
                     if flow_llm_enabled() {
                         let specs = collect_spec_files(run.specs_glob.as_str())?;
-                        let generated =
-                            self.llm_generate_plan_seed(run, specs.as_slice(), correlation_id).await?;
+                        let generated = self
+                            .llm_generate_plan_seed(run, specs.as_slice(), correlation_id)
+                            .await?;
                         std::fs::write(plan_path.as_path(), generated)
                             .map_err(|e| format!("failed writing plan file: {e}"))?;
                     } else if !plan_path.exists() {
@@ -1383,15 +1388,17 @@ impl FlowService {
                 .collect::<Vec<_>>()
                 .join("\n")
         );
-        let text = self.llm_generate_text(
-            run.run_id.as_str(),
-            correlation_id,
-            "Select the single best next task from the list. Output task text only.",
-            prompt.as_str(),
-            Some("select_task"),
-            Some(220),
-            Some(0.2),
-        ).await?;
+        let text = self
+            .llm_generate_text(
+                run.run_id.as_str(),
+                correlation_id,
+                "Select the single best next task from the list. Output task text only.",
+                prompt.as_str(),
+                Some("select_task"),
+                Some(220),
+                Some(0.2),
+            )
+            .await?;
         let selected = text.lines().next().unwrap_or("").trim().to_string();
         if selected.is_empty() {
             return Ok(None);
@@ -1455,7 +1462,8 @@ impl FlowService {
             Some("investigate"),
             Some(700),
             Some(0.25),
-        ).await
+        )
+        .await
     }
 
     async fn llm_generate_plan_seed(
@@ -1489,7 +1497,8 @@ impl FlowService {
             Some("update_plan"),
             Some(900),
             Some(0.2),
-        ).await
+        )
+        .await
     }
 
     fn resolve_flow_agent_tools(&self, correlation_id: &str) -> Vec<Box<dyn AgentTool>> {
@@ -1509,8 +1518,7 @@ impl FlowService {
             tools.extend(arx_rs::tools::default_tools().into_iter().filter(|tool| {
                 matches!(
                     tool.name(),
-                    "read" | "edit" | "write" | "ls" | "mkdir" | "move" | "chmod" | "grep"
-                        | "find"
+                    "read" | "edit" | "write" | "ls" | "mkdir" | "move" | "chmod" | "grep" | "find"
                 )
             }));
         }
@@ -1536,10 +1544,7 @@ impl FlowService {
         tools
     }
 
-    fn resolve_flow_provider_config(
-        &self,
-        phase: Option<&str>,
-    ) -> Result<ProviderConfig, String> {
+    fn resolve_flow_provider_config(&self, phase: Option<&str>) -> Result<ProviderConfig, String> {
         let (mut endpoint, mut model, mut api_key) =
             resolve_flow_provider(self.api_registry.as_ref())?;
         if let Some(phase_name) = phase {
@@ -1689,8 +1694,7 @@ impl FlowService {
             .lock()
             .map(|a| a.trim().to_string())
             .unwrap_or_default();
-        let total_tool_calls = tool_call_count
-            .load(std::sync::atomic::Ordering::Relaxed);
+        let total_tool_calls = tool_call_count.load(std::sync::atomic::Ordering::Relaxed);
 
         self.hub.emit(self.hub.make_event(
             correlation_id,
@@ -1722,7 +1726,8 @@ impl FlowService {
         max_tokens: Option<u32>,
         temperature: Option<f32>,
     ) -> Result<String, String> {
-        let (mut endpoint, mut model, mut api_key) = resolve_flow_provider(self.api_registry.as_ref())?;
+        let (mut endpoint, mut model, mut api_key) =
+            resolve_flow_provider(self.api_registry.as_ref())?;
         if let Some(phase_name) = phase {
             if let Some(override_value) = self.resolve_phase_model_override(phase_name) {
                 let resolved = resolve_flow_provider_for_model_id(
@@ -1764,7 +1769,11 @@ impl FlowService {
                 .header("Authorization", format!("Bearer {key}"))
                 .header("x-api-key", key);
         }
-        let request_once = |model_name: &str, request_builder: reqwest::RequestBuilder| -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<String, String>> + Send>> {
+        let request_once = |model_name: &str,
+                            request_builder: reqwest::RequestBuilder|
+         -> std::pin::Pin<
+            Box<dyn std::future::Future<Output = Result<String, String>> + Send>,
+        > {
             let mut request_payload = payload.clone();
             request_payload.model = model_name.to_string();
             Box::pin(async move {
@@ -1801,7 +1810,8 @@ impl FlowService {
         let phase_name = phase.unwrap_or("unknown");
         let mut last_error: Option<String> = None;
         for attempt in 0..=max_retries {
-            let cloned = req.try_clone()
+            let cloned = req
+                .try_clone()
                 .ok_or_else(|| "failed cloning flow LLM request".to_string())?;
             match request_once(model.as_str(), cloned).await {
                 Ok(text) => return Ok(text),
@@ -1861,7 +1871,8 @@ impl FlowService {
                 if let Some(phase_value) = phase {
                     self.set_phase_model_override(run_id, phase_value, fallback_model.as_str());
                 }
-                let cloned = req.try_clone()
+                let cloned = req
+                    .try_clone()
                     .ok_or_else(|| "failed cloning flow LLM request".to_string())?;
                 let text = request_once(fallback_model.as_str(), cloned).await?;
                 self.emit_model_recovery_event(
@@ -2347,7 +2358,9 @@ fn resolve_flow_provider_for_model_id(
             .find(|item| item.id == connection_id)
             .ok_or_else(|| format!("API connection not found: {connection_id}"))?;
         if !matches!(record.api_type, ApiConnectionType::Llm) {
-            return Err(format!("API connection is not an LLM endpoint: {connection_id}"));
+            return Err(format!(
+                "API connection is not an LLM endpoint: {connection_id}"
+            ));
         }
         if !matches!(
             record.status,
@@ -2792,10 +2805,7 @@ mod tests {
             )
             .await;
         assert!(result.is_err());
-        assert!(result
-            .err()
-            .unwrap_or_default()
-            .contains("workspace tools"));
+        assert!(result.err().unwrap_or_default().contains("workspace tools"));
     }
 
     #[tokio::test]

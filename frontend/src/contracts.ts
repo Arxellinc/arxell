@@ -656,6 +656,95 @@ export interface DevicesProbeMicrophoneResponse {
   defaultInputName: string | null;
 }
 
+export type VoiceRuntimeState = "idle" | "starting" | "running" | "stopping" | "error";
+export type VadStatus = "stable" | "experimental" | "hidden" | "deprecated";
+
+export interface VadCapabilities {
+  supportsEndpointing: boolean;
+  supportsInterruptionSignals: boolean;
+  supportsMicroTurns: boolean;
+  supportsOverlapTurnYieldHints: boolean;
+  supportsSpeechProbability: boolean;
+  supportsPartialSegmentation: boolean;
+}
+
+export interface VadManifest {
+  id: string;
+  displayName: string;
+  status: VadStatus;
+  description: string;
+  capabilities: VadCapabilities;
+  defaultConfig: Record<string, unknown>;
+}
+
+export interface GlobalVoiceConfig {
+  sampleRateHz: number;
+}
+
+export interface PersistedVoiceSettings {
+  version: number;
+  selectedVadMethod: string;
+  globalVoiceConfig: GlobalVoiceConfig;
+  vadMethods: Record<string, Record<string, unknown>>;
+}
+
+export interface VoiceRuntimeSnapshot {
+  state: VoiceRuntimeState;
+  sessionId: string | null;
+  selectedVadMethod: string;
+}
+
+export interface VoiceListVadMethodsRequest {
+  correlationId: string;
+  includeExperimental: boolean;
+}
+
+export interface VoiceListVadMethodsResponse {
+  correlationId: string;
+  methods: VadManifest[];
+  selectedVadMethod: string;
+  state: VoiceRuntimeState;
+}
+
+export interface VoiceGetVadSettingsRequest {
+  correlationId: string;
+}
+
+export interface VoiceGetVadSettingsResponse {
+  correlationId: string;
+  settings: PersistedVoiceSettings;
+  state: VoiceRuntimeState;
+}
+
+export interface VoiceSetVadMethodRequest {
+  correlationId: string;
+  methodId: string;
+}
+
+export interface VoiceRuntimeSnapshotResponse {
+  correlationId: string;
+  snapshot: VoiceRuntimeSnapshot;
+}
+
+export interface VoiceUpdateVadConfigRequest {
+  correlationId: string;
+  methodId: string;
+  config: Record<string, unknown>;
+}
+
+export interface VoiceUpdateVadConfigResponse {
+  correlationId: string;
+  settings: PersistedVoiceSettings;
+}
+
+export interface VoiceStartSessionRequest {
+  correlationId: string;
+}
+
+export interface VoiceStopSessionRequest {
+  correlationId: string;
+}
+
 export interface TtsStatusRequest {
   correlationId: string;
 }

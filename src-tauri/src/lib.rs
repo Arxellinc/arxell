@@ -10,4 +10,5 @@ pub mod stt;
 pub mod tools;
 #[cfg(feature = "tauri-runtime")]
 pub mod tts;
+pub mod voice;
 pub mod workspace_tools;

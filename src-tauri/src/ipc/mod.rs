@@ -7,13 +7,15 @@ pub mod tauri_bridge;
 pub mod terminal;
 #[cfg(feature = "tauri-runtime")]
 pub mod tool_runtime;
+pub mod voice_commands;
 
 use crate::app::chat_service::ChatService;
 use crate::app::flow_service::FlowService;
 use crate::app::terminal_service::TerminalService;
-use crate::tools::looper_handler::LooperHandler;
+use crate::app::voice_runtime_service::VoiceRuntimeService;
 use crate::contracts::AppEvent;
 use crate::observability::EventHub;
+use crate::tools::looper_handler::LooperHandler;
 use std::sync::Arc;
 
 pub struct IpcLayer {
@@ -21,6 +23,7 @@ pub struct IpcLayer {
     pub terminal: terminal::TerminalCommandHandler,
     pub flow: flow::FlowCommandHandler,
     pub looper: looper::LooperCommandHandler,
+    pub voice: voice_commands::VoiceCommandHandler,
     hub: EventHub,
 }
 
@@ -31,12 +34,14 @@ impl IpcLayer {
         terminal: Arc<TerminalService>,
         flow: Arc<FlowService>,
         looper: Arc<LooperHandler>,
+        voice: Arc<VoiceRuntimeService>,
     ) -> Self {
         Self {
             chat: chat::ChatCommandHandler::new(hub.clone(), service),
             terminal: terminal::TerminalCommandHandler::new(hub.clone(), terminal),
             flow: flow::FlowCommandHandler::new(hub.clone(), flow),
             looper: looper::LooperCommandHandler::new(hub.clone(), looper),
+            voice: voice_commands::VoiceCommandHandler::new(hub.clone(), voice),
             hub,
         }
     }

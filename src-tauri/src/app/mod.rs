@@ -5,6 +5,7 @@ pub mod model_manager_service;
 pub mod permission_service;
 pub mod runtime_service;
 pub mod terminal_service;
+pub mod voice_runtime_service;
 pub mod web_search_service;
 
 use crate::api_registry::ApiRegistryService;
@@ -27,6 +28,7 @@ pub struct AppContext {
     pub files: Arc<files_service::FilesService>,
     pub flow: Arc<flow_service::FlowService>,
     pub looper: Arc<LooperHandler>,
+    pub voice: Arc<voice_runtime_service::VoiceRuntimeService>,
 }
 
 impl AppContext {
@@ -71,6 +73,7 @@ impl AppContext {
         looper.load_from_disk();
         #[cfg(feature = "tauri-runtime")]
         looper.start_event_listener();
+        let voice = Arc::new(voice_runtime_service::VoiceRuntimeService::new(hub.clone()));
 
         let ipc = IpcLayer::new(
             hub,
@@ -78,6 +81,7 @@ impl AppContext {
             Arc::clone(&terminal),
             Arc::clone(&flow),
             Arc::clone(&looper),
+            Arc::clone(&voice),
         );
         Self {
             ipc,
@@ -90,6 +94,7 @@ impl AppContext {
             files,
             flow,
             looper,
+            voice,
         }
     }
 }
@@ -108,6 +113,7 @@ impl AppContext {
             terminal: Arc::new(self.ipc.terminal.clone()),
             flow_handler: Arc::new(self.ipc.flow.clone()),
             looper_handler: Arc::new(self.ipc.looper.clone()),
+            voice_handler: Arc::new(self.ipc.voice.clone()),
             hub: self.ipc.event_hub(),
             workspace_tools: Arc::clone(&self.workspace_tools),
             api_registry: Arc::clone(&self.api_registry),
@@ -117,6 +123,7 @@ impl AppContext {
             model_manager: Arc::clone(&self.model_manager),
             files: Arc::clone(&self.files),
             flow: Arc::clone(&self.flow),
+            voice: Arc::clone(&self.voice),
         }
     }
 }

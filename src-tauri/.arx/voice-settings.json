@@ -1,0 +1,26 @@
+{
+  "version": 1,
+  "selectedVadMethod": "sherpa-silero",
+  "globalVoiceConfig": {
+    "sampleRateHz": 16000
+  },
+  "vadMethods": {
+    "sherpa-silero": {
+      "baseThreshold": 0.0012000000569969416,
+      "dynamicMultiplier": 2.4000000953674316,
+      "endFrames": 8,
+      "forceFlushS": 3.0,
+      "maxUtteranceS": 30,
+      "minUtteranceMs": 200,
+      "noiseAdaptationAlpha": 0.029999999329447746,
+      "preSpeechMs": 200,
+      "startFrames": 2
+    },
+    "energy-basic": {
+      "hangoverMs": 80,
+      "minSilenceMs": 240,
+      "minSpeechMs": 120,
+      "threshold": 0.0012000000569969416
+    }
+  }
+}

@@ -48,6 +48,16 @@ import type {
   TtsStatusResponse,
   TtsStopRequest,
   TtsStopResponse,
+  VoiceGetVadSettingsRequest,
+  VoiceGetVadSettingsResponse,
+  VoiceListVadMethodsRequest,
+  VoiceListVadMethodsResponse,
+  VoiceRuntimeSnapshotResponse,
+  VoiceSetVadMethodRequest,
+  VoiceStartSessionRequest,
+  VoiceStopSessionRequest,
+  VoiceUpdateVadConfigRequest,
+  VoiceUpdateVadConfigResponse,
   LlamaRuntimeInstallRequest,
   LlamaRuntimeInstallResponse,
   LlamaRuntimeStartRequest,
@@ -200,6 +210,12 @@ export interface ChatIpcClient {
   ttsSettingsGet(request: TtsSettingsGetRequest): Promise<TtsSettingsGetResponse>;
   ttsSettingsSet(request: TtsSettingsSetRequest): Promise<TtsSettingsSetResponse>;
   ttsDownloadModel(request: TtsDownloadModelRequest): Promise<TtsDownloadModelResponse>;
+  voiceListVadMethods(request: VoiceListVadMethodsRequest): Promise<VoiceListVadMethodsResponse>;
+  voiceGetVadSettings(request: VoiceGetVadSettingsRequest): Promise<VoiceGetVadSettingsResponse>;
+  voiceSetVadMethod(request: VoiceSetVadMethodRequest): Promise<VoiceRuntimeSnapshotResponse>;
+  voiceUpdateVadConfig(request: VoiceUpdateVadConfigRequest): Promise<VoiceUpdateVadConfigResponse>;
+  voiceStartSession(request: VoiceStartSessionRequest): Promise<VoiceRuntimeSnapshotResponse>;
+  voiceStopSession(request: VoiceStopSessionRequest): Promise<VoiceRuntimeSnapshotResponse>;
   onEvent(listener: (event: AppEvent) => void): () => void;
 }
 
@@ -553,6 +569,32 @@ class TauriChatIpcClient implements ChatIpcClient {
 
   ttsDownloadModel(request: TtsDownloadModelRequest): Promise<TtsDownloadModelResponse> {
     return this.invokeFn<TtsDownloadModelResponse>("cmd_tts_download_model", { request });
+  }
+
+  voiceListVadMethods(request: VoiceListVadMethodsRequest): Promise<VoiceListVadMethodsResponse> {
+    return this.invokeFn<VoiceListVadMethodsResponse>("cmd_voice_list_vad_methods", { request });
+  }
+
+  voiceGetVadSettings(request: VoiceGetVadSettingsRequest): Promise<VoiceGetVadSettingsResponse> {
+    return this.invokeFn<VoiceGetVadSettingsResponse>("cmd_voice_get_vad_settings", { request });
+  }
+
+  voiceSetVadMethod(request: VoiceSetVadMethodRequest): Promise<VoiceRuntimeSnapshotResponse> {
+    return this.invokeFn<VoiceRuntimeSnapshotResponse>("cmd_voice_set_vad_method", { request });
+  }
+
+  voiceUpdateVadConfig(
+    request: VoiceUpdateVadConfigRequest
+  ): Promise<VoiceUpdateVadConfigResponse> {
+    return this.invokeFn<VoiceUpdateVadConfigResponse>("cmd_voice_update_vad_config", { request });
+  }
+
+  voiceStartSession(request: VoiceStartSessionRequest): Promise<VoiceRuntimeSnapshotResponse> {
+    return this.invokeFn<VoiceRuntimeSnapshotResponse>("cmd_voice_start_session", { request });
+  }
+
+  voiceStopSession(request: VoiceStopSessionRequest): Promise<VoiceRuntimeSnapshotResponse> {
+    return this.invokeFn<VoiceRuntimeSnapshotResponse>("cmd_voice_stop_session", { request });
   }
 }
 
@@ -1714,6 +1756,140 @@ export class MockChatIpcClient implements ChatIpcClient {
       correlationId: request.correlationId,
       voices,
       selectedVoice: voices.includes(this.mockTts.voice) ? this.mockTts.voice : fallbackVoice
+    };
+  }
+
+  async voiceListVadMethods(
+    request: VoiceListVadMethodsRequest
+  ): Promise<VoiceListVadMethodsResponse> {
+    const methods = [
+      {
+        id: "energy-basic",
+        displayName: "Energy Basic",
+        status: "stable" as const,
+        description: "Deterministic threshold-based voice activity detection.",
+        capabilities: {
+          supportsEndpointing: true,
+          supportsInterruptionSignals: false,
+          supportsMicroTurns: false,
+          supportsOverlapTurnYieldHints: false,
+          supportsSpeechProbability: true,
+          supportsPartialSegmentation: true
+        },
+        defaultConfig: { threshold: 0.0012, minSpeechMs: 120, minSilenceMs: 240, hangoverMs: 80 }
+      },
+      {
+        id: "sherpa-silero",
+        displayName: "Sherpa Silero",
+        status: "stable" as const,
+        description: "Production-compatible endpointing adapter.",
+        capabilities: {
+          supportsEndpointing: true,
+          supportsInterruptionSignals: true,
+          supportsMicroTurns: false,
+          supportsOverlapTurnYieldHints: false,
+          supportsSpeechProbability: true,
+          supportsPartialSegmentation: true
+        },
+        defaultConfig: {
+          baseThreshold: 0.0012,
+          startFrames: 2,
+          endFrames: 8,
+          dynamicMultiplier: 2.4,
+          noiseAdaptationAlpha: 0.03,
+          preSpeechMs: 200,
+          minUtteranceMs: 200,
+          maxUtteranceS: 30,
+          forceFlushS: 3
+        }
+      },
+      {
+        id: "microturn-v1",
+        displayName: "Microturn v1",
+        status: "experimental" as const,
+        description: "Experimental periodic micro-turn segmentation.",
+        capabilities: {
+          supportsEndpointing: true,
+          supportsInterruptionSignals: false,
+          supportsMicroTurns: true,
+          supportsOverlapTurnYieldHints: false,
+          supportsSpeechProbability: true,
+          supportsPartialSegmentation: true
+        },
+        defaultConfig: { threshold: 0.0012, microturnWindowMs: 700, minSpeechMs: 120 }
+      }
+    ].filter((method) => request.includeExperimental || method.status !== "experimental");
+    return {
+      correlationId: request.correlationId,
+      methods,
+      selectedVadMethod: "sherpa-silero",
+      state: "idle"
+    };
+  }
+
+  async voiceGetVadSettings(
+    request: VoiceGetVadSettingsRequest
+  ): Promise<VoiceGetVadSettingsResponse> {
+    return {
+      correlationId: request.correlationId,
+      state: "idle",
+      settings: {
+        version: 1,
+        selectedVadMethod: "sherpa-silero",
+        globalVoiceConfig: { sampleRateHz: 16000 },
+        vadMethods: {
+          "sherpa-silero": {
+            baseThreshold: 0.0012,
+            startFrames: 2,
+            endFrames: 8,
+            dynamicMultiplier: 2.4,
+            noiseAdaptationAlpha: 0.03,
+            preSpeechMs: 200,
+            minUtteranceMs: 200,
+            maxUtteranceS: 30,
+            forceFlushS: 3
+          }
+        }
+      }
+    };
+  }
+
+  async voiceSetVadMethod(
+    request: VoiceSetVadMethodRequest
+  ): Promise<VoiceRuntimeSnapshotResponse> {
+    return {
+      correlationId: request.correlationId,
+      snapshot: { state: "idle", sessionId: null, selectedVadMethod: request.methodId }
+    };
+  }
+
+  async voiceUpdateVadConfig(
+    request: VoiceUpdateVadConfigRequest
+  ): Promise<VoiceUpdateVadConfigResponse> {
+    return {
+      correlationId: request.correlationId,
+      settings: {
+        version: 1,
+        selectedVadMethod: request.methodId,
+        globalVoiceConfig: { sampleRateHz: 16000 },
+        vadMethods: { [request.methodId]: request.config }
+      }
+    };
+  }
+
+  async voiceStartSession(
+    request: VoiceStartSessionRequest
+  ): Promise<VoiceRuntimeSnapshotResponse> {
+    return {
+      correlationId: request.correlationId,
+      snapshot: { state: "running", sessionId: "mock-voice", selectedVadMethod: "sherpa-silero" }
+    };
+  }
+
+  async voiceStopSession(request: VoiceStopSessionRequest): Promise<VoiceRuntimeSnapshotResponse> {
+    return {
+      correlationId: request.correlationId,
+      snapshot: { state: "idle", sessionId: null, selectedVadMethod: "sherpa-silero" }
     };
   }
 

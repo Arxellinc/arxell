@@ -5,7 +5,10 @@ import type {
   ConversationSummaryRecord,
   LlamaRuntimeStatusResponse,
   ModelManagerHfCandidate,
-  ModelManagerInstalledModel
+  ModelManagerInstalledModel,
+  PersistedVoiceSettings,
+  VadManifest,
+  VoiceRuntimeState
 } from "../contracts";
 import type { ChatModelCapabilities } from "../modelCapabilities";
 import type { IconName } from "../icons";
@@ -224,6 +227,12 @@ export interface PrimaryPanelRenderState {
   }>;
   modelManagerUnslothUdLoading: boolean;
   stt: SttState;
+  vadMethods: VadManifest[];
+  vadIncludeExperimental: boolean;
+  vadSelectedMethod: string;
+  vadSettings: PersistedVoiceSettings | null;
+  voiceRuntimeState: VoiceRuntimeState;
+  vadMessage: string | null;
   tts: TtsState;
   consoleEntries: ConsoleEntry[];
 }
@@ -333,6 +342,10 @@ export interface PrimaryPanelBindings {
     "vadMinUtteranceMs" |
     "vadMaxUtteranceS" |
     "vadForceFlushS">, value: number) => Promise<void>;
+  onSetVadMethod: (methodId: string) => Promise<void>;
+  onSetVadIncludeExperimental: (value: boolean) => Promise<void>;
+  onUpdateVadMethodConfig: (key: string, value: number) => Promise<void>;
+  onRefreshVadSettings: () => Promise<void>;
   onSetDisplayMode: (mode: "dark" | "light" | "terminal") => Promise<void>;
   onSetDisplayModePreference: (mode: "dark" | "light" | "system" | "terminal") => Promise<void>;
   onSetChatRoutePreference: (mode: "auto" | "agent" | "legacy") => Promise<void>;

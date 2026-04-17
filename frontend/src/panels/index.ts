@@ -417,6 +417,29 @@ export function attachPrimaryPanelInteractions(
         await bindings.onUpdateSttVadSetting(input.key, parsed);
       };
     }
+
+    const vadMethodSelect = document.querySelector<HTMLSelectElement>("#vadMethodSelect");
+    if (vadMethodSelect) {
+      vadMethodSelect.onchange = async () => {
+        await bindings.onSetVadMethod(vadMethodSelect.value);
+      };
+    }
+    const vadExperimentalToggle = document.querySelector<HTMLInputElement>("#vadExperimentalToggle");
+    if (vadExperimentalToggle) {
+      vadExperimentalToggle.onchange = async () => {
+        await bindings.onSetVadIncludeExperimental(vadExperimentalToggle.checked);
+      };
+    }
+    const methodConfigInputs = document.querySelectorAll<HTMLInputElement>("[data-vad-config-key]");
+    for (const el of methodConfigInputs) {
+      el.onchange = async () => {
+        const key = el.getAttribute("data-vad-config-key");
+        if (!key) return;
+        const parsed = Number.parseFloat(el.value);
+        if (!Number.isFinite(parsed)) return;
+        await bindings.onUpdateVadMethodConfig(key, parsed);
+      };
+    }
   }
 
   if (tab === "settings") {
