@@ -34,26 +34,28 @@ function parseAttachmentMessage(raw: string): ParsedAttachmentMessage {
   };
 }
 
-export function renderChatActions(state: PrimaryPanelRenderState): string {
+export function renderChatActions(state: PrimaryPanelRenderState, scopeId = ""): string {
   const sttRunning = state.stt?.status === "running" || state.stt?.status === "starting";
-  const ttsActive = state.chatTtsEnabled;
+  const ttsActive = state.chat.chatTtsEnabled;
   const voiceModeActive = sttRunning && ttsActive;
+  const showVoiceControls = state.chat.panelId === "chat-0";
   return `
     <div class="chat-actions">
-      <button type="button" class="topbar-icon-btn" id="chatNewBtn" aria-label="New chat" data-title="New Chat" title="New Chat">${iconHtml(APP_ICON.action.chatNew, { size: 16, tone: "dark" })}</button>
-      <button type="button" class="topbar-icon-btn" id="chatClearBtn" aria-label="Clear chat" data-title="Clear Chat" title="Clear Chat">${iconHtml(APP_ICON.action.chatClear, { size: 16, tone: "dark" })}</button>
-      <button type="button" class="topbar-icon-btn chat-speech-btn ${voiceModeActive ? "is-active" : ""}" id="chatSpeechBtn" aria-label="${voiceModeActive ? "Disable voice mode" : "Enable voice mode"}" data-title="${voiceModeActive ? "Voice Mode On" : "Voice Mode Off"}" title="${voiceModeActive ? "Disable voice mode (STT + TTS)" : "Enable voice mode (STT + TTS)"}">${iconHtml("speech", { size: 16, tone: "dark" })}</button>
+      <button type="button" class="topbar-icon-btn" id="chatNewBtn${scopeId}" aria-label="New chat" data-title="New Chat" title="New Chat">${iconHtml(APP_ICON.action.chatNew, { size: 16, tone: "dark" })}</button>
+      <button type="button" class="topbar-icon-btn" id="chatClearBtn${scopeId}" aria-label="Clear chat" data-title="Clear Chat" title="Clear Chat">${iconHtml(APP_ICON.action.chatClear, { size: 16, tone: "dark" })}</button>
+      ${showVoiceControls ? `<button type="button" class="topbar-icon-btn chat-speech-btn ${voiceModeActive ? "is-active" : ""}" id="chatSpeechBtn${scopeId}" aria-label="${voiceModeActive ? "Disable voice mode" : "Enable voice mode"}" data-title="${voiceModeActive ? "Voice Mode On" : "Voice Mode Off"}" title="${voiceModeActive ? "Disable voice mode (STT + TTS)" : "Enable voice mode (STT + TTS)"}">${iconHtml("speech", { size: 16, tone: "dark" })}</button>` : ""}
     </div>
   `;
 }
 
-export function renderChatBody(state: PrimaryPanelRenderState): string {
+export function renderChatBody(state: PrimaryPanelRenderState, scopeId = ""): string {
   const isListening = state.stt?.isListening ?? false;
   const isSpeaking = state.stt?.isSpeaking ?? false;
-  const attachedFileName = state.chatAttachedFileName?.trim() ?? "";
+  const attachedFileName = state.chat.chatAttachedFileName?.trim() ?? "";
   const hasAttachedFile = attachedFileName.length > 0;
-  const caps = state.chatActiveModelCapabilities;
-  const canStopActiveOutput = state.chatStreaming || state.chatTtsPlaying;
+  const caps = state.chat.chatActiveModelCapabilities;
+  const canStopActiveOutput = state.chat.chatStreaming || state.chat.chatTtsPlaying;
+  const showVoiceControls = state.chat.panelId === "chat-0";
   const capabilitySummary = [
     caps.text ? "text" : null,
     caps.imageUnderstanding ? "image" : null,
@@ -64,69 +66,69 @@ export function renderChatBody(state: PrimaryPanelRenderState): string {
     .filter((part): part is string => Boolean(part))
     .join(", ");
   return `
-    <div class="messages">${renderChatMessages(state)}</div>
-    <form class="composer" id="composer">
-      <div class="composer-model-meta" id="chatModelMeta">
+    <div class="messages" data-chat-pane-id="${escapeHtml(state.chat.panelId)}">${renderChatMessages(state)}</div>
+    <form class="composer" id="composer${scopeId}">
+      <div class="composer-model-meta" id="chatModelMeta${scopeId}">
         <span class="composer-model-caps">${escapeHtml(capabilitySummary || "text")}</span>
       </div>
-      <div class="composer-attachment-meta" id="chatAttachmentMeta" ${hasAttachedFile ? "" : "hidden"}>
+      <div class="composer-attachment-meta" id="chatAttachmentMeta${scopeId}" ${hasAttachedFile ? "" : "hidden"}>
         <span class="composer-attachment-icon" aria-hidden="true">${iconHtml("file-badge", { size: 16, tone: "dark" })}</span>
-        <span class="composer-attachment-name" id="chatAttachmentName">${hasAttachedFile ? escapeHtml(attachedFileName) : ""}</span>
+        <span class="composer-attachment-name" id="chatAttachmentName${scopeId}">${hasAttachedFile ? escapeHtml(attachedFileName) : ""}</span>
       </div>
-      <textarea id="msg" rows="3" placeholder="Send a message">${escapeHtml(state.chatDraft)}</textarea>
+      <textarea id="msg${scopeId}" rows="3" placeholder="Send a message">${escapeHtml(state.chat.chatDraft)}</textarea>
       <div class="composer-actions">
         <button
           type="button"
-          class="thinking-toggle-btn ${state.chatThinkingEnabled ? "is-active" : ""}"
-          id="chatThinkingToggleBtn"
-          aria-label="${state.chatThinkingEnabled ? "Disable Thinking" : "Enable Thinking"}"
-          title="${state.chatThinkingEnabled ? "Disable Thinking" : "Enable Thinking"}"
+          class="thinking-toggle-btn ${state.chat.chatThinkingEnabled ? "is-active" : ""}"
+          id="chatThinkingToggleBtn${scopeId}"
+          aria-label="${state.chat.chatThinkingEnabled ? "Disable Thinking" : "Enable Thinking"}"
+          title="${state.chat.chatThinkingEnabled ? "Disable Thinking" : "Enable Thinking"}"
         >
           <span class="thinking-toggle-glyph" aria-hidden="true">${iconHtml(APP_ICON.action.chatThinking, { size: 16, tone: "dark" })}</span>
-          <span class="thinking-toggle-label">${state.chatThinkingEnabled ? "Thinking" : "No Thinking"}</span>
+          <span class="thinking-toggle-label">${state.chat.chatThinkingEnabled ? "Thinking" : "No Thinking"}</span>
         </button>
-        <button type="button" class="attach-icon-btn" id="chatAttachBtn" aria-label="Attach document" title="Attach document">
+        <button type="button" class="attach-icon-btn" id="chatAttachBtn${scopeId}" aria-label="Attach document" title="Attach document">
           <span class="attach-icon-glyph" aria-hidden="true">${iconHtml("file-plus", { size: 16, tone: "dark" })}</span>
           <span class="attach-icon-label">attach</span>
         </button>
-        <button type="button" class="mic-icon-btn ${isListening ? "is-active" : ""}" id="chatMicBtn" aria-label="${isListening ? "Stop voice input" : "Start voice input"}" title="${isListening ? "Stop voice input" : "Start voice input"}">
+        ${showVoiceControls ? `<button type="button" class="mic-icon-btn ${isListening ? "is-active" : ""}" id="chatMicBtn${scopeId}" aria-label="${isListening ? "Stop voice input" : "Start voice input"}" title="${isListening ? "Stop voice input" : "Start voice input"}">
           <span class="mic-icon-glyph" aria-hidden="true">${iconHtml(isSpeaking ? APP_ICON.sidebar.sttSpeaking : APP_ICON.sidebar.stt, { size: 16, tone: "dark" })}</span>
           <span class="mic-icon-label">STT</span>
         </button>
-        <button type="button" class="mic-icon-btn ${state.chatTtsEnabled ? "is-active" : ""}" id="chatSpeakBtn" aria-label="${state.chatTtsEnabled ? "Disable auto-speak" : "Enable auto-speak"}" title="${state.chatTtsEnabled ? "Disable auto-speak" : "Enable auto-speak"}">
+        <button type="button" class="mic-icon-btn ${state.chat.chatTtsEnabled ? "is-active" : ""}" id="chatSpeakBtn${scopeId}" aria-label="${state.chat.chatTtsEnabled ? "Disable auto-speak" : "Enable auto-speak"}" title="${state.chat.chatTtsEnabled ? "Disable auto-speak" : "Enable auto-speak"}">
           <span class="mic-icon-glyph" aria-hidden="true">${iconHtml(APP_ICON.sidebar.tts, { size: 16, tone: "dark" })}</span>
           <span class="mic-icon-label">TTS</span>
-        </button>
-        <button type="button" class="send-icon-btn" id="chatSubmitBtn" aria-label="${canStopActiveOutput ? "Stop response" : "Send message"}" title="${canStopActiveOutput ? "Stop response" : "Send message"}">
+        </button>` : ""}
+        <button type="button" class="send-icon-btn" id="chatSubmitBtn${scopeId}" aria-label="${canStopActiveOutput ? "Stop response" : "Send message"}" title="${canStopActiveOutput ? "Stop response" : "Send message"}">
           <span class="send-icon-glyph ${canStopActiveOutput ? "is-stop" : "is-play"}" aria-hidden="true">${canStopActiveOutput ? "◼" : "▶"}</span>
         </button>
       </div>
-      <input type="file" id="chatAttachInput" hidden />
+      <input type="file" id="chatAttachInput${scopeId}" hidden />
     </form>
   `;
 }
 
-export function renderChatMessages(state: PrimaryPanelRenderState): string {
-  const messagesHtml = state.messages
+export function renderChatMessages(state: Pick<PrimaryPanelRenderState, "chat">): string {
+  const messagesHtml = state.chat.messages
     .map(
       (m, messageIndex) => {
         const correlationId = m.role === "assistant" ? m.correlationId : undefined;
         const parsed = m.role === "user" ? parseAttachmentMessage(m.text) : { displayText: m.text, attachment: null };
         const thinkingText = correlationId
-          ? (state.chatReasoningByCorrelation[correlationId] ?? "").trim()
+          ? (state.chat.chatReasoningByCorrelation[correlationId] ?? "").trim()
           : "";
         const thinkingRowId = correlationId ? `thinking-row-${correlationId}` : "";
         const thinkingExpanded = thinkingRowId
-          ? state.chatToolRowExpandedById[thinkingRowId] === true
+          ? state.chat.chatToolRowExpandedById[thinkingRowId] === true
           : false;
         const placement = correlationId
-          ? state.chatThinkingPlacementByCorrelation[correlationId] ?? "after"
+          ? state.chat.chatThinkingPlacementByCorrelation[correlationId] ?? "after"
           : "after";
         const toolRows = correlationId
-          ? (state.chatToolRowsByCorrelation[correlationId] ?? [])
+          ? (state.chat.chatToolRowsByCorrelation[correlationId] ?? [])
           : [];
         const streamComplete = correlationId
-          ? state.chatStreamCompleteByCorrelation[correlationId] === true
+          ? state.chat.chatStreamCompleteByCorrelation[correlationId] === true
           : true;
         const hasToolRows = toolRows.length > 0;
         const showAssistantText = !(hasToolRows && !streamComplete);
@@ -134,10 +136,10 @@ export function renderChatMessages(state: PrimaryPanelRenderState): string {
           ? `<section class="message-tool-rows">
               ${toolRows
                 .map((row) => {
-                  const expanded = state.chatToolRowExpandedById[row.rowId] === true;
+                  const expanded = state.chat.chatToolRowExpandedById[row.rowId] === true;
                   const chevron = expanded ? "▾" : "▸";
                   return `<article class="message-tool-row ${expanded ? "is-open" : ""}">
-                    <button type="button" class="message-tool-row-toggle" data-tool-row-toggle-id="${escapeHtml(row.rowId)}" aria-expanded="${expanded ? "true" : "false"}" title="${expanded ? "Collapse details" : "Expand details"}">
+                    <button type="button" class="message-tool-row-toggle" data-tool-row-toggle-id="${escapeHtml(row.rowId)}" data-chat-pane-id="${escapeHtml(state.chat.panelId)}" aria-expanded="${expanded ? "true" : "false"}" title="${expanded ? "Collapse details" : "Expand details"}">
                       <span class="message-tool-row-left">
                         <span class="message-tool-row-icon">${iconHtml(row.icon, { size: 16, tone: "dark" })}</span>
                         <span class="message-tool-row-title">${escapeHtml(row.title)}</span>
@@ -154,12 +156,12 @@ export function renderChatMessages(state: PrimaryPanelRenderState): string {
           ? `attachment-row-${messageIndex}-${parsed.attachment.fileName}`
           : "";
         const attachmentExpanded = parsed.attachment
-          ? state.chatToolRowExpandedById[attachmentRowId] === true
+          ? state.chat.chatToolRowExpandedById[attachmentRowId] === true
           : false;
         const attachmentRowsHtml = parsed.attachment
           ? `<section class="message-tool-rows">
               <article class="message-tool-row ${attachmentExpanded ? "is-open" : ""}">
-                <button type="button" class="message-tool-row-toggle" data-tool-row-toggle-id="${escapeHtml(attachmentRowId)}" aria-expanded="${attachmentExpanded ? "true" : "false"}" title="${attachmentExpanded ? "Collapse attachment" : "Expand attachment"}">
+                <button type="button" class="message-tool-row-toggle" data-tool-row-toggle-id="${escapeHtml(attachmentRowId)}" data-chat-pane-id="${escapeHtml(state.chat.panelId)}" aria-expanded="${attachmentExpanded ? "true" : "false"}" title="${attachmentExpanded ? "Collapse attachment" : "Expand attachment"}">
                   <span class="message-tool-row-left">
                     <span class="message-tool-row-icon">${iconHtml("file-badge", { size: 16, tone: "dark" })}</span>
                     <span class="message-tool-row-title">${escapeHtml(parsed.attachment.fileName)}</span>
@@ -179,7 +181,7 @@ export function renderChatMessages(state: PrimaryPanelRenderState): string {
           correlationId && thinkingText
             ? `<section class="message-tool-rows">
                 <article class="message-tool-row ${thinkingExpanded ? "is-open" : ""}">
-                  <button type="button" class="message-tool-row-toggle" data-tool-row-toggle-id="${escapeHtml(thinkingRowId)}" aria-expanded="${thinkingExpanded ? "true" : "false"}" title="${thinkingExpanded ? "Collapse thinking" : "Expand thinking"}">
+                  <button type="button" class="message-tool-row-toggle" data-tool-row-toggle-id="${escapeHtml(thinkingRowId)}" data-chat-pane-id="${escapeHtml(state.chat.panelId)}" aria-expanded="${thinkingExpanded ? "true" : "false"}" title="${thinkingExpanded ? "Collapse thinking" : "Expand thinking"}">
                     <span class="message-tool-row-left">
                       <span class="message-tool-row-icon">${iconHtml(APP_ICON.action.chatThinking, { size: 16, tone: "dark" })}</span>
                       <span class="message-tool-row-title">Thinking</span>
@@ -205,6 +207,7 @@ export function renderChatMessages(state: PrimaryPanelRenderState): string {
 }
 
 export function bindChatPanel(
+  scopeId: string,
   onSendMessage: (text: string, attachments?: ChatAttachment[]) => Promise<void>,
   onUpdateChatDraft: (text: string) => void,
   onSetChatAttachment: (fileName: string, content: string) => void,
@@ -216,12 +219,13 @@ export function bindChatPanel(
   activeModelLabel: string,
   modelCapabilities: ChatModelCapabilities
 ): void {
-  const form = document.querySelector<HTMLFormElement>("#composer");
-  const input = document.querySelector<HTMLTextAreaElement>("#msg");
-  const attachBtn = document.querySelector<HTMLButtonElement>("#chatAttachBtn");
-  const attachInput = document.querySelector<HTMLInputElement>("#chatAttachInput");
-  const attachmentMeta = document.querySelector<HTMLDivElement>("#chatAttachmentMeta");
-  const attachmentName = document.querySelector<HTMLSpanElement>("#chatAttachmentName");
+  const s = scopeId;
+  const form = document.querySelector<HTMLFormElement>(`#composer${s}`);
+  const input = document.querySelector<HTMLTextAreaElement>(`#msg${s}`);
+  const attachBtn = document.querySelector<HTMLButtonElement>(`#chatAttachBtn${s}`);
+  const attachInput = document.querySelector<HTMLInputElement>(`#chatAttachInput${s}`);
+  const attachmentMeta = document.querySelector<HTMLDivElement>(`#chatAttachmentMeta${s}`);
+  const attachmentName = document.querySelector<HTMLSpanElement>(`#chatAttachmentName${s}`);
   if (!form || !input) return;
   const MAX_ATTACHMENT_CHARS = 12000;
   const MAX_IMAGE_BYTES = 6 * 1024 * 1024;
@@ -241,7 +245,7 @@ export function bindChatPanel(
 
   const refocusInput = () => {
     requestAnimationFrame(() => {
-      const nextInput = document.querySelector<HTMLTextAreaElement>("#msg");
+      const nextInput = document.querySelector<HTMLTextAreaElement>(`#msg${s}`);
       if (!nextInput) return;
       nextInput.focus();
       const caret = nextInput.value.length;
@@ -298,7 +302,7 @@ export function bindChatPanel(
     await submitCurrentInput();
   };
 
-  const submitBtn = document.querySelector<HTMLButtonElement>("#chatSubmitBtn");
+  const submitBtn = document.querySelector<HTMLButtonElement>(`#chatSubmitBtn${s}`);
   if (submitBtn) {
     submitBtn.onclick = async () => {
       if (chatStreaming) {
@@ -310,7 +314,7 @@ export function bindChatPanel(
     };
   }
 
-  const micBtn = document.querySelector<HTMLButtonElement>("#chatMicBtn");
+  const micBtn = document.querySelector<HTMLButtonElement>(`#chatMicBtn${s}`);
   if (micBtn) {
     micBtn.onclick = async () => {
       await onToggleStt();

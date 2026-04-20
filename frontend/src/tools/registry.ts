@@ -45,12 +45,14 @@ const PREFERRED_TOOL_ORDER = [
   "looper",
   "files",
   "notepad",
+  "sheets",
   "webSearch",
   "chart",
   "flow",
   "tasks",
   "memory",
-  "skills"
+  "skills",
+  "docs"
 ] as const;
 
 function buildToolOrder(): string[] {

@@ -1,3 +1,5 @@
+import type { FilesListDirectoryEntry } from "../../contracts";
+
 export interface SkillInfo {
   id: string;
   name: string;
@@ -13,21 +15,29 @@ export interface SkillsSettings {
 }
 
 export interface SkillsToolViewState {
-  skills: SkillInfo[];
-  selectedSkillId: string | null;
-  contentById: Record<string, string>;
-  dirtyById: Record<string, boolean>;
-  savedContentById: Record<string, string>;
-  loading: boolean;
-  error: string | null;
-  sidebarWidth: number;
-  sidebarCollapsed?: boolean;
-  settingsOpen: boolean;
-  settings: SkillsSettings;
-  newSkillModalOpen: boolean;
-  newSkillName: string;
-  newSkillDescription: string;
-  confirmDeleteId: string | null;
+  skillsRootPath: string | null;
+  skillsSelectedPath: string | null;
+  skillsSelectedEntryPath: string | null;
+  skillsExpandedByPath: Record<string, boolean>;
+  skillsEntriesByPath: Record<string, FilesListDirectoryEntry[]>;
+  skillsLoadingByPath: Record<string, boolean>;
+  skillsOpenTabs: string[];
+  skillsActiveTabPath: string | null;
+  skillsContentByPath: Record<string, string>;
+  skillsSavedContentByPath: Record<string, string>;
+  skillsDirtyByPath: Record<string, boolean>;
+  skillsLoadingFileByPath: Record<string, boolean>;
+  skillsSavingFileByPath: Record<string, boolean>;
+  skillsReadOnlyByPath: Record<string, boolean>;
+  skillsSizeByPath: Record<string, number>;
+  skillsSidebarWidth: number;
+  skillsSidebarCollapsed: boolean;
+  skillsFindOpen: boolean;
+  skillsFindQuery: string;
+  skillsReplaceQuery: string;
+  skillsFindCaseSensitive: boolean;
+  skillsLineWrap: boolean;
+  skillsError: string | null;
 }
 
 export const DEFAULT_SKILLS_SETTINGS: SkillsSettings = {
@@ -97,20 +107,28 @@ export function buildSkillContent(name: string, description: string, body: strin
 
 export function getInitialSkillsState(): SkillsToolViewState {
   return {
-    skills: [],
-    selectedSkillId: null,
-    contentById: {},
-    dirtyById: {},
-    savedContentById: {},
-    loading: false,
-    error: null,
-    sidebarWidth: SKILLS_SIDEBAR_DEFAULT_WIDTH,
-    sidebarCollapsed: false,
-    settingsOpen: false,
-    settings: { ...DEFAULT_SKILLS_SETTINGS },
-    newSkillModalOpen: false,
-    newSkillName: "",
-    newSkillDescription: "",
-    confirmDeleteId: null
+    skillsRootPath: null,
+    skillsSelectedPath: null,
+    skillsSelectedEntryPath: null,
+    skillsExpandedByPath: {},
+    skillsEntriesByPath: {},
+    skillsLoadingByPath: {},
+    skillsOpenTabs: [],
+    skillsActiveTabPath: null,
+    skillsContentByPath: {},
+    skillsSavedContentByPath: {},
+    skillsDirtyByPath: {},
+    skillsLoadingFileByPath: {},
+    skillsSavingFileByPath: {},
+    skillsReadOnlyByPath: {},
+    skillsSizeByPath: {},
+    skillsSidebarWidth: SKILLS_SIDEBAR_DEFAULT_WIDTH,
+    skillsSidebarCollapsed: false,
+    skillsFindOpen: false,
+    skillsFindQuery: "",
+    skillsReplaceQuery: "",
+    skillsFindCaseSensitive: false,
+    skillsLineWrap: false,
+    skillsError: null
   };
 }

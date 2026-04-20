@@ -34,6 +34,18 @@ pub enum VoiceRuntimeState {
     Idle,
     Starting,
     Running,
+    RunningSingle,
+    RunningDual,
+    HandingOff,
     Stopping,
     Error,
+}
+
+impl VoiceRuntimeState {
+    pub fn is_running(self) -> bool {
+        matches!(
+            self,
+            Self::Running | Self::RunningSingle | Self::RunningDual | Self::HandingOff
+        )
+    }
 }

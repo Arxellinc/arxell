@@ -1,5 +1,11 @@
 import type { PrimaryPanelRenderState } from "./types";
 import { escapeHtml } from "./utils";
+import {
+  canRequestVadHandoff,
+  canStartShadowEval,
+  canStopShadowEval,
+  isVoiceRuntimeIdle
+} from "../app/vadRuntimeRules";
 
 export function renderSttActions(): string {
   return `
@@ -241,7 +247,13 @@ export function renderVadBody(state: PrimaryPanelRenderState): string {
   const selectedMethod = state.vadMethods.find((method) => method.id === state.vadSelectedMethod);
   const statusText = selectedMethod?.status ?? "stable";
   const config = state.vadSettings?.vadMethods[state.vadSelectedMethod] ?? selectedMethod?.defaultConfig ?? {};
-  const sessionActive = state.voiceRuntimeState !== "idle";
+  const sessionActive = !isVoiceRuntimeIdle(state.voiceRuntimeState);
+  const handoffTargets = state.vadMethods.filter((method) => method.id !== state.vadSelectedMethod);
+  const handoffAllowed = canRequestVadHandoff({
+    runtimeState: state.voiceRuntimeState,
+    handoffState: state.voiceHandoffState,
+    targetCount: handoffTargets.length
+  });
   const capabilityLabels = selectedMethod
     ? [
         selectedMethod.capabilities.supportsEndpointing ? "endpointing" : null,
@@ -269,7 +281,16 @@ export function renderVadBody(state: PrimaryPanelRenderState): string {
           <div class="config-row stt-vad-row">
             <span class="config-key stt-vad-label">Runtime</span>
             <span class="config-value stt-vad-value">${escapeHtml(state.voiceRuntimeState)}</span>
-            <span class="config-meta stt-vad-hint">${sessionActive ? "switching locked" : "switching available"}</span>
+            <span class="config-meta stt-vad-hint">${escapeHtml(state.voiceHandoffState)}</span>
+          </div>
+          <div class="config-row stt-vad-row">
+            <label class="config-key stt-vad-label" for="vadDuplexModeSelect">Duplex</label>
+            <span class="config-value stt-vad-value">
+              <select id="vadDuplexModeSelect" class="control-select">
+                ${["single_turn", "full_duplex_speculative", "full_duplex_shadow_only"].map((mode) => `<option value="${mode}"${mode === state.voiceDuplexMode ? " selected" : ""}>${mode}</option>`).join("")}
+              </select>
+            </span>
+            <span class="config-meta stt-vad-hint">${escapeHtml(state.voiceSpeculationState)}</span>
           </div>
           <div class="config-row stt-vad-row">
             <label class="config-key stt-vad-label" for="vadExperimentalToggle">Experimental</label>
@@ -282,6 +303,41 @@ export function renderVadBody(state: PrimaryPanelRenderState): string {
         ${selectedMethod ? `<p class="stt-vad-note">${escapeHtml(selectedMethod.description)}</p>` : ""}
         ${capabilityLabels.length ? `<div class="stt-vad-note">${capabilityLabels.map((label) => `<span class="vad-capability-badge">${escapeHtml(label)}</span>`).join(" ")}</div>` : ""}
         ${state.vadMessage ? `<p class="stt-vad-note">${escapeHtml(state.vadMessage)}</p>` : ""}
+      </section>
+      <section class="stt-vad-section" aria-label="VAD Handoff">
+        <h3 class="stt-vad-title">Handoff</h3>
+        <div class="config-table stt-vad-table">
+          <div class="config-row stt-vad-row">
+            <label class="config-key stt-vad-label" for="vadHandoffTargetSelect">Target</label>
+            <span class="config-value stt-vad-value">
+              <select id="vadHandoffTargetSelect" class="control-select" ${sessionActive ? "" : "disabled"}>
+                ${handoffTargets.map((method) => `<option value="${escapeHtml(method.id)}">${escapeHtml(method.displayName)}</option>`).join("")}
+              </select>
+            </span>
+            <span class="config-meta stt-vad-hint">${state.vadStandbyMethod ? `standby ${escapeHtml(state.vadStandbyMethod)}` : "no standby"}</span>
+          </div>
+        </div>
+        <button type="button" class="tool-action-btn" id="vadRequestHandoffBtn" ${handoffAllowed ? "" : "disabled"}>Request Handoff</button>
+      </section>
+      <section class="stt-vad-section" aria-label="VAD Shadow Evaluation">
+        <h3 class="stt-vad-title">Shadow Evaluation</h3>
+        <div class="config-table stt-vad-table">
+          <div class="config-row stt-vad-row">
+            <label class="config-key stt-vad-label" for="vadShadowMethodSelect">Shadow</label>
+            <span class="config-value stt-vad-value">
+              <select id="vadShadowMethodSelect" class="control-select">
+                <option value="">None</option>
+                ${handoffTargets.map((method) => `<option value="${escapeHtml(method.id)}"${method.id === state.vadShadowMethod ? " selected" : ""}>${escapeHtml(method.displayName)}</option>`).join("")}
+              </select>
+            </span>
+            <span class="config-meta stt-vad-hint">${state.vadShadowMethod ? escapeHtml(state.vadShadowMethod) : "disabled"}</span>
+          </div>
+        </div>
+        <div class="modal-actions">
+          <button type="button" class="tool-action-btn" id="vadStartShadowBtn" ${canStartShadowEval({ runtimeState: state.voiceRuntimeState, shadowMethodId: state.vadShadowMethod }) ? "" : "disabled"}>Start Shadow</button>
+          <button type="button" class="tool-action-btn" id="vadStopShadowBtn" ${canStopShadowEval(state.voiceRuntimeState) ? "" : "disabled"}>Stop Shadow</button>
+        </div>
+        ${state.vadShadowSummary ? `<p class="stt-vad-note">active ${state.vadShadowSummary.activeEventCount} / shadow ${state.vadShadowSummary.shadowEventCount} / disagreements ${state.vadShadowSummary.disagreementCount}</p>` : ""}
       </section>
       ${renderVadMethodConfigSection(config)}
     </div>

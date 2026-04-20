@@ -22,14 +22,15 @@ import { renderWorkspaceActions, renderWorkspaceBody } from "./workspacePanel";
 
 export function getPanelDefinition(
   tab: SidebarTab,
-  state: PrimaryPanelRenderState
+  state: PrimaryPanelRenderState,
+  scopeId = ""
 ): PrimaryPanelDefinition {
   if (tab === "chat") {
     return {
       title: "Chat",
       icon: APP_ICON.pane.chat,
-      renderBody: () => renderChatBody(state),
-      renderActions: () => renderChatActions(state)
+      renderBody: () => renderChatBody(state, scopeId),
+      renderActions: () => renderChatActions(state, scopeId)
     };
   }
 
@@ -138,21 +139,22 @@ export function attachPrimaryPanelInteractions(
 ): void {
   if (tab === "chat") {
     bindChatPanel(
+      "",
       bindings.onSendMessage,
       bindings.onUpdateChatDraft,
       bindings.onSetChatAttachment,
       bindings.onClearChatAttachment,
       bindings.onStopCurrentResponse,
       bindings.onToggleStt,
-      state.chatStreaming || state.chatTtsPlaying,
-      state.chatAttachedFileName
+      state.chat.chatStreaming || state.chat.chatTtsPlaying,
+      state.chat.chatAttachedFileName
         ? {
-            name: state.chatAttachedFileName,
-            content: state.chatAttachedFileContent ?? ""
+            name: state.chat.chatAttachedFileName,
+            content: state.chat.chatAttachedFileContent ?? ""
           }
         : null,
-      state.chatActiveModelLabel,
-      state.chatActiveModelCapabilities
+      state.chat.chatActiveModelLabel,
+      state.chat.chatActiveModelCapabilities
     );
     const newBtn = document.querySelector<HTMLButtonElement>("#chatNewBtn");
     if (newBtn) {
@@ -438,6 +440,44 @@ export function attachPrimaryPanelInteractions(
         const parsed = Number.parseFloat(el.value);
         if (!Number.isFinite(parsed)) return;
         await bindings.onUpdateVadMethodConfig(key, parsed);
+      };
+    }
+    const duplexSelect = document.querySelector<HTMLSelectElement>("#vadDuplexModeSelect");
+    if (duplexSelect) {
+      duplexSelect.onchange = async () => {
+        const mode = duplexSelect.value;
+        if (
+          mode !== "single_turn" &&
+          mode !== "full_duplex_speculative" &&
+          mode !== "full_duplex_shadow_only"
+        ) return;
+        await bindings.onSetVoiceDuplexMode(mode);
+      };
+    }
+    const handoffBtn = document.querySelector<HTMLButtonElement>("#vadRequestHandoffBtn");
+    const handoffSelect = document.querySelector<HTMLSelectElement>("#vadHandoffTargetSelect");
+    if (handoffBtn && handoffSelect) {
+      handoffBtn.onclick = async () => {
+        if (!handoffSelect.value) return;
+        await bindings.onRequestVadHandoff(handoffSelect.value);
+      };
+    }
+    const shadowSelect = document.querySelector<HTMLSelectElement>("#vadShadowMethodSelect");
+    if (shadowSelect) {
+      shadowSelect.onchange = async () => {
+        await bindings.onSetVadShadowMethod(shadowSelect.value || null);
+      };
+    }
+    const shadowStartBtn = document.querySelector<HTMLButtonElement>("#vadStartShadowBtn");
+    if (shadowStartBtn) {
+      shadowStartBtn.onclick = async () => {
+        await bindings.onStartVadShadowEval();
+      };
+    }
+    const shadowStopBtn = document.querySelector<HTMLButtonElement>("#vadStopShadowBtn");
+    if (shadowStopBtn) {
+      shadowStopBtn.onclick = async () => {
+        await bindings.onStopVadShadowEval();
       };
     }
   }

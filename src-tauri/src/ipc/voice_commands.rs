@@ -1,9 +1,11 @@
 use crate::app::voice_runtime_service::VoiceRuntimeService;
 use crate::contracts::{
-    EventSeverity, EventStage, Subsystem, VoiceGetVadSettingsRequest, VoiceGetVadSettingsResponse,
-    VoiceListVadMethodsRequest, VoiceListVadMethodsResponse, VoiceRuntimeSnapshotResponse,
-    VoiceSetVadMethodRequest, VoiceStartSessionRequest, VoiceStopSessionRequest,
-    VoiceUpdateVadConfigRequest, VoiceUpdateVadConfigResponse,
+    EventSeverity, EventStage, Subsystem, VoiceGetRuntimeDiagnosticsRequest,
+    VoiceGetVadSettingsRequest, VoiceGetVadSettingsResponse, VoiceListVadMethodsRequest,
+    VoiceListVadMethodsResponse, VoiceRequestHandoffRequest, VoiceRuntimeSnapshotResponse,
+    VoiceSetDuplexModeRequest, VoiceSetShadowMethodRequest, VoiceSetVadMethodRequest,
+    VoiceStartSessionRequest, VoiceStartShadowEvalRequest, VoiceStopSessionRequest,
+    VoiceStopShadowEvalRequest, VoiceUpdateVadConfigRequest, VoiceUpdateVadConfigResponse,
 };
 use crate::observability::EventHub;
 use serde_json::json;
@@ -103,5 +105,80 @@ impl VoiceCommandHandler {
                 snapshot,
             })
             .map_err(|err| err.to_string())
+    }
+
+    pub async fn request_handoff(
+        &self,
+        request: VoiceRequestHandoffRequest,
+    ) -> Result<VoiceRuntimeSnapshotResponse, String> {
+        self.voice
+            .request_handoff(&request.correlation_id, &request.target_method_id)
+            .map(|snapshot| VoiceRuntimeSnapshotResponse {
+                correlation_id: request.correlation_id,
+                snapshot,
+            })
+            .map_err(|err| err.to_string())
+    }
+
+    pub async fn set_shadow_method(
+        &self,
+        request: VoiceSetShadowMethodRequest,
+    ) -> Result<VoiceRuntimeSnapshotResponse, String> {
+        self.voice
+            .set_shadow_method(&request.correlation_id, request.method_id)
+            .map(|snapshot| VoiceRuntimeSnapshotResponse {
+                correlation_id: request.correlation_id,
+                snapshot,
+            })
+            .map_err(|err| err.to_string())
+    }
+
+    pub async fn start_shadow_eval(
+        &self,
+        request: VoiceStartShadowEvalRequest,
+    ) -> Result<VoiceRuntimeSnapshotResponse, String> {
+        self.voice
+            .start_shadow_eval(&request.correlation_id)
+            .map(|snapshot| VoiceRuntimeSnapshotResponse {
+                correlation_id: request.correlation_id,
+                snapshot,
+            })
+            .map_err(|err| err.to_string())
+    }
+
+    pub async fn stop_shadow_eval(
+        &self,
+        request: VoiceStopShadowEvalRequest,
+    ) -> Result<VoiceRuntimeSnapshotResponse, String> {
+        self.voice
+            .stop_shadow_eval(&request.correlation_id)
+            .map(|snapshot| VoiceRuntimeSnapshotResponse {
+                correlation_id: request.correlation_id,
+                snapshot,
+            })
+            .map_err(|err| err.to_string())
+    }
+
+    pub async fn set_duplex_mode(
+        &self,
+        request: VoiceSetDuplexModeRequest,
+    ) -> Result<VoiceRuntimeSnapshotResponse, String> {
+        self.voice
+            .set_duplex_mode(&request.correlation_id, request.duplex_mode)
+            .map(|snapshot| VoiceRuntimeSnapshotResponse {
+                correlation_id: request.correlation_id,
+                snapshot,
+            })
+            .map_err(|err| err.to_string())
+    }
+
+    pub async fn runtime_diagnostics(
+        &self,
+        request: VoiceGetRuntimeDiagnosticsRequest,
+    ) -> Result<VoiceRuntimeSnapshotResponse, String> {
+        Ok(VoiceRuntimeSnapshotResponse {
+            correlation_id: request.correlation_id,
+            snapshot: self.voice.snapshot(),
+        })
     }
 }

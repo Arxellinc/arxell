@@ -5,7 +5,15 @@ import chevronLeft from "./chevron-left.svg?raw";
 import columns2 from "./columns-2.svg?raw";
 import edit from "./edit.svg?raw";
 import fileBadge from "./file-badge.svg?raw";
+import fileBraces from "./file-braces.svg?raw";
+import fileCode from "./file-code.svg?raw";
+import fileArchive from "./file-archive.svg?raw";
+import fileImage from "./file-image.svg?raw";
+import fileKey from "./file-key.svg?raw";
+import fileSpreadsheet from "./file-spreadsheet.svg?raw";
+import fileTerminal from "./file-terminal.svg?raw";
 import fileText from "./file-text.svg?raw";
+import fileType from "./file-type.svg?raw";
 import folder from "./folder.svg?raw";
 import gitCompareArrows from "./git-compare-arrows.svg?raw";
 import globe from "./globe.svg?raw";
@@ -43,6 +51,7 @@ import cpu from "./cpu.svg?raw";
 import audioLines from "./audio-lines.svg?raw";
 import search from "./search.svg?raw";
 import databaseZap from "./database-zap.svg?raw";
+import table2 from "./table-2.svg?raw";
 import save from "./save.svg?raw";
 import saveAll from "./save-all.svg?raw";
 import fileOutput from "./file-output.svg?raw";
@@ -60,6 +69,27 @@ import code from "./code.svg?raw";
 import eye from "./eye.svg?raw";
 import squareCheck from "./square-check.svg?raw";
 import squareDashed from "./square-dashed.svg?raw";
+import ellipsisVertical from "./ellipsis-vertical.svg?raw";
+import separatorHorizontal from "./separator-horizontal.svg?raw";
+import separatorVertical from "./separator-vertical.svg?raw";
+import panelRightClose from "./panel-right-close.svg?raw";
+import panelLeftOpen from "./panel-left-open.svg?raw";
+import circleQuestionMark from "./circle-question-mark.svg?raw";
+import database from "./database.svg?raw";
+import bookOpenText from "./book-open-text.svg?raw";
+import undo from "./undo.svg?raw";
+import redo from "./redo.svg?raw";
+import dollarSign from "./dollar-sign.svg?raw";
+import percent from "./percent.svg?raw";
+import hash from "./hash.svg?raw";
+import calendar from "./calendar.svg?raw";
+import calendarClock from "./calendar-clock.svg?raw";
+import bold from "./bold.svg?raw";
+import italic from "./italic.svg?raw";
+import strikethrough from "./strikethrough.svg?raw";
+import listFilterPlus from "./list-filter-plus.svg?raw";
+import panelTop from "./panel-top.svg?raw";
+import link from "./link.svg?raw";
 
 const ICON_SVGS = {
   bot,
@@ -68,8 +98,18 @@ const ICON_SVGS = {
   "chevron-left": chevronLeft,
   "columns-2": columns2,
   edit,
+  "book-open-text": bookOpenText,
   "file-badge": fileBadge,
+  "file-braces": fileBraces,
+  "file-code": fileCode,
+  "file-archive": fileArchive,
+  "file-image": fileImage,
+  "file-key": fileKey,
+  "file-spreadsheet": fileSpreadsheet,
+  "file-terminal": fileTerminal,
   "file-text": fileText,
+  "file-type": fileType,
+  database,
   folder,
   "git-compare-arrows": gitCompareArrows,
   globe,
@@ -117,13 +157,33 @@ const ICON_SVGS = {
   wrench,
   audioLines,
   "database-zap": databaseZap,
+  "table-2": table2,
   "bot-message-square": botMessageSquare,
   "refresh-cw": refreshCw,
   info,
   code,
   eye,
   "square-check": squareCheck,
-  "square-dashed": squareDashed
+  "square-dashed": squareDashed,
+  "ellipsis-vertical": ellipsisVertical,
+  "separator-horizontal": separatorHorizontal,
+  "separator-vertical": separatorVertical,
+  "panel-right-close": panelRightClose,
+  "panel-left-open": panelLeftOpen,
+  "circle-question-mark": circleQuestionMark,
+  undo,
+  redo,
+  "dollar-sign": dollarSign,
+  percent,
+  hash,
+  calendar,
+  "calendar-clock": calendarClock,
+  bold,
+  italic,
+  strikethrough,
+  "list-filter-plus": listFilterPlus,
+  "panel-top": panelTop,
+  link
 } as const;
 
 export type IconName = keyof typeof ICON_SVGS;

@@ -48,14 +48,20 @@ import type {
   TtsStatusResponse,
   TtsStopRequest,
   TtsStopResponse,
+  VoiceGetRuntimeDiagnosticsRequest,
   VoiceGetVadSettingsRequest,
   VoiceGetVadSettingsResponse,
   VoiceListVadMethodsRequest,
   VoiceListVadMethodsResponse,
+  VoiceRequestHandoffRequest,
   VoiceRuntimeSnapshotResponse,
+  VoiceSetDuplexModeRequest,
+  VoiceSetShadowMethodRequest,
   VoiceSetVadMethodRequest,
   VoiceStartSessionRequest,
+  VoiceStartShadowEvalRequest,
   VoiceStopSessionRequest,
+  VoiceStopShadowEvalRequest,
   VoiceUpdateVadConfigRequest,
   VoiceUpdateVadConfigResponse,
   LlamaRuntimeInstallRequest,
@@ -216,6 +222,14 @@ export interface ChatIpcClient {
   voiceUpdateVadConfig(request: VoiceUpdateVadConfigRequest): Promise<VoiceUpdateVadConfigResponse>;
   voiceStartSession(request: VoiceStartSessionRequest): Promise<VoiceRuntimeSnapshotResponse>;
   voiceStopSession(request: VoiceStopSessionRequest): Promise<VoiceRuntimeSnapshotResponse>;
+  voiceRequestHandoff(request: VoiceRequestHandoffRequest): Promise<VoiceRuntimeSnapshotResponse>;
+  voiceSetShadowMethod(request: VoiceSetShadowMethodRequest): Promise<VoiceRuntimeSnapshotResponse>;
+  voiceStartShadowEval(request: VoiceStartShadowEvalRequest): Promise<VoiceRuntimeSnapshotResponse>;
+  voiceStopShadowEval(request: VoiceStopShadowEvalRequest): Promise<VoiceRuntimeSnapshotResponse>;
+  voiceSetDuplexMode(request: VoiceSetDuplexModeRequest): Promise<VoiceRuntimeSnapshotResponse>;
+  voiceGetRuntimeDiagnostics(
+    request: VoiceGetRuntimeDiagnosticsRequest
+  ): Promise<VoiceRuntimeSnapshotResponse>;
   onEvent(listener: (event: AppEvent) => void): () => void;
 }
 
@@ -595,6 +609,38 @@ class TauriChatIpcClient implements ChatIpcClient {
 
   voiceStopSession(request: VoiceStopSessionRequest): Promise<VoiceRuntimeSnapshotResponse> {
     return this.invokeFn<VoiceRuntimeSnapshotResponse>("cmd_voice_stop_session", { request });
+  }
+
+  voiceRequestHandoff(request: VoiceRequestHandoffRequest): Promise<VoiceRuntimeSnapshotResponse> {
+    return this.invokeFn<VoiceRuntimeSnapshotResponse>("cmd_voice_request_handoff", { request });
+  }
+
+  voiceSetShadowMethod(
+    request: VoiceSetShadowMethodRequest
+  ): Promise<VoiceRuntimeSnapshotResponse> {
+    return this.invokeFn<VoiceRuntimeSnapshotResponse>("cmd_voice_set_shadow_method", { request });
+  }
+
+  voiceStartShadowEval(
+    request: VoiceStartShadowEvalRequest
+  ): Promise<VoiceRuntimeSnapshotResponse> {
+    return this.invokeFn<VoiceRuntimeSnapshotResponse>("cmd_voice_start_shadow_eval", { request });
+  }
+
+  voiceStopShadowEval(request: VoiceStopShadowEvalRequest): Promise<VoiceRuntimeSnapshotResponse> {
+    return this.invokeFn<VoiceRuntimeSnapshotResponse>("cmd_voice_stop_shadow_eval", { request });
+  }
+
+  voiceSetDuplexMode(request: VoiceSetDuplexModeRequest): Promise<VoiceRuntimeSnapshotResponse> {
+    return this.invokeFn<VoiceRuntimeSnapshotResponse>("cmd_voice_set_duplex_mode", { request });
+  }
+
+  voiceGetRuntimeDiagnostics(
+    request: VoiceGetRuntimeDiagnosticsRequest
+  ): Promise<VoiceRuntimeSnapshotResponse> {
+    return this.invokeFn<VoiceRuntimeSnapshotResponse>("cmd_voice_get_runtime_diagnostics", {
+      request
+    });
   }
 }
 
@@ -1774,7 +1820,9 @@ export class MockChatIpcClient implements ChatIpcClient {
           supportsMicroTurns: false,
           supportsOverlapTurnYieldHints: false,
           supportsSpeechProbability: true,
-          supportsPartialSegmentation: true
+          supportsPartialSegmentation: true,
+          supportsLiveHandoff: true,
+          supportsSpeculativeOnset: false
         },
         defaultConfig: { threshold: 0.0012, minSpeechMs: 120, minSilenceMs: 240, hangoverMs: 80 }
       },
@@ -1789,7 +1837,9 @@ export class MockChatIpcClient implements ChatIpcClient {
           supportsMicroTurns: false,
           supportsOverlapTurnYieldHints: false,
           supportsSpeechProbability: true,
-          supportsPartialSegmentation: true
+          supportsPartialSegmentation: true,
+          supportsLiveHandoff: true,
+          supportsSpeculativeOnset: false
         },
         defaultConfig: {
           baseThreshold: 0.0012,
@@ -1814,9 +1864,35 @@ export class MockChatIpcClient implements ChatIpcClient {
           supportsMicroTurns: true,
           supportsOverlapTurnYieldHints: false,
           supportsSpeechProbability: true,
-          supportsPartialSegmentation: true
+          supportsPartialSegmentation: true,
+          supportsLiveHandoff: true,
+          supportsSpeculativeOnset: true
         },
         defaultConfig: { threshold: 0.0012, microturnWindowMs: 700, minSpeechMs: 120 }
+      },
+      {
+        id: "hybrid_interrupt",
+        displayName: "Hybrid Interrupt",
+        status: "experimental" as const,
+        description: "Interruption-aware VAD with overlap and speculative-onset safety signals.",
+        capabilities: {
+          supportsEndpointing: true,
+          supportsInterruptionSignals: true,
+          supportsMicroTurns: true,
+          supportsOverlapTurnYieldHints: true,
+          supportsSpeechProbability: true,
+          supportsPartialSegmentation: true,
+          supportsLiveHandoff: true,
+          supportsSpeculativeOnset: true
+        },
+        defaultConfig: {
+          interruptThreshold: 0.0018,
+          minOverlapMs: 120,
+          cancelTtsOnInterrupt: true,
+          resumeAfterFalseInterrupt: true,
+          yieldBias: 0.45,
+          assistantSpeakingSensitivity: 0.65
+        }
       }
     ].filter((method) => request.includeExperimental || method.status !== "experimental");
     return {
@@ -1836,7 +1912,10 @@ export class MockChatIpcClient implements ChatIpcClient {
       settings: {
         version: 1,
         selectedVadMethod: "sherpa-silero",
+        shadowVadMethod: "microturn-v1",
+        duplexMode: "single_turn",
         globalVoiceConfig: { sampleRateHz: 16000 },
+        speculation: { enabled: false, maxPrefixMs: 800, cancelOnUserContinuation: true },
         vadMethods: {
           "sherpa-silero": {
             baseThreshold: 0.0012,
@@ -1859,7 +1938,7 @@ export class MockChatIpcClient implements ChatIpcClient {
   ): Promise<VoiceRuntimeSnapshotResponse> {
     return {
       correlationId: request.correlationId,
-      snapshot: { state: "idle", sessionId: null, selectedVadMethod: request.methodId }
+      snapshot: this.mockVoiceSnapshot("idle", request.methodId)
     };
   }
 
@@ -1871,7 +1950,10 @@ export class MockChatIpcClient implements ChatIpcClient {
       settings: {
         version: 1,
         selectedVadMethod: request.methodId,
+        shadowVadMethod: null,
+        duplexMode: "single_turn",
         globalVoiceConfig: { sampleRateHz: 16000 },
+        speculation: { enabled: false, maxPrefixMs: 800, cancelOnUserContinuation: true },
         vadMethods: { [request.methodId]: request.config }
       }
     };
@@ -1882,14 +1964,93 @@ export class MockChatIpcClient implements ChatIpcClient {
   ): Promise<VoiceRuntimeSnapshotResponse> {
     return {
       correlationId: request.correlationId,
-      snapshot: { state: "running", sessionId: "mock-voice", selectedVadMethod: "sherpa-silero" }
+      snapshot: this.mockVoiceSnapshot("running_single", "sherpa-silero", "mock-voice")
     };
   }
 
   async voiceStopSession(request: VoiceStopSessionRequest): Promise<VoiceRuntimeSnapshotResponse> {
     return {
       correlationId: request.correlationId,
-      snapshot: { state: "idle", sessionId: null, selectedVadMethod: "sherpa-silero" }
+      snapshot: this.mockVoiceSnapshot("idle", "sherpa-silero")
+    };
+  }
+
+  async voiceRequestHandoff(
+    request: VoiceRequestHandoffRequest
+  ): Promise<VoiceRuntimeSnapshotResponse> {
+    return {
+      correlationId: request.correlationId,
+      snapshot: this.mockVoiceSnapshot("running_single", request.targetMethodId, "mock-voice")
+    };
+  }
+
+  async voiceSetShadowMethod(
+    request: VoiceSetShadowMethodRequest
+  ): Promise<VoiceRuntimeSnapshotResponse> {
+    return {
+      correlationId: request.correlationId,
+      snapshot: {
+        ...this.mockVoiceSnapshot("idle", "sherpa-silero"),
+        shadowVadMethodId: request.methodId ?? null
+      }
+    };
+  }
+
+  async voiceStartShadowEval(
+    request: VoiceStartShadowEvalRequest
+  ): Promise<VoiceRuntimeSnapshotResponse> {
+    return {
+      correlationId: request.correlationId,
+      snapshot: {
+        ...this.mockVoiceSnapshot("running_dual", "sherpa-silero", "mock-voice"),
+        shadowVadMethodId: "microturn-v1"
+      }
+    };
+  }
+
+  async voiceStopShadowEval(
+    request: VoiceStopShadowEvalRequest
+  ): Promise<VoiceRuntimeSnapshotResponse> {
+    return {
+      correlationId: request.correlationId,
+      snapshot: this.mockVoiceSnapshot("running_single", "sherpa-silero", "mock-voice")
+    };
+  }
+
+  async voiceSetDuplexMode(
+    request: VoiceSetDuplexModeRequest
+  ): Promise<VoiceRuntimeSnapshotResponse> {
+    return {
+      correlationId: request.correlationId,
+      snapshot: { ...this.mockVoiceSnapshot("idle", "sherpa-silero"), duplexMode: request.duplexMode }
+    };
+  }
+
+  async voiceGetRuntimeDiagnostics(
+    request: VoiceGetRuntimeDiagnosticsRequest
+  ): Promise<VoiceRuntimeSnapshotResponse> {
+    return {
+      correlationId: request.correlationId,
+      snapshot: this.mockVoiceSnapshot("idle", "sherpa-silero")
+    };
+  }
+
+  private mockVoiceSnapshot(
+    state: "idle" | "running_single" | "running_dual",
+    methodId: string,
+    sessionId: string | null = null
+  ) {
+    return {
+      state,
+      sessionId,
+      selectedVadMethod: methodId,
+      activeVadMethodId: methodId,
+      standbyVadMethodId: null,
+      shadowVadMethodId: null,
+      handoffState: "none" as const,
+      speculationState: "disabled" as const,
+      duplexMode: "single_turn" as const,
+      shadowSummary: null
     };
   }
 

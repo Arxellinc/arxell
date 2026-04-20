@@ -656,7 +656,34 @@ export interface DevicesProbeMicrophoneResponse {
   defaultInputName: string | null;
 }
 
-export type VoiceRuntimeState = "idle" | "starting" | "running" | "stopping" | "error";
+export type VoiceRuntimeState =
+  | "idle"
+  | "starting"
+  | "running"
+  | "running_single"
+  | "running_dual"
+  | "handing_off"
+  | "stopping"
+  | "error";
+export type HandoffState =
+  | "none"
+  | "requested"
+  | "preparing"
+  | "ready_to_cutover"
+  | "cutover_in_progress"
+  | "completed"
+  | "rolled_back"
+  | "failed";
+export type SpeculationState =
+  | "disabled"
+  | "listening"
+  | "drafting_fast_path"
+  | "speaking_speculative_prefix"
+  | "awaiting_confirmation"
+  | "committed"
+  | "cancelled"
+  | "replaced";
+export type DuplexMode = "single_turn" | "full_duplex_speculative" | "full_duplex_shadow_only";
 export type VadStatus = "stable" | "experimental" | "hidden" | "deprecated";
 
 export interface VadCapabilities {
@@ -666,6 +693,8 @@ export interface VadCapabilities {
   supportsOverlapTurnYieldHints: boolean;
   supportsSpeechProbability: boolean;
   supportsPartialSegmentation: boolean;
+  supportsLiveHandoff: boolean;
+  supportsSpeculativeOnset: boolean;
 }
 
 export interface VadManifest {
@@ -684,14 +713,34 @@ export interface GlobalVoiceConfig {
 export interface PersistedVoiceSettings {
   version: number;
   selectedVadMethod: string;
+  shadowVadMethod?: string | null;
+  duplexMode?: DuplexMode;
   globalVoiceConfig: GlobalVoiceConfig;
   vadMethods: Record<string, Record<string, unknown>>;
+  speculation?: {
+    enabled: boolean;
+    maxPrefixMs: number;
+    cancelOnUserContinuation: boolean;
+  };
 }
 
 export interface VoiceRuntimeSnapshot {
   state: VoiceRuntimeState;
   sessionId: string | null;
   selectedVadMethod: string;
+  activeVadMethodId: string;
+  standbyVadMethodId: string | null;
+  shadowVadMethodId: string | null;
+  handoffState: HandoffState;
+  speculationState: SpeculationState;
+  duplexMode: DuplexMode;
+  shadowSummary: {
+    activeMethodId: string;
+    shadowMethodId: string;
+    activeEventCount: number;
+    shadowEventCount: number;
+    disagreementCount: number;
+  } | null;
 }
 
 export interface VoiceListVadMethodsRequest {
@@ -742,6 +791,33 @@ export interface VoiceStartSessionRequest {
 }
 
 export interface VoiceStopSessionRequest {
+  correlationId: string;
+}
+
+export interface VoiceRequestHandoffRequest {
+  correlationId: string;
+  targetMethodId: string;
+}
+
+export interface VoiceSetShadowMethodRequest {
+  correlationId: string;
+  methodId?: string | null;
+}
+
+export interface VoiceStartShadowEvalRequest {
+  correlationId: string;
+}
+
+export interface VoiceStopShadowEvalRequest {
+  correlationId: string;
+}
+
+export interface VoiceSetDuplexModeRequest {
+  correlationId: string;
+  duplexMode: DuplexMode;
+}
+
+export interface VoiceGetRuntimeDiagnosticsRequest {
   correlationId: string;
 }
 

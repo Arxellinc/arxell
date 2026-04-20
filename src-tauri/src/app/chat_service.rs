@@ -1,6 +1,8 @@
 use crate::agent_tools::chart::ChartTool;
 use crate::agent_tools::notepad::{NotepadEditLinesTool, NotepadReadTool, NotepadWriteTool};
+use crate::agent_tools::sheets::SheetsTool;
 use crate::agent_tools::web_search::WebSearchTool;
+use crate::services::sheets_service::SheetsService;
 use crate::api_registry::ApiRegistryService;
 use crate::app::web_search_service::WebSearchService;
 use crate::contracts::{
@@ -37,6 +39,7 @@ pub struct ChatService {
     conversation_repo: Arc<dyn ConversationRepository>,
     api_registry: Arc<ApiRegistryService>,
     workspace_tools: Arc<WorkspaceToolsService>,
+    sheets: Arc<SheetsService>,
     web_search: Arc<WebSearchService>,
     cancelled_correlations: Arc<Mutex<HashSet<String>>>,
 }
@@ -123,6 +126,17 @@ fn bind_chart_tools(
     )));
 }
 
+fn bind_sheets_tools(
+    chat: &ChatService,
+    resolved: &mut Vec<Box<dyn AgentTool>>,
+    correlation_id: &str,
+) {
+    resolved.push(Box::new(SheetsTool::new(
+        Arc::clone(&chat.sheets),
+        correlation_id.to_string(),
+    )));
+}
+
 fn agent_tool_bindings() -> &'static [AgentToolBinding] {
     &[
         AgentToolBinding {
@@ -145,6 +159,10 @@ fn agent_tool_bindings() -> &'static [AgentToolBinding] {
             workspace_tool_id: "chart",
             bind: bind_chart_tools,
         },
+        AgentToolBinding {
+            workspace_tool_id: "sheets",
+            bind: bind_sheets_tools,
+        },
     ]
 }
 
@@ -155,6 +173,7 @@ impl ChatService {
         conversation_repo: Arc<dyn ConversationRepository>,
         api_registry: Arc<ApiRegistryService>,
         workspace_tools: Arc<WorkspaceToolsService>,
+        sheets: Arc<SheetsService>,
         web_search: Arc<WebSearchService>,
     ) -> Self {
         Self {
@@ -163,6 +182,7 @@ impl ChatService {
             conversation_repo,
             api_registry,
             workspace_tools,
+            sheets,
             web_search,
             cancelled_correlations: Arc::new(Mutex::new(HashSet::new())),
         }

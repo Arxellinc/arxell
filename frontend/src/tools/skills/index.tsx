@@ -1,66 +1,120 @@
-/**
- * Skills Tool
- *
- * Reusable skill packs and directives
- */
-import { iconHtml } from "../../icons";
+import type { FilesListDirectoryEntry } from "../../contracts";
+import { resolveFileTabIcon } from "../ui/fileTabIcons";
 import { renderToolToolbar } from "../ui/toolbar";
-import { SKILLS_DATA_ATTR } from "./constants";
-import type { SkillsToolViewState } from "./state";
+import { renderFilesTreeEditorBody } from "../files";
 
-export function renderSkillsToolActions(): string {
+export interface SkillsToolViewState {
+  skillsRootPath: string | null;
+  skillsSelectedPath: string | null;
+  skillsSelectedEntryPath: string | null;
+  skillsExpandedByPath: Record<string, boolean>;
+  skillsEntriesByPath: Record<string, FilesListDirectoryEntry[]>;
+  skillsLoadingByPath: Record<string, boolean>;
+  skillsOpenTabs: string[];
+  skillsActiveTabPath: string | null;
+  skillsContentByPath: Record<string, string>;
+  skillsSavedContentByPath: Record<string, string>;
+  skillsDirtyByPath: Record<string, boolean>;
+  skillsLoadingFileByPath: Record<string, boolean>;
+  skillsSavingFileByPath: Record<string, boolean>;
+  skillsReadOnlyByPath: Record<string, boolean>;
+  skillsSizeByPath: Record<string, number>;
+  skillsSidebarWidth: number;
+  skillsSidebarCollapsed: boolean;
+  skillsFindOpen: boolean;
+  skillsFindQuery: string;
+  skillsReplaceQuery: string;
+  skillsFindCaseSensitive: boolean;
+  skillsLineWrap: boolean;
+  skillsError: string | null;
+}
+
+export function renderSkillsToolActions(view: SkillsToolViewState): string {
+  const active = view.skillsActiveTabPath;
   return renderToolToolbar({
-    tabsMode: "none",
-    tabs: [],
-    actions: []
+    tabsMode: "dynamic",
+    tabs: view.skillsOpenTabs.map((path) => ({
+      id: path,
+      label: `${path.split(/[\\/]/).filter(Boolean).pop() || path}${view.skillsDirtyByPath[path] ? " *" : ""}`,
+      icon: resolveFileTabIcon(path, "file-text"),
+      mutedIcon: view.skillsReadOnlyByPath[path] === true,
+      active: active === path,
+      buttonAttrs: {
+        "data-files-action": "activate-tab",
+        "data-files-path": path
+      },
+      closeAttrs: {
+        "data-files-action": "close-tab",
+        "data-files-path": path
+      }
+    })),
+    tabAction: {
+      title: "New File",
+      icon: "plus",
+      buttonAttrs: {
+        "data-files-action": "new-file"
+      }
+    },
+    actions: [
+      {
+        id: "skills-save",
+        title: "Save file",
+        icon: "save",
+        disabled: !active || view.skillsReadOnlyByPath[active] === true || !view.skillsDirtyByPath[active],
+        buttonAttrs: {
+          "data-files-action": "save-file"
+        }
+      },
+      {
+        id: "skills-search",
+        title: "Find / Replace",
+        icon: "search",
+        disabled: !active,
+        buttonAttrs: {
+          "data-files-action": "search-in-file"
+        }
+      },
+      {
+        id: "skills-wrap",
+        title: view.skillsLineWrap ? "Disable line wrap" : "Enable line wrap",
+        icon: "list",
+        disabled: !active,
+        buttonAttrs: {
+          "data-files-action": "toggle-wrap"
+        }
+      }
+    ]
   });
 }
 
 export function renderSkillsToolBody(view: SkillsToolViewState): string {
-  const { sidebarCollapsed, sidebarWidth, selectedSkillId } = view;
-  const rootStyle = `--tool-sidebar-width: ${sidebarWidth}px;`;
-
-  return `<div class="tool-with-sidebar ${sidebarCollapsed ? "is-sidebar-collapsed" : ""}" style="${rootStyle}">
-    <section class="tool-with-sidebar-panel">
-      <div class="pane-title tool-sidebar-header">
-        <span class="tool-sidebar-header-text">${sidebarCollapsed ? "" : "Skills"}</span>
-        <button type="button" class="tool-sidebar-toggle" data-tool-action="toggle-sidebar-collapse" aria-label="${sidebarCollapsed ? "Expand skills sidebar" : "Collapse skills sidebar"}">${iconHtml("chevron-left", { size: 16, tone: "dark" })}</button>
-      </div>
-      <div class="tool-sidebar-content">
-        <div class="skills-tool-list">
-          ${view.skills.length === 0
-            ? '<div class="skills-tool-empty">No skills yet</div>'
-            : view.skills.map(skill => `
-              <button type="button" class="skills-tool-item ${selectedSkillId === skill.id ? "is-selected" : ""}" ${SKILLS_DATA_ATTR.action}="select-skill" ${SKILLS_DATA_ATTR.skillId}="${skill.id}">
-                <span class="skills-tool-item-name">
-                  <span class="skill-icon">${iconHtml("file-badge", { size: 16, tone: "dark" })}</span>
-                  ${skill.name}
-                </span>
-                ${view.settings.showDescriptions && skill.description ? `<span class="skills-tool-item-desc">${skill.description}</span>` : ""}
-              </button>
-            `).join("")
-          }
-        </div>
-      </div>
-    </section>
-    <button type="button" class="tool-sidebar-resizer" aria-label="Resize skills sidebar" data-tool-action="resize-sidebar"></button>
-    <section class="tool-with-sidebar-main">
-      ${selectedSkillId
-        ? `<div class="skills-tool-editor">
-            <div class="skills-tool-editor-content">${view.contentById[selectedSkillId] || ""}</div>
-          </div>`
-        : `<div class="skills-tool-empty">Select a skill to edit</div>`
-      }
-    </section>
-  </div>`;
-}
-
-export function SkillsTool() {
-  return (
-    <div className="tool-placeholder">
-      <h2>Skills</h2>
-      <p>Reusable skill packs and directives</p>
-      <div className="tool-placeholder-message">This tool is not yet implemented.</div>
-    </div>
+  return renderFilesTreeEditorBody(
+    {
+      rootPath: view.skillsRootPath,
+      selectedPath: view.skillsSelectedPath,
+      selectedEntryPath: view.skillsSelectedEntryPath,
+      activeTabPath: view.skillsActiveTabPath,
+      contentByPath: view.skillsContentByPath,
+      dirtyByPath: view.skillsDirtyByPath,
+      loadingFileByPath: view.skillsLoadingFileByPath,
+      savingFileByPath: view.skillsSavingFileByPath,
+      readOnlyByPath: view.skillsReadOnlyByPath,
+      sizeByPath: view.skillsSizeByPath,
+      expandedByPath: view.skillsExpandedByPath as Record<string, boolean>,
+      entriesByPath: view.skillsEntriesByPath,
+      loadingByPath: view.skillsLoadingByPath,
+      sidebarWidth: view.skillsSidebarWidth,
+      sidebarCollapsed: view.skillsSidebarCollapsed,
+      findOpen: view.skillsFindOpen,
+      findQuery: view.skillsFindQuery,
+      replaceQuery: view.skillsReplaceQuery,
+      findCaseSensitive: view.skillsFindCaseSensitive,
+      lineWrap: view.skillsLineWrap,
+      error: view.skillsError
+    },
+    {
+      title: "Skills",
+      emptyStateMessage: "Select a skill file to view or edit."
+    }
   );
 }

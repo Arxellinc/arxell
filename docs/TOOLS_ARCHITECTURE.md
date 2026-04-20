@@ -12,7 +12,7 @@ There are three related tool paths in the app:
 
 1. Workspace tools
 - User-facing panels in the workspace, implemented in `frontend/src/tools`.
-- Examples: `files`, `webSearch`, `chart`, `flow`, `tasks`, `memory`, `skills`.
+- Examples: `files`, `webSearch`, `chart`, `flow`, `looper`, `tasks`, `memory`, `skills`, `notepad`, `opencode`, `terminal`, `manager`.
 - Registered in the frontend by `frontend/src/tools/registry.ts`.
 - Registered in the backend workspace tool list by `src-tauri/src/workspace_tools/mod.rs`.
 
@@ -20,7 +20,7 @@ There are three related tool paths in the app:
 - Backend action handlers that the frontend calls through the generic `invoke_tool` IPC command.
 - Implemented under `src-tauri/src/tools/invoke`.
 - Registered by `src-tauri/src/tools/invoke/mod.rs`.
-- Used when a workspace tool needs typed backend behavior such as filesystem operations, web search setup, or flow actions.
+- Used when a workspace tool needs typed backend behavior such as filesystem operations, web search setup, flow actions, or looper orchestration.
 
 3. Agent tools
 - Tools exposed to the chat agent loop.
@@ -59,7 +59,28 @@ Builtin workspace tools use a folder under `frontend/src/tools/<toolId>/`. Exist
 - `runtime.ts`: runtime integration for tools with polling, rendering engines, or external libraries.
 - `styles.css`: tool-specific styles.
 
-Not every tool needs every file. Static tools such as `memory` and `skills` may only need render and manifest files. Interactive tools such as `files`, `flow`, and `webSearch` use state, bindings, actions, and styles.
+Not every tool needs every file. Static tools such as `memory` and `skills` may only need render and manifest files. Interactive tools such as `files`, `flow`, `looper`, and `webSearch` use state, bindings, actions, and styles.
+
+## Current Workspace Tools
+
+| Tool ID | Directory | Category | Description |
+|---------|-----------|----------|-------------|
+| `chart` | `frontend/src/tools/chart/` | data | Chart visualization |
+| `files` | `frontend/src/tools/files/` | workspace | File browser and editor |
+| `flow` | `frontend/src/tools/flow/` | automation | Plan/build iteration engine |
+| `looper` | `frontend/src/tools/looper/` | automation | PRD/build loop orchestration with interactive questions |
+| `tasks` | `frontend/src/tools/tasks/` | workspace | Task tracking |
+| `memory` | `frontend/src/tools/memory/` | workspace | Memory/context display |
+| `skills` | `frontend/src/tools/skills/` | agent | Agent skill browsing |
+| `notepad` | `frontend/src/tools/notepad/` | workspace | Note editor |
+| `opencode` | `frontend/src/tools/opencode/` | automation | OpenCode integration |
+| `terminal` | `frontend/src/tools/terminal/` | workspace | Integrated terminal emulator |
+| `webSearch` | `frontend/src/tools/webSearch/` | search | Web search |
+| `manager` | `frontend/src/tools/manager/` | workspace | Workspace tool manager (enable/disable/import/export) |
+
+Additional shared modules:
+- `host/` — Tool host runtime, events, state, views
+- `ui/` — Shared tool UI components
 
 ## Frontend Discovery
 

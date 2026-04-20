@@ -5,7 +5,9 @@ pub mod model_manager_service;
 pub mod permission_service;
 pub mod runtime_service;
 pub mod terminal_service;
+pub mod voice_handoff_service;
 pub mod voice_runtime_service;
+pub mod voice_speculation_service;
 pub mod web_search_service;
 
 use crate::api_registry::ApiRegistryService;
@@ -13,6 +15,7 @@ use crate::ipc::IpcLayer;
 use crate::memory::InMemoryMemoryManager;
 use crate::observability::EventHub;
 use crate::persistence::SqliteConversationRepository;
+use crate::services::sheets_service::SheetsService;
 use crate::tools::looper_handler::LooperHandler;
 use crate::workspace_tools::WorkspaceToolsService;
 use std::sync::Arc;
@@ -26,6 +29,7 @@ pub struct AppContext {
     pub permissions: Arc<permission_service::PermissionService>,
     pub model_manager: Arc<model_manager_service::ModelManagerService>,
     pub files: Arc<files_service::FilesService>,
+    pub sheets: Arc<SheetsService>,
     pub flow: Arc<flow_service::FlowService>,
     pub looper: Arc<LooperHandler>,
     pub voice: Arc<voice_runtime_service::VoiceRuntimeService>,
@@ -44,6 +48,7 @@ impl AppContext {
         let web_search = Arc::new(web_search_service::WebSearchService::new(Arc::clone(
             &api_registry,
         )));
+        let sheets = Arc::new(SheetsService::new(Some(hub.clone())));
 
         let service = Arc::new(chat_service::ChatService::new(
             hub.clone(),
@@ -51,6 +56,7 @@ impl AppContext {
             conversation_repo,
             Arc::clone(&api_registry),
             Arc::clone(&workspace_tools),
+            Arc::clone(&sheets),
             Arc::clone(&web_search),
         ));
         let terminal = Arc::new(terminal_service::TerminalService::new(hub.clone()));
@@ -92,6 +98,7 @@ impl AppContext {
             permissions,
             model_manager,
             files,
+            sheets,
             flow,
             looper,
             voice,
@@ -122,6 +129,7 @@ impl AppContext {
             permissions: Arc::clone(&self.permissions),
             model_manager: Arc::clone(&self.model_manager),
             files: Arc::clone(&self.files),
+            sheets: Arc::clone(&self.sheets),
             flow: Arc::clone(&self.flow),
             voice: Arc::clone(&self.voice),
         }

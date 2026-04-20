@@ -65,6 +65,14 @@ export const NOTEPAD_DATA_ATTR = {
   path: "data-notepad-path"
 } as const;
 
+export const SHEETS_DATA_ATTR = {
+  action: "data-sheets-action"
+} as const;
+
+export const SHEETS_UI_ID = {
+  host: "sheetsToolHost"
+} as const;
+
 export const TASKS_DATA_ATTR = {
   action: "data-tasks-action",
   taskId: "data-tasks-id",

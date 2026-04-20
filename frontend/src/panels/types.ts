@@ -8,6 +8,9 @@ import type {
   ModelManagerInstalledModel,
   PersistedVoiceSettings,
   VadManifest,
+  DuplexMode,
+  HandoffState,
+  SpeculationState,
   VoiceRuntimeState
 } from "../contracts";
 import type { ChatModelCapabilities } from "../modelCapabilities";
@@ -50,6 +53,29 @@ export interface ChatToolEventRow {
   title: string;
   details: string;
   icon: IconName;
+}
+
+export interface ChatPanelState {
+  panelId: string;
+  conversationId: string;
+  messages: UiMessage[];
+  chatReasoningByCorrelation: Record<string, string>;
+  chatThinkingPlacementByCorrelation: Record<string, "before" | "after">;
+  chatThinkingExpandedByCorrelation: Record<string, boolean>;
+  chatToolRowsByCorrelation: Record<string, ChatToolEventRow[]>;
+  chatToolRowExpandedById: Record<string, boolean>;
+  chatStreamCompleteByCorrelation: Record<string, boolean>;
+  chatStreaming: boolean;
+  chatDraft: string;
+  chatAttachedFileName: string | null;
+  chatAttachedFileContent: string | null;
+  chatActiveModelId: string;
+  chatActiveModelLabel: string;
+  chatActiveModelCapabilities: ChatModelCapabilities;
+  chatThinkingEnabled: boolean;
+  chatTtsEnabled: boolean;
+  chatTtsPlaying: boolean;
+  activeChatCorrelationId: string | null;
 }
 
 export interface SttState {
@@ -142,23 +168,11 @@ export interface PrimaryPanelRenderState {
   showBottomContext: boolean;
   showBottomSpeed: boolean;
   showBottomTtsLatency: boolean;
-  conversationId: string;
-  messages: UiMessage[];
-  chatReasoningByCorrelation: Record<string, string>;
-  chatThinkingPlacementByCorrelation: Record<string, "before" | "after">;
-  chatThinkingExpandedByCorrelation: Record<string, boolean>;
-  chatToolRowsByCorrelation: Record<string, ChatToolEventRow[]>;
-  chatToolRowExpandedById: Record<string, boolean>;
-  chatStreamCompleteByCorrelation: Record<string, boolean>;
-  chatStreaming: boolean;
-  chatDraft: string;
-  chatAttachedFileName: string | null;
-  chatAttachedFileContent: string | null;
-  chatActiveModelId: string;
-  chatActiveModelLabel: string;
-  chatActiveModelCapabilities: ChatModelCapabilities;
-  chatTtsEnabled: boolean;
-  chatTtsPlaying: boolean;
+  chat: ChatPanelState;
+  chatToolIntentByCorrelation: Record<string, boolean>;
+  chatFirstAssistantChunkMsByCorrelation: Record<string, number>;
+  chatFirstReasoningChunkMsByCorrelation: Record<string, number>;
+  chatTtsLatencyMs: number | null;
   devices: DevicesState;
   apiConnections: ApiConnectionRecord[];
   apiFormOpen: boolean;
@@ -170,7 +184,6 @@ export interface PrimaryPanelRenderState {
   apiProbeMessage: string | null;
   apiDetectedModels: string[];
   conversations: ConversationSummaryRecord[];
-  chatThinkingEnabled: boolean;
   llamaRuntime: LlamaRuntimeStatusResponse | null;
   llamaRuntimeSelectedEngineId: string;
   llamaRuntimeModelPath: string;
@@ -230,8 +243,20 @@ export interface PrimaryPanelRenderState {
   vadMethods: VadManifest[];
   vadIncludeExperimental: boolean;
   vadSelectedMethod: string;
+  vadShadowMethod: string | null;
+  vadStandbyMethod: string | null;
   vadSettings: PersistedVoiceSettings | null;
   voiceRuntimeState: VoiceRuntimeState;
+  voiceHandoffState: HandoffState;
+  voiceSpeculationState: SpeculationState;
+  voiceDuplexMode: DuplexMode;
+  vadShadowSummary: {
+    activeMethodId: string;
+    shadowMethodId: string;
+    activeEventCount: number;
+    shadowEventCount: number;
+    disagreementCount: number;
+  } | null;
   vadMessage: string | null;
   tts: TtsState;
   consoleEntries: ConsoleEntry[];
@@ -346,6 +371,11 @@ export interface PrimaryPanelBindings {
   onSetVadIncludeExperimental: (value: boolean) => Promise<void>;
   onUpdateVadMethodConfig: (key: string, value: number) => Promise<void>;
   onRefreshVadSettings: () => Promise<void>;
+  onRequestVadHandoff: (targetMethodId: string) => Promise<void>;
+  onSetVadShadowMethod: (methodId: string | null) => Promise<void>;
+  onStartVadShadowEval: () => Promise<void>;
+  onStopVadShadowEval: () => Promise<void>;
+  onSetVoiceDuplexMode: (mode: DuplexMode) => Promise<void>;
   onSetDisplayMode: (mode: "dark" | "light" | "terminal") => Promise<void>;
   onSetDisplayModePreference: (mode: "dark" | "light" | "system" | "terminal") => Promise<void>;
   onSetChatRoutePreference: (mode: "auto" | "agent" | "legacy") => Promise<void>;

@@ -3,6 +3,8 @@ import type { IconName } from "../icons";
 import { escapeHtml } from "../panels/utils";
 import type { CONSOLE_DATA_ATTR } from "../tools/ui/constants";
 import { renderToolToolbar } from "../tools/ui/toolbar";
+import { APP_ICON } from "../icons/map";
+import { renderPaneMenu } from "../layout/paneMenu";
 
 export function modelNameFromPath(path: string): string {
   const trimmed = path.trim();
@@ -99,6 +101,8 @@ export interface HeaderModelOption {
 export function renderChatHeaderModelSelect(input: {
   options: HeaderModelOption[];
   activeModelId: string;
+  paneId: string;
+  scopeId?: string;
 }): string {
   const options = input.options;
   if (!options.length) {
@@ -112,7 +116,7 @@ export function renderChatHeaderModelSelect(input: {
     .join("");
   return `
     <span class="chat-header-model-wrap">
-      <select id="chatHeaderModelSelect" class="chat-header-model-select" title="Select chat model">
+      <select id="chatHeaderModelSelect${input.scopeId ?? ""}" class="chat-header-model-select" title="Select chat model" data-chat-pane-id="${escapeHtml(input.paneId)}">
         ${optionsHtml}
       </select>
     </span>
@@ -146,6 +150,8 @@ export function renderPanelTitleIcon(input: {
   sidebarTab: string;
   chatModelOptions: HeaderModelOption[];
   chatActiveModelId: string;
+  chatPaneId: string;
+  scopeId?: string;
   ttsReady: boolean;
   ttsEngine: "kokoro" | "piper" | "matcha" | "kitten" | "pocket";
 }): string {
@@ -156,10 +162,20 @@ export function renderPanelTitleIcon(input: {
   });
   const chatModelSelect =
     input.sidebarTab === "chat"
-      ? renderChatHeaderModelSelect({
-          options: input.chatModelOptions,
-          activeModelId: input.chatActiveModelId
-        })
+      ? renderChatHeaderModelSelect(
+          input.scopeId
+            ? {
+                options: input.chatModelOptions,
+                activeModelId: input.chatActiveModelId,
+                paneId: input.chatPaneId,
+                scopeId: input.scopeId
+              }
+            : {
+                options: input.chatModelOptions,
+                activeModelId: input.chatActiveModelId,
+                paneId: input.chatPaneId
+              }
+        )
       : "";
   return `${iconHtml(input.icon, { size: 16, tone: "dark" })}<span>${input.title}</span>${chatModelSelect}${ttsSuffix}`;
 }
@@ -288,19 +304,57 @@ export function buildConsoleFilename(now = new Date()): string {
 
 export function composePrimaryPaneHtml(input: {
   isChatTab: boolean;
+  chatSplitMode: "none" | "vertical" | "horizontal";
+  chatSplitPercent: number;
   paneTitleHtml: string;
   panelActionsHtml: string;
   panelBodyHtml: string;
+  extraPanelHtmls?: Array<{
+    paneTitleHtml: string;
+    panelActionsHtml: string;
+    panelBodyHtml: string;
+  }> | undefined;
 }): string {
-  return `
-    <section class="pane primary-pane ${input.isChatTab ? "chat-pane" : ""}">
+  const paneMenuHtml = input.isChatTab
+    ? renderPaneMenu("chatPaneMenu", APP_ICON.action.paneMenu)
+    : "";
+  const chatClass = input.isChatTab ? "chat-pane" : "";
+  const mainPanelHtml = `
+    <section class="pane primary-pane ${chatClass}" data-chat-panel="0">
       <header class="pane-topbar">
         <span class="pane-title">${input.paneTitleHtml}</span>
+        ${paneMenuHtml}
       </header>
       <div class="primary-panel-actions">${input.panelActionsHtml}</div>
       ${input.panelBodyHtml}
     </section>
   `;
+  if (input.chatSplitMode === "none" || !input.extraPanelHtmls?.length) {
+    return mainPanelHtml;
+  }
+  const dirClass = input.chatSplitMode === "vertical" ? "is-vertical" : "is-horizontal";
+  const dividerClass = input.chatSplitMode === "vertical" ? "" : "pane-divider-horizontal";
+  const extraHtmls = input.extraPanelHtmls.map((panel, i) => {
+    const menuId = `chatPaneMenu-${i + 1}`;
+    const menuHtml = renderPaneMenu(menuId, APP_ICON.action.paneMenu);
+    return `
+      <section class="pane primary-pane ${chatClass}" data-chat-panel="${i + 1}">
+        <header class="pane-topbar">
+          <span class="pane-title">${panel.paneTitleHtml}</span>
+          ${menuHtml}
+        </header>
+        <div class="primary-panel-actions">${panel.panelActionsHtml}</div>
+        ${panel.panelBodyHtml}
+      </section>
+    `;
+  });
+  return `<section class="chat-split-wrap ${dirClass}" id="chatSplitWrap" style="--chat-split-percent: ${input.chatSplitPercent}">
+    ${mainPanelHtml}
+    <div class="pane-divider ${dividerClass}" id="chatSplitDivider" aria-label="Resize chat panels" role="separator">
+      <div class="pane-divider-line"></div>
+    </div>
+    ${extraHtmls.join("")}
+  </section>`;
 }
 
 export function composeAppBodyHtml(input: {

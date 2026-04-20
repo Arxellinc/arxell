@@ -7,6 +7,7 @@ import {
   renderNotepadFindBar
 } from "../notepad/shared";
 import { FILES_DATA_ATTR, FILES_UI_ID } from "../ui/constants";
+import { resolveFileTabIcon } from "../ui/fileTabIcons";
 import { renderToolToolbar } from "../ui/toolbar";
 import "./styles.css";
 import "../notepad/styles.css";
@@ -80,6 +81,37 @@ export interface FilesExplorerViewState {
   error: string | null;
 }
 
+export interface FilesTreeEditorViewState {
+  rootPath: string | null;
+  scopeRootPath?: string | null;
+  selectedPath: string | null;
+  selectedEntryPath?: string | null;
+  activeTabPath: string | null;
+  contentByPath: Record<string, string>;
+  dirtyByPath: Record<string, boolean>;
+  loadingFileByPath: Record<string, boolean>;
+  savingFileByPath: Record<string, boolean>;
+  readOnlyByPath: Record<string, boolean>;
+  sizeByPath: Record<string, number>;
+  expandedByPath: Record<string, boolean>;
+  entriesByPath: Record<string, FilesListDirectoryEntry[]>;
+  loadingByPath: Record<string, boolean>;
+  sidebarWidth?: number;
+  sidebarCollapsed?: boolean;
+  findOpen?: boolean;
+  findQuery?: string;
+  replaceQuery?: string;
+  findCaseSensitive?: boolean;
+  lineWrap?: boolean;
+  error: string | null;
+}
+
+export interface FilesTreeEditorRenderConfig {
+  title: string;
+  emptyStateMessage: string;
+  errorClassName?: string;
+}
+
 export function renderFilesToolActions(view: FilesExplorerViewState): string {
   const tabs = view.openTabs.map((path) => {
     const dirty = view.dirtyByPath[path] ? " *" : "";
@@ -87,6 +119,8 @@ export function renderFilesToolActions(view: FilesExplorerViewState): string {
     return {
       id: path,
       label: `${basename(path)}${dirty}${loading}`,
+      icon: resolveFileTabIcon(path, "file-type"),
+      mutedIcon: view.readOnlyByPath[path] === true,
       active: view.activeTabPath === path,
       buttonAttrs: {
         [FILES_DATA_ATTR.action]: "activate-tab",
@@ -106,6 +140,13 @@ export function renderFilesToolActions(view: FilesExplorerViewState): string {
   return renderToolToolbar({
     tabsMode: "dynamic",
     tabs,
+    tabAction: {
+      title: "New File",
+      icon: "plus",
+      buttonAttrs: {
+        [FILES_DATA_ATTR.action]: "new-file"
+      }
+    },
     actions: [
       {
         id: "files-save",
@@ -158,14 +199,6 @@ export function renderFilesToolActions(view: FilesExplorerViewState): string {
         disabled: !active,
         buttonAttrs: {
           [FILES_DATA_ATTR.action]: "duplicate-file"
-        }
-      },
-      {
-        id: "files-new",
-        title: "New File",
-        icon: "file-plus",
-        buttonAttrs: {
-          [FILES_DATA_ATTR.action]: "new-file"
         }
       },
       {
@@ -239,7 +272,7 @@ export function renderFilesToolBody(view: FilesExplorerViewState): string {
     <section class="files-tool-left ${view.rootSelectorOpen ? "is-root-selector-open" : ""}">
       <div class="files-tool-pane-title files-tool-left-title">
         <span class="files-tool-left-title-text">${sidebarCollapsed ? "" : "Folders"}</span>
-        <button type="button" class="files-tool-sidebar-toggle" ${FILES_DATA_ATTR.action}="toggle-sidebar-collapse" aria-label="${sidebarCollapsed ? "Expand folders sidebar" : "Collapse folders sidebar"}">${iconHtml("chevron-left", { size: 12, tone: "dark" })}</button>
+        <button type="button" class="files-tool-sidebar-toggle" ${FILES_DATA_ATTR.action}="toggle-sidebar-collapse" aria-label="${sidebarCollapsed ? "Expand folders sidebar" : "Collapse folders sidebar"}">${iconHtml("chevron-left", { size: 16, tone: "dark" })}</button>
       </div>
       ${sidebarCollapsed ? "" : `<div class="files-tool-root-row">${rootSelectorHtml}</div>`}
       <div class="files-tool-tree">${leftTree}</div>
@@ -327,6 +360,94 @@ export function renderFilesToolBody(view: FilesExplorerViewState): string {
     </section>
     ${renderContextMenu(view)}
     ${renderConflictModal(view)}
+  </div>`;
+}
+
+export function renderFilesTreeEditorBody(
+  view: FilesTreeEditorViewState,
+  config: FilesTreeEditorRenderConfig
+): string {
+  const activeRoot = view.scopeRootPath ?? view.rootPath;
+  const activePath = view.activeTabPath;
+  const selectedLabel = activePath || view.selectedPath || activeRoot || "No folder selected";
+  const leftTree = renderTree(view, activeRoot);
+  const sidebarCollapsed = view.sidebarCollapsed === true;
+  const sidebarWidth = sidebarCollapsed ? 36 : normalizeSidebarWidth(view.sidebarWidth);
+  const rootStyle = `--files-sidebar-width:${sidebarWidth}px;`;
+  const activeContent = activePath ? view.contentByPath[activePath] ?? "" : "";
+  const activeLoading = activePath ? view.loadingFileByPath[activePath] === true : false;
+  const activeSaving = activePath ? view.savingFileByPath[activePath] === true : false;
+  const activeReadOnly = activePath ? view.readOnlyByPath[activePath] === true : false;
+  const lineWrap = view.lineWrap === true;
+  const activeLineCount = Math.max(1, activeContent.split("\n").length);
+  const findOpen = view.findOpen === true;
+  const findQuery = view.findQuery ?? "";
+  const replaceQuery = view.replaceQuery ?? "";
+  const findStats = activePath
+    ? computeNotepadFindStats(activeContent, findQuery, view.findCaseSensitive === true)
+    : { count: 0 };
+
+  return `<div class="files-tool primary-pane-body ${sidebarCollapsed ? "is-sidebar-collapsed" : ""}" style="${rootStyle}">
+    <section class="files-tool-left">
+      <div class="files-tool-pane-title files-tool-left-title">
+        <span class="files-tool-left-title-text">${sidebarCollapsed ? "" : escapeHtml(config.title)}</span>
+        <button type="button" class="files-tool-sidebar-toggle" ${FILES_DATA_ATTR.action}="toggle-sidebar-collapse" aria-label="${sidebarCollapsed ? `Expand ${config.title.toLowerCase()} sidebar` : `Collapse ${config.title.toLowerCase()} sidebar`}">${iconHtml("chevron-left", { size: 16, tone: "dark" })}</button>
+      </div>
+      <div class="files-tool-tree">${leftTree}</div>
+    </section>
+    <button type="button" class="tool-sidebar-resizer" aria-label="Resize ${config.title.toLowerCase()} pane" data-tool-action="resize-sidebar"></button>
+    <section class="files-tool-right">
+      <div class="files-tool-pane-title files-tool-right-title">
+        <span class="files-tool-path-cluster">
+          <span class="files-tool-breadcrumb">${escapeHtml(selectedLabel)}</span>
+          ${
+            activePath
+              ? `<button type="button" class="files-tool-path-copy-btn" ${FILES_DATA_ATTR.action}="copy-file-path" title="Copy active file path">${iconHtml("copy", { size: 16, tone: "dark" })}</button>`
+              : ""
+          }
+        </span>
+        ${
+          activePath
+            ? `<span class="files-tool-editor-right"><span class="files-tool-editor-meta">${activeReadOnly ? "read-only" : activeSaving ? "saving..." : view.dirtyByPath[activePath] ? "modified" : "saved"}</span></span>`
+            : ""
+        }
+      </div>
+      ${
+        activePath
+          ? renderNotepadEditorPane({
+              documentId: activePath,
+              filePath: activePath,
+              content: activeContent,
+              lineCount: activeLineCount,
+              wrap: lineWrap,
+              readOnly: activeReadOnly,
+              loading: activeLoading,
+              sizeBytes: view.sizeByPath[activePath] ?? 0,
+              dataAttrs: {
+                action: FILES_DATA_ATTR.action,
+                document: FILES_DATA_ATTR.path,
+                path: FILES_DATA_ATTR.path
+              }
+            })
+          : `<div class="notepad-empty-state"><div>${escapeHtml(config.emptyStateMessage)}</div></div>`
+      }
+      ${
+        activePath && findOpen
+          ? renderNotepadFindBar({
+              query: findQuery,
+              replace: replaceQuery,
+              caseSensitive: view.findCaseSensitive === true,
+              matchCount: findStats.count,
+              dataAttrs: {
+                action: FILES_DATA_ATTR.action,
+                document: FILES_DATA_ATTR.path,
+                path: FILES_DATA_ATTR.path
+              }
+            })
+          : ""
+      }
+      ${view.error ? `<div class="${escapeHtml(config.errorClassName ?? "files-tool-error")}">${escapeHtml(view.error)}</div>` : ""}
+    </section>
   </div>`;
 }
 
@@ -512,7 +633,7 @@ function normalizePickerPath(path: string): string {
 }
 
 
-function renderTree(view: FilesExplorerViewState, rootPath: string | null): string {
+function renderTree(view: Pick<FilesExplorerViewState, "selectedPath" | "expandedByPath" | "entriesByPath" | "loadingByPath">, rootPath: string | null): string {
   if (!rootPath) {
     return '<div class="files-tool-empty">Loading workspace files...</div>';
   }
@@ -521,7 +642,7 @@ function renderTree(view: FilesExplorerViewState, rootPath: string | null): stri
 }
 
 function renderTreeNode(
-  view: FilesExplorerViewState,
+  view: Pick<FilesExplorerViewState, "selectedPath" | "expandedByPath" | "entriesByPath" | "loadingByPath">,
   path: string,
   label: string,
   depth: number

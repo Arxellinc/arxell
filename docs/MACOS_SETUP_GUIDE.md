@@ -272,6 +272,6 @@ Once the environment is set up:
 
 ## Additional Resources
 
-- [Tauri Documentation](https://tauri.app/v1/guides/)
+- [Tauri v2 Documentation](https://v2.tauri.app/start/)
 - [Rust on macOS Guide](https://doc.rust-lang.org/book/ch01-01-installation.html)
 - [Node.js on macOS](https://nodejs.org/)

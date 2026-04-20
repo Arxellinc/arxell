@@ -27,6 +27,18 @@
 - Platform branches are allowed only in tool modules.
 - Service and contracts remain platform-agnostic.
 
+## Voice Guardrails
+- Voice session state transitions must follow the documented state machine (`idle` → `starting` → `running` → `stopping` → `idle`).
+- VAD handoff must never leave both methods active without a clear primary/shadow distinction.
+- Duplex mode changes must emit a snapshot response confirming the new state.
+- Audio data must not appear in event payloads; use counts and status indicators.
+
+## Plugin Guardrails
+- Custom tool and plugin capability invocations must go through `cmd_custom_tool_capability_invoke` or `cmd_plugin_capability_invoke`.
+- Plugin iframes are sandboxed; they must not access Tauri APIs directly.
+- Capability invocations must validate the capability name against the registered set before execution.
+- Plugin errors must return structured error responses with error codes, not panics.
+
 ## Dependency Guardrails
 - Minimize dependencies by default.
 - No CSS framework required for base UI.

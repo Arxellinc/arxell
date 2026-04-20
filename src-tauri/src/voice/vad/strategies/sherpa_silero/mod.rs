@@ -34,6 +34,7 @@ impl SherpaSileroStrategy {
             supports_interruption_signals: true,
             supports_speech_probability: true,
             supports_partial_segmentation: true,
+            supports_live_handoff: true,
             ..VadCapabilities::default()
         }
     }

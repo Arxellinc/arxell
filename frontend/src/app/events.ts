@@ -223,28 +223,30 @@ export function handleCoreAppEvent(
 export function handleChatStreamEvent(
   event: AppEvent,
   deps: {
-    isCurrentChatCorrelation: (correlationId: string) => boolean;
-    state: {
+    resolveChatEventTarget: (correlationId: string, conversationId?: string | null) => {
+      controlsVoiceState: boolean;
       chatTtsEnabled: boolean;
       chatTtsPlaying: boolean;
-      conversationId: string;
-      chatStreamCompleteByCorrelation: Record<string, boolean>;
-    };
+      markStreamComplete: (correlationId: string, complete: boolean) => void;
+      ensureAssistantMessageForCorrelation: (correlationId: string) => void;
+      ensureToolIntentRow: (correlationId: string, toolName: string) => void;
+      appendChatToolRow: (
+        correlationId: string,
+        row: { icon: unknown; title: string; details: string }
+      ) => void;
+      updateAssistantDraft: (correlationId: string, delta: string) => void;
+      ingestChatStreamForTts: (correlationId: string, delta: string) => void;
+      updateReasoningDraft: (correlationId: string, delta: string) => void;
+      scheduleDomUpdate: () => void;
+    } | null;
     setChatTtsStopRequested: (value: boolean) => void;
     getVoicePipelineState: () => "idle" | "user_speaking" | "processing" | "agent_speaking" | "interrupted";
     setVoicePipelineState: (next: "idle" | "user_speaking" | "processing" | "agent_speaking" | "interrupted") => void;
     resetChatTtsStreamParser: (correlationId: string) => void;
     flushChatStreamForTts: (correlationId: string) => void;
-    scheduleChatStreamDomUpdate: () => void;
     parseAgentToolPayload: (
       payload: AppEvent["payload"]
     ) => { toolCallId: string; toolName: string; display: string; success: boolean | null } | null;
-    ensureAssistantMessageForCorrelation: (correlationId: string) => void;
-    ensureToolIntentRow: (correlationId: string, toolName: string) => void;
-    appendChatToolRow: (
-      correlationId: string,
-      row: { icon: unknown; title: string; details: string }
-    ) => void;
     toolIconName: (toolName: string) => string;
     toolTitleName: (toolName: string) => string;
     parseStreamChunk: (
@@ -253,103 +255,115 @@ export function handleChatStreamEvent(
     parseReasoningStreamChunk: (
       payload: AppEvent["payload"]
     ) => { conversationId: string; delta: string; done: boolean } | null;
-    updateAssistantDraft: (correlationId: string, delta: string) => void;
-    ingestChatStreamForTts: (correlationId: string, delta: string) => void;
-    updateReasoningDraft: (correlationId: string, delta: string) => void;
     renderAndBind: () => void;
   }
 ): boolean {
   if (event.action === "chat.stream.start") {
-    if (!deps.isCurrentChatCorrelation(event.correlationId)) return true;
-    deps.setChatTtsStopRequested(false);
-    const pipeline = deps.getVoicePipelineState();
-    if (pipeline === "processing" || pipeline === "interrupted") {
-      deps.setVoicePipelineState("idle");
+    const target = deps.resolveChatEventTarget(event.correlationId);
+    if (!target) return true;
+    if (target.controlsVoiceState) {
+      deps.setChatTtsStopRequested(false);
+      const pipeline = deps.getVoicePipelineState();
+      if (pipeline === "processing" || pipeline === "interrupted") {
+        deps.setVoicePipelineState("idle");
+      }
     }
-    deps.state.chatStreamCompleteByCorrelation[event.correlationId] = false;
-    if (deps.state.chatTtsEnabled) {
+    target.markStreamComplete(event.correlationId, false);
+    if (target.chatTtsEnabled) {
       deps.resetChatTtsStreamParser(event.correlationId);
     }
     return true;
   }
 
   if (event.action === "chat.stream.complete") {
-    if (!deps.isCurrentChatCorrelation(event.correlationId)) return true;
-    deps.state.chatStreamCompleteByCorrelation[event.correlationId] = true;
-    if (!deps.state.chatTtsPlaying) {
+    const target = deps.resolveChatEventTarget(event.correlationId);
+    if (!target) return true;
+    target.markStreamComplete(event.correlationId, true);
+    if (target.controlsVoiceState && !target.chatTtsPlaying) {
       deps.setVoicePipelineState("idle");
     }
-    deps.flushChatStreamForTts(event.correlationId);
-    deps.scheduleChatStreamDomUpdate();
+    if (target.chatTtsEnabled) {
+      deps.flushChatStreamForTts(event.correlationId);
+    }
+    target.scheduleDomUpdate();
     return true;
   }
 
   if (event.action === "chat.agent.tool.start") {
-    if (!deps.isCurrentChatCorrelation(event.correlationId)) return true;
+    const target = deps.resolveChatEventTarget(event.correlationId);
+    if (!target) return true;
     const payload = deps.parseAgentToolPayload(event.payload);
     if (payload) {
-      deps.ensureAssistantMessageForCorrelation(event.correlationId);
-      deps.ensureToolIntentRow(event.correlationId, payload.toolName);
-      deps.appendChatToolRow(event.correlationId, {
+      target.ensureAssistantMessageForCorrelation(event.correlationId);
+      target.ensureToolIntentRow(event.correlationId, payload.toolName);
+      target.appendChatToolRow(event.correlationId, {
         icon: deps.toolIconName(payload.toolName),
         title: `${deps.toolTitleName(payload.toolName)} · start`,
         details: payload.display || `Started tool call ${payload.toolCallId}.`
       });
-      deps.scheduleChatStreamDomUpdate();
+      target.scheduleDomUpdate();
     }
     return true;
   }
 
   if (event.action === "chat.agent.tool.end") {
-    if (!deps.isCurrentChatCorrelation(event.correlationId)) return true;
+    const target = deps.resolveChatEventTarget(event.correlationId);
+    if (!target) return true;
     const payload = deps.parseAgentToolPayload(event.payload);
     if (payload) {
-      deps.ensureAssistantMessageForCorrelation(event.correlationId);
-      deps.appendChatToolRow(event.correlationId, {
+      target.ensureAssistantMessageForCorrelation(event.correlationId);
+      target.appendChatToolRow(event.correlationId, {
         icon: deps.toolIconName(payload.toolName),
         title: `${deps.toolTitleName(payload.toolName)} · complete`,
         details: payload.display || `Tool call ${payload.toolCallId} completed.`
       });
-      deps.scheduleChatStreamDomUpdate();
+      target.scheduleDomUpdate();
     }
     return true;
   }
 
   if (event.action === "chat.agent.tool.result") {
-    if (!deps.isCurrentChatCorrelation(event.correlationId)) return true;
+    const target = deps.resolveChatEventTarget(event.correlationId);
+    if (!target) return true;
     const payload = deps.parseAgentToolPayload(event.payload);
     if (payload) {
-      deps.ensureAssistantMessageForCorrelation(event.correlationId);
+      target.ensureAssistantMessageForCorrelation(event.correlationId);
       const status = payload.success === false ? "error" : "result";
       const defaultDetail =
         payload.success === false
           ? `Tool call ${payload.toolCallId} returned an error.`
           : `Tool call ${payload.toolCallId} returned successfully.`;
-      deps.appendChatToolRow(event.correlationId, {
+      target.appendChatToolRow(event.correlationId, {
         icon: payload.success === false ? "triangle-alert" : deps.toolIconName(payload.toolName),
         title: `${deps.toolTitleName(payload.toolName)} · ${status}`,
         details: payload.display || defaultDetail
       });
-      deps.scheduleChatStreamDomUpdate();
+      target.scheduleDomUpdate();
     }
     return true;
   }
 
   if (event.action === "chat.stream.chunk") {
     const chunk = deps.parseStreamChunk(event.payload);
-    if (chunk && chunk.conversationId === deps.state.conversationId) {
-      deps.updateAssistantDraft(event.correlationId, chunk.delta);
-      deps.ingestChatStreamForTts(event.correlationId, chunk.delta);
-      deps.scheduleChatStreamDomUpdate();
+    const target = chunk
+      ? deps.resolveChatEventTarget(event.correlationId, chunk.conversationId)
+      : null;
+    if (chunk && target) {
+      target.updateAssistantDraft(event.correlationId, chunk.delta);
+      target.ingestChatStreamForTts(event.correlationId, chunk.delta);
+      target.scheduleDomUpdate();
       return true;
     }
   }
 
   if (event.action === "chat.stream.reasoning_chunk") {
     const chunk = deps.parseReasoningStreamChunk(event.payload);
-    if (chunk && chunk.conversationId === deps.state.conversationId) {
-      deps.updateReasoningDraft(event.correlationId, chunk.delta);
-      deps.scheduleChatStreamDomUpdate();
+    const target = chunk
+      ? deps.resolveChatEventTarget(event.correlationId, chunk.conversationId)
+      : null;
+    if (chunk && target) {
+      target.updateReasoningDraft(event.correlationId, chunk.delta);
+      target.scheduleDomUpdate();
       return true;
     }
   }

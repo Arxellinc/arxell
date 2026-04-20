@@ -24,10 +24,13 @@ import type { OpenCodeActionsDeps } from "../opencode/actions";
 import { handleLooperClick, handleLooperInput } from "../looper/bindings";
 import type { LooperToolState } from "../looper/state";
 import type { LooperActionsDeps } from "../looper/actions";
-import { handleSkillsClick, handleSkillsPointerDown } from "../skills/bindings";
+import { handleSkillsClick, handleSkillsInput, handleSkillsKeyDown, handleSkillsPointerDown } from "../skills/bindings";
 import type { SkillsToolViewState } from "../skills/state";
 import { SKILLS_DATA_ATTR } from "../skills/constants";
+import { handleDocsClick, handleDocsPointerDown } from "../docs/bindings";
+import { handleDocsInput, handleDocsKeyDown } from "../docs/bindings";
 import { handleNotepadClick, handleNotepadInput, handleNotepadKeyDown } from "../notepad/bindings";
+import { handleSheetsClick } from "../sheets/bindings";
 import {
   FILES_DATA_ATTR,
   FILES_UI_ID,
@@ -37,6 +40,7 @@ import {
   MANAGER_UI_ID,
   NOTEPAD_DATA_ATTR,
   OPENCODE_DATA_ATTR,
+  SHEETS_DATA_ATTR,
   TASKS_DATA_ATTR,
   TERMINAL_DATA_ATTR,
   TERMINAL_UI_ID,
@@ -64,6 +68,7 @@ export const WORKSPACE_TOOL_TARGET_SELECTOR = [
   `#${FILES_UI_ID.refreshButton}`,
   `[${NOTEPAD_DATA_ATTR.action}]`,
   `[${NOTEPAD_DATA_ATTR.tabId}]`,
+  `[${SHEETS_DATA_ATTR.action}]`,
   `[${TASKS_DATA_ATTR.action}]`,
   `[${TASKS_DATA_ATTR.taskId}]`,
   `[${TASKS_DATA_ATTR.field}]`,
@@ -133,6 +138,42 @@ export interface WorkspaceToolDispatchDeps {
     duplicateActiveNotepadTab: (path: string) => Promise<void>;
     deleteActiveNotepadFile: () => Promise<void>;
   };
+  sheets: {
+    createNewSheet: () => Promise<void>;
+    openSheetWithDialog: () => Promise<void>;
+    saveSheetCurrent: () => Promise<void>;
+    saveSheetWithDialog: () => Promise<void>;
+    insertRows: (index: number, count?: number) => Promise<void>;
+    insertColumns: (index: number, count?: number) => Promise<void>;
+    deleteRows: (index: number, count?: number) => Promise<void>;
+    deleteColumns: (index: number, count?: number) => Promise<void>;
+  };
+  docs: {
+    listDocsDirectory: (path?: string) => Promise<void>;
+    selectDocsPath: (path: string) => Promise<void>;
+    toggleDocsNode: (path: string) => Promise<void>;
+    openDocsFile: (path: string) => Promise<void>;
+    createNewDocsFile: (path: string) => Promise<void>;
+    activateDocsTab: (path: string) => void;
+    closeDocsTab: (path: string) => void;
+    updateDocsBuffer: (path: string, content: string) => void;
+    saveActiveDocsTab: () => Promise<void>;
+    saveActiveDocsTabAs: (path: string) => Promise<void>;
+    saveAllDocsTabs: () => Promise<void>;
+  };
+  skills: {
+    listSkillsDirectory: (path?: string) => Promise<void>;
+    selectSkillsPath: (path: string) => Promise<void>;
+    toggleSkillsNode: (path: string) => Promise<void>;
+    openSkillsFile: (path: string) => Promise<void>;
+    createNewSkillsFile: (path: string) => Promise<void>;
+    activateSkillsTab: (path: string) => void;
+    closeSkillsTab: (path: string) => void;
+    updateSkillsBuffer: (path: string, content: string) => void;
+    saveActiveSkillsTab: () => Promise<void>;
+    saveActiveSkillsTabAs: (path: string) => Promise<void>;
+    saveAllSkillsTabs: () => Promise<void>;
+  };
   web: {
     runWebSearch: () => Promise<void>;
     createAndActivateWebTab: () => void;
@@ -165,6 +206,9 @@ export async function dispatchWorkspaceToolClick(
   if (await handleNotepadClick(target, state as any, deps.notepad)) {
     return true;
   }
+  if (await handleSheetsClick(target, (state as any).sheetsState, deps.sheets)) {
+    return true;
+  }
   if (await handleTasksClick(target, state as any)) {
     return true;
   }
@@ -180,7 +224,10 @@ export async function dispatchWorkspaceToolClick(
   if (handleLooperClick(target, deps.looper.state, deps.looper.actionsDeps)) {
     return true;
   }
-  if (await handleSkillsClick(target, state as unknown as SkillsToolViewState)) {
+  if (await handleSkillsClick(target, state as unknown as SkillsToolViewState, deps.skills)) {
+    return true;
+  }
+  if (await handleDocsClick(target, state as any, deps.docs)) {
     return true;
   }
   return false;
@@ -203,6 +250,8 @@ export function dispatchWorkspaceToolInput(
   deps: WorkspaceToolDispatchDeps
 ): { handled: boolean; rerender: boolean } {
   const filesResult = handleFilesInput(target, state as any);
+  const skillsResult = handleSkillsInput(target, state as unknown as SkillsToolViewState);
+  const docsResult = handleDocsInput(target, state as any);
   const notepadResult = handleNotepadInput(target, state as any);
   const tasksHandled = handleTasksInput(target, state as any);
   const webHandled = handleWebInput(target, state as any, { withActiveWebTab: deps.web.withActiveWebTab as any });
@@ -212,6 +261,8 @@ export function dispatchWorkspaceToolInput(
   return {
     handled:
       filesResult.handled ||
+      skillsResult.handled ||
+      docsResult.handled ||
       notepadResult.handled ||
       tasksHandled ||
       webHandled ||
@@ -220,6 +271,8 @@ export function dispatchWorkspaceToolInput(
       looperResult.handled,
     rerender:
       filesResult.rerender ||
+      skillsResult.rerender ||
+      docsResult.rerender ||
       notepadResult.rerender ||
       tasksHandled ||
       flowResult.rerender ||
@@ -269,6 +322,12 @@ export async function dispatchWorkspaceToolKeyDown(
   ) {
     return true;
   }
+  if (await handleDocsKeyDown(event, state as any, deps.docs)) {
+    return true;
+  }
+  if (await handleSkillsKeyDown(event, state as unknown as SkillsToolViewState, deps.skills)) {
+    return true;
+  }
   return handleWebKeyDown(event, {
     runWebSearch: deps.web.runWebSearch,
     withActiveWebTab: deps.web.withActiveWebTab as any
@@ -310,6 +369,9 @@ export function dispatchWorkspaceToolPointerDown(
     return true;
   }
   if (handleSkillsPointerDown(event, target, state as unknown as SkillsToolViewState)) {
+    return true;
+  }
+  if (handleDocsPointerDown(event, target, state as any)) {
     return true;
   }
   return false;

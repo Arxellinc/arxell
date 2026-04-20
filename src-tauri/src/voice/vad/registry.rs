@@ -1,14 +1,22 @@
 use crate::voice::vad::contracts::{VadError, VadManifest, VadStatus, VadStrategy};
-use crate::voice::vad::settings::{ENERGY_BASIC_ID, MICROTURN_V1_ID, SHERPA_SILERO_ID};
+use crate::voice::vad::settings::{
+    ENERGY_BASIC_ID, HYBRID_INTERRUPT_ID, MICROTURN_V1_ID, SHERPA_SILERO_ID,
+};
 use crate::voice::vad::strategies::energy_basic::EnergyBasicStrategy;
+use crate::voice::vad::strategies::hybrid_interrupt::HybridInterruptStrategy;
 use crate::voice::vad::strategies::microturn_v1::MicroturnV1Strategy;
 use crate::voice::vad::strategies::sherpa_silero::SherpaSileroStrategy;
 
 pub fn list_methods(include_experimental: bool) -> Vec<VadManifest> {
-    [energy_manifest(), sherpa_manifest(), microturn_manifest()]
-        .into_iter()
-        .filter(|manifest| is_visible(manifest, include_experimental))
-        .collect()
+    [
+        energy_manifest(),
+        sherpa_manifest(),
+        microturn_manifest(),
+        hybrid_interrupt_manifest(),
+    ]
+    .into_iter()
+    .filter(|manifest| is_visible(manifest, include_experimental))
+    .collect()
 }
 
 pub fn validate_method(method_id: &str) -> Result<(), VadError> {
@@ -36,6 +44,7 @@ pub fn instantiate(method_id: &str) -> Result<Box<dyn VadStrategy>, VadError> {
         ENERGY_BASIC_ID => Ok(Box::<EnergyBasicStrategy>::default()),
         SHERPA_SILERO_ID => Ok(Box::<SherpaSileroStrategy>::default()),
         MICROTURN_V1_ID => Ok(Box::<MicroturnV1Strategy>::default()),
+        HYBRID_INTERRUPT_ID => Ok(Box::<HybridInterruptStrategy>::default()),
         _ => Err(VadError::UnknownMethod(format!(
             "unknown VAD method '{method_id}'"
         ))),
@@ -43,7 +52,12 @@ pub fn instantiate(method_id: &str) -> Result<Box<dyn VadStrategy>, VadError> {
 }
 
 fn all_manifests() -> Vec<VadManifest> {
-    vec![energy_manifest(), sherpa_manifest(), microturn_manifest()]
+    vec![
+        energy_manifest(),
+        sherpa_manifest(),
+        microturn_manifest(),
+        hybrid_interrupt_manifest(),
+    ]
 }
 
 fn is_visible(manifest: &VadManifest, include_experimental: bool) -> bool {
@@ -64,6 +78,10 @@ fn sherpa_manifest() -> VadManifest {
 
 fn microturn_manifest() -> VadManifest {
     MicroturnV1Strategy::manifest_static()
+}
+
+fn hybrid_interrupt_manifest() -> VadManifest {
+    HybridInterruptStrategy::manifest_static()
 }
 
 #[cfg(test)]

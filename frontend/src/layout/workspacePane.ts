@@ -7,6 +7,7 @@ import { WORKSPACE_DATA_ATTR } from "../tools/ui/constants";
 import { resolveWorkspaceView } from "../tools/workspaceViewRegistry";
 import type { WorkspacePrimaryTab, WorkspaceTab } from "./workspaceTabs";
 import { toWorkspaceToolTabId } from "./workspaceTabs";
+import { renderPaneMenu } from "./paneMenu";
 
 export function renderWorkspacePane(
   consoleHtml: string,
@@ -92,12 +93,14 @@ function renderWorkspaceTopbar(activeTab: WorkspaceTab, workspaceTools: Workspac
   const rightButtonsHtml = rightButtons
     .map((button) => renderWorkspaceTopbarButton(button.tabId, button.icon, button.title, activeTab))
     .join("");
+  const workspaceMenuHtml = renderPaneMenu("workspacePaneMenu", APP_ICON.action.paneMenu);
   return `<header class="pane-topbar workspace-pane-topbar">
     <div class="workspace-topbar-left">
       ${leftButtonsHtml}
     </div>
     <div class="workspace-topbar-right">
       ${rightButtonsHtml}
+      ${workspaceMenuHtml}
     </div>
   </header>`;
 }

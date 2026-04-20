@@ -16,6 +16,9 @@ import type {
   ModelManagerInstalledModel,
   PersistedVoiceSettings,
   TtsSpeakResponse,
+  DuplexMode,
+  HandoffState,
+  SpeculationState,
   VadManifest,
   VoiceRuntimeState,
   WorkspaceToolRecord
@@ -25,8 +28,10 @@ import type { IconName } from "./icons";
 import { APP_ICON } from "./icons/map";
 import type { ChatIpcClient } from "./ipcClient";
 import { createChatIpcClient } from "./ipcClient";
+import type { ChatPanelState } from "./panels/types";
 import {
   BOTTOMBAR_RESOURCE_IDS,
+  bindPaneMenu,
   isWorkspaceTab,
   renderGlobalBottombar,
   renderGlobalTopbar,
@@ -34,6 +39,7 @@ import {
   renderWorkspacePane
 } from "./layout";
 import { attachPrimaryPanelInteractions, getPanelDefinition } from "./panels";
+import { bindChatPanel } from "./panels/chatPanel";
 import type {
   ApiConnectionDraft,
   ChatToolEventRow,
@@ -97,6 +103,43 @@ import type { LooperToolState } from "./tools/looper/state";
 import { ensureLooperInit } from "./tools/looper/actions";
 import type { LooperActionsDeps } from "./tools/looper/actions";
 import { LOOPER_UI_ID } from "./tools/ui/constants";
+import {
+  activateDocsTab,
+  closeDocsTab,
+  createNewDocsFile,
+  ensureDocsLoaded,
+  listDocsDirectory,
+  openDocsFile,
+  saveActiveDocsTab,
+  saveActiveDocsTabAs,
+  saveAllDocsTabs,
+  selectDocsPath,
+  toggleDocsNode,
+  updateDocsBuffer
+} from "./tools/docs/actions";
+import { getInitialSheetsState } from "./tools/sheets/state";
+import type { SheetsToolState } from "./tools/sheets/state";
+import {
+  buildSheetsGridRows,
+  collapseGridChangesToWrite,
+  diffSheetsGridChanges,
+  type SheetsGridRow
+} from "./tools/sheets/gridMapping";
+import { mountSheetsRuntime, unmountSheetsRuntime } from "./tools/sheets/runtime";
+import {
+  activateSkillsTab,
+  closeSkillsTab,
+  createNewSkillsFile,
+  ensureSkillsLoaded,
+  listSkillsDirectory,
+  openSkillsFile,
+  saveActiveSkillsTab,
+  saveActiveSkillsTabAs,
+  saveAllSkillsTabs,
+  selectSkillsPath,
+  toggleSkillsNode,
+  updateSkillsBuffer
+} from "./tools/skills/actions";
 import { loadPersistedTasksById } from "./tools/tasks/actions";
 import type { TaskFolder, TaskSortDirection, TaskSortKey, TaskRecord } from "./tools/tasks/state";
 import { resetTtsStateForEngine, type TtsEngine } from "./tts/engineRules";
@@ -204,11 +247,16 @@ const terminalManager = new TerminalManager();
 const MAX_CONSOLE_ENTRIES = 600;
 const CHAT_ID_ALPHANUM = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
 let chatStreamDomUpdateScheduled = false;
+const chatPaneDomUpdatesPending = new Set<string>();
 let chatThinkingDelegationInstalled = false;
 let customToolBridgeInstalled = false;
 let tauriWindowHandle: TauriWindowHandle | null = null;
 const FALLBACK_APP_VERSION = normalizeVersionLabel(APP_BUILD_VERSION);
 let preferredChatModelId = loadPersistedChatModelId();
+const initialWorkspaceTabCandidate = loadPersistedWorkspaceTab("events");
+const initialWorkspaceTab = isWorkspaceTab(initialWorkspaceTabCandidate)
+  ? initialWorkspaceTabCandidate
+  : "events";
 type ConsoleView = "all" | "errors-warnings" | "security-events";
 type DisplayModePreference = DisplayMode | "system" | "terminal";
 type ChatModelOption = {
@@ -267,6 +315,9 @@ const state: {
   chatTtsEnabled: boolean;
   chatTtsPlaying: boolean;
   activeChatCorrelationId: string | null;
+  chatSplitMode: "none" | "vertical" | "horizontal";
+  chatSplitPercent: number;
+  chatPanels: ChatPanelState[];
   devices: DevicesState;
   apiConnections: ApiConnectionRecord[];
   apiFormOpen: boolean;
@@ -378,6 +429,53 @@ const state: {
   notepadFindCaseSensitive: boolean;
   notepadLineWrap: boolean;
   notepadError: string | null;
+  sheetsState: SheetsToolState;
+  docsRootPath: string | null;
+  docsSelectedPath: string | null;
+  docsSelectedEntryPath: string | null;
+  docsExpandedByPath: Record<string, boolean>;
+  docsEntriesByPath: Record<string, FilesListDirectoryEntry[]>;
+  docsLoadingByPath: Record<string, boolean>;
+  docsOpenTabs: string[];
+  docsActiveTabPath: string | null;
+  docsContentByPath: Record<string, string>;
+  docsSavedContentByPath: Record<string, string>;
+  docsDirtyByPath: Record<string, boolean>;
+  docsLoadingFileByPath: Record<string, boolean>;
+  docsSavingFileByPath: Record<string, boolean>;
+  docsReadOnlyByPath: Record<string, boolean>;
+  docsSizeByPath: Record<string, number>;
+  docsSidebarWidth: number;
+  docsSidebarCollapsed: boolean;
+  docsFindOpen: boolean;
+  docsFindQuery: string;
+  docsReplaceQuery: string;
+  docsFindCaseSensitive: boolean;
+  docsLineWrap: boolean;
+  docsError: string | null;
+  skillsRootPath: string | null;
+  skillsSelectedPath: string | null;
+  skillsSelectedEntryPath: string | null;
+  skillsExpandedByPath: Record<string, boolean>;
+  skillsEntriesByPath: Record<string, FilesListDirectoryEntry[]>;
+  skillsLoadingByPath: Record<string, boolean>;
+  skillsOpenTabs: string[];
+  skillsActiveTabPath: string | null;
+  skillsContentByPath: Record<string, string>;
+  skillsSavedContentByPath: Record<string, string>;
+  skillsDirtyByPath: Record<string, boolean>;
+  skillsLoadingFileByPath: Record<string, boolean>;
+  skillsSavingFileByPath: Record<string, boolean>;
+  skillsReadOnlyByPath: Record<string, boolean>;
+  skillsSizeByPath: Record<string, number>;
+  skillsSidebarWidth: number;
+  skillsSidebarCollapsed: boolean;
+  skillsFindOpen: boolean;
+  skillsFindQuery: string;
+  skillsReplaceQuery: string;
+  skillsFindCaseSensitive: boolean;
+  skillsLineWrap: boolean;
+  skillsError: string | null;
   tasksById: Record<string, TaskRecord>;
   tasksSelectedId: string | null;
   tasksFolder: TaskFolder;
@@ -516,8 +614,20 @@ const state: {
   vadMethods: VadManifest[];
   vadIncludeExperimental: boolean;
   vadSelectedMethod: string;
+  vadShadowMethod: string | null;
+  vadStandbyMethod: string | null;
   vadSettings: PersistedVoiceSettings | null;
   voiceRuntimeState: VoiceRuntimeState;
+  voiceHandoffState: HandoffState;
+  voiceSpeculationState: SpeculationState;
+  voiceDuplexMode: DuplexMode;
+  vadShadowSummary: {
+    activeMethodId: string;
+    shadowMethodId: string;
+    activeEventCount: number;
+    shadowEventCount: number;
+    disagreementCount: number;
+  } | null;
   vadMessage: string | null;
   tts: {
     status: "idle" | "ready" | "busy" | "error";
@@ -571,6 +681,9 @@ const state: {
   chatTtsEnabled: false,
   chatTtsPlaying: false,
   activeChatCorrelationId: null,
+  chatSplitMode: "none",
+  chatSplitPercent: 50,
+  chatPanels: [],
   devices: defaultDevicesState(),
   apiConnections: [],
   apiFormOpen: false,
@@ -589,7 +702,7 @@ const state: {
   chatPanePercent: 35,
   portraitWorkspacePercent: 46,
   sidebarTab: "chat",
-  workspaceTab: loadPersistedWorkspaceTab("events"),
+  workspaceTab: initialWorkspaceTab,
   layoutOrientation: "landscape",
   activeTerminalSessionId: null,
   terminalShellProfile: "default",
@@ -677,6 +790,53 @@ const state: {
   notepadFindCaseSensitive: false,
   notepadLineWrap: false,
   notepadError: null,
+  sheetsState: getInitialSheetsState(),
+  docsRootPath: null,
+  docsSelectedPath: null,
+  docsSelectedEntryPath: null,
+  docsExpandedByPath: {},
+  docsEntriesByPath: {},
+  docsLoadingByPath: {},
+  docsOpenTabs: [],
+  docsActiveTabPath: null,
+  docsContentByPath: {},
+  docsSavedContentByPath: {},
+  docsDirtyByPath: {},
+  docsLoadingFileByPath: {},
+  docsSavingFileByPath: {},
+  docsReadOnlyByPath: {},
+  docsSizeByPath: {},
+  docsSidebarWidth: 280,
+  docsSidebarCollapsed: false,
+  docsFindOpen: false,
+  docsFindQuery: "",
+  docsReplaceQuery: "",
+  docsFindCaseSensitive: false,
+  docsLineWrap: false,
+  docsError: null,
+  skillsRootPath: null,
+  skillsSelectedPath: null,
+  skillsSelectedEntryPath: null,
+  skillsExpandedByPath: {},
+  skillsEntriesByPath: {},
+  skillsLoadingByPath: {},
+  skillsOpenTabs: [],
+  skillsActiveTabPath: null,
+  skillsContentByPath: {},
+  skillsSavedContentByPath: {},
+  skillsDirtyByPath: {},
+  skillsLoadingFileByPath: {},
+  skillsSavingFileByPath: {},
+  skillsReadOnlyByPath: {},
+  skillsSizeByPath: {},
+  skillsSidebarWidth: 280,
+  skillsSidebarCollapsed: false,
+  skillsFindOpen: false,
+  skillsFindQuery: "",
+  skillsReplaceQuery: "",
+  skillsFindCaseSensitive: false,
+  skillsLineWrap: false,
+  skillsError: null,
   tasksById: loadPersistedTasksById(),
   tasksSelectedId: null,
   tasksFolder: "inbox",
@@ -805,8 +965,14 @@ const state: {
   vadMethods: [],
   vadIncludeExperimental: false,
   vadSelectedMethod: "sherpa-silero",
+  vadShadowMethod: null,
+  vadStandbyMethod: null,
   vadSettings: null,
   voiceRuntimeState: "idle",
+  voiceHandoffState: "none",
+  voiceSpeculationState: "disabled",
+  voiceDuplexMode: "single_turn",
+  vadShadowSummary: null,
   vadMessage: null,
   tts: {
     status: "idle",
@@ -837,6 +1003,271 @@ const state: {
   }
 };
 state.activeWebTabId = state.webTabs[0]?.id ?? "";
+state.chatPanels = [createChatPanelState("chat-0", state)];
+
+const PRIMARY_CHAT_PANE_ID = "chat-0";
+const chatPaneIdByCorrelation = new Map<string, string>();
+
+function syncPrimaryChatPanelFromFlatState(): void {
+  const cp = state.chatPanels[0];
+  if (!cp) return;
+  cp.conversationId = state.conversationId;
+  cp.messages = state.messages;
+  cp.chatReasoningByCorrelation = state.chatReasoningByCorrelation;
+  cp.chatThinkingPlacementByCorrelation = state.chatThinkingPlacementByCorrelation;
+  cp.chatThinkingExpandedByCorrelation = state.chatThinkingExpandedByCorrelation;
+  cp.chatToolRowsByCorrelation = state.chatToolRowsByCorrelation;
+  cp.chatToolRowExpandedById = state.chatToolRowExpandedById;
+  cp.chatStreamCompleteByCorrelation = state.chatStreamCompleteByCorrelation;
+  cp.chatStreaming = state.chatStreaming;
+  cp.chatDraft = state.chatDraft;
+  cp.chatAttachedFileName = state.chatAttachedFileName;
+  cp.chatAttachedFileContent = state.chatAttachedFileContent;
+  cp.chatActiveModelId = state.chatActiveModelId;
+  cp.chatActiveModelLabel = state.chatActiveModelLabel;
+  cp.chatActiveModelCapabilities = state.chatActiveModelCapabilities;
+  cp.chatThinkingEnabled = state.chatThinkingEnabled;
+  cp.chatTtsEnabled = state.chatTtsEnabled;
+  cp.chatTtsPlaying = state.chatTtsPlaying;
+  cp.activeChatCorrelationId = state.activeChatCorrelationId;
+}
+
+function getPrimaryChatPanelState(): ChatPanelState {
+  let cp = state.chatPanels[0];
+  if (!cp) {
+    cp = createChatPanelState(PRIMARY_CHAT_PANE_ID, state);
+    state.chatPanels[0] = cp;
+  }
+  syncPrimaryChatPanelFromFlatState();
+  return cp;
+}
+
+function getSecondaryChatPanelState(panelId: string): ChatPanelState | null {
+  if (panelId === PRIMARY_CHAT_PANE_ID) return null;
+  return state.chatPanels.find((panel) => panel.panelId === panelId) ?? null;
+}
+
+function getChatPanelById(panelId: string): ChatPanelState | null {
+  if (panelId === PRIMARY_CHAT_PANE_ID) {
+    return getPrimaryChatPanelState();
+  }
+  return getSecondaryChatPanelState(panelId);
+}
+
+function rememberChatCorrelationTarget(panelId: string, correlationId: string): void {
+  chatPaneIdByCorrelation.set(correlationId, panelId);
+}
+
+function resolveChatPaneIdForEvent(correlationId: string, conversationId?: string | null): string | null {
+  const knownPaneId = chatPaneIdByCorrelation.get(correlationId);
+  if (knownPaneId) return knownPaneId;
+  if (state.activeChatCorrelationId === correlationId || state.conversationId === conversationId) {
+    return PRIMARY_CHAT_PANE_ID;
+  }
+  for (const cp of state.chatPanels.slice(1)) {
+    if (cp.activeChatCorrelationId === correlationId || cp.conversationId === conversationId) {
+      return cp.panelId;
+    }
+  }
+  return null;
+}
+
+function createChatPanelState(panelId: string, src: typeof state): ChatPanelState {
+  return {
+    panelId,
+    conversationId: src.conversationId,
+    messages: src.messages,
+    chatReasoningByCorrelation: src.chatReasoningByCorrelation,
+    chatThinkingPlacementByCorrelation: src.chatThinkingPlacementByCorrelation,
+    chatThinkingExpandedByCorrelation: src.chatThinkingExpandedByCorrelation,
+    chatToolRowsByCorrelation: src.chatToolRowsByCorrelation,
+    chatToolRowExpandedById: src.chatToolRowExpandedById,
+    chatStreamCompleteByCorrelation: src.chatStreamCompleteByCorrelation,
+    chatStreaming: false,
+    chatDraft: "",
+    chatAttachedFileName: null,
+    chatAttachedFileContent: null,
+    chatActiveModelId: src.chatActiveModelId,
+    chatActiveModelLabel: src.chatActiveModelLabel,
+    chatActiveModelCapabilities: src.chatActiveModelCapabilities,
+    chatThinkingEnabled: src.chatThinkingEnabled,
+    chatTtsEnabled: false,
+    chatTtsPlaying: false,
+    activeChatCorrelationId: null
+  };
+}
+
+function createFreshChatPanelState(panelId: string, modelId: string, modelLabel: string): ChatPanelState {
+  return {
+    panelId,
+    conversationId: generateChatConversationId(),
+    messages: [],
+    chatReasoningByCorrelation: {},
+    chatThinkingPlacementByCorrelation: {},
+    chatThinkingExpandedByCorrelation: {},
+    chatToolRowsByCorrelation: {},
+    chatToolRowExpandedById: {},
+    chatStreamCompleteByCorrelation: {},
+    chatStreaming: false,
+    chatDraft: "",
+    chatAttachedFileName: null,
+    chatAttachedFileContent: null,
+    chatActiveModelId: modelId,
+    chatActiveModelLabel: modelLabel,
+    chatActiveModelCapabilities: inferChatModelCapabilities(modelLabel),
+    chatThinkingEnabled: false,
+    chatTtsEnabled: false,
+    chatTtsPlaying: false,
+    activeChatCorrelationId: null
+  };
+}
+
+function resetSecondaryChatPaneState(cp: ChatPanelState): void {
+  cp.messages = [];
+  cp.chatDraft = "";
+  cp.chatAttachedFileName = null;
+  cp.chatAttachedFileContent = null;
+  cp.chatReasoningByCorrelation = {};
+  cp.chatThinkingPlacementByCorrelation = {};
+  cp.chatThinkingExpandedByCorrelation = {};
+  cp.chatToolRowsByCorrelation = {};
+  cp.chatToolRowExpandedById = {};
+  cp.chatStreamCompleteByCorrelation = {};
+  cp.chatStreaming = false;
+  cp.activeChatCorrelationId = null;
+}
+
+function createSecondaryChatSendState(
+  cp: ChatPanelState
+): Parameters<typeof createSendMessageHandler>[0]["state"] {
+  return {
+    get messages() {
+      return cp.messages;
+    },
+    set messages(value) {
+      cp.messages = value;
+    },
+    get chatDraft() {
+      return cp.chatDraft;
+    },
+    set chatDraft(value) {
+      cp.chatDraft = value;
+    },
+    get chatStreaming() {
+      return cp.chatStreaming;
+    },
+    set chatStreaming(value) {
+      cp.chatStreaming = value;
+    },
+    get activeChatCorrelationId() {
+      return cp.activeChatCorrelationId;
+    },
+    set activeChatCorrelationId(value) {
+      cp.activeChatCorrelationId = value;
+    },
+    get chatStreamCompleteByCorrelation() {
+      return cp.chatStreamCompleteByCorrelation;
+    },
+    set chatStreamCompleteByCorrelation(value) {
+      cp.chatStreamCompleteByCorrelation = value;
+    },
+    get chatTtsLatencyMs() {
+      return state.chatTtsLatencyMs;
+    },
+    set chatTtsLatencyMs(value) {
+      state.chatTtsLatencyMs = value;
+    },
+    get chatModelOptions() {
+      return state.chatModelOptions;
+    },
+    set chatModelOptions(value) {
+      state.chatModelOptions = value;
+    },
+    get chatActiveModelId() {
+      return cp.chatActiveModelId;
+    },
+    set chatActiveModelId(value) {
+      cp.chatActiveModelId = value;
+    },
+    get conversationId() {
+      return cp.conversationId;
+    },
+    set conversationId(value) {
+      cp.conversationId = value;
+    },
+    get chatThinkingEnabled() {
+      return cp.chatThinkingEnabled;
+    },
+    set chatThinkingEnabled(value) {
+      cp.chatThinkingEnabled = value;
+    },
+    get chatRoutePreference() {
+      return state.chatRoutePreference;
+    },
+    set chatRoutePreference(value) {
+      state.chatRoutePreference = value;
+    },
+    get chatActiveModelLabel() {
+      return cp.chatActiveModelLabel;
+    },
+    set chatActiveModelLabel(value) {
+      cp.chatActiveModelLabel = value;
+    },
+    get llamaRuntimeMaxTokens() {
+      return state.llamaRuntimeMaxTokens;
+    },
+    set llamaRuntimeMaxTokens(value) {
+      state.llamaRuntimeMaxTokens = value;
+    },
+    get chatReasoningByCorrelation() {
+      return cp.chatReasoningByCorrelation;
+    },
+    set chatReasoningByCorrelation(value) {
+      cp.chatReasoningByCorrelation = value;
+    },
+    get chatThinkingExpandedByCorrelation() {
+      return cp.chatThinkingExpandedByCorrelation;
+    },
+    set chatThinkingExpandedByCorrelation(value) {
+      cp.chatThinkingExpandedByCorrelation = value;
+    },
+    get chatThinkingPlacementByCorrelation() {
+      return cp.chatThinkingPlacementByCorrelation;
+    },
+    set chatThinkingPlacementByCorrelation(value) {
+      cp.chatThinkingPlacementByCorrelation = value;
+    },
+    get chatTtsEnabled() {
+      return false;
+    },
+    set chatTtsEnabled(_value) {},
+    get chatFirstAssistantChunkMsByCorrelation() {
+      return state.chatFirstAssistantChunkMsByCorrelation;
+    },
+    set chatFirstAssistantChunkMsByCorrelation(value) {
+      state.chatFirstAssistantChunkMsByCorrelation = value;
+    },
+    get events() {
+      return state.events;
+    },
+    set events(value) {
+      state.events = value;
+    }
+  };
+}
+
+function resolveSplitPanelModel(): { id: string; label: string } {
+  const primary = getPrimaryChatPanelState();
+  if (!primary) return { id: "", label: "Select a model..." };
+  const currentOption = state.chatModelOptions.find((o) => o.id === primary.chatActiveModelId);
+  if (currentOption && currentOption.source === "api") {
+    return { id: currentOption.id, label: currentOption.label };
+  }
+  const firstApi = state.chatModelOptions.find((o) => o.source === "api");
+  if (firstApi) return { id: firstApi.id, label: firstApi.label };
+  return { id: "", label: "Select a model..." };
+}
+
 type AppState = typeof state;
 type VoicePipelineState = "idle" | "user_speaking" | "processing" | "agent_speaking" | "interrupted";
 let voicePipelineState: VoicePipelineState = "idle";
@@ -1968,6 +2399,7 @@ async function requestSpeakerAccess(): Promise<void> {
 }
 
 function render(): void {
+  syncPrimaryChatPanelFromFlatState();
   const app = document.querySelector<HTMLDivElement>("#app");
   if (!app) return;
   document.documentElement.setAttribute("data-theme", state.displayMode);
@@ -2086,6 +2518,53 @@ function render(): void {
     notepadFindCaseSensitive: state.notepadFindCaseSensitive,
     notepadLineWrap: state.notepadLineWrap,
     notepadError: state.notepadError,
+    sheetsState: state.sheetsState,
+    docsRootPath: state.docsRootPath,
+    docsSelectedPath: state.docsSelectedPath,
+    docsSelectedEntryPath: state.docsSelectedEntryPath,
+    docsExpandedByPath: state.docsExpandedByPath,
+    docsEntriesByPath: state.docsEntriesByPath,
+    docsLoadingByPath: state.docsLoadingByPath,
+    docsOpenTabs: state.docsOpenTabs,
+    docsActiveTabPath: state.docsActiveTabPath,
+    docsContentByPath: state.docsContentByPath,
+    docsSavedContentByPath: state.docsSavedContentByPath,
+    docsDirtyByPath: state.docsDirtyByPath,
+    docsLoadingFileByPath: state.docsLoadingFileByPath,
+    docsSavingFileByPath: state.docsSavingFileByPath,
+    docsReadOnlyByPath: state.docsReadOnlyByPath,
+    docsSizeByPath: state.docsSizeByPath,
+    docsSidebarWidth: state.docsSidebarWidth,
+    docsSidebarCollapsed: state.docsSidebarCollapsed,
+    docsFindOpen: state.docsFindOpen,
+    docsFindQuery: state.docsFindQuery,
+    docsReplaceQuery: state.docsReplaceQuery,
+    docsFindCaseSensitive: state.docsFindCaseSensitive,
+    docsLineWrap: state.docsLineWrap,
+    docsError: state.docsError,
+    skillsRootPath: state.skillsRootPath,
+    skillsSelectedPath: state.skillsSelectedPath,
+    skillsSelectedEntryPath: state.skillsSelectedEntryPath,
+    skillsExpandedByPath: state.skillsExpandedByPath,
+    skillsEntriesByPath: state.skillsEntriesByPath,
+    skillsLoadingByPath: state.skillsLoadingByPath,
+    skillsOpenTabs: state.skillsOpenTabs,
+    skillsActiveTabPath: state.skillsActiveTabPath,
+    skillsContentByPath: state.skillsContentByPath,
+    skillsSavedContentByPath: state.skillsSavedContentByPath,
+    skillsDirtyByPath: state.skillsDirtyByPath,
+    skillsLoadingFileByPath: state.skillsLoadingFileByPath,
+    skillsSavingFileByPath: state.skillsSavingFileByPath,
+    skillsReadOnlyByPath: state.skillsReadOnlyByPath,
+    skillsSizeByPath: state.skillsSizeByPath,
+    skillsSidebarWidth: state.skillsSidebarWidth,
+    skillsSidebarCollapsed: state.skillsSidebarCollapsed,
+    skillsFindOpen: state.skillsFindOpen,
+    skillsFindQuery: state.skillsFindQuery,
+    skillsReplaceQuery: state.skillsReplaceQuery,
+    skillsFindCaseSensitive: state.skillsFindCaseSensitive,
+    skillsLineWrap: state.skillsLineWrap,
+    skillsError: state.skillsError,
     tasksById: state.tasksById,
     tasksSelectedId: state.tasksSelectedId,
     tasksFolder: state.tasksFolder,
@@ -2144,6 +2623,8 @@ function render(): void {
     looperState: state.looperState
   });
 
+  const primaryChatPanel = getPrimaryChatPanelState();
+
   const panel = getPanelDefinition(state.sidebarTab, {
     displayMode: state.displayMode,
     displayModePreference: state.displayModePreference,
@@ -2156,23 +2637,11 @@ function render(): void {
     showBottomContext: state.showBottomContext,
     showBottomSpeed: state.showBottomSpeed,
     showBottomTtsLatency: state.showBottomTtsLatency,
-    conversationId: state.conversationId,
-    messages: state.messages,
-    chatReasoningByCorrelation: state.chatReasoningByCorrelation,
-    chatThinkingPlacementByCorrelation: state.chatThinkingPlacementByCorrelation,
-    chatThinkingExpandedByCorrelation: state.chatThinkingExpandedByCorrelation,
-    chatToolRowsByCorrelation: state.chatToolRowsByCorrelation,
-    chatToolRowExpandedById: state.chatToolRowExpandedById,
-    chatStreamCompleteByCorrelation: state.chatStreamCompleteByCorrelation,
-    chatStreaming: state.chatStreaming,
-    chatDraft: state.chatDraft,
-    chatAttachedFileName: state.chatAttachedFileName,
-    chatAttachedFileContent: state.chatAttachedFileContent,
-    chatActiveModelId: state.chatActiveModelId,
-    chatActiveModelLabel: state.chatActiveModelLabel,
-    chatActiveModelCapabilities: state.chatActiveModelCapabilities,
-    chatTtsEnabled: state.chatTtsEnabled,
-    chatTtsPlaying: state.chatTtsPlaying,
+    chat: primaryChatPanel,
+    chatToolIntentByCorrelation: state.chatToolIntentByCorrelation,
+    chatFirstAssistantChunkMsByCorrelation: state.chatFirstAssistantChunkMsByCorrelation,
+    chatFirstReasoningChunkMsByCorrelation: state.chatFirstReasoningChunkMsByCorrelation,
+    chatTtsLatencyMs: state.chatTtsLatencyMs,
     devices: state.devices,
     apiConnections: state.apiConnections,
     apiFormOpen: state.apiFormOpen,
@@ -2184,7 +2653,6 @@ function render(): void {
     apiProbeMessage: state.apiProbeMessage,
     apiDetectedModels: state.apiDetectedModels,
     conversations: state.conversations,
-    chatThinkingEnabled: state.chatThinkingEnabled,
     llamaRuntime: state.llamaRuntime,
     llamaRuntimeSelectedEngineId: state.llamaRuntimeSelectedEngineId,
     llamaRuntimeModelPath: state.llamaRuntimeModelPath,
@@ -2222,26 +2690,137 @@ function render(): void {
     vadMethods: state.vadMethods,
     vadIncludeExperimental: state.vadIncludeExperimental,
     vadSelectedMethod: state.vadSelectedMethod,
+    vadShadowMethod: state.vadShadowMethod,
+    vadStandbyMethod: state.vadStandbyMethod,
     vadSettings: state.vadSettings,
     voiceRuntimeState: state.voiceRuntimeState,
+    voiceHandoffState: state.voiceHandoffState,
+    voiceSpeculationState: state.voiceSpeculationState,
+    voiceDuplexMode: state.voiceDuplexMode,
+    vadShadowSummary: state.vadShadowSummary,
     vadMessage: state.vadMessage,
     tts: state.tts,
     consoleEntries: state.consoleEntries
   });
 
+  const isChatTab = state.sidebarTab === "chat";
+  const extraPanelHtmls =
+    isChatTab && state.chatSplitMode !== "none" && state.chatPanels.length > 1
+      ? state.chatPanels.slice(1).map((cp, idx) => {
+          const scopeId = `-${idx + 1}`;
+          const splitPanelDef = getPanelDefinition("chat", {
+            displayMode: state.displayMode,
+            displayModePreference: state.displayModePreference,
+            chatRoutePreference: state.chatRoutePreference,
+            showAppResourceCpu: state.showAppResourceCpu,
+            showAppResourceMemory: state.showAppResourceMemory,
+            showAppResourceNetwork: state.showAppResourceNetwork,
+            showBottomEngine: state.showBottomEngine,
+            showBottomModel: state.showBottomModel,
+            showBottomContext: state.showBottomContext,
+            showBottomSpeed: state.showBottomSpeed,
+            showBottomTtsLatency: state.showBottomTtsLatency,
+            chat: cp,
+            chatToolIntentByCorrelation: {},
+            chatFirstAssistantChunkMsByCorrelation: {},
+            chatFirstReasoningChunkMsByCorrelation: {},
+            chatTtsLatencyMs: null,
+            devices: state.devices,
+            apiConnections: state.apiConnections,
+            apiFormOpen: state.apiFormOpen,
+            apiDraft: state.apiDraft,
+            apiEditingId: state.apiEditingId,
+            apiMessage: state.apiMessage,
+            apiProbeBusy: state.apiProbeBusy,
+            apiProbeStatus: state.apiProbeStatus,
+            apiProbeMessage: state.apiProbeMessage,
+            apiDetectedModels: state.apiDetectedModels,
+            conversations: state.conversations,
+            llamaRuntime: state.llamaRuntime,
+            llamaRuntimeSelectedEngineId: state.llamaRuntimeSelectedEngineId,
+            llamaRuntimeModelPath: state.llamaRuntimeModelPath,
+            llamaRuntimePort: state.llamaRuntimePort,
+            llamaRuntimeCtxSize: state.llamaRuntimeCtxSize,
+            llamaRuntimeGpuLayers: state.llamaRuntimeGpuLayers,
+            llamaRuntimeThreads: state.llamaRuntimeThreads,
+            llamaRuntimeBatchSize: state.llamaRuntimeBatchSize,
+            llamaRuntimeUbatchSize: state.llamaRuntimeUbatchSize,
+            llamaRuntimeTemperature: state.llamaRuntimeTemperature,
+            llamaRuntimeTopP: state.llamaRuntimeTopP,
+            llamaRuntimeTopK: state.llamaRuntimeTopK,
+            llamaRuntimeRepeatPenalty: state.llamaRuntimeRepeatPenalty,
+            llamaRuntimeFlashAttn: state.llamaRuntimeFlashAttn,
+            llamaRuntimeMmap: state.llamaRuntimeMmap,
+            llamaRuntimeMlock: state.llamaRuntimeMlock,
+            llamaRuntimeSeed: state.llamaRuntimeSeed,
+            llamaRuntimeMaxTokens: state.llamaRuntimeMaxTokens,
+            llamaRuntimeBusy: state.llamaRuntimeBusy,
+            llamaRuntimeLogs: state.llamaRuntimeLogs,
+            modelManagerInstalled: state.modelManagerInstalled,
+            modelManagerActiveTab: state.modelManagerActiveTab,
+            modelManagerDisabledModelIds: state.modelManagerDisabledModelIds,
+            modelManagerInfoModalModelId: state.modelManagerInfoModalModelId,
+            chatModelOptions: state.chatModelOptions,
+            allModelsList: state.allModelsList,
+            modelManagerQuery: state.modelManagerQuery,
+            modelManagerCollection: state.modelManagerCollection,
+            modelManagerSearchResults: state.modelManagerSearchResults,
+            modelManagerBusy: state.modelManagerBusy,
+            modelManagerMessage: state.modelManagerMessage,
+            modelManagerUnslothUdCatalog: state.modelManagerUnslothUdCatalog,
+            modelManagerUnslothUdLoading: state.modelManagerUnslothUdLoading,
+            stt: state.stt,
+            vadMethods: state.vadMethods,
+            vadIncludeExperimental: state.vadIncludeExperimental,
+            vadSelectedMethod: state.vadSelectedMethod,
+            vadShadowMethod: state.vadShadowMethod,
+            vadStandbyMethod: state.vadStandbyMethod,
+            vadSettings: state.vadSettings,
+            voiceRuntimeState: state.voiceRuntimeState,
+            voiceHandoffState: state.voiceHandoffState,
+            voiceSpeculationState: state.voiceSpeculationState,
+            voiceDuplexMode: state.voiceDuplexMode,
+            vadShadowSummary: state.vadShadowSummary,
+            vadMessage: state.vadMessage,
+            tts: state.tts,
+            consoleEntries: state.consoleEntries
+          }, scopeId);
+          return {
+            paneTitleHtml: renderPanelTitleIcon({
+              icon: splitPanelDef.icon,
+              title: splitPanelDef.title,
+              sidebarTab: "chat",
+              chatModelOptions: state.chatModelOptions,
+              chatActiveModelId: cp.chatActiveModelId,
+              chatPaneId: cp.panelId,
+              scopeId,
+              ttsReady: state.tts.ready,
+              ttsEngine: state.tts.engine
+            }),
+            panelActionsHtml: splitPanelDef.renderActions(),
+            panelBodyHtml: splitPanelDef.renderBody()
+          };
+        })
+      : undefined;
+
   const primaryPaneHtml = composePrimaryPaneHtml({
-    isChatTab: state.sidebarTab === "chat",
+    isChatTab,
+    chatSplitMode: isChatTab ? state.chatSplitMode : "none",
+    chatSplitPercent: state.chatSplitPercent,
     paneTitleHtml: renderPanelTitleIcon({
       icon: panel.icon,
       title: panel.title,
       sidebarTab: state.sidebarTab,
       chatModelOptions: state.chatModelOptions,
-      chatActiveModelId: state.chatActiveModelId,
+      chatActiveModelId: primaryChatPanel.chatActiveModelId,
+      chatPaneId: primaryChatPanel.panelId,
+      scopeId: "",
       ttsReady: state.tts.ready,
       ttsEngine: state.tts.engine
     }),
     panelActionsHtml: panel.renderActions(),
-    panelBodyHtml: panel.renderBody()
+    panelBodyHtml: panel.renderBody(),
+    extraPanelHtmls
   });
 
   const workspacePaneHtml = renderWorkspacePane(
@@ -2335,6 +2914,31 @@ function updateReasoningDraft(correlationId: string, delta: string): void {
   state.chatReasoningByCorrelation[correlationId] = normalizeChatText(`${current}${delta}`);
 }
 
+function updateSecondaryAssistantDraft(cp: ChatPanelState, correlationId: string, delta: string): void {
+  if (!state.chatFirstAssistantChunkMsByCorrelation[correlationId]) {
+    state.chatFirstAssistantChunkMsByCorrelation[correlationId] = Date.now();
+    syncSecondaryThinkingPlacement(cp, correlationId);
+  }
+  const existing = cp.messages.find((message) => message.role === "assistant" && message.correlationId === correlationId);
+  if (existing) {
+    existing.text = normalizeChatText(`${existing.text}${delta}`);
+    return;
+  }
+  cp.messages.push({ role: "assistant", text: normalizeChatText(delta), correlationId });
+}
+
+function updateSecondaryReasoningDraft(cp: ChatPanelState, correlationId: string, delta: string): void {
+  if (!state.chatFirstReasoningChunkMsByCorrelation[correlationId]) {
+    state.chatFirstReasoningChunkMsByCorrelation[correlationId] = Date.now();
+    syncSecondaryThinkingPlacement(cp, correlationId);
+  }
+  if (cp.chatThinkingExpandedByCorrelation[correlationId] === undefined) {
+    cp.chatThinkingExpandedByCorrelation[correlationId] = false;
+  }
+  const current = cp.chatReasoningByCorrelation[correlationId] ?? "";
+  cp.chatReasoningByCorrelation[correlationId] = normalizeChatText(`${current}${delta}`);
+}
+
 function syncThinkingPlacement(correlationId: string): void {
   const assistantTs = state.chatFirstAssistantChunkMsByCorrelation[correlationId];
   const reasoningTs = state.chatFirstReasoningChunkMsByCorrelation[correlationId];
@@ -2349,6 +2953,22 @@ function syncThinkingPlacement(correlationId: string): void {
   }
   if (assistantTs && !reasoningTs) {
     state.chatThinkingPlacementByCorrelation[correlationId] = "after";
+  }
+}
+
+function syncSecondaryThinkingPlacement(cp: ChatPanelState, correlationId: string): void {
+  const assistantTs = state.chatFirstAssistantChunkMsByCorrelation[correlationId];
+  const reasoningTs = state.chatFirstReasoningChunkMsByCorrelation[correlationId];
+  if (assistantTs && reasoningTs) {
+    cp.chatThinkingPlacementByCorrelation[correlationId] = reasoningTs <= assistantTs ? "before" : "after";
+    return;
+  }
+  if (reasoningTs && !assistantTs) {
+    cp.chatThinkingPlacementByCorrelation[correlationId] = "before";
+    return;
+  }
+  if (assistantTs && !reasoningTs) {
+    cp.chatThinkingPlacementByCorrelation[correlationId] = "after";
   }
 }
 
@@ -2463,6 +3083,12 @@ function ensureAssistantMessageForCorrelation(correlationId: string): void {
   state.messages.push({ role: "assistant", text: "", correlationId });
 }
 
+function ensureAssistantMessageForPanel(cp: ChatPanelState, correlationId: string): void {
+  const existing = cp.messages.find((message) => message.role === "assistant" && message.correlationId === correlationId);
+  if (existing) return;
+  cp.messages.push({ role: "assistant", text: "", correlationId });
+}
+
 function isCurrentChatCorrelation(correlationId: string): boolean {
   if (state.activeChatCorrelationId === correlationId) return true;
   return state.messages.some(
@@ -2479,6 +3105,19 @@ function appendChatToolRow(
   state.chatToolRowsByCorrelation[correlationId] = [...existing, { rowId, ...row }];
   if (state.chatToolRowExpandedById[rowId] === undefined) {
     state.chatToolRowExpandedById[rowId] = false;
+  }
+}
+
+function appendChatToolRowForPanel(
+  cp: ChatPanelState,
+  correlationId: string,
+  row: Omit<ChatToolEventRow, "rowId">
+): void {
+  const existing = cp.chatToolRowsByCorrelation[correlationId] ?? [];
+  const rowId = `tool-row-${correlationId}-${existing.length + 1}`;
+  cp.chatToolRowsByCorrelation[correlationId] = [...existing, { rowId, ...row }];
+  if (cp.chatToolRowExpandedById[rowId] === undefined) {
+    cp.chatToolRowExpandedById[rowId] = false;
   }
 }
 
@@ -2968,17 +3607,24 @@ function applyVadSettingsToLegacyStt(): void {
 
 async function refreshVadState(): Promise<void> {
   if (!clientRef) return;
-  const [methods, settings] = await Promise.all([
+  const [methods, settings, diagnostics] = await Promise.all([
     clientRef.voiceListVadMethods({
       correlationId: nextCorrelationId(),
       includeExperimental: state.vadIncludeExperimental
     }),
-    clientRef.voiceGetVadSettings({ correlationId: nextCorrelationId() })
+    clientRef.voiceGetVadSettings({ correlationId: nextCorrelationId() }),
+    clientRef.voiceGetRuntimeDiagnostics({ correlationId: nextCorrelationId() })
   ]);
   state.vadMethods = methods.methods;
   state.vadSelectedMethod = settings.settings.selectedVadMethod || methods.selectedVadMethod;
+  state.vadShadowMethod = settings.settings.shadowVadMethod ?? diagnostics.snapshot.shadowVadMethodId;
+  state.vadStandbyMethod = diagnostics.snapshot.standbyVadMethodId;
   state.vadSettings = settings.settings;
-  state.voiceRuntimeState = settings.state;
+  state.voiceRuntimeState = diagnostics.snapshot.state || settings.state;
+  state.voiceHandoffState = diagnostics.snapshot.handoffState;
+  state.voiceSpeculationState = diagnostics.snapshot.speculationState;
+  state.voiceDuplexMode = diagnostics.snapshot.duplexMode || settings.settings.duplexMode || "single_turn";
+  state.vadShadowSummary = diagnostics.snapshot.shadowSummary;
   applyVadSettingsToLegacyStt();
 }
 
@@ -3084,6 +3730,22 @@ function refreshChatModelProfile(): void {
       `Chat model auto-switched to ${selected.label} (${selected.id}) because the previous selection was unavailable.`
     );
   }
+
+  for (const cp of state.chatPanels.slice(1)) {
+    const existing = state.chatModelOptions.find((option) => option.id === cp.chatActiveModelId);
+    if (existing) {
+      applyChatModelSelectionToPanel(cp, existing);
+      continue;
+    }
+    const fallbackModel = resolveSplitPanelModel();
+    applyChatModelSelectionToPanel(cp, {
+      id: fallbackModel.id,
+      label: fallbackModel.label,
+      modelName: fallbackModel.label,
+      source: fallbackModel.id.startsWith("api:") ? "api" : "local",
+      detail: ""
+    });
+  }
 }
 
 function applyChatModelSelection(option: ChatModelOption, persistSelection = true): void {
@@ -3094,6 +3756,12 @@ function applyChatModelSelection(option: ChatModelOption, persistSelection = tru
     preferredChatModelId = option.id;
     persistChatModelId(option.id);
   }
+}
+
+function applyChatModelSelectionToPanel(panel: ChatPanelState, option: ChatModelOption): void {
+  panel.chatActiveModelId = option.id;
+  panel.chatActiveModelLabel = option.label;
+  panel.chatActiveModelCapabilities = inferChatModelCapabilities(option.modelName);
 }
 
 function buildChatModelOptions(): ChatModelOption[] {
@@ -3717,6 +4385,7 @@ function renderAndBind(sendMessage: (text: string) => Promise<void>): void {
   };
 
   render();
+  mountActiveSheetsRuntime(sendMessage);
   syncOverlayScrollbars();
   scrollConsoleToBottom();
   attachDividerResize();
@@ -3725,7 +4394,181 @@ function renderAndBind(sendMessage: (text: string) => Promise<void>): void {
   attachSidebarInteractions(sendMessage);
   attachWorkspaceInteractions(sendMessage);
   bindCustomToolIframes();
-  attachPrimaryPanelInteractions(state.sidebarTab, state, {
+  const collapseSplitPanes = async () => {
+    if (clientRef) {
+      for (const cp of state.chatPanels.slice(1)) {
+        if (!cp.activeChatCorrelationId) continue;
+        try {
+          await clientRef.cancelMessage({
+            correlationId: nextCorrelationId(),
+            targetCorrelationId: cp.activeChatCorrelationId
+          });
+        } catch {
+          // Best effort when closing split panes.
+        }
+      }
+    }
+    state.chatSplitMode = "none";
+    state.chatPanels.length = 1;
+    renderAndBind(sendMessage);
+  };
+  bindPaneMenu("chatPaneMenu", {
+    "pane-menu-1": () => {
+      if (state.chatSplitMode === "none") {
+        state.chatSplitMode = "vertical";
+        state.chatSplitPercent = 50;
+        if (state.chatPanels.length < 2) {
+          const model = resolveSplitPanelModel();
+          state.chatPanels.push(createFreshChatPanelState("chat-1", model.id, model.label));
+        }
+        renderAndBind(sendMessage);
+      }
+    },
+    "pane-menu-2": () => {
+      if (state.chatSplitMode === "none") {
+        state.chatSplitMode = "horizontal";
+        state.chatSplitPercent = 50;
+        if (state.chatPanels.length < 2) {
+          const model = resolveSplitPanelModel();
+          state.chatPanels.push(createFreshChatPanelState("chat-1", model.id, model.label));
+        }
+        renderAndBind(sendMessage);
+      }
+    },
+    "pane-menu-5": () => {
+      if (state.chatSplitMode !== "none") {
+        void collapseSplitPanes();
+      }
+    }
+  });
+  bindPaneMenu("workspacePaneMenu");
+  for (let i = 1; i < state.chatPanels.length; i++) {
+    const cp = state.chatPanels[i];
+    if (!cp) continue;
+    const scopeId = `-${i}`;
+    const paneSendState = createSecondaryChatSendState(cp);
+    const paneSendMessage = createSendMessageHandler({
+      getClientRef: () => clientRef,
+      state: paneSendState,
+      nextCorrelationId: () => {
+        const correlationId = nextCorrelationId();
+        rememberChatCorrelationTarget(cp.panelId, correlationId);
+        return correlationId;
+      },
+      normalizeChatText,
+      clearVoicePrefillState: () => {},
+      chatTtsLatencyCapturedByCorrelation,
+      chatTtsSawStreamDeltaByCorrelation,
+      postprocessSpeakableText,
+      extractSpeakableStreamDelta,
+      enqueueImmediateTtsChunk: (text, correlationId) => {
+        chatTtsQueue.push({ text, correlationId });
+        notifyChatTtsQueueAvailable();
+      },
+      enqueueSpeakableChunk,
+      runChatTtsQueue,
+      refreshConversations,
+      renderAndBind: (_boundSendMessage) => renderAndBind(sendMessage)
+    });
+    bindPaneMenu(`chatPaneMenu-${i}`, {
+      "pane-menu-5": () => {
+        void collapseSplitPanes();
+      }
+    });
+    bindChatPanel(
+      scopeId,
+      paneSendMessage,
+      (text: string) => { cp.chatDraft = text; },
+      (fileName: string, content: string) => {
+        cp.chatAttachedFileName = fileName;
+        cp.chatAttachedFileContent = content;
+      },
+      () => {
+        cp.chatAttachedFileName = null;
+        cp.chatAttachedFileContent = null;
+      },
+      async () => {
+        const targetCorrelationId = cp.activeChatCorrelationId;
+        cp.chatStreaming = false;
+        cp.activeChatCorrelationId = null;
+        if (clientRef && targetCorrelationId) {
+          try {
+            await clientRef.cancelMessage({
+              correlationId: nextCorrelationId(),
+              targetCorrelationId
+            });
+          } catch (error) {
+            pushConsoleEntry("warn", "browser", `Failed to stop split response ${targetCorrelationId}: ${String(error)}`);
+          }
+        }
+        renderAndBind(sendMessage);
+      },
+      async () => {},
+      cp.chatStreaming || cp.chatTtsPlaying,
+      cp.chatAttachedFileName
+        ? { name: cp.chatAttachedFileName, content: cp.chatAttachedFileContent ?? "" }
+        : null,
+      cp.chatActiveModelLabel,
+      cp.chatActiveModelCapabilities
+    );
+    const newBtn = document.querySelector<HTMLButtonElement>(`#chatNewBtn${scopeId}`);
+    if (newBtn) {
+      newBtn.onclick = async () => {
+        if (clientRef && cp.activeChatCorrelationId) {
+          try {
+            await clientRef.cancelMessage({
+              correlationId: nextCorrelationId(),
+              targetCorrelationId: cp.activeChatCorrelationId
+            });
+          } catch {
+            // Best effort before starting a fresh split conversation.
+          }
+        }
+        cp.conversationId = generateChatConversationId();
+        resetSecondaryChatPaneState(cp);
+        await refreshConversations();
+        renderAndBind(sendMessage);
+      };
+    }
+    const clearBtn = document.querySelector<HTMLButtonElement>(`#chatClearBtn${scopeId}`);
+    if (clearBtn) {
+      clearBtn.onclick = async () => {
+        const currentId = cp.conversationId;
+        if (clientRef && cp.activeChatCorrelationId) {
+          try {
+            await clientRef.cancelMessage({
+              correlationId: nextCorrelationId(),
+              targetCorrelationId: cp.activeChatCorrelationId
+            });
+          } catch {
+            // Best effort before clearing the conversation.
+          }
+        }
+        if (clientRef) {
+          try {
+            await clientRef.deleteConversation({
+              conversationId: currentId,
+              correlationId: nextCorrelationId()
+            });
+          } catch (error) {
+            pushConsoleEntry("warn", "browser", `Failed to clear split conversation ${currentId}: ${String(error)}`);
+          }
+        }
+        cp.conversationId = generateChatConversationId();
+        resetSecondaryChatPaneState(cp);
+        await refreshConversations();
+        renderAndBind(sendMessage);
+      };
+    }
+    const thinkingToggleBtn = document.querySelector<HTMLButtonElement>(`#chatThinkingToggleBtn${scopeId}`);
+    if (thinkingToggleBtn) {
+      thinkingToggleBtn.onclick = async () => {
+        cp.chatThinkingEnabled = !cp.chatThinkingEnabled;
+        renderAndBind(sendMessage);
+      };
+    }
+  }
+  attachPrimaryPanelInteractions(state.sidebarTab, currentPrimaryPanelRenderState(), {
     onSendMessage: sendMessage,
     onUpdateChatDraft: (text: string) => {
       state.chatDraft = text;
@@ -4946,6 +5789,78 @@ function renderAndBind(sendMessage: (text: string) => Promise<void>): void {
       await refreshVadState();
       renderAndBind(sendMessage);
     },
+    onRequestVadHandoff: async (targetMethodId) => {
+      if (!clientRef) return;
+      try {
+        const response = await clientRef.voiceRequestHandoff({
+          correlationId: nextCorrelationId(),
+          targetMethodId
+        });
+        state.vadSelectedMethod = response.snapshot.selectedVadMethod;
+        state.voiceRuntimeState = response.snapshot.state;
+        state.voiceHandoffState = response.snapshot.handoffState;
+        state.vadStandbyMethod = response.snapshot.standbyVadMethodId;
+        state.vadMessage = `Handoff complete: ${response.snapshot.activeVadMethodId}.`;
+        await refreshVadState();
+      } catch (error) {
+        state.vadMessage = `Handoff failed: ${String(error)}`;
+      }
+      renderAndBind(sendMessage);
+    },
+    onSetVadShadowMethod: async (methodId) => {
+      if (!clientRef) return;
+      try {
+        const response = await clientRef.voiceSetShadowMethod({
+          correlationId: nextCorrelationId(),
+          methodId
+        });
+        state.vadShadowMethod = response.snapshot.shadowVadMethodId;
+        state.vadMessage = methodId ? `Shadow method set to ${methodId}.` : "Shadow method cleared.";
+        await refreshVadState();
+      } catch (error) {
+        state.vadMessage = `Shadow method update failed: ${String(error)}`;
+      }
+      renderAndBind(sendMessage);
+    },
+    onStartVadShadowEval: async () => {
+      if (!clientRef) return;
+      try {
+        const response = await clientRef.voiceStartShadowEval({ correlationId: nextCorrelationId() });
+        state.voiceRuntimeState = response.snapshot.state;
+        state.vadShadowSummary = response.snapshot.shadowSummary;
+        state.vadMessage = "Shadow evaluation started.";
+      } catch (error) {
+        state.vadMessage = `Shadow start failed: ${String(error)}`;
+      }
+      renderAndBind(sendMessage);
+    },
+    onStopVadShadowEval: async () => {
+      if (!clientRef) return;
+      try {
+        const response = await clientRef.voiceStopShadowEval({ correlationId: nextCorrelationId() });
+        state.voiceRuntimeState = response.snapshot.state;
+        state.vadShadowSummary = response.snapshot.shadowSummary;
+        state.vadMessage = "Shadow evaluation stopped.";
+      } catch (error) {
+        state.vadMessage = `Shadow stop failed: ${String(error)}`;
+      }
+      renderAndBind(sendMessage);
+    },
+    onSetVoiceDuplexMode: async (mode) => {
+      if (!clientRef) return;
+      try {
+        const response = await clientRef.voiceSetDuplexMode({
+          correlationId: nextCorrelationId(),
+          duplexMode: mode
+        });
+        state.voiceDuplexMode = response.snapshot.duplexMode;
+        state.voiceSpeculationState = response.snapshot.speculationState;
+        state.vadMessage = `Duplex mode set to ${mode}.`;
+      } catch (error) {
+        state.vadMessage = `Duplex mode update failed: ${String(error)}`;
+      }
+      renderAndBind(sendMessage);
+    },
     onSetDisplayMode: async (mode) => {
       state.displayMode = mode;
       state.displayModePreference = mode;
@@ -5010,20 +5925,71 @@ function renderAndBind(sendMessage: (text: string) => Promise<void>): void {
   });
 }
 
-function attachChatHeaderModelInteractions(sendMessage: (text: string) => Promise<void>): void {
-  const select = document.querySelector<HTMLSelectElement>("#chatHeaderModelSelect");
-  if (!select) return;
-  select.onchange = () => {
-    const nextId = select.value;
-    const selected = state.chatModelOptions.find((option) => option.id === nextId);
-    if (!selected) return;
-    const previousId = state.chatActiveModelId;
-    applyChatModelSelection(selected);
-    if (previousId !== selected.id) {
-      pushConsoleEntry("info", "browser", `Chat model changed to ${selected.label} (${selected.id}).`);
+function mountActiveSheetsRuntime(sendMessage: (text: string) => Promise<void>): void {
+  if (state.workspaceTab !== "sheets-tool") {
+    unmountSheetsRuntime();
+    return;
+  }
+  mountSheetsRuntime(state.sheetsState, {
+    rerender: () => renderAndBind(sendMessage),
+    ensureWorkbook: async () => {
+      if (!state.sheetsState.hasWorkbook) {
+        await workspaceToolsRuntime.createNewSheet();
+      } else {
+        await workspaceToolsRuntime.ensureSheetReady();
+      }
+    },
+    updateFormulaBarValue: (value) => {
+      state.sheetsState.activeEditorValue = value;
+    },
+    commitFormulaBar: async (value) => {
+      const selection = state.sheetsState.selection;
+      if (!selection) return;
+      await workspaceToolsRuntime.setCellInput(selection.startRow, selection.startCol, value);
+    },
+    applyGridChanges: (rows, operations) => {
+      const beforeRows = buildSheetsGridRows(state.sheetsState);
+      const changes = diffSheetsGridChanges(
+        beforeRows,
+        rows as SheetsGridRow[],
+        operations,
+        state.sheetsState.columnCount
+      );
+      const write = collapseGridChangesToWrite(changes, rows as SheetsGridRow[]);
+      return { changes, write };
+    },
+    fireWriteRange: async (startRow, startCol, values) => {
+      await workspaceToolsRuntime.writeRange(startRow, startCol, values);
     }
-    renderAndBind(sendMessage);
-  };
+  });
+}
+
+function attachChatHeaderModelInteractions(sendMessage: (text: string) => Promise<void>): void {
+  const selects = document.querySelectorAll<HTMLSelectElement>(".chat-header-model-select[data-chat-pane-id]");
+  selects.forEach((select) => {
+    select.onchange = () => {
+      const paneId = select.dataset.chatPaneId?.trim() || PRIMARY_CHAT_PANE_ID;
+      const nextId = select.value;
+      const selected = state.chatModelOptions.find((option) => option.id === nextId);
+      if (!selected) return;
+      if (paneId === PRIMARY_CHAT_PANE_ID) {
+        const previousId = state.chatActiveModelId;
+        applyChatModelSelection(selected);
+        if (previousId !== selected.id) {
+          pushConsoleEntry("info", "browser", `Chat model changed to ${selected.label} (${selected.id}).`);
+        }
+      } else {
+        const panel = getSecondaryChatPanelState(paneId);
+        if (!panel) return;
+        const previousId = panel.chatActiveModelId;
+        applyChatModelSelectionToPanel(panel, selected);
+        if (previousId !== selected.id) {
+          pushConsoleEntry("info", "browser", `Split chat model changed to ${selected.label} (${selected.id}).`);
+        }
+      }
+      renderAndBind(sendMessage);
+    };
+  });
 }
 
 window.addEventListener("beforeunload", () => {
@@ -5726,6 +6692,7 @@ function stopSttAudioCapture(): void {
 }
 
 function currentPrimaryPanelRenderState() {
+  const primaryChatPanel = getPrimaryChatPanelState();
   return {
     displayMode: state.displayMode,
     displayModePreference: state.displayModePreference,
@@ -5738,23 +6705,11 @@ function currentPrimaryPanelRenderState() {
     showBottomContext: state.showBottomContext,
     showBottomSpeed: state.showBottomSpeed,
     showBottomTtsLatency: state.showBottomTtsLatency,
-    conversationId: state.conversationId,
-    messages: state.messages,
-    chatReasoningByCorrelation: state.chatReasoningByCorrelation,
-    chatThinkingPlacementByCorrelation: state.chatThinkingPlacementByCorrelation,
-    chatThinkingExpandedByCorrelation: state.chatThinkingExpandedByCorrelation,
-    chatToolRowsByCorrelation: state.chatToolRowsByCorrelation,
-    chatToolRowExpandedById: state.chatToolRowExpandedById,
-    chatStreamCompleteByCorrelation: state.chatStreamCompleteByCorrelation,
-    chatStreaming: state.chatStreaming,
-    chatDraft: state.chatDraft,
-    chatAttachedFileName: state.chatAttachedFileName,
-    chatAttachedFileContent: state.chatAttachedFileContent,
-    chatActiveModelId: state.chatActiveModelId,
-    chatActiveModelLabel: state.chatActiveModelLabel,
-    chatActiveModelCapabilities: state.chatActiveModelCapabilities,
-    chatTtsEnabled: state.chatTtsEnabled,
-    chatTtsPlaying: state.chatTtsPlaying,
+    chat: primaryChatPanel,
+    chatToolIntentByCorrelation: state.chatToolIntentByCorrelation,
+    chatFirstAssistantChunkMsByCorrelation: state.chatFirstAssistantChunkMsByCorrelation,
+    chatFirstReasoningChunkMsByCorrelation: state.chatFirstReasoningChunkMsByCorrelation,
+    chatTtsLatencyMs: state.chatTtsLatencyMs,
     devices: state.devices,
     apiConnections: state.apiConnections,
     apiFormOpen: state.apiFormOpen,
@@ -5766,7 +6721,6 @@ function currentPrimaryPanelRenderState() {
     apiProbeMessage: state.apiProbeMessage,
     apiDetectedModels: state.apiDetectedModels,
     conversations: state.conversations,
-    chatThinkingEnabled: state.chatThinkingEnabled,
     llamaRuntime: state.llamaRuntime,
     llamaRuntimeSelectedEngineId: state.llamaRuntimeSelectedEngineId,
     llamaRuntimeModelPath: state.llamaRuntimeModelPath,
@@ -5801,29 +6755,46 @@ function currentPrimaryPanelRenderState() {
     modelManagerUnslothUdCatalog: state.modelManagerUnslothUdCatalog,
     modelManagerUnslothUdLoading: state.modelManagerUnslothUdLoading,
     stt: state.stt,
+    vadMethods: state.vadMethods,
+    vadIncludeExperimental: state.vadIncludeExperimental,
+    vadSelectedMethod: state.vadSelectedMethod,
+    vadShadowMethod: state.vadShadowMethod,
+    vadStandbyMethod: state.vadStandbyMethod,
+    vadSettings: state.vadSettings,
+    voiceRuntimeState: state.voiceRuntimeState,
+    voiceHandoffState: state.voiceHandoffState,
+    voiceSpeculationState: state.voiceSpeculationState,
+    voiceDuplexMode: state.voiceDuplexMode,
+    vadShadowSummary: state.vadShadowSummary,
+    vadMessage: state.vadMessage,
     tts: state.tts,
     consoleEntries: state.consoleEntries
   };
 }
 
-function renderChatMessagesOnly(): void {
+function renderChatMessagesOnly(panelId = PRIMARY_CHAT_PANE_ID): void {
   if (state.sidebarTab !== "chat") return;
-  const messagesHost = document.querySelector<HTMLElement>(".messages");
+  const messagesHost = document.querySelector<HTMLElement>(`.messages[data-chat-pane-id="${panelId}"]`);
   if (!messagesHost) return;
+  const panel = getChatPanelById(panelId);
+  if (!panel) return;
   const isNearBottom =
     messagesHost.scrollHeight - messagesHost.scrollTop - messagesHost.clientHeight < 36;
-  messagesHost.innerHTML = renderChatMessages(currentPrimaryPanelRenderState());
-  if (isNearBottom || state.chatStreaming) {
+  messagesHost.innerHTML = renderChatMessages({ chat: panel });
+  if (isNearBottom || panel.chatStreaming) {
     messagesHost.scrollTop = messagesHost.scrollHeight;
   }
 }
 
-function scheduleChatStreamDomUpdate(): void {
+function scheduleChatStreamDomUpdate(panelId = PRIMARY_CHAT_PANE_ID): void {
+  chatPaneDomUpdatesPending.add(panelId);
   if (chatStreamDomUpdateScheduled) return;
   chatStreamDomUpdateScheduled = true;
   requestAnimationFrame(() => {
     chatStreamDomUpdateScheduled = false;
-    renderChatMessagesOnly();
+    const pendingPaneIds = Array.from(chatPaneDomUpdatesPending);
+    chatPaneDomUpdatesPending.clear();
+    pendingPaneIds.forEach((pendingPaneId) => renderChatMessagesOnly(pendingPaneId));
   });
 }
 
@@ -5834,12 +6805,20 @@ function installThinkingToggleDelegation(sendMessage: (text: string) => Promise<
     const target = event.target as HTMLElement | null;
     const toolToggle = target?.closest<HTMLButtonElement>("[data-tool-row-toggle-id]");
     if (toolToggle) {
+      const paneId = toolToggle.dataset.chatPaneId?.trim() || PRIMARY_CHAT_PANE_ID;
       const rowId = toolToggle.dataset.toolRowToggleId;
       if (!rowId) return;
-      const current = state.chatToolRowExpandedById[rowId] === true;
-      state.chatToolRowExpandedById[rowId] = !current;
+      if (paneId === PRIMARY_CHAT_PANE_ID) {
+        const current = state.chatToolRowExpandedById[rowId] === true;
+        state.chatToolRowExpandedById[rowId] = !current;
+      } else {
+        const panel = getSecondaryChatPanelState(paneId);
+        if (!panel) return;
+        const current = panel.chatToolRowExpandedById[rowId] === true;
+        panel.chatToolRowExpandedById[rowId] = !current;
+      }
       if (state.sidebarTab === "chat") {
-        renderChatMessagesOnly();
+        renderChatMessagesOnly(paneId);
         return;
       }
       renderAndBind(sendMessage);
@@ -5849,10 +6828,18 @@ function installThinkingToggleDelegation(sendMessage: (text: string) => Promise<
     if (!toggle) return;
     const correlationId = toggle.dataset.thinkingToggleCorr;
     if (!correlationId) return;
-    const current = state.chatThinkingExpandedByCorrelation[correlationId] === true;
-    state.chatThinkingExpandedByCorrelation[correlationId] = !current;
+    const paneId = resolveChatPaneIdForEvent(correlationId) ?? PRIMARY_CHAT_PANE_ID;
+    if (paneId === PRIMARY_CHAT_PANE_ID) {
+      const current = state.chatThinkingExpandedByCorrelation[correlationId] === true;
+      state.chatThinkingExpandedByCorrelation[correlationId] = !current;
+    } else {
+      const panel = getSecondaryChatPanelState(paneId);
+      if (!panel) return;
+      const current = panel.chatThinkingExpandedByCorrelation[correlationId] === true;
+      panel.chatThinkingExpandedByCorrelation[correlationId] = !current;
+    }
     if (state.sidebarTab === "chat") {
-      renderChatMessagesOnly();
+      renderChatMessagesOnly(paneId);
       return;
     }
     renderAndBind(sendMessage);
@@ -6240,6 +7227,42 @@ function attachWorkspaceInteractions(sendMessage: (text: string) => Promise<void
         duplicateActiveNotepadTab: workspaceToolsRuntime.duplicateActiveNotepadTab,
         deleteActiveNotepadFile: workspaceToolsRuntime.deleteActiveNotepadFile
       },
+      sheets: {
+        createNewSheet: workspaceToolsRuntime.createNewSheet,
+        openSheetWithDialog: workspaceToolsRuntime.openSheetWithDialog,
+        saveSheetCurrent: workspaceToolsRuntime.saveSheetCurrent,
+        saveSheetWithDialog: workspaceToolsRuntime.saveSheetWithDialog,
+        insertRows: workspaceToolsRuntime.insertRows,
+        insertColumns: workspaceToolsRuntime.insertColumns,
+        deleteRows: workspaceToolsRuntime.deleteRows,
+        deleteColumns: workspaceToolsRuntime.deleteColumns
+      },
+      docs: {
+        listDocsDirectory: (path?: string) => listDocsDirectory(state, { client: clientRef!, nextCorrelationId }, path),
+        selectDocsPath: (path: string) => selectDocsPath(state, { client: clientRef!, nextCorrelationId }, path),
+        toggleDocsNode: (path: string) => toggleDocsNode(state, { client: clientRef!, nextCorrelationId }, path),
+        openDocsFile: (path: string) => openDocsFile(state, { client: clientRef!, nextCorrelationId }, path),
+        createNewDocsFile: (path: string) => createNewDocsFile(state, { client: clientRef!, nextCorrelationId }, path),
+        activateDocsTab: (path: string) => activateDocsTab(state, path),
+        closeDocsTab: (path: string) => closeDocsTab(state, path),
+        updateDocsBuffer: (path: string, content: string) => updateDocsBuffer(state, path, content),
+        saveActiveDocsTab: () => saveActiveDocsTab(state, { client: clientRef!, nextCorrelationId }),
+        saveActiveDocsTabAs: (path: string) => saveActiveDocsTabAs(state, { client: clientRef!, nextCorrelationId }, path),
+        saveAllDocsTabs: () => saveAllDocsTabs(state, { client: clientRef!, nextCorrelationId })
+      },
+      skills: {
+        listSkillsDirectory: (path?: string) => listSkillsDirectory(state, { client: clientRef!, nextCorrelationId }, path),
+        selectSkillsPath: (path: string) => selectSkillsPath(state, { client: clientRef!, nextCorrelationId }, path),
+        toggleSkillsNode: (path: string) => toggleSkillsNode(state, { client: clientRef!, nextCorrelationId }, path),
+        openSkillsFile: (path: string) => openSkillsFile(state, { client: clientRef!, nextCorrelationId }, path),
+        createNewSkillsFile: (path: string) => createNewSkillsFile(state, { client: clientRef!, nextCorrelationId }, path),
+        activateSkillsTab: (path: string) => activateSkillsTab(state, path),
+        closeSkillsTab: (path: string) => closeSkillsTab(state, path),
+        updateSkillsBuffer: (path: string, content: string) => updateSkillsBuffer(state, path, content),
+        saveActiveSkillsTab: () => saveActiveSkillsTab(state, { client: clientRef!, nextCorrelationId }),
+        saveActiveSkillsTabAs: (path: string) => saveActiveSkillsTabAs(state, { client: clientRef!, nextCorrelationId }, path),
+        saveAllSkillsTabs: () => saveAllSkillsTabs(state, { client: clientRef!, nextCorrelationId })
+      },
       web: {
         runWebSearch: workspaceToolsRuntime.runWebSearch,
         createAndActivateWebTab: workspaceToolsRuntime.createAndActivateWebTab,
@@ -6280,11 +7303,14 @@ function attachWorkspaceInteractions(sendMessage: (text: string) => Promise<void
           await handleWorkspaceToolTabActivation(workspaceTab as WorkspaceTab, state, {
             ensureWebTabs: workspaceToolsRuntime.ensureWebTabs,
             refreshApiConnections,
-            hasVerifiedSearchConnection: workspaceToolsRuntime.hasVerifiedSearchConnection,
-            ensureFilesExplorerLoaded: workspaceToolsRuntime.ensureFilesExplorerLoaded,
-            ensureNotepadReady: workspaceToolsRuntime.ensureNotepadReady,
-            refreshFlowRuns,
-            ensureOpenCodeInit: async () => {
+             hasVerifiedSearchConnection: workspaceToolsRuntime.hasVerifiedSearchConnection,
+             ensureFilesExplorerLoaded: workspaceToolsRuntime.ensureFilesExplorerLoaded,
+              ensureDocsLoaded: () => ensureDocsLoaded(state, { client: clientRef!, nextCorrelationId }),
+              ensureSkillsLoaded: () => ensureSkillsLoaded(state, { client: clientRef!, nextCorrelationId }),
+              ensureNotepadReady: workspaceToolsRuntime.ensureNotepadReady,
+             ensureSheetReady: workspaceToolsRuntime.ensureSheetReady,
+             refreshFlowRuns,
+             ensureOpenCodeInit: async () => {
               const opencodeDeps: OpenCodeActionsDeps = {
                 terminalManager,
                 client: clientRef!,
@@ -6457,6 +7483,7 @@ function attachWorkspaceInteractions(sendMessage: (text: string) => Promise<void
       }
     }
   }
+
   bindConsoleInteractions({
     consoleEntries: state.consoleEntries,
     consoleView: state.consoleView,
@@ -6601,6 +7628,25 @@ async function bootstrap(): Promise<void> {
         }
         return true;
       }
+      if (event.action === "sheets.workbook.sync") {
+        const payload = payloadAsRecord(event.payload);
+        const source = typeof payload?.source === "string" ? payload.source : null;
+        const operation = typeof payload?.operation === "string" ? payload.operation : null;
+        if (source === "user" && operation === "write_range") {
+          state.sheetsState.filePath = typeof payload?.filePath === "string" ? payload.filePath : state.sheetsState.filePath;
+          state.sheetsState.fileName = typeof payload?.fileName === "string" ? payload.fileName : state.sheetsState.fileName;
+          state.sheetsState.rowCount = typeof payload?.rowCount === "number" ? payload.rowCount : state.sheetsState.rowCount;
+          state.sheetsState.columnCount = typeof payload?.columnCount === "number" ? payload.columnCount : state.sheetsState.columnCount;
+          state.sheetsState.usedRange = (payload?.usedRange as typeof state.sheetsState.usedRange) ?? state.sheetsState.usedRange;
+          state.sheetsState.dirty = typeof payload?.dirty === "boolean" ? payload.dirty : state.sheetsState.dirty;
+          state.sheetsState.revision = typeof payload?.revision === "number" ? payload.revision : state.sheetsState.revision;
+          return true;
+        }
+        void workspaceToolsRuntime.refreshSheetSnapshot().then(() => {
+          renderAndBind(sendMessage);
+        });
+        return true;
+      }
       return handleCoreAppEvent(event, {
         onChatTtsStreamChunkEvent,
         formatAgentEventLine,
@@ -6628,8 +7674,59 @@ async function bootstrap(): Promise<void> {
     },
     handleChatEvent: (event) =>
       handleChatStreamEvent(event, {
-        isCurrentChatCorrelation,
-        state,
+        resolveChatEventTarget: (correlationId, conversationId) => {
+          const paneId = resolveChatPaneIdForEvent(correlationId, conversationId);
+          if (!paneId) return null;
+          if (paneId === PRIMARY_CHAT_PANE_ID) {
+            return {
+              controlsVoiceState: true,
+              chatTtsEnabled: state.chatTtsEnabled,
+              chatTtsPlaying: state.chatTtsPlaying,
+              markStreamComplete: (targetCorrelationId: string, complete: boolean) => {
+                state.chatStreamCompleteByCorrelation[targetCorrelationId] = complete;
+              },
+              ensureAssistantMessageForCorrelation,
+              ensureToolIntentRow,
+              appendChatToolRow: (targetCorrelationId, row) => appendChatToolRow(targetCorrelationId, row as any),
+              updateAssistantDraft,
+              ingestChatStreamForTts: (targetCorrelationId, delta) => ingestChatStreamForTts(sendMessage, targetCorrelationId, delta),
+              updateReasoningDraft,
+              scheduleDomUpdate: () => scheduleChatStreamDomUpdate(PRIMARY_CHAT_PANE_ID)
+            };
+          }
+          const panel = getSecondaryChatPanelState(paneId);
+          if (!panel) return null;
+          return {
+            controlsVoiceState: false,
+            chatTtsEnabled: false,
+            chatTtsPlaying: false,
+            markStreamComplete: (targetCorrelationId: string, complete: boolean) => {
+              panel.chatStreamCompleteByCorrelation[targetCorrelationId] = complete;
+            },
+            ensureAssistantMessageForCorrelation: (targetCorrelationId: string) => {
+              ensureAssistantMessageForPanel(panel, targetCorrelationId);
+            },
+            ensureToolIntentRow: (targetCorrelationId: string, toolName: string) => {
+              const key = `${targetCorrelationId}:${toolName}`;
+              if (state.chatToolIntentByCorrelation[key]) return;
+              state.chatToolIntentByCorrelation[key] = true;
+              appendChatToolRowForPanel(panel, targetCorrelationId, {
+                icon: toolIconName(toolName),
+                title: `Use ${toolTitleName(toolName)} tool`,
+                details: `Agent confirmed it will use the ${toolTitleName(toolName)} tool.`
+              });
+            },
+            appendChatToolRow: (targetCorrelationId, row) => appendChatToolRowForPanel(panel, targetCorrelationId, row as any),
+            updateAssistantDraft: (targetCorrelationId: string, delta: string) => {
+              updateSecondaryAssistantDraft(panel, targetCorrelationId, delta);
+            },
+            ingestChatStreamForTts: () => {},
+            updateReasoningDraft: (targetCorrelationId: string, delta: string) => {
+              updateSecondaryReasoningDraft(panel, targetCorrelationId, delta);
+            },
+            scheduleDomUpdate: () => scheduleChatStreamDomUpdate(panel.panelId)
+          };
+        },
         setChatTtsStopRequested: (value) => {
           chatTtsStopRequested = value;
         },
@@ -6637,18 +7734,11 @@ async function bootstrap(): Promise<void> {
         setVoicePipelineState,
         resetChatTtsStreamParser,
         flushChatStreamForTts: (correlationId) => flushChatStreamForTts(sendMessage, correlationId),
-        scheduleChatStreamDomUpdate,
         parseAgentToolPayload,
-        ensureAssistantMessageForCorrelation,
-        ensureToolIntentRow,
-        appendChatToolRow: (correlationId, row) => appendChatToolRow(correlationId, row as any),
         toolIconName,
         toolTitleName,
         parseStreamChunk,
         parseReasoningStreamChunk,
-        updateAssistantDraft,
-        ingestChatStreamForTts: (correlationId, delta) => ingestChatStreamForTts(sendMessage, correlationId, delta),
-        updateReasoningDraft,
         renderAndBind: () => renderAndBind(sendMessage)
       })
   });
@@ -6656,7 +7746,11 @@ async function bootstrap(): Promise<void> {
   sendMessage = initializeSendMessageBinding({
     getClientRef: () => clientRef,
     state,
-    nextCorrelationId,
+    nextCorrelationId: () => {
+      const correlationId = nextCorrelationId();
+      rememberChatCorrelationTarget(PRIMARY_CHAT_PANE_ID, correlationId);
+      return correlationId;
+    },
     normalizeChatText,
     clearVoicePrefillState: () => {
       clearVoicePrefillWarmupTimer();
@@ -6678,6 +7772,39 @@ async function bootstrap(): Promise<void> {
     renderAndBind
   }, (boundSendMessage) => {
     appResourceRenderSendMessageRef = boundSendMessage;
+  });
+
+  await handleWorkspaceToolTabActivation(state.workspaceTab, state, {
+    ensureWebTabs: workspaceToolsRuntime.ensureWebTabs,
+    refreshApiConnections,
+    hasVerifiedSearchConnection: workspaceToolsRuntime.hasVerifiedSearchConnection,
+    ensureFilesExplorerLoaded: workspaceToolsRuntime.ensureFilesExplorerLoaded,
+    ensureDocsLoaded: () => ensureDocsLoaded(state, { client: clientRef!, nextCorrelationId }),
+    ensureSkillsLoaded: () => ensureSkillsLoaded(state, { client: clientRef!, nextCorrelationId }),
+    ensureNotepadReady: workspaceToolsRuntime.ensureNotepadReady,
+    ensureSheetReady: workspaceToolsRuntime.ensureSheetReady,
+    refreshFlowRuns,
+    ensureOpenCodeInit: async () => {
+      const opencodeDeps: OpenCodeActionsDeps = {
+        terminalManager,
+        client: clientRef!,
+        nextCorrelationId,
+        renderAndBind: () => renderAndBind(sendMessage)
+      };
+      const installed = await checkOpenCodeInstalled(state.opencodeState, opencodeDeps);
+      if (installed) {
+        await spawnAgent(state.opencodeState, opencodeDeps, { label: "Agent 1" });
+      }
+    },
+    ensureLooperInit: async () => {
+      const looperDeps: LooperActionsDeps = {
+        terminalManager,
+        client: clientRef!,
+        nextCorrelationId,
+        renderAndBind: () => renderAndBind(sendMessage)
+      };
+      await ensureLooperInit(state.looperState, looperDeps);
+    }
   });
 
   installCustomToolBridge(sendMessage);
@@ -6822,4 +7949,38 @@ function attachDividerResize(): void {
     divider.addEventListener("pointerup", onUp);
     divider.addEventListener("pointercancel", onUp);
   };
+
+  const chatSplitWrap = document.querySelector<HTMLElement>("#chatSplitWrap");
+  const chatSplitDivider = document.querySelector<HTMLDivElement>("#chatSplitDivider");
+  if (chatSplitWrap && chatSplitDivider) {
+    chatSplitDivider.onpointerdown = (event) => {
+      event.preventDefault();
+      chatSplitDivider.classList.add("dragging");
+      chatSplitDivider.setPointerCapture(event.pointerId);
+
+      const isVertical = state.chatSplitMode === "vertical";
+
+      const onMove = (moveEvent: PointerEvent) => {
+        const bounds = chatSplitWrap.getBoundingClientRect();
+        const rawPercent = isVertical
+          ? ((moveEvent.clientX - bounds.left) / bounds.width) * 100
+          : ((moveEvent.clientY - bounds.top) / bounds.height) * 100;
+        const clamped = Math.max(20, Math.min(80, rawPercent));
+        state.chatSplitPercent = Number(clamped.toFixed(2));
+        chatSplitWrap.style.setProperty("--chat-split-percent", String(state.chatSplitPercent));
+      };
+
+      const onUp = (upEvent: PointerEvent) => {
+        chatSplitDivider.classList.remove("dragging");
+        chatSplitDivider.releasePointerCapture(upEvent.pointerId);
+        chatSplitDivider.removeEventListener("pointermove", onMove);
+        chatSplitDivider.removeEventListener("pointerup", onUp);
+        chatSplitDivider.removeEventListener("pointercancel", onUp);
+      };
+
+      chatSplitDivider.addEventListener("pointermove", onMove);
+      chatSplitDivider.addEventListener("pointerup", onUp);
+      chatSplitDivider.addEventListener("pointercancel", onUp);
+    };
+  }
 }

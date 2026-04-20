@@ -15,6 +15,9 @@ import type { OpenCodeToolState } from "../opencode/state";
 import { renderLooperToolActions, renderLooperToolBody } from "../looper";
 import type { LooperToolState } from "../looper/state";
 import { renderNotepadToolActions, renderNotepadToolBody } from "../notepad";
+import { renderSheetsToolActions, renderSheetsToolBody } from "../sheets";
+import type { SheetsToolState } from "../sheets/state";
+import { renderDocsToolActions, renderDocsToolBody } from "../docs";
 
 export interface ToolViewHtml {
   actionsHtml: string;
@@ -144,6 +147,53 @@ export interface WorkspaceToolViewInput {
   notepadFindCaseSensitive: boolean;
   notepadLineWrap: boolean;
   notepadError: string | null;
+  sheetsState: SheetsToolState;
+  docsRootPath: string | null;
+  docsSelectedPath: string | null;
+  docsSelectedEntryPath: string | null;
+  docsExpandedByPath: Record<string, boolean>;
+  docsEntriesByPath: Record<string, FilesListDirectoryEntry[]>;
+  docsLoadingByPath: Record<string, boolean>;
+  docsOpenTabs: string[];
+  docsActiveTabPath: string | null;
+  docsContentByPath: Record<string, string>;
+  docsSavedContentByPath: Record<string, string>;
+  docsDirtyByPath: Record<string, boolean>;
+  docsLoadingFileByPath: Record<string, boolean>;
+  docsSavingFileByPath: Record<string, boolean>;
+  docsReadOnlyByPath: Record<string, boolean>;
+  docsSizeByPath: Record<string, number>;
+  docsSidebarWidth: number;
+  docsSidebarCollapsed: boolean;
+  docsFindOpen: boolean;
+  docsFindQuery: string;
+  docsReplaceQuery: string;
+  docsFindCaseSensitive: boolean;
+  docsLineWrap: boolean;
+  docsError: string | null;
+  skillsRootPath: string | null;
+  skillsSelectedPath: string | null;
+  skillsSelectedEntryPath: string | null;
+  skillsExpandedByPath: Record<string, boolean>;
+  skillsEntriesByPath: Record<string, FilesListDirectoryEntry[]>;
+  skillsLoadingByPath: Record<string, boolean>;
+  skillsOpenTabs: string[];
+  skillsActiveTabPath: string | null;
+  skillsContentByPath: Record<string, string>;
+  skillsSavedContentByPath: Record<string, string>;
+  skillsDirtyByPath: Record<string, boolean>;
+  skillsLoadingFileByPath: Record<string, boolean>;
+  skillsSavingFileByPath: Record<string, boolean>;
+  skillsReadOnlyByPath: Record<string, boolean>;
+  skillsSizeByPath: Record<string, number>;
+  skillsSidebarWidth: number;
+  skillsSidebarCollapsed: boolean;
+  skillsFindOpen: boolean;
+  skillsFindQuery: string;
+  skillsReplaceQuery: string;
+  skillsFindCaseSensitive: boolean;
+  skillsLineWrap: boolean;
+  skillsError: string | null;
 }
 
 export function buildWorkspaceToolViews(input: WorkspaceToolViewInput): Record<string, ToolViewHtml> {
@@ -405,23 +455,55 @@ export function buildWorkspaceToolViews(input: WorkspaceToolViewInput): Record<s
       })
     },
     skills: {
-      actionsHtml: renderSkillsToolActions(),
+      actionsHtml: renderSkillsToolActions({
+        skillsRootPath: input.skillsRootPath,
+        skillsSelectedPath: input.skillsSelectedPath,
+        skillsSelectedEntryPath: input.skillsSelectedEntryPath,
+        skillsExpandedByPath: input.skillsExpandedByPath,
+        skillsEntriesByPath: input.skillsEntriesByPath,
+        skillsLoadingByPath: input.skillsLoadingByPath,
+        skillsOpenTabs: input.skillsOpenTabs,
+        skillsActiveTabPath: input.skillsActiveTabPath,
+        skillsContentByPath: input.skillsContentByPath,
+        skillsSavedContentByPath: input.skillsSavedContentByPath,
+        skillsDirtyByPath: input.skillsDirtyByPath,
+        skillsLoadingFileByPath: input.skillsLoadingFileByPath,
+        skillsSavingFileByPath: input.skillsSavingFileByPath,
+        skillsReadOnlyByPath: input.skillsReadOnlyByPath,
+        skillsSizeByPath: input.skillsSizeByPath,
+        skillsSidebarWidth: input.skillsSidebarWidth,
+        skillsSidebarCollapsed: input.skillsSidebarCollapsed,
+        skillsFindOpen: input.skillsFindOpen,
+        skillsFindQuery: input.skillsFindQuery,
+        skillsReplaceQuery: input.skillsReplaceQuery,
+        skillsFindCaseSensitive: input.skillsFindCaseSensitive,
+        skillsLineWrap: input.skillsLineWrap,
+        skillsError: input.skillsError
+      }),
       bodyHtml: renderSkillsToolBody({
-        skills: [],
-        selectedSkillId: null,
-        contentById: {},
-        dirtyById: {},
-        savedContentById: {},
-        loading: false,
-        error: null,
-        sidebarWidth: 280,
-        sidebarCollapsed: false,
-        settingsOpen: false,
-        settings: { autoLoad: true, permissionDefault: "allow", showDescriptions: true },
-        newSkillModalOpen: false,
-        newSkillName: "",
-        newSkillDescription: "",
-        confirmDeleteId: null
+        skillsRootPath: input.skillsRootPath,
+        skillsSelectedPath: input.skillsSelectedPath,
+        skillsSelectedEntryPath: input.skillsSelectedEntryPath,
+        skillsExpandedByPath: input.skillsExpandedByPath,
+        skillsEntriesByPath: input.skillsEntriesByPath,
+        skillsLoadingByPath: input.skillsLoadingByPath,
+        skillsOpenTabs: input.skillsOpenTabs,
+        skillsActiveTabPath: input.skillsActiveTabPath,
+        skillsContentByPath: input.skillsContentByPath,
+        skillsSavedContentByPath: input.skillsSavedContentByPath,
+        skillsDirtyByPath: input.skillsDirtyByPath,
+        skillsLoadingFileByPath: input.skillsLoadingFileByPath,
+        skillsSavingFileByPath: input.skillsSavingFileByPath,
+        skillsReadOnlyByPath: input.skillsReadOnlyByPath,
+        skillsSizeByPath: input.skillsSizeByPath,
+        skillsSidebarWidth: input.skillsSidebarWidth,
+        skillsSidebarCollapsed: input.skillsSidebarCollapsed,
+        skillsFindOpen: input.skillsFindOpen,
+        skillsFindQuery: input.skillsFindQuery,
+        skillsReplaceQuery: input.skillsReplaceQuery,
+        skillsFindCaseSensitive: input.skillsFindCaseSensitive,
+        skillsLineWrap: input.skillsLineWrap,
+        skillsError: input.skillsError
       })
     },
     opencode: {
@@ -470,6 +552,62 @@ export function buildWorkspaceToolViews(input: WorkspaceToolViewInput): Record<s
         findCaseSensitive: input.notepadFindCaseSensitive,
         lineWrap: input.notepadLineWrap,
         error: input.notepadError
+      })
+    },
+    sheets: {
+      actionsHtml: renderSheetsToolActions(input.sheetsState),
+      bodyHtml: renderSheetsToolBody(input.sheetsState)
+    },
+    docs: {
+      actionsHtml: renderDocsToolActions({
+        docsRootPath: input.docsRootPath,
+        docsSelectedPath: input.docsSelectedPath,
+        docsSelectedEntryPath: input.docsSelectedEntryPath,
+        docsExpandedByPath: input.docsExpandedByPath,
+        docsEntriesByPath: input.docsEntriesByPath,
+        docsLoadingByPath: input.docsLoadingByPath,
+        docsOpenTabs: input.docsOpenTabs,
+        docsActiveTabPath: input.docsActiveTabPath,
+        docsContentByPath: input.docsContentByPath,
+        docsSavedContentByPath: input.docsSavedContentByPath,
+        docsDirtyByPath: input.docsDirtyByPath,
+        docsLoadingFileByPath: input.docsLoadingFileByPath,
+        docsSavingFileByPath: input.docsSavingFileByPath,
+        docsReadOnlyByPath: input.docsReadOnlyByPath,
+        docsSizeByPath: input.docsSizeByPath,
+        docsSidebarWidth: input.docsSidebarWidth,
+        docsSidebarCollapsed: input.docsSidebarCollapsed,
+        docsFindOpen: input.docsFindOpen,
+        docsFindQuery: input.docsFindQuery,
+        docsReplaceQuery: input.docsReplaceQuery,
+        docsFindCaseSensitive: input.docsFindCaseSensitive,
+        docsLineWrap: input.docsLineWrap,
+        docsError: input.docsError
+      }),
+      bodyHtml: renderDocsToolBody({
+        docsRootPath: input.docsRootPath,
+        docsSelectedPath: input.docsSelectedPath,
+        docsSelectedEntryPath: input.docsSelectedEntryPath,
+        docsExpandedByPath: input.docsExpandedByPath,
+        docsEntriesByPath: input.docsEntriesByPath,
+        docsLoadingByPath: input.docsLoadingByPath,
+        docsOpenTabs: input.docsOpenTabs,
+        docsActiveTabPath: input.docsActiveTabPath,
+        docsContentByPath: input.docsContentByPath,
+        docsSavedContentByPath: input.docsSavedContentByPath,
+        docsDirtyByPath: input.docsDirtyByPath,
+        docsLoadingFileByPath: input.docsLoadingFileByPath,
+        docsSavingFileByPath: input.docsSavingFileByPath,
+        docsReadOnlyByPath: input.docsReadOnlyByPath,
+        docsSizeByPath: input.docsSizeByPath,
+        docsSidebarWidth: input.docsSidebarWidth,
+        docsSidebarCollapsed: input.docsSidebarCollapsed,
+        docsFindOpen: input.docsFindOpen,
+        docsFindQuery: input.docsFindQuery,
+        docsReplaceQuery: input.docsReplaceQuery,
+        docsFindCaseSensitive: input.docsFindCaseSensitive,
+        docsLineWrap: input.docsLineWrap,
+        docsError: input.docsError
       })
     }
   };

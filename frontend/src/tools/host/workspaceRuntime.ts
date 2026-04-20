@@ -54,6 +54,23 @@ import {
   saveAllNotepadTabs,
   updateNotepadBuffer
 } from "../notepad/actions";
+import { createNewDocsFile } from "../docs/actions";
+import { createNewSkillsFile } from "../skills/actions";
+import {
+  createNewSheet,
+  deleteColumns as deleteSheetsColumns,
+  deleteRows as deleteSheetsRows,
+  insertColumns as insertSheetsColumns,
+  insertRows as insertSheetsRows,
+  openSheetWithDialog,
+  readVisibleRange as readSheetsVisibleRange,
+  refreshSheetSnapshot,
+  saveSheetCurrent,
+  saveSheetWithDialog,
+  setCellInput as setSheetsCellInput,
+  writeRange as writeSheetsRange
+} from "../sheets/actions";
+import type { SheetsToolState } from "../sheets/state";
 
 interface FilesRuntimeSlice {
   filesRootPath: string | null;
@@ -92,12 +109,24 @@ interface NotepadRuntimeSlice {
   notepadError: string | null;
 }
 
+interface DocsRuntimeSlice {
+  docsRootPath: string | null;
+  docsSelectedPath: string | null;
+  docsExpandedByPath: Record<string, boolean>;
+  docsEntriesByPath: Record<string, FilesListDirectoryEntry[]>;
+  docsLoadingByPath: Record<string, boolean>;
+  docsSidebarWidth: number;
+  docsSidebarCollapsed: boolean;
+}
+
 export interface WorkspaceToolsRuntimeState
   extends FlowRuntimeSlice,
     FilesRuntimeSlice,
     NotepadRuntimeSlice,
+    DocsRuntimeSlice,
     Omit<WebSearchSlice, "apiConnections"> {
   apiConnections: ApiConnectionRecord[];
+  sheetsState: SheetsToolState;
 }
 
 export interface WorkspaceToolsRuntimeDeps {
@@ -154,6 +183,21 @@ export interface WorkspaceToolsRuntime {
   saveAllNotepadTabs: () => Promise<void>;
   duplicateActiveNotepadTab: (path: string) => Promise<void>;
   deleteActiveNotepadFile: () => Promise<void>;
+  createNewSheet: () => Promise<void>;
+  ensureSheetReady: () => Promise<void>;
+  openSheetWithDialog: () => Promise<void>;
+  saveSheetCurrent: () => Promise<void>;
+  saveSheetWithDialog: () => Promise<void>;
+  refreshSheetSnapshot: () => Promise<void>;
+  readVisibleRange: () => Promise<void>;
+  setCellInput: (row: number, col: number, input: string) => Promise<void>;
+  writeRange: (startRow: number, startCol: number, values: string[][]) => Promise<void>;
+  insertRows: (index: number, count?: number) => Promise<void>;
+  insertColumns: (index: number, count?: number) => Promise<void>;
+  deleteRows: (index: number, count?: number) => Promise<void>;
+  deleteColumns: (index: number, count?: number) => Promise<void>;
+  createNewDocsFile: (path: string) => Promise<void>;
+  createNewSkillsFile: (path: string) => Promise<void>;
   createAndActivateWebTab: () => void;
   runWebSearch: () => Promise<void>;
   saveWebSearchSetup: () => Promise<void>;
@@ -189,6 +233,13 @@ export function createWorkspaceToolsRuntime(
   };
 
   const notepadDeps = {
+    get client() {
+      return deps.getClient();
+    },
+    nextCorrelationId: deps.nextCorrelationId
+  };
+
+  const sheetsDeps = {
     get client() {
       return deps.getClient();
     },
@@ -309,6 +360,51 @@ export function createWorkspaceToolsRuntime(
     },
     deleteActiveNotepadFile: async () => {
       await deleteActiveNotepadFile(state, notepadDeps);
+    },
+    createNewSheet: async () => {
+      await createNewSheet(state.sheetsState, sheetsDeps);
+    },
+    ensureSheetReady: async () => {
+      await refreshSheetSnapshot(state.sheetsState, sheetsDeps);
+    },
+    openSheetWithDialog: async () => {
+      await openSheetWithDialog(state.sheetsState, sheetsDeps);
+    },
+    saveSheetCurrent: async () => {
+      await saveSheetCurrent(state.sheetsState, sheetsDeps);
+    },
+    saveSheetWithDialog: async () => {
+      await saveSheetWithDialog(state.sheetsState, sheetsDeps);
+    },
+    refreshSheetSnapshot: async () => {
+      await refreshSheetSnapshot(state.sheetsState, sheetsDeps);
+    },
+    readVisibleRange: async () => {
+      await readSheetsVisibleRange(state.sheetsState, sheetsDeps);
+    },
+    setCellInput: async (row, col, input) => {
+      await setSheetsCellInput(state.sheetsState, sheetsDeps, row, col, input);
+    },
+    writeRange: async (startRow, startCol, values) => {
+      await writeSheetsRange(state.sheetsState, sheetsDeps, startRow, startCol, values);
+    },
+    insertRows: async (index, count = 1) => {
+      await insertSheetsRows(state.sheetsState, sheetsDeps, index, count);
+    },
+    insertColumns: async (index, count = 1) => {
+      await insertSheetsColumns(state.sheetsState, sheetsDeps, index, count);
+    },
+    deleteRows: async (index, count = 1) => {
+      await deleteSheetsRows(state.sheetsState, sheetsDeps, index, count);
+    },
+    deleteColumns: async (index, count = 1) => {
+      await deleteSheetsColumns(state.sheetsState, sheetsDeps, index, count);
+    },
+    createNewDocsFile: async (path) => {
+      await createNewDocsFile(state as never, notepadDeps as never, path);
+    },
+    createNewSkillsFile: async (path) => {
+      await createNewSkillsFile(state as never, notepadDeps as never, path);
     },
     createAndActivateWebTab: () => {
       createAndActivateWebTab(state, { createWebTab: deps.createWebTab });

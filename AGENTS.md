@@ -1,4 +1,6 @@
 # Agent Instructions
+- Architecture and App information documents are available in the /docs folder
+
 
 ## Build & Dev Commands
 - `cd frontend && npm run dev` — start dev server
@@ -134,4 +136,4 @@ Always prefer these over tool-specific equivalents.
 7. **Tool-specific button styles** should use `.tool-action-btn` (22px) or `.icon-btn` (24px) as base — don't recreate button styles.
 
 ### Known Issues
-- `--ink-dim` is referenced but not defined in `:root` (used in message thinking styles)
+

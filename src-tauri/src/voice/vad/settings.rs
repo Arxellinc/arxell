@@ -4,6 +4,7 @@ use serde_json::{json, Value};
 pub const ENERGY_BASIC_ID: &str = "energy-basic";
 pub const SHERPA_SILERO_ID: &str = "sherpa-silero";
 pub const MICROTURN_V1_ID: &str = "microturn-v1";
+pub const HYBRID_INTERRUPT_ID: &str = "hybrid_interrupt";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -63,6 +64,30 @@ pub struct MicroturnV1Config {
     pub min_speech_ms: u32,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HybridInterruptConfig {
+    pub interrupt_threshold: f32,
+    pub min_overlap_ms: u32,
+    pub cancel_tts_on_interrupt: bool,
+    pub resume_after_false_interrupt: bool,
+    pub yield_bias: f32,
+    pub assistant_speaking_sensitivity: f32,
+}
+
+impl Default for HybridInterruptConfig {
+    fn default() -> Self {
+        Self {
+            interrupt_threshold: 0.0018,
+            min_overlap_ms: 120,
+            cancel_tts_on_interrupt: true,
+            resume_after_false_interrupt: true,
+            yield_bias: 0.45,
+            assistant_speaking_sensitivity: 0.65,
+        }
+    }
+}
+
 impl Default for MicroturnV1Config {
     fn default() -> Self {
         Self {
@@ -83,6 +108,9 @@ pub fn default_config_for(method_id: &str) -> Value {
         }
         MICROTURN_V1_ID => {
             serde_json::to_value(MicroturnV1Config::default()).unwrap_or_else(|_| json!({}))
+        }
+        HYBRID_INTERRUPT_ID => {
+            serde_json::to_value(HybridInterruptConfig::default()).unwrap_or_else(|_| json!({}))
         }
         _ => json!({}),
     }

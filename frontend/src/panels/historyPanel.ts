@@ -22,7 +22,7 @@ export function renderHistoryBody(state: PrimaryPanelRenderState): string {
   const body =
     state.conversations
       .map((c) => {
-        const active = c.conversationId === state.conversationId ? " is-active" : "";
+        const active = c.conversationId === state.chat.conversationId ? " is-active" : "";
         const updated = formatHistoryTimestamp(c.updatedAtMs);
         const title = c.title?.trim() || c.lastMessagePreview || c.conversationId;
         return `<div class="history-row${active}" data-conversation-id="${escapeHtml(c.conversationId)}" role="button" tabindex="0">

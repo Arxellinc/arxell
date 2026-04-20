@@ -92,6 +92,7 @@ pub async fn invoke_tool(
         ("flow", "flow"),
         ("files", "files"),
         ("looper", "looper"),
+        ("sheets", "sheets"),
         ("webSearch", "webSearch"),
         ("web", "webSearch"),
     ];

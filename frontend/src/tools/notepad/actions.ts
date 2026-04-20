@@ -240,7 +240,7 @@ function replaceNotepadTabId(slice: NotepadSlice, fromId: string, toId: string):
 }
 
 function moveRecord<T>(record: Record<string, T>, fromId: string, toId: string, fallback: T): void {
-  const value = fromId in record ? record[fromId] : fallback;
+  const value = Object.prototype.hasOwnProperty.call(record, fromId) ? (record[fromId] as T) : fallback;
   record[toId] = value;
   if (fromId !== toId) {
     delete record[fromId];

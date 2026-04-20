@@ -23,6 +23,18 @@ Use this checklist for every AI-assisted change.
 - [ ] Tool contract tests for changed tools.
 - [ ] Event emission path tested for success and failure.
 
+## Voice Compliance
+- [ ] Voice session state transitions follow the documented state machine.
+- [ ] VAD method changes emit runtime snapshot confirming new state.
+- [ ] Audio data does not appear in event payloads.
+- [ ] Handoff leaves no orphaned active methods.
+
+## Plugin Compliance
+- [ ] Plugin capability invocations use the designated IPC commands.
+- [ ] Capability names validated before execution.
+- [ ] Plugin errors return structured responses with error codes.
+- [ ] Plugin iframes are sandboxed from direct Tauri API access.
+
 ## Platform Compliance
 - [ ] Platform-specific logic isolated to tool module.
 - [ ] Service/contract code remains platform-neutral.

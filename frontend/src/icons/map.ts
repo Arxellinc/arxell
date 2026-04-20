@@ -36,7 +36,12 @@ export const APP_ICON = {
     toolsPanel: "wrench",
     displayModeDark: "moon",
     displayModeLight: "sun",
-    layoutOrientation: "proportions"
+    layoutOrientation: "proportions",
+    paneMenu: "ellipsis-vertical",
+    splitHorizontal: "separator-horizontal",
+    splitVertical: "separator-vertical",
+    closePanel: "panel-right-close",
+    openPanel: "panel-left-open"
   }
 } as const satisfies {
   brand: IconName;
@@ -75,5 +80,10 @@ export const APP_ICON = {
     displayModeDark: IconName;
     displayModeLight: IconName;
     layoutOrientation: IconName;
+    paneMenu: IconName;
+    splitHorizontal: IconName;
+    splitVertical: IconName;
+    closePanel: IconName;
+    openPanel: IconName;
   };
 };

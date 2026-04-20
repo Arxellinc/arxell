@@ -124,6 +124,7 @@ export async function handleNotepadClick(
   }
   if (action === "delete-file") {
     const active = slice.notepadActiveTabId;
+    if (!active) return true;
     const path = active ? slice.notepadPathByTabId[active] : null;
     if (!path) return true;
     const confirmed = window.confirm(`Delete file '${slice.notepadTitleByTabId[active] || path}'?`);

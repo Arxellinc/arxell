@@ -35,6 +35,8 @@ impl MicroturnV1Strategy {
             supports_micro_turns: true,
             supports_speech_probability: true,
             supports_partial_segmentation: true,
+            supports_live_handoff: true,
+            supports_speculative_onset: true,
             ..VadCapabilities::default()
         }
     }

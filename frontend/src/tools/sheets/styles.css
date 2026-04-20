@@ -1,0 +1,205 @@
+.sheets-tool {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  gap: 8px;
+}
+
+.sheets-runtime-host {
+  flex: 1;
+  min-height: 0;
+  border: 1px solid var(--line);
+  border-radius: 0;
+  background: var(--panel);
+  overflow: hidden;
+}
+
+.sheets-runtime {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+.sheets-runtime-error {
+  padding: 16px;
+  color: var(--error);
+  font-size: var(--text-sm);
+}
+
+.sheets-runtime-error pre {
+  margin: 10px 0 0;
+  color: var(--ink);
+  white-space: pre-wrap;
+}
+
+.sheets-formula-row {
+  display: grid;
+  grid-template-columns: 90px minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+  padding: 8px;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface-soft);
+}
+
+.sheets-formula-label {
+  color: var(--muted);
+  font-size: var(--text-sm);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.sheets-formula-input {
+  width: 100%;
+}
+
+.sheets-apply-btn {
+  min-width: 58px;
+}
+
+.tool-toolbar-btn.sheets-toolbar-divider-before,
+.tool-toolbar-btn.sheets-toolbar-divider-after {
+  position: relative;
+}
+
+.tool-toolbar-btn.sheets-toolbar-divider-before {
+  margin-left: 8px;
+}
+
+.tool-toolbar-btn.sheets-toolbar-divider-after {
+  margin-right: 8px;
+}
+
+.tool-toolbar-btn.sheets-toolbar-divider-before::before,
+.tool-toolbar-btn.sheets-toolbar-divider-after::after {
+  content: "";
+  position: absolute;
+  top: 5px;
+  bottom: 5px;
+  width: 1px;
+  background: var(--line);
+  opacity: 0.75;
+}
+
+.tool-toolbar-btn.sheets-toolbar-divider-before::before {
+  left: -5px;
+}
+
+.tool-toolbar-btn.sheets-toolbar-divider-after::after {
+  right: -5px;
+}
+
+.sheets-grid-wrap {
+  flex: 1;
+  min-height: 0;
+  height: 100%;
+  overflow: hidden;
+}
+
+.sheets-grid {
+  --dsg-border-color: color-mix(in srgb, var(--ink) 24%, var(--panel));
+  --dsg-cell-background-color: var(--panel);
+  --dsg-cell-disabled-background-color: var(--surface-soft);
+  --dsg-header-active-text-color: var(--ink);
+  --dsg-header-text-color: var(--muted);
+  --dsg-scroll-shadow-color: var(--line);
+  --dsg-selection-background-color: transparent;
+  --dsg-selection-border-color: var(--accent);
+  --dsg-selection-disabled-background-color: var(--surface-soft);
+  --dsg-selection-disabled-border-color: var(--muted);
+
+  height: 100%;
+  font-size: var(--text-sm);
+}
+
+.sheets-grid-wrap,
+.sheets-grid,
+.sheets-grid > .dsg-container,
+.sheets-grid .dsg-scrollable-view-container,
+.sheets-grid .dsg-row,
+.sheets-grid .dsg-add-row {
+  background: var(--panel);
+}
+
+.sheets-grid > .dsg-container {
+  border-radius: 0;
+  color: var(--ink);
+  overflow-y: scroll;
+}
+
+.sheets-grid .dsg-cell {
+  color: var(--muted);
+  border: 1px solid var(--dsg-border-color);
+  z-index: 5;
+}
+
+.sheets-grid .dsg-cell-header {
+  background: var(--surface-soft);
+  color: var(--muted);
+}
+
+.sheets-grid .dsg-row {
+  box-shadow: 0 1px var(--dsg-border-color) inset;
+}
+
+.sheets-grid .dsg-scrollable-view,
+.sheets-grid .dsg-cell-header.dsg-cell-gutter {
+  border-color: var(--dsg-border-color);
+  box-shadow: 1px 0 var(--dsg-border-color), 0 1px var(--dsg-border-color);
+  pointer-events: none;
+}
+
+.sheets-grid .dsg-input {
+  background: var(--panel);
+  color: var(--ink);
+}
+
+.sheets-grid-cell.is-error,
+.sheets-grid .dsg-cell.sheets-grid-cell.is-error {
+  background: color-mix(in srgb, var(--error) 14%, var(--panel));
+  color: var(--error);
+}
+
+.sheets-grid-cell.is-formula,
+.sheets-grid .dsg-cell.sheets-grid-cell.is-formula {
+  color: var(--status-info);
+}
+
+.sheets-empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  gap: 8px;
+  color: var(--muted);
+  font-size: var(--text-md);
+  text-align: center;
+  padding: 24px;
+}
+
+.sheets-empty-note {
+  font-size: var(--text-sm);
+}
+
+.sheets-error-banner {
+  border: 1px solid color-mix(in srgb, var(--error) 40%, var(--line));
+  background: color-mix(in srgb, var(--error) 10%, var(--panel));
+  color: var(--error);
+  border-radius: 0;
+  padding: 8px 10px;
+  font-size: var(--text-sm);
+}
+
+@media (max-width: 720px) {
+  .sheets-formula-row {
+    grid-template-columns: 1fr;
+  }
+
+  .sheets-status-row {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+}

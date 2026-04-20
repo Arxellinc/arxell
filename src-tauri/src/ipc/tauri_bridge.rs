@@ -15,6 +15,7 @@ use crate::ipc::looper::LooperCommandHandler;
 use crate::ipc::terminal::TerminalCommandHandler;
 use crate::ipc::voice_commands::VoiceCommandHandler;
 use crate::observability::EventHub;
+use crate::services::sheets_service::SheetsService;
 use crate::workspace_tools::WorkspaceToolsService;
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter};
@@ -33,6 +34,7 @@ pub struct TauriBridgeState {
     pub permissions: Arc<PermissionService>,
     pub model_manager: Arc<ModelManagerService>,
     pub files: Arc<FilesService>,
+    pub sheets: Arc<SheetsService>,
     pub flow: Arc<FlowService>,
     pub voice: Arc<VoiceRuntimeService>,
 }

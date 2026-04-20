@@ -1,4 +1,11 @@
 pub mod audio_bus;
+pub mod control_bus;
+pub mod handoff;
+pub mod interruption_interface;
 pub mod session;
 pub mod settings;
+pub mod shadow_eval;
+pub mod speculation;
+pub mod stt_interface;
+pub mod tts_interface;
 pub mod vad;

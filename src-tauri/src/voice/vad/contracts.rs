@@ -34,6 +34,8 @@ pub struct VadCapabilities {
     pub supports_overlap_turn_yield_hints: bool,
     pub supports_speech_probability: bool,
     pub supports_partial_segmentation: bool,
+    pub supports_live_handoff: bool,
+    pub supports_speculative_onset: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -86,6 +88,16 @@ pub enum VadEvent {
         segment_id: String,
         start_ms: u64,
         end_ms: u64,
+    },
+    InterruptionDetected {
+        confidence: f32,
+    },
+    OverlapDetected {
+        confidence: f32,
+        duration_ms: u32,
+    },
+    TurnYieldLikely {
+        confidence: f32,
     },
     StateChanged {
         from: String,

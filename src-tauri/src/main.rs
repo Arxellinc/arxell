@@ -38,9 +38,11 @@ use arxell_lite::contracts::{
     TtsSelfTestRequest, TtsSelfTestResponse, TtsSettingsGetRequest, TtsSettingsGetResponse,
     TtsSettingsSetRequest, TtsSettingsSetResponse, TtsSpeakRequest, TtsSpeakResponse,
     TtsStatusRequest, TtsStatusResponse, TtsStopRequest, TtsStopResponse,
-    VoiceGetVadSettingsRequest, VoiceGetVadSettingsResponse, VoiceListVadMethodsRequest,
-    VoiceListVadMethodsResponse, VoiceRuntimeSnapshotResponse, VoiceSetVadMethodRequest,
-    VoiceStartSessionRequest, VoiceStopSessionRequest, VoiceUpdateVadConfigRequest,
+    VoiceGetRuntimeDiagnosticsRequest, VoiceGetVadSettingsRequest, VoiceGetVadSettingsResponse,
+    VoiceListVadMethodsRequest, VoiceListVadMethodsResponse, VoiceRequestHandoffRequest,
+    VoiceRuntimeSnapshotResponse, VoiceSetDuplexModeRequest, VoiceSetShadowMethodRequest,
+    VoiceSetVadMethodRequest, VoiceStartSessionRequest, VoiceStartShadowEvalRequest,
+    VoiceStopSessionRequest, VoiceStopShadowEvalRequest, VoiceUpdateVadConfigRequest,
     VoiceUpdateVadConfigResponse, WebSearchRequest, WebSearchResponse,
     WorkspaceToolCreateAppPluginRequest, WorkspaceToolCreateAppPluginResponse,
     WorkspaceToolForgetRequest, WorkspaceToolForgetResponse, WorkspaceToolSetEnabledRequest,
@@ -151,6 +153,7 @@ fn main() {
         permissions: std::sync::Arc::clone(&app_context.permissions),
         model_manager: std::sync::Arc::clone(&app_context.model_manager),
         files: std::sync::Arc::clone(&app_context.files),
+        sheets: std::sync::Arc::clone(&app_context.sheets),
         flow: std::sync::Arc::clone(&app_context.flow),
         voice: std::sync::Arc::clone(&app_context.voice),
     };
@@ -283,7 +286,13 @@ fn main() {
             cmd_voice_set_vad_method,
             cmd_voice_update_vad_config,
             cmd_voice_start_session,
-            cmd_voice_stop_session
+            cmd_voice_stop_session,
+            cmd_voice_request_handoff,
+            cmd_voice_set_shadow_method,
+            cmd_voice_start_shadow_eval,
+            cmd_voice_stop_shadow_eval,
+            cmd_voice_set_duplex_mode,
+            cmd_voice_get_runtime_diagnostics
         ])
         .run(tauri::generate_context!())
         .expect("failed to run tauri app");
@@ -489,6 +498,60 @@ async fn cmd_voice_stop_session(
     request: VoiceStopSessionRequest,
 ) -> Result<VoiceRuntimeSnapshotResponse, String> {
     state.voice_handler.stop_session(request).await
+}
+
+#[cfg(feature = "tauri-runtime")]
+#[tauri::command]
+async fn cmd_voice_request_handoff(
+    state: State<'_, TauriBridgeState>,
+    request: VoiceRequestHandoffRequest,
+) -> Result<VoiceRuntimeSnapshotResponse, String> {
+    state.voice_handler.request_handoff(request).await
+}
+
+#[cfg(feature = "tauri-runtime")]
+#[tauri::command]
+async fn cmd_voice_set_shadow_method(
+    state: State<'_, TauriBridgeState>,
+    request: VoiceSetShadowMethodRequest,
+) -> Result<VoiceRuntimeSnapshotResponse, String> {
+    state.voice_handler.set_shadow_method(request).await
+}
+
+#[cfg(feature = "tauri-runtime")]
+#[tauri::command]
+async fn cmd_voice_start_shadow_eval(
+    state: State<'_, TauriBridgeState>,
+    request: VoiceStartShadowEvalRequest,
+) -> Result<VoiceRuntimeSnapshotResponse, String> {
+    state.voice_handler.start_shadow_eval(request).await
+}
+
+#[cfg(feature = "tauri-runtime")]
+#[tauri::command]
+async fn cmd_voice_stop_shadow_eval(
+    state: State<'_, TauriBridgeState>,
+    request: VoiceStopShadowEvalRequest,
+) -> Result<VoiceRuntimeSnapshotResponse, String> {
+    state.voice_handler.stop_shadow_eval(request).await
+}
+
+#[cfg(feature = "tauri-runtime")]
+#[tauri::command]
+async fn cmd_voice_set_duplex_mode(
+    state: State<'_, TauriBridgeState>,
+    request: VoiceSetDuplexModeRequest,
+) -> Result<VoiceRuntimeSnapshotResponse, String> {
+    state.voice_handler.set_duplex_mode(request).await
+}
+
+#[cfg(feature = "tauri-runtime")]
+#[tauri::command]
+async fn cmd_voice_get_runtime_diagnostics(
+    state: State<'_, TauriBridgeState>,
+    request: VoiceGetRuntimeDiagnosticsRequest,
+) -> Result<VoiceRuntimeSnapshotResponse, String> {
+    state.voice_handler.runtime_diagnostics(request).await
 }
 
 #[cfg(feature = "tauri-runtime")]

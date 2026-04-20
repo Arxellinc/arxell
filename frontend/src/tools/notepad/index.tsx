@@ -1,5 +1,6 @@
 import { iconHtml } from "../../icons";
 import { renderToolToolbar } from "../ui/toolbar";
+import { resolveFileTabIcon } from "../ui/fileTabIcons";
 import { NOTEPAD_DATA_ATTR } from "../ui/constants";
 import {
   computeNotepadFindStats,
@@ -35,6 +36,8 @@ export function renderNotepadToolActions(view: NotepadToolViewState): string {
     return {
       id: tabId,
       label: `${view.titleByTabId[tabId] || "Untitled"}${dirty}${loading}`,
+      icon: resolveFileTabIcon(view.pathByTabId[tabId] || view.titleByTabId[tabId], "file-text"),
+      mutedIcon: view.readOnlyByTabId[tabId] === true,
       active: view.activeTabId === tabId,
       buttonAttrs: {
         [NOTEPAD_DATA_ATTR.action]: "activate-tab",
@@ -54,6 +57,13 @@ export function renderNotepadToolActions(view: NotepadToolViewState): string {
   return renderToolToolbar({
     tabsMode: "dynamic",
     tabs,
+    tabAction: {
+      title: "New File",
+      icon: "plus",
+      buttonAttrs: {
+        [NOTEPAD_DATA_ATTR.action]: "new-file"
+      }
+    },
     actions: [
       {
         id: "notepad-save",
@@ -97,14 +107,6 @@ export function renderNotepadToolActions(view: NotepadToolViewState): string {
         disabled: !active,
         buttonAttrs: {
           [NOTEPAD_DATA_ATTR.action]: "duplicate-file"
-        }
-      },
-      {
-        id: "notepad-new",
-        title: "New File",
-        icon: "file-plus",
-        buttonAttrs: {
-          [NOTEPAD_DATA_ATTR.action]: "new-file"
         }
       },
       {
@@ -152,7 +154,7 @@ export function renderNotepadToolBody(view: NotepadToolViewState): string {
       activeTabId
         ? renderNotepadEditorPane({
           documentId: activeTabId,
-            filePath: view.pathByTabId[activeTabId],
+            filePath: view.pathByTabId[activeTabId] ?? null,
             content: activeContent,
             lineCount: activeLineCount,
             wrap: view.lineWrap === true,

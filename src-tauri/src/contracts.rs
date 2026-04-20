@@ -1689,3 +1689,42 @@ pub struct VoiceStartSessionRequest {
 pub struct VoiceStopSessionRequest {
     pub correlation_id: String,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VoiceRequestHandoffRequest {
+    pub correlation_id: String,
+    pub target_method_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VoiceSetShadowMethodRequest {
+    pub correlation_id: String,
+    pub method_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VoiceStartShadowEvalRequest {
+    pub correlation_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VoiceStopShadowEvalRequest {
+    pub correlation_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VoiceSetDuplexModeRequest {
+    pub correlation_id: String,
+    pub duplex_mode: crate::voice::settings::DuplexMode,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VoiceGetRuntimeDiagnosticsRequest {
+    pub correlation_id: String,
+}

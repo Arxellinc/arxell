@@ -13,7 +13,10 @@ export interface WorkspaceToolLifecycleDeps {
   refreshApiConnections: () => Promise<void>;
   hasVerifiedSearchConnection: () => boolean;
   ensureFilesExplorerLoaded: () => Promise<void>;
+  ensureDocsLoaded: () => Promise<void>;
+  ensureSkillsLoaded: () => Promise<void>;
   ensureNotepadReady: () => Promise<void>;
+  ensureSheetReady: () => Promise<void>;
   refreshFlowRuns: () => Promise<void>;
   ensureOpenCodeInit: () => Promise<void>;
   ensureLooperInit: () => Promise<void>;
@@ -40,8 +43,23 @@ export async function handleWorkspaceToolTabActivation(
     return true;
   }
 
+  if (workspaceTab === "docs-tool") {
+    await deps.ensureDocsLoaded();
+    return true;
+  }
+
+  if (workspaceTab === "skills-tool") {
+    await deps.ensureSkillsLoaded();
+    return true;
+  }
+
   if (workspaceTab === "notepad-tool") {
     await deps.ensureNotepadReady();
+    return true;
+  }
+
+  if (workspaceTab === "sheets-tool") {
+    await deps.ensureSheetReady();
     return true;
   }
 

@@ -10,7 +10,7 @@ export const APP_ICON = {
     devices: "monitor",
     tts: "volume-2",
     stt: "mic",
-    vad: "speech",
+    vad: "mic",
     llamaCpp: "cpu",
     modelManager: "package-search",
     terminal: "square-terminal",
