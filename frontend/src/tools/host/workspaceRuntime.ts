@@ -67,6 +67,7 @@ import {
   refreshSheetSnapshot,
   saveSheetCurrent,
   saveSheetWithDialog,
+  setAiModel as setSheetsAiModel,
   setCellInput as setSheetsCellInput,
   writeRange as writeSheetsRange
 } from "../sheets/actions";
@@ -190,6 +191,7 @@ export interface WorkspaceToolsRuntime {
   saveSheetWithDialog: () => Promise<void>;
   refreshSheetSnapshot: () => Promise<void>;
   readVisibleRange: () => Promise<void>;
+  setAiModel: (modelId: string) => Promise<void>;
   setCellInput: (row: number, col: number, input: string) => Promise<void>;
   writeRange: (startRow: number, startCol: number, values: string[][]) => Promise<void>;
   insertRows: (index: number, count?: number) => Promise<void>;
@@ -381,6 +383,9 @@ export function createWorkspaceToolsRuntime(
     },
     readVisibleRange: async () => {
       await readSheetsVisibleRange(state.sheetsState, sheetsDeps);
+    },
+    setAiModel: async (modelId) => {
+      await setSheetsAiModel(state.sheetsState, sheetsDeps, modelId);
     },
     setCellInput: async (row, col, input) => {
       await setSheetsCellInput(state.sheetsState, sheetsDeps, row, col, input);

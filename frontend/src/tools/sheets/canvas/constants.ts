@@ -1,0 +1,14 @@
+export const ROW_HEIGHT      = 30;
+export const COL_WIDTH       = 120;
+export const HEADER_HEIGHT   = 30;
+export const GUTTER_WIDTH    = 48;
+export const FILL_HANDLE_PX  = 6;
+export const SELECTION_COLOR = "rgba(66,133,244,0.15)";
+export const SELECTION_BORDER = "#4285F4";
+export const HEADER_BG       = "var(--surface-soft)";
+export const CELL_BG         = "var(--panel)";
+export const CELL_BORDER     = "rgba(0,0,0,0.15)";
+export const FONT_SIZE       = 13;
+export const FONT_FAMILY     = '"Anthropic Sans", system-ui, sans-serif';
+export const ERROR_COLOR     = "var(--error)";
+export const FORMULA_COLOR   = "var(--status-info)";

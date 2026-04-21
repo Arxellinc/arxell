@@ -5,7 +5,7 @@ import type { SheetsToolState } from "./state.js";
 import "./styles.css";
 
 export function renderSheetsToolActions(view: SheetsToolState): string {
-  const tabLabel = `${view.fileName || "New Sheet"}${view.dirty ? " *" : ""}`;
+  const tabLabel = `${getSheetTabLabel(view)}${view.dirty ? " *" : ""}`;
   const can = view.capabilities;
   const canInsertRows = can?.insertRows !== false;
   const canInsertCols = can?.insertCols !== false;
@@ -219,6 +219,21 @@ export function renderSheetsToolActions(view: SheetsToolState): string {
       }
     ]
   });
+}
+
+function getSheetTabLabel(view: SheetsToolState): string {
+  const baseName = view.fileName || "New Sheet";
+  if (/\.[^./\\]+$/.test(baseName)) {
+    return baseName;
+  }
+
+  return `${baseName}${sheetExtension(view.sourceKind)}`;
+}
+
+function sheetExtension(sourceKind: string): string {
+  if (sourceKind === "csv") return ".csv";
+  if (sourceKind === "sqliteTable") return ".sqlite";
+  return ".jsonl";
 }
 
 export function renderSheetsToolBody(view: SheetsToolState): string {

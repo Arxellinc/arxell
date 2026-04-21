@@ -48,7 +48,7 @@ impl AppContext {
         let web_search = Arc::new(web_search_service::WebSearchService::new(Arc::clone(
             &api_registry,
         )));
-        let sheets = Arc::new(SheetsService::new(Some(hub.clone())));
+        let sheets = Arc::new(SheetsService::new(Some(hub.clone()), Arc::clone(&api_registry)));
 
         let service = Arc::new(chat_service::ChatService::new(
             hub.clone(),

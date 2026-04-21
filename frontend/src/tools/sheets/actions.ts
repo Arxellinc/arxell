@@ -2,6 +2,7 @@ import type { ChatIpcClient } from "../../ipcClient.js";
 import {
   applySheetsSnapshotMeta,
   clearSheetsWorkbook,
+  mergeSheetsCells,
   replaceSheetsCells,
   syncEditorValue,
   type SheetsCellSnapshot,
@@ -89,7 +90,8 @@ export async function openSheet(slice: SheetsToolState, deps: SheetsDeps, path: 
       columnCount: response.sheet.columnCount,
       usedRange: response.sheet.usedRange,
       dirty: response.sheet.dirty,
-      revision: response.sheet.revision
+      revision: response.sheet.revision,
+      aiModelId: response.aiModelId
     });
     slice.capabilities = response.capabilities ?? {};
     slice.sourceKind = Object.keys(response.capabilities ?? {}).length > 0
@@ -159,6 +161,23 @@ export async function refreshSheetSnapshot(slice: SheetsToolState, deps: SheetsD
   }
 }
 
+export async function setAiModel(slice: SheetsToolState, deps: SheetsDeps, modelId: string): Promise<void> {
+  if (!deps.client || !slice.hasWorkbook) return;
+  slice.pending = true;
+  slice.lastError = null;
+  try {
+    const meta = await invokeSheets<SheetsInspectResult>(deps, "set_ai_model", { modelId });
+    applySheetsSnapshotMeta(slice, meta);
+    const cells = await loadUsedRangeCells(deps, meta.usedRange);
+    replaceSheetsCells(slice, cells);
+    syncEditorValue(slice);
+  } catch (error) {
+    slice.lastError = error instanceof Error ? error.message : String(error);
+  } finally {
+    slice.pending = false;
+  }
+}
+
 export async function readVisibleRange(slice: SheetsToolState, deps: SheetsDeps): Promise<void> {
   if (!deps.client || !slice.hasWorkbook) return;
   try {
@@ -177,18 +196,23 @@ export async function setCellInput(
   col: number,
   input: string
 ): Promise<void> {
-  if (!deps.client || !slice.hasWorkbook) return;
+  if (!deps.client || !slice.hasWorkbook) {
+    throw new Error("Sheets IPC client is unavailable or no workbook is open.");
+  }
   slice.lastError = null;
   try {
-    await invokeSheets(deps, "set_cell", {
+    const result = await invokeSheets<{ revision: number; updatedCells: SheetsCellSnapshot[]; dirty: boolean }>(deps, "set_cell", {
       row,
       col,
       input,
       source: "user"
     });
-    slice.dirty = true;
+    slice.dirty = result.dirty;
+    slice.revision = result.revision;
+    await refreshSheetSnapshot(slice, deps);
   } catch (error) {
     slice.lastError = error instanceof Error ? error.message : String(error);
+    throw error;
   }
 }
 
@@ -199,18 +223,34 @@ export async function writeRange(
   startCol: number,
   values: string[][]
 ): Promise<void> {
-  if (!deps.client || !slice.hasWorkbook) return;
+  if (!deps.client || !slice.hasWorkbook) {
+    throw new Error("Sheets IPC client is unavailable or no workbook is open.");
+  }
   slice.lastError = null;
   try {
-    await invokeSheets(deps, "write_range", {
+    const result = await invokeSheets<{ revision: number; updatedRange: { startRow: number; startCol: number; endRow: number; endCol: number } | null; dirty: boolean }>(deps, "write_range", {
       startRow,
       startCol,
       values,
       source: "user"
     });
-    slice.dirty = true;
+    slice.dirty = result.dirty;
+    slice.revision = result.revision;
+
+    // Read back updated cells to get formula results
+    if (result.updatedRange) {
+      const readResult = await invokeSheets<{ cells: SheetsCellSnapshot[] }>(deps, "read_range", {
+        startRow: result.updatedRange.startRow,
+        startCol: result.updatedRange.startCol,
+        endRow: result.updatedRange.endRow,
+        endCol: result.updatedRange.endCol
+      });
+      mergeSheetsCells(slice, readResult.cells);
+      syncEditorValue(slice);
+    }
   } catch (error) {
     slice.lastError = error instanceof Error ? error.message : String(error);
+    throw error;
   }
 }
 

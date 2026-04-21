@@ -48,6 +48,7 @@ pub struct SheetHeader {
     pub locale: Option<String>,
     pub currency: Option<String>,
     pub timezone: Option<String>,
+    pub ai_model_id: Option<String>,
     pub default_style: Option<usize>,
 }
 
@@ -174,7 +175,7 @@ fn parse_header(v: &Value, line: usize) -> Result<SheetHeader, SheetsError> {
                 as_usz(a.get(1).unwrap_or(&Value::Null)),
             ]
         })
-        .unwrap_or([100, 26]);
+        .unwrap_or([1000, 26]);
     Ok(SheetHeader {
         schema_version: sv,
         name,
@@ -182,6 +183,7 @@ fn parse_header(v: &Value, line: usize) -> Result<SheetHeader, SheetsError> {
         locale: opt_str(v, "lc"),
         currency: opt_str(v, "cy"),
         timezone: opt_str(v, "tz"),
+        ai_model_id: opt_str(v, "aim"),
         default_style: v.get("ds").and_then(|v| v.as_u64()).map(|n| n as usize),
     })
 }
@@ -345,6 +347,9 @@ pub fn serialize_jsonl(data: &JsonlSheetData) -> Result<String, SheetsError> {
         }
         if let Some(ref v) = data.header.timezone {
             m.insert("tz".into(), Value::String(v.clone()));
+        }
+        if let Some(ref v) = data.header.ai_model_id {
+            m.insert("aim".into(), Value::String(v.clone()));
         }
         if let Some(v) = data.header.default_style {
             m.insert("ds".into(), json!(v));
@@ -543,6 +548,7 @@ pub fn sheet_state_to_jsonl(
             locale: None,
             currency: None,
             timezone: None,
+            ai_model_id: None,
             default_style: None,
         },
         styles: styles.to_vec(),
@@ -569,6 +575,7 @@ mod tests {
             locale: None,
             currency: None,
             timezone: None,
+            ai_model_id: None,
             default_style: None,
         }
     }

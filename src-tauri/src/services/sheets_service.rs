@@ -1,8 +1,9 @@
+use crate::api_registry::ApiRegistryService;
 use crate::contracts::{EventSeverity, EventStage, Subsystem};
 use crate::observability::EventHub;
 use crate::services::sheets_capabilities::CapabilitySet;
 use crate::services::sheets_formula::{
-    create_engine, FormulaEngine, FormulaError, FormulaErrorCode,
+    create_engine, AiFormulaProvider, FormulaEngine, FormulaError, FormulaErrorCode,
 };
 use crate::services::sheets_jsonl;
 use crate::services::sheets_source::{source_for_new_sheet, source_from_path, SheetSourceKind};
@@ -16,7 +17,7 @@ use csv::{ReaderBuilder, WriterBuilder};
 use serde_json::json;
 use std::collections::{BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
-use std::sync::RwLock;
+use std::sync::{Arc, RwLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 use thiserror::Error;
 
@@ -33,14 +34,21 @@ pub struct SheetsService {
     state: RwLock<Option<WorkbookState>>,
     formula_engine: Box<dyn FormulaEngine>,
     hub: Option<EventHub>,
+    ai_model_id: Arc<RwLock<String>>,
 }
 
 impl SheetsService {
-    pub fn new(hub: Option<EventHub>) -> Self {
+    pub fn new(hub: Option<EventHub>, api_registry: Arc<ApiRegistryService>) -> Self {
+        let ai_model_id = Arc::new(RwLock::new("local:runtime".to_string()));
+        let ai_provider: Arc<dyn AiFormulaProvider> = Arc::new(HttpAiFormulaProvider::new(
+            api_registry,
+            Arc::clone(&ai_model_id),
+        ));
         Self {
             state: RwLock::new(None),
-            formula_engine: create_engine(),
+            formula_engine: create_engine(Some(ai_provider)),
             hub,
+            ai_model_id,
         }
     }
 
@@ -79,9 +87,14 @@ impl SheetsService {
             edit_log: Vec::new(),
             format: "jsonl".to_string(),
             source,
+            ai_model_id: "local:runtime".to_string(),
         };
         let mut guard = self.state.write().expect("sheets state lock poisoned");
         *guard = Some(workbook);
+        *self
+            .ai_model_id
+            .write()
+            .expect("sheets ai model lock poisoned") = "local:runtime".to_string();
         Ok(InspectSheetResult {
             file_path: None,
             file_name: Some("New Sheet".to_string()),
@@ -91,6 +104,7 @@ impl SheetsService {
             dirty: false,
             revision: 1,
             capabilities: Some(capabilities),
+            ai_model_id: "local:runtime".to_string(),
         })
     }
 
@@ -117,6 +131,14 @@ impl SheetsService {
                 )
             })?;
             let data = sheets_jsonl::parse_jsonl(&raw)?;
+            *self
+                .ai_model_id
+                .write()
+                .expect("sheets ai model lock poisoned") = data
+                .header
+                .ai_model_id
+                .clone()
+                .unwrap_or_else(|| "local:runtime".to_string());
             sheets_jsonl::jsonl_to_sheet_state(&data)
         } else {
             let mut reader = ReaderBuilder::new()
@@ -182,6 +204,11 @@ impl SheetsService {
         sheet.used_range = compute_used_range(&sheet.cells);
 
         let capabilities = source.capabilities.clone();
+        let ai_model_id = self
+            .ai_model_id
+            .read()
+            .expect("sheets ai model lock poisoned")
+            .clone();
         let workbook = WorkbookState {
             file_path: Some(path_to_string(&resolved)),
             file_name: Some(file_name.clone()),
@@ -192,6 +219,7 @@ impl SheetsService {
             edit_log: Vec::new(),
             format: format.to_string(),
             source,
+            ai_model_id: ai_model_id.clone(),
         };
 
         let mut guard = self.state.write().expect("sheets state lock poisoned");
@@ -202,6 +230,7 @@ impl SheetsService {
             file_name,
             sheet: snapshot_sheet(&sheet, 1, false),
             capabilities,
+            ai_model_id,
         })
     }
 
@@ -244,7 +273,8 @@ impl SheetsService {
                 cells,
                 used_range,
             };
-            let data = sheets_jsonl::sheet_state_to_jsonl(&sheet_state, &sheet_state.name, &[]);
+            let mut data = sheets_jsonl::sheet_state_to_jsonl(&sheet_state, &sheet_state.name, &[]);
+            data.header.ai_model_id = Some(workbook.ai_model_id.clone());
             let content = sheets_jsonl::serialize_jsonl(&data)?;
             if let Some(parent) = target.parent() {
                 std::fs::create_dir_all(parent).map_err(|error| {
@@ -333,6 +363,7 @@ impl SheetsService {
             dirty: workbook.dirty,
             revision: workbook.revision,
             capabilities: Some(workbook.source.capabilities.clone()),
+            ai_model_id: workbook.ai_model_id.clone(),
         })
     }
 
@@ -521,7 +552,10 @@ impl SheetsService {
                     } else {
                         coord.clone()
                     };
-                    next.insert(next_coord, cell.clone());
+                    let mut next_cell = cell.clone();
+                    next_cell.input =
+                        rewrite_formula_input_for_row_insert(&next_cell.input, index, count);
+                    next.insert(next_coord, next_cell);
                 }
                 sheet.cells = next;
                 sheet.row_count += count;
@@ -598,7 +632,10 @@ impl SheetsService {
                     } else {
                         coord.clone()
                     };
-                    next.insert(next_coord, cell.clone());
+                    let mut next_cell = cell.clone();
+                    next_cell.input =
+                        rewrite_formula_input_for_row_delete(&next_cell.input, index, count);
+                    next.insert(next_coord, next_cell);
                 }
                 sheet.cells = next;
                 sheet.row_count = sheet.row_count.saturating_sub(count).max(1);
@@ -671,7 +708,10 @@ impl SheetsService {
                     } else {
                         coord.clone()
                     };
-                    next.insert(next_coord, cell.clone());
+                    let mut next_cell = cell.clone();
+                    next_cell.input =
+                        rewrite_formula_input_for_column_insert(&next_cell.input, index, count);
+                    next.insert(next_coord, next_cell);
                 }
                 sheet.cells = next;
                 sheet.col_count += count;
@@ -748,7 +788,10 @@ impl SheetsService {
                     } else {
                         coord.clone()
                     };
-                    next.insert(next_coord, cell.clone());
+                    let mut next_cell = cell.clone();
+                    next_cell.input =
+                        rewrite_formula_input_for_column_delete(&next_cell.input, index, count);
+                    next.insert(next_coord, next_cell);
                 }
                 sheet.cells = next;
                 sheet.col_count = sheet.col_count.saturating_sub(count).max(1);
@@ -782,11 +825,210 @@ impl SheetsService {
     pub fn error_string(error: SheetsError) -> String {
         error.to_error_string()
     }
+
+    pub fn set_ai_model(&self, model_id: &str) -> Result<InspectSheetResult, SheetsError> {
+        let mut guard = self.state.write().expect("sheets state lock poisoned");
+        let workbook = guard.as_mut().ok_or_else(|| {
+            sheets_error(SheetsErrorCode::MissingOpenWorkbook, "no sheet is open")
+        })?;
+        let next_model = if model_id.trim().is_empty() {
+            "local:runtime".to_string()
+        } else {
+            model_id.trim().to_string()
+        };
+        workbook.ai_model_id = next_model.clone();
+        *self
+            .ai_model_id
+            .write()
+            .expect("sheets ai model lock poisoned") = next_model.clone();
+        let (row_count, column_count, used_range, revision, dirty, capabilities) = {
+            let sheet = active_sheet_mut(workbook)?;
+            self.formula_engine
+                .recompute_sheet(sheet)
+                .map_err(SheetsError::from)?;
+            sheet.used_range = compute_used_range(&sheet.cells);
+            let row_count = sheet.row_count;
+            let column_count = sheet.col_count;
+            let used_range = sheet.used_range.clone();
+            workbook.revision += 1;
+            workbook.dirty = true;
+            (
+                row_count,
+                column_count,
+                used_range,
+                workbook.revision,
+                workbook.dirty,
+                workbook.source.capabilities.clone(),
+            )
+        };
+        Ok(InspectSheetResult {
+            file_path: workbook.file_path.clone(),
+            file_name: workbook.file_name.clone(),
+            row_count,
+            column_count,
+            used_range,
+            dirty,
+            revision,
+            capabilities: Some(capabilities),
+            ai_model_id: next_model,
+        })
+    }
+}
+
+struct HttpAiFormulaProvider {
+    api_registry: Arc<ApiRegistryService>,
+    selected_model_id: Arc<RwLock<String>>,
+    cache: RwLock<HashMap<String, String>>,
+}
+
+impl HttpAiFormulaProvider {
+    fn new(api_registry: Arc<ApiRegistryService>, selected_model_id: Arc<RwLock<String>>) -> Self {
+        Self {
+            api_registry,
+            selected_model_id,
+            cache: RwLock::new(HashMap::new()),
+        }
+    }
+
+    fn resolve_provider(&self) -> Result<(String, Option<String>, String), FormulaError> {
+        let selected = self
+            .selected_model_id
+            .read()
+            .expect("sheets ai model lock poisoned")
+            .clone();
+        let fallback_model =
+            std::env::var("FOUNDATION_LLM_MODEL").unwrap_or_else(|_| "local-model".to_string());
+        if selected.starts_with("api:") {
+            let mut parts = selected.splitn(3, ':');
+            let _ = parts.next();
+            let connection_id = parts.next().unwrap_or_default();
+            let model_name = parts.next().unwrap_or_default();
+            if let Some(conn) = self
+                .api_registry
+                .verified_for_agent()
+                .into_iter()
+                .find(|record| record.id == connection_id)
+            {
+                return Ok((
+                    resolve_chat_endpoint(conn.api_url.as_str(), conn.api_standard_path.as_deref()),
+                    Some(conn.api_key),
+                    if model_name.is_empty() {
+                        conn.model_name.unwrap_or(fallback_model)
+                    } else {
+                        model_name.to_string()
+                    },
+                ));
+            }
+        }
+        Ok((
+            std::env::var("FOUNDATION_LLM_ENDPOINT")
+                .unwrap_or_else(|_| "http://127.0.0.1:1420/v1/chat/completions".to_string()),
+            std::env::var("OPENAI_API_KEY").ok(),
+            fallback_model,
+        ))
+    }
+}
+
+impl AiFormulaProvider for HttpAiFormulaProvider {
+    fn generate(&self, prompt: &str, context: Option<&str>) -> Result<String, FormulaError> {
+        let cache_key = format!(
+            "{}\u{1f}|{}\u{1f}|{}",
+            self.selected_model_id
+                .read()
+                .expect("sheets ai model lock poisoned")
+                .as_str(),
+            prompt,
+            context.unwrap_or("")
+        );
+        if let Some(cached) = self
+            .cache
+            .read()
+            .expect("sheets ai cache lock poisoned")
+            .get(&cache_key)
+        {
+            return Ok(cached.clone());
+        }
+        let (endpoint, api_key, model) = self.resolve_provider()?;
+        let user_prompt = if let Some(context) = context {
+            format!("{}\n\nContext:\n{}", prompt.trim(), context.trim())
+        } else {
+            prompt.trim().to_string()
+        };
+        let mut request = reqwest::blocking::Client::new()
+            .post(endpoint)
+            .json(&json!({
+                "model": model,
+                "messages": [
+                    {"role": "system", "content": "You are helping spreadsheet users. Return only the requested cell output text with no markdown or commentary."},
+                    {"role": "user", "content": user_prompt}
+                ],
+                "temperature": 0.2
+            }));
+        if let Some(key) = api_key.filter(|value| !value.trim().is_empty()) {
+            request = request.header("Authorization", format!("Bearer {key}"));
+        }
+        let response = request.send().map_err(|error| FormulaError {
+            code: FormulaErrorCode::UnsupportedFormula,
+            message: format!("AI request failed: {error}"),
+        })?;
+        let body: serde_json::Value = response.json().map_err(|error| FormulaError {
+            code: FormulaErrorCode::UnsupportedFormula,
+            message: format!("AI response parse failed: {error}"),
+        })?;
+        let text = extract_generated_text_from_value(&body);
+        self.cache
+            .write()
+            .expect("sheets ai cache lock poisoned")
+            .insert(cache_key, text.clone());
+        Ok(text)
+    }
+}
+
+fn resolve_chat_endpoint(base: &str, path: Option<&str>) -> String {
+    let path = path
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("/chat/completions");
+    let normalized_path = if path.starts_with('/') {
+        path.to_string()
+    } else {
+        format!("/{path}")
+    };
+    let lower = base.to_ascii_lowercase();
+    if lower.ends_with("/chat/completions") {
+        return base.to_string();
+    }
+    if lower.ends_with("/v1") {
+        return format!("{base}{normalized_path}");
+    }
+    format!("{base}/v1{normalized_path}")
+}
+
+fn extract_generated_text_from_value(body: &serde_json::Value) -> String {
+    body.get("choices")
+        .and_then(|choices| choices.as_array())
+        .and_then(|choices| choices.first())
+        .and_then(|choice| {
+            choice
+                .get("message")
+                .and_then(|message| message.get("content"))
+                .and_then(|content| content.as_str())
+                .map(str::to_string)
+        })
+        .or_else(|| {
+            body.get("choices")
+                .and_then(|choices| choices.as_array())
+                .and_then(|choices| choices.first())
+                .and_then(|choice| choice.get("text"))
+                .and_then(|text| text.as_str())
+                .map(str::to_string)
+        })
+        .unwrap_or_default()
 }
 
 impl Default for SheetsService {
     fn default() -> Self {
-        Self::new(None)
+        Self::new(None, Arc::new(ApiRegistryService::new()))
     }
 }
 
@@ -1101,6 +1343,209 @@ fn normalize_target_path(path: &str) -> Result<PathBuf, SheetsError> {
     Ok(candidate)
 }
 
+fn rewrite_formula_input_for_row_insert(input: &str, index: usize, count: usize) -> String {
+    rewrite_formula_references(input, |coord| {
+        Some(CellCoord {
+            row: if coord.row >= index {
+                coord.row + count
+            } else {
+                coord.row
+            },
+            col: coord.col,
+        })
+    })
+}
+
+fn rewrite_formula_input_for_row_delete(input: &str, index: usize, count: usize) -> String {
+    let delete_end = index + count;
+    rewrite_formula_references(input, |coord| {
+        if coord.row >= index && coord.row < delete_end {
+            None
+        } else {
+            Some(CellCoord {
+                row: if coord.row >= delete_end {
+                    coord.row - count
+                } else {
+                    coord.row
+                },
+                col: coord.col,
+            })
+        }
+    })
+}
+
+fn rewrite_formula_input_for_column_insert(input: &str, index: usize, count: usize) -> String {
+    rewrite_formula_references(input, |coord| {
+        Some(CellCoord {
+            row: coord.row,
+            col: if coord.col >= index {
+                coord.col + count
+            } else {
+                coord.col
+            },
+        })
+    })
+}
+
+fn rewrite_formula_input_for_column_delete(input: &str, index: usize, count: usize) -> String {
+    let delete_end = index + count;
+    rewrite_formula_references(input, |coord| {
+        if coord.col >= index && coord.col < delete_end {
+            None
+        } else {
+            Some(CellCoord {
+                row: coord.row,
+                col: if coord.col >= delete_end {
+                    coord.col - count
+                } else {
+                    coord.col
+                },
+            })
+        }
+    })
+}
+
+fn rewrite_formula_references(
+    input: &str,
+    mut rewrite_coord: impl FnMut(CellCoord) -> Option<CellCoord>,
+) -> String {
+    if !input.starts_with('=') {
+        return input.to_string();
+    }
+
+    let mut result = String::with_capacity(input.len());
+    let chars: Vec<char> = input.chars().collect();
+    let mut index = 0usize;
+    let mut in_string = false;
+
+    while index < chars.len() {
+        let ch = chars[index];
+        if ch == '"' {
+            result.push(ch);
+            if in_string && index + 1 < chars.len() && chars[index + 1] == '"' {
+                result.push(chars[index + 1]);
+                index += 2;
+                continue;
+            }
+            in_string = !in_string;
+            index += 1;
+            continue;
+        }
+
+        if !in_string && ch.is_ascii_alphabetic() {
+            let token_start = index;
+            while index < chars.len() && chars[index].is_ascii_alphabetic() {
+                index += 1;
+            }
+            let row_start = index;
+            while index < chars.len() && chars[index].is_ascii_digit() {
+                index += 1;
+            }
+
+            if row_start > token_start && index > row_start {
+                let reference: String = chars[token_start..index].iter().collect();
+                if let Some(coord) = parse_formula_coord(&reference) {
+                    if token_start > 0 && is_reference_word_char(chars[token_start - 1]) {
+                        result.push_str(&reference);
+                        continue;
+                    }
+                    if index < chars.len() && is_reference_word_char(chars[index]) {
+                        result.push_str(&reference);
+                        continue;
+                    }
+
+                    let replacement = match rewrite_coord(coord) {
+                        Some(next) => coord_label(next.row, next.col),
+                        None => "#REF!".to_string(),
+                    };
+                    result.push_str(&replacement);
+
+                    if index < chars.len() && chars[index] == ':' {
+                        let colon_index = index;
+                        let mut range_end = colon_index + 1;
+                        while range_end < chars.len() && chars[range_end].is_ascii_alphabetic() {
+                            range_end += 1;
+                        }
+                        let range_row_start = range_end;
+                        while range_end < chars.len() && chars[range_end].is_ascii_digit() {
+                            range_end += 1;
+                        }
+                        if range_row_start > colon_index + 1 && range_end > range_row_start {
+                            let end_reference: String =
+                                chars[colon_index + 1..range_end].iter().collect();
+                            if let Some(end_coord) = parse_formula_coord(&end_reference) {
+                                let end_replacement = match rewrite_coord(end_coord) {
+                                    Some(next) => coord_label(next.row, next.col),
+                                    None => "#REF!".to_string(),
+                                };
+                                result.push(':');
+                                result.push_str(&end_replacement);
+                                index = range_end;
+                                continue;
+                            }
+                        }
+                        result.push(':');
+                        index = colon_index + 1;
+                    }
+                    continue;
+                }
+                result.push_str(&reference);
+                continue;
+            }
+
+            let token: String = chars[token_start..index].iter().collect();
+            result.push_str(&token);
+            continue;
+        }
+
+        result.push(ch);
+        index += 1;
+    }
+
+    result
+}
+
+fn is_reference_word_char(ch: char) -> bool {
+    ch.is_ascii_alphanumeric() || ch == '_'
+}
+
+fn parse_formula_coord(value: &str) -> Option<CellCoord> {
+    let mut col_part = String::new();
+    let mut row_part = String::new();
+    for ch in value.chars() {
+        if ch.is_ascii_alphabetic() && row_part.is_empty() {
+            col_part.push(ch.to_ascii_uppercase());
+        } else if ch.is_ascii_digit() {
+            row_part.push(ch);
+        } else {
+            return None;
+        }
+    }
+    if col_part.is_empty() || row_part.is_empty() {
+        return None;
+    }
+    let row_number = row_part.parse::<usize>().ok()?;
+    if row_number == 0 {
+        return None;
+    }
+    Some(CellCoord {
+        row: row_number - 1,
+        col: column_label_to_index(&col_part)?,
+    })
+}
+
+fn column_label_to_index(label: &str) -> Option<usize> {
+    let mut value = 0usize;
+    for ch in label.chars() {
+        if !ch.is_ascii_uppercase() {
+            return None;
+        }
+        value = value.checked_mul(26)?;
+        value = value.checked_add((ch as u8 - b'A' + 1) as usize)?;
+    }
+    value.checked_sub(1)
+}
+
 fn now_ms() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -1265,6 +1710,58 @@ mod tests {
             sheet.cells[&CellCoord { row: 0, col: 1 }].computed,
             ComputedValue::Number(10.0)
         );
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn insert_rows_rewrites_formula_references() {
+        let path = write_csv("insert-row-refs", "1\n=A1\n");
+        let service = SheetsService::default();
+        service.open_sheet(path.to_str().unwrap()).unwrap();
+        service.insert_rows(0, 1, EditSource::User, None).unwrap();
+        let workbook = service.current_workbook().unwrap();
+        let sheet = &workbook.sheets[0];
+        assert_eq!(sheet.cells[&CellCoord { row: 2, col: 0 }].input, "=A2");
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn delete_rows_rewrites_formula_references() {
+        let path = write_csv("delete-row-refs", "1\n2\n=A2\n");
+        let service = SheetsService::default();
+        service.open_sheet(path.to_str().unwrap()).unwrap();
+        service.delete_rows(0, 1, EditSource::User, None).unwrap();
+        let workbook = service.current_workbook().unwrap();
+        let sheet = &workbook.sheets[0];
+        assert_eq!(sheet.cells[&CellCoord { row: 1, col: 0 }].input, "=A1");
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn insert_columns_rewrites_formula_references() {
+        let path = write_csv("insert-col-refs", "1,=A1\n");
+        let service = SheetsService::default();
+        service.open_sheet(path.to_str().unwrap()).unwrap();
+        service
+            .insert_columns(0, 1, EditSource::User, None)
+            .unwrap();
+        let workbook = service.current_workbook().unwrap();
+        let sheet = &workbook.sheets[0];
+        assert_eq!(sheet.cells[&CellCoord { row: 0, col: 2 }].input, "=B1");
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn delete_columns_rewrites_formula_references() {
+        let path = write_csv("delete-col-refs", "1,2,=B1\n");
+        let service = SheetsService::default();
+        service.open_sheet(path.to_str().unwrap()).unwrap();
+        service
+            .delete_columns(0, 1, EditSource::User, None)
+            .unwrap();
+        let workbook = service.current_workbook().unwrap();
+        let sheet = &workbook.sheets[0];
+        assert_eq!(sheet.cells[&CellCoord { row: 0, col: 1 }].input, "=A1");
         let _ = fs::remove_file(path);
     }
 

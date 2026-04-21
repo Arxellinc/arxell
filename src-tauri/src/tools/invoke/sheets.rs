@@ -14,6 +14,7 @@ pub fn register(registry: &mut InvokeRegistry) {
     registry.register("sheets", &["inspect_sheet"], invoke_inspect_sheet);
     registry.register("sheets", &["read_range"], invoke_read_range);
     registry.register("sheets", &["set_cell"], invoke_set_cell);
+    registry.register("sheets", &["set_ai_model"], invoke_set_ai_model);
     registry.register("sheets", &["write_range"], invoke_write_range);
     registry.register("sheets", &["insert_rows"], invoke_insert_rows);
     registry.register("sheets", &["delete_rows"], invoke_delete_rows);
@@ -34,8 +35,12 @@ fn invoke_open_sheet(state: &TauriBridgeState, payload: Value) -> ToolInvokeFutu
     let sheets = state.sheets.clone();
     Box::pin(async move {
         let req: OpenSheetPayload = decode_payload(payload)?;
-        serde_json::to_value(sheets.open_sheet(req.path.as_str()).map_err(SheetsService::error_string)?)
-            .map_err(|error| format!("failed serializing sheets open_sheet response: {error}"))
+        serde_json::to_value(
+            sheets
+                .open_sheet(req.path.as_str())
+                .map_err(SheetsService::error_string)?,
+        )
+        .map_err(|error| format!("failed serializing sheets open_sheet response: {error}"))
     })
 }
 
@@ -82,12 +87,35 @@ fn invoke_set_cell(state: &TauriBridgeState, payload: Value) -> ToolInvokeFuture
     let sheets = state.sheets.clone();
     Box::pin(async move {
         let req: SetCellPayload = decode_payload(payload)?;
-        serde_json::to_value(
+        let result = tokio::task::spawn_blocking(move || {
             sheets
                 .set_cell_input(req.row, req.col, req.input.as_str(), req.source, None)
-                .map_err(SheetsService::error_string)?,
+                .map_err(SheetsService::error_string)
+        })
+        .await
+        .map_err(|error| format!("sheets set_cell task failed: {error}"))??;
+        serde_json::to_value(
+            result,
         )
         .map_err(|error| format!("failed serializing sheets set_cell response: {error}"))
+    })
+}
+
+fn invoke_set_ai_model(state: &TauriBridgeState, payload: Value) -> ToolInvokeFuture {
+    let sheets = state.sheets.clone();
+    Box::pin(async move {
+        let req: SetAiModelPayload = decode_payload(payload)?;
+        let result = tokio::task::spawn_blocking(move || {
+            sheets
+                .set_ai_model(req.model_id.as_str())
+                .map_err(SheetsService::error_string)
+        })
+        .await
+        .map_err(|error| format!("sheets set_ai_model task failed: {error}"))??;
+        serde_json::to_value(
+            result,
+        )
+        .map_err(|error| format!("failed serializing sheets set_ai_model response: {error}"))
     })
 }
 
@@ -95,10 +123,15 @@ fn invoke_write_range(state: &TauriBridgeState, payload: Value) -> ToolInvokeFut
     let sheets = state.sheets.clone();
     Box::pin(async move {
         let req: WriteRangePayload = decode_payload(payload)?;
-        serde_json::to_value(
+        let result = tokio::task::spawn_blocking(move || {
             sheets
                 .write_range(req.start_row, req.start_col, &req.values, req.source, None)
-                .map_err(SheetsService::error_string)?,
+                .map_err(SheetsService::error_string)
+        })
+        .await
+        .map_err(|error| format!("sheets write_range task failed: {error}"))??;
+        serde_json::to_value(
+            result,
         )
         .map_err(|error| format!("failed serializing sheets write_range response: {error}"))
     })
@@ -108,10 +141,15 @@ fn invoke_insert_rows(state: &TauriBridgeState, payload: Value) -> ToolInvokeFut
     let sheets = state.sheets.clone();
     Box::pin(async move {
         let req: ResizePayload = decode_payload(payload)?;
-        serde_json::to_value(
+        let result = tokio::task::spawn_blocking(move || {
             sheets
                 .insert_rows(req.index, req.count, req.source, None)
-                .map_err(SheetsService::error_string)?,
+                .map_err(SheetsService::error_string)
+        })
+        .await
+        .map_err(|error| format!("sheets insert_rows task failed: {error}"))??;
+        serde_json::to_value(
+            result,
         )
         .map_err(|error| format!("failed serializing sheets insert_rows response: {error}"))
     })
@@ -121,10 +159,15 @@ fn invoke_delete_rows(state: &TauriBridgeState, payload: Value) -> ToolInvokeFut
     let sheets = state.sheets.clone();
     Box::pin(async move {
         let req: ResizePayload = decode_payload(payload)?;
-        serde_json::to_value(
+        let result = tokio::task::spawn_blocking(move || {
             sheets
                 .delete_rows(req.index, req.count, req.source, None)
-                .map_err(SheetsService::error_string)?,
+                .map_err(SheetsService::error_string)
+        })
+        .await
+        .map_err(|error| format!("sheets delete_rows task failed: {error}"))??;
+        serde_json::to_value(
+            result,
         )
         .map_err(|error| format!("failed serializing sheets delete_rows response: {error}"))
     })
@@ -134,10 +177,15 @@ fn invoke_insert_columns(state: &TauriBridgeState, payload: Value) -> ToolInvoke
     let sheets = state.sheets.clone();
     Box::pin(async move {
         let req: ResizePayload = decode_payload(payload)?;
-        serde_json::to_value(
+        let result = tokio::task::spawn_blocking(move || {
             sheets
                 .insert_columns(req.index, req.count, req.source, None)
-                .map_err(SheetsService::error_string)?,
+                .map_err(SheetsService::error_string)
+        })
+        .await
+        .map_err(|error| format!("sheets insert_columns task failed: {error}"))??;
+        serde_json::to_value(
+            result,
         )
         .map_err(|error| format!("failed serializing sheets insert_columns response: {error}"))
     })
@@ -147,10 +195,15 @@ fn invoke_delete_columns(state: &TauriBridgeState, payload: Value) -> ToolInvoke
     let sheets = state.sheets.clone();
     Box::pin(async move {
         let req: ResizePayload = decode_payload(payload)?;
-        serde_json::to_value(
+        let result = tokio::task::spawn_blocking(move || {
             sheets
                 .delete_columns(req.index, req.count, req.source, None)
-                .map_err(SheetsService::error_string)?,
+                .map_err(SheetsService::error_string)
+        })
+        .await
+        .map_err(|error| format!("sheets delete_columns task failed: {error}"))??;
+        serde_json::to_value(
+            result,
         )
         .map_err(|error| format!("failed serializing sheets delete_columns response: {error}"))
     })
@@ -192,6 +245,12 @@ struct SetCellPayload {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+struct SetAiModelPayload {
+    model_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct WriteRangePayload {
     start_row: usize,
     start_col: usize,
@@ -211,8 +270,8 @@ struct ResizePayload {
 mod tests {
     use super::*;
     use crate::app::AppContext;
-    use serde_json::Value as JsonValue;
     use serde_json::json;
+    use serde_json::Value as JsonValue;
     use std::fs;
 
     fn temp_csv_path(name: &str) -> std::path::PathBuf {
@@ -294,7 +353,10 @@ mod tests {
         let payload = json!({ "path": path.to_string_lossy().to_string() });
         let value = invoke_open_sheet(&state, payload).await.unwrap();
 
-        assert_eq!(value["fileName"].as_str(), Some(path.file_name().unwrap().to_string_lossy().as_ref()));
+        assert_eq!(
+            value["fileName"].as_str(),
+            Some(path.file_name().unwrap().to_string_lossy().as_ref())
+        );
         assert_eq!(value["sheet"]["rowCount"].as_u64(), Some(2));
         let _ = fs::remove_file(path);
     }

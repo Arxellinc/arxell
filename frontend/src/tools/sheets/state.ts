@@ -44,6 +44,7 @@ export interface SheetsOpenSheetResult {
   fileName: string;
   sheet: SheetsSheetSnapshot;
   capabilities: Record<string, boolean>;
+  aiModelId: string;
 }
 
 export interface SheetsInspectResult {
@@ -54,6 +55,7 @@ export interface SheetsInspectResult {
   usedRange: SheetsUsedRange | null;
   dirty: boolean;
   revision: number;
+  aiModelId: string;
   capabilities?: Record<string, boolean>;
 }
 
@@ -70,6 +72,7 @@ export interface SheetsToolState {
   usedRange: SheetsUsedRange | null;
   dirty: boolean;
   revision: number;
+  aiModelId: string;
   cellsByKey: Record<string, SheetsCellSnapshot>;
   selection: SheetsSelection | null;
   activeEditorValue: string;
@@ -79,6 +82,11 @@ export interface SheetsToolState {
   viewport: SheetsViewportState;
   sourceKind: string;
   capabilities: Record<string, boolean>;
+  scrollX: number;
+  scrollY: number;
+  colWidths: Map<number, number>;
+  rowHeights: Map<number, number>;
+  editingCell: { row: number; col: number } | null;
 }
 
 export function getInitialSheetsState(): SheetsToolState {
@@ -91,6 +99,7 @@ export function getInitialSheetsState(): SheetsToolState {
     usedRange: null,
     dirty: false,
     revision: 0,
+    aiModelId: "local:runtime",
     cellsByKey: {},
     selection: null,
     activeEditorValue: "",
@@ -104,7 +113,12 @@ export function getInitialSheetsState(): SheetsToolState {
       endCol: 0
     },
     sourceKind: "csv",
-    capabilities: {}
+    capabilities: {},
+    scrollX: 0,
+    scrollY: 0,
+    colWidths: new Map(),
+    rowHeights: new Map(),
+    editingCell: null
   };
 }
 
@@ -129,11 +143,12 @@ export function applyOptimisticCellWrites(
     const key = sheetsCellKey(change.row, change.col);
     snapshot[key] = slice.cellsByKey[key];
     const existing = slice.cellsByKey[key];
+    // For optimistic update: display = input (formula results will be recalculated by backend)
     slice.cellsByKey[key] = {
       row: change.row,
       col: change.col,
       input: change.input,
-      display: existing?.display ?? change.input,
+      display: change.input, // Show the input immediately
       kind: existing?.kind ?? (change.input ? "text" : "empty"),
       error: null
     };
@@ -165,9 +180,15 @@ export function replaceSheetsCells(slice: SheetsToolState, cells: SheetsCellSnap
   slice.cellsByKey = next;
 }
 
+export function mergeSheetsCells(slice: SheetsToolState, cells: SheetsCellSnapshot[]): void {
+  for (const cell of cells) {
+    slice.cellsByKey[sheetsCellKey(cell.row, cell.col)] = cell;
+  }
+}
+
 export function applySheetsSnapshotMeta(
   slice: SheetsToolState,
-  meta: Pick<SheetsInspectResult, "filePath" | "fileName" | "rowCount" | "columnCount" | "usedRange" | "dirty" | "revision">
+  meta: Pick<SheetsInspectResult, "filePath" | "fileName" | "rowCount" | "columnCount" | "usedRange" | "dirty" | "revision" | "aiModelId">
 ): void {
   slice.hasWorkbook = true;
   slice.filePath = meta.filePath;
@@ -177,6 +198,7 @@ export function applySheetsSnapshotMeta(
   slice.usedRange = meta.usedRange;
   slice.dirty = meta.dirty;
   slice.revision = meta.revision;
+  slice.aiModelId = meta.aiModelId;
   syncViewport(slice);
   syncEditorValue(slice);
 }

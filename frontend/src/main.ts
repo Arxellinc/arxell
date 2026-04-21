@@ -119,13 +119,7 @@ import {
 } from "./tools/docs/actions";
 import { getInitialSheetsState } from "./tools/sheets/state";
 import type { SheetsToolState } from "./tools/sheets/state";
-import {
-  buildSheetsGridRows,
-  collapseGridChangesToWrite,
-  diffSheetsGridChanges,
-  type SheetsGridRow
-} from "./tools/sheets/gridMapping";
-import { mountSheetsRuntime, unmountSheetsRuntime } from "./tools/sheets/runtime";
+import { mountSheetsRuntime, unmountSheetsRuntime } from "./tools/sheets/canvas/mount";
 import {
   activateSkillsTab,
   closeSkillsTab,
@@ -4384,9 +4378,11 @@ function renderAndBind(sendMessage: (text: string) => Promise<void>): void {
     }
   };
 
-  render();
+render();
+if (state.workspaceTab === "sheets-tool") {
   mountActiveSheetsRuntime(sendMessage);
-  syncOverlayScrollbars();
+}
+syncOverlayScrollbars();
   scrollConsoleToBottom();
   attachDividerResize();
   attachTopbarInteractions(sendMessage);
@@ -5930,6 +5926,10 @@ function mountActiveSheetsRuntime(sendMessage: (text: string) => Promise<void>):
     unmountSheetsRuntime();
     return;
   }
+  const sheetsModelOptions = state.chatModelOptions.map((option) => ({ id: option.id, label: option.modelName }));
+  const sheetsActiveModelId = sheetsModelOptions.some((option) => option.id === state.sheetsState.aiModelId)
+    ? state.sheetsState.aiModelId
+    : state.chatActiveModelId;
   mountSheetsRuntime(state.sheetsState, {
     rerender: () => renderAndBind(sendMessage),
     ensureWorkbook: async () => {
@@ -5942,24 +5942,33 @@ function mountActiveSheetsRuntime(sendMessage: (text: string) => Promise<void>):
     updateFormulaBarValue: (value) => {
       state.sheetsState.activeEditorValue = value;
     },
+    modelOptions: sheetsModelOptions,
+    aiModelId: sheetsActiveModelId,
+    setAiModel: async (modelId) => {
+      await workspaceToolsRuntime.setAiModel(modelId);
+    },
     commitFormulaBar: async (value) => {
       const selection = state.sheetsState.selection;
       if (!selection) return;
       await workspaceToolsRuntime.setCellInput(selection.startRow, selection.startCol, value);
     },
-    applyGridChanges: (rows, operations) => {
-      const beforeRows = buildSheetsGridRows(state.sheetsState);
-      const changes = diffSheetsGridChanges(
-        beforeRows,
-        rows as SheetsGridRow[],
-        operations,
-        state.sheetsState.columnCount
-      );
-      const write = collapseGridChangesToWrite(changes, rows as SheetsGridRow[]);
-      return { changes, write };
+    fireSetCellInput: async (row, col, value) => {
+      await workspaceToolsRuntime.setCellInput(row, col, value);
     },
     fireWriteRange: async (startRow, startCol, values) => {
       await workspaceToolsRuntime.writeRange(startRow, startCol, values);
+    },
+    insertRows: async (index, count = 1) => {
+      await workspaceToolsRuntime.insertRows(index, count);
+    },
+    insertColumns: async (index, count = 1) => {
+      await workspaceToolsRuntime.insertColumns(index, count);
+    },
+    deleteRows: async (index, count = 1) => {
+      await workspaceToolsRuntime.deleteRows(index, count);
+    },
+    deleteColumns: async (index, count = 1) => {
+      await workspaceToolsRuntime.deleteColumns(index, count);
     }
   });
 }
@@ -7322,17 +7331,22 @@ function attachWorkspaceInteractions(sendMessage: (text: string) => Promise<void
                 await spawnAgent(state.opencodeState, opencodeDeps, { label: "Agent 1" });
               }
             },
-            ensureLooperInit: async () => {
-              const looperDeps: LooperActionsDeps = {
-                terminalManager,
-                client: clientRef!,
-                nextCorrelationId,
-                renderAndBind: () => renderAndBind(sendMessage)
-              };
-              await ensureLooperInit(state.looperState, looperDeps);
-            }
-          });
-        },
+ensureLooperInit: async () => {
+  const looperDeps: LooperActionsDeps = {
+    terminalManager,
+    client: clientRef!,
+    nextCorrelationId,
+    renderAndBind: () => renderAndBind(sendMessage)
+  };
+  await ensureLooperInit(state.looperState, looperDeps);
+}
+});
+if (workspaceTab === "sheets-tool") {
+  mountActiveSheetsRuntime(sendMessage);
+} else {
+  unmountSheetsRuntime();
+}
+},
         maybeOpenFlowProjectSetup,
         dispatchWorkspaceToolClick: async (target) => dispatchWorkspaceToolClick(target, state, workspaceToolDeps),
         persistFlowWorkspacePrefs: () => persistFlowWorkspacePrefs(state),
@@ -7632,7 +7646,7 @@ async function bootstrap(): Promise<void> {
         const payload = payloadAsRecord(event.payload);
         const source = typeof payload?.source === "string" ? payload.source : null;
         const operation = typeof payload?.operation === "string" ? payload.operation : null;
-        if (source === "user" && operation === "write_range") {
+      if (source === "user" && operation === "write_range") {
           state.sheetsState.filePath = typeof payload?.filePath === "string" ? payload.filePath : state.sheetsState.filePath;
           state.sheetsState.fileName = typeof payload?.fileName === "string" ? payload.fileName : state.sheetsState.fileName;
           state.sheetsState.rowCount = typeof payload?.rowCount === "number" ? payload.rowCount : state.sheetsState.rowCount;

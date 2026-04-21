@@ -2,7 +2,6 @@ use crate::agent_tools::chart::ChartTool;
 use crate::agent_tools::notepad::{NotepadEditLinesTool, NotepadReadTool, NotepadWriteTool};
 use crate::agent_tools::sheets::SheetsTool;
 use crate::agent_tools::web_search::WebSearchTool;
-use crate::services::sheets_service::SheetsService;
 use crate::api_registry::ApiRegistryService;
 use crate::app::web_search_service::WebSearchService;
 use crate::contracts::{
@@ -15,6 +14,7 @@ use crate::contracts::{
 use crate::memory::MemoryManager;
 use crate::observability::EventHub;
 use crate::persistence::ConversationRepository;
+use crate::services::sheets_service::SheetsService;
 use crate::workspace_tools::WorkspaceToolsService;
 use arx_rs::events::Event as AgentEvent;
 use arx_rs::provider::openai_compatible::OpenAiCompatibleProvider;

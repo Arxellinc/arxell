@@ -36,7 +36,7 @@
 
 .sheets-formula-row {
   display: grid;
-  grid-template-columns: 90px minmax(0, 1fr) auto;
+  grid-template-columns: 90px minmax(0, 1fr) auto auto;
   gap: 8px;
   align-items: center;
   padding: 8px;
@@ -57,6 +57,29 @@
 
 .sheets-apply-btn {
   min-width: 58px;
+}
+
+.sheets-ai-model-wrap {
+  display: inline-flex;
+  align-items: center;
+  justify-self: end;
+  gap: 6px;
+  min-width: 0;
+}
+
+.sheets-ai-model-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  font-size: var(--text-base);
+  line-height: 1;
+}
+
+.sheets-ai-model-select {
+  min-width: 170px;
+  max-width: 240px;
 }
 
 .tool-toolbar-btn.sheets-toolbar-divider-before,
@@ -94,77 +117,61 @@
 .sheets-grid-wrap {
   flex: 1;
   min-height: 0;
-  height: 100%;
   overflow: hidden;
+  position: relative;
 }
 
-.sheets-grid {
-  --dsg-border-color: color-mix(in srgb, var(--ink) 24%, var(--panel));
-  --dsg-cell-background-color: var(--panel);
-  --dsg-cell-disabled-background-color: var(--surface-soft);
-  --dsg-header-active-text-color: var(--ink);
-  --dsg-header-text-color: var(--muted);
-  --dsg-scroll-shadow-color: var(--line);
-  --dsg-selection-background-color: transparent;
-  --dsg-selection-border-color: var(--accent);
-  --dsg-selection-disabled-background-color: var(--surface-soft);
-  --dsg-selection-disabled-border-color: var(--muted);
-
+.sheets-grid-wrap canvas {
+  display: block;
+  width: 100%;
   height: 100%;
+  outline: none;
+}
+
+.sheets-cell-editor {
+  position: absolute;
+  box-sizing: border-box;
+  border: 2px solid var(--accent);
+  padding: 0 4px;
   font-size: var(--text-sm);
-}
-
-.sheets-grid-wrap,
-.sheets-grid,
-.sheets-grid > .dsg-container,
-.sheets-grid .dsg-scrollable-view-container,
-.sheets-grid .dsg-row,
-.sheets-grid .dsg-add-row {
-  background: var(--panel);
-}
-
-.sheets-grid > .dsg-container {
-  border-radius: 0;
-  color: var(--ink);
-  overflow-y: scroll;
-}
-
-.sheets-grid .dsg-cell {
-  color: var(--muted);
-  border: 1px solid var(--dsg-border-color);
-  z-index: 5;
-}
-
-.sheets-grid .dsg-cell-header {
-  background: var(--surface-soft);
-  color: var(--muted);
-}
-
-.sheets-grid .dsg-row {
-  box-shadow: 0 1px var(--dsg-border-color) inset;
-}
-
-.sheets-grid .dsg-scrollable-view,
-.sheets-grid .dsg-cell-header.dsg-cell-gutter {
-  border-color: var(--dsg-border-color);
-  box-shadow: 1px 0 var(--dsg-border-color), 0 1px var(--dsg-border-color);
-  pointer-events: none;
-}
-
-.sheets-grid .dsg-input {
   background: var(--panel);
   color: var(--ink);
+  z-index: 10;
+  outline: none;
 }
 
-.sheets-grid-cell.is-error,
-.sheets-grid .dsg-cell.sheets-grid-cell.is-error {
-  background: color-mix(in srgb, var(--error) 14%, var(--panel));
-  color: var(--error);
+.sheets-context-menu {
+  position: fixed;
+  z-index: 40;
+  min-width: 180px;
+  padding: 4px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.22);
 }
 
-.sheets-grid-cell.is-formula,
-.sheets-grid .dsg-cell.sheets-grid-cell.is-formula {
-  color: var(--status-info);
+.sheets-context-menu-item {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  padding: 7px 10px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--ink);
+  font-size: var(--text-md);
+  text-align: left;
+  cursor: pointer;
+}
+
+.sheets-context-menu-item:hover:not(:disabled) {
+  background: var(--hover-bg);
+}
+
+.sheets-context-menu-item:disabled {
+  color: var(--muted);
+  cursor: default;
 }
 
 .sheets-empty-state {
@@ -196,6 +203,16 @@
 @media (max-width: 720px) {
   .sheets-formula-row {
     grid-template-columns: 1fr;
+  }
+
+  .sheets-ai-model-wrap {
+    justify-self: stretch;
+  }
+
+  .sheets-ai-model-select {
+    width: 100%;
+    min-width: 0;
+    max-width: none;
   }
 
   .sheets-status-row {

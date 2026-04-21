@@ -60,10 +60,16 @@ pub struct WorkbookState {
     pub format: String,
     #[serde(default = "default_source")]
     pub source: SheetSource,
+    #[serde(default = "default_ai_model_id")]
+    pub ai_model_id: String,
 }
 
 fn default_source() -> SheetSource {
     crate::services::sheets_source::source_for_new_sheet()
+}
+
+fn default_ai_model_id() -> String {
+    "local:runtime".to_string()
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -122,6 +128,7 @@ pub struct OpenSheetResult {
     pub file_name: String,
     pub sheet: SheetSnapshot,
     pub capabilities: CapabilitySet,
+    pub ai_model_id: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -144,6 +151,8 @@ pub struct InspectSheetResult {
     pub revision: u64,
     #[serde(default)]
     pub capabilities: Option<CapabilitySet>,
+    #[serde(default = "default_ai_model_id")]
+    pub ai_model_id: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

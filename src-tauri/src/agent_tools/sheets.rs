@@ -92,10 +92,12 @@ impl Tool for SheetsTool {
                 Err(error) => tool_error(error.message()),
             },
             "read_range" => {
-                let Some(start_row) = params.get("startRow").and_then(|value| value.as_u64()) else {
+                let Some(start_row) = params.get("startRow").and_then(|value| value.as_u64())
+                else {
                     return tool_error("read_range requires startRow");
                 };
-                let Some(start_col) = params.get("startCol").and_then(|value| value.as_u64()) else {
+                let Some(start_col) = params.get("startCol").and_then(|value| value.as_u64())
+                else {
                     return tool_error("read_range requires startCol");
                 };
                 let Some(end_row) = params.get("endRow").and_then(|value| value.as_u64()) else {
@@ -136,10 +138,12 @@ impl Tool for SheetsTool {
                 }
             }
             "write_range" => {
-                let Some(start_row) = params.get("startRow").and_then(|value| value.as_u64()) else {
+                let Some(start_row) = params.get("startRow").and_then(|value| value.as_u64())
+                else {
                     return tool_error("write_range requires startRow");
                 };
-                let Some(start_col) = params.get("startCol").and_then(|value| value.as_u64()) else {
+                let Some(start_col) = params.get("startCol").and_then(|value| value.as_u64())
+                else {
                     return tool_error("write_range requires startCol");
                 };
                 let Some(values) = params.get("values").and_then(as_string_matrix) else {
@@ -324,7 +328,10 @@ mod tests {
             )
             .await;
         let workbook = service.current_workbook().unwrap();
-        assert_eq!(workbook.edit_log.last().map(|item| item.source.clone()), Some(EditSource::Agent));
+        assert_eq!(
+            workbook.edit_log.last().map(|item| item.source.clone()),
+            Some(EditSource::Agent)
+        );
         let _ = fs::remove_file(path);
     }
 
