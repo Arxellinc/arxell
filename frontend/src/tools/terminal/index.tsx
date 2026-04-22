@@ -20,6 +20,7 @@ export interface TerminalSessionMeta {
   shell: string;
   createdAtMs: number;
   status: "running" | "exited";
+  owner: "terminal" | "opencode" | "looper";
 }
 
 interface SessionRuntime {
@@ -45,12 +46,14 @@ export class TerminalManager {
     shell?: string;
     createdAtMs?: number;
     status?: "running" | "exited";
+    owner?: "terminal" | "opencode" | "looper";
   }): TerminalSessionMeta {
     const existing = this.sessions.get(meta.sessionId);
     if (existing) {
       existing.meta.title = meta.title ?? existing.meta.title;
       existing.meta.shell = meta.shell ?? existing.meta.shell;
       existing.meta.status = meta.status ?? existing.meta.status;
+      existing.meta.owner = meta.owner ?? existing.meta.owner;
       return existing.meta;
     }
 
@@ -80,7 +83,8 @@ export class TerminalManager {
       title: meta.title ?? `Terminal ${this.sessions.size + 1}`,
       shell: meta.shell ?? "remote",
       createdAtMs: meta.createdAtMs ?? Date.now(),
-      status: meta.status ?? "running"
+      status: meta.status ?? "running",
+      owner: meta.owner ?? "terminal"
     };
     this.sessions.set(meta.sessionId, {
       meta: sessionMeta,
@@ -107,13 +111,19 @@ export class TerminalManager {
     }
   }
 
-  listSessions(): TerminalSessionMeta[] {
+  listSessions(owner?: TerminalSessionMeta["owner"]): TerminalSessionMeta[] {
     return [...this.sessions.values()]
       .map((s) => s.meta)
+      .filter((session) => (owner ? session.owner === owner : true))
       .sort((a, b) => a.createdAtMs - b.createdAtMs);
   }
 
-  async createSession(opts?: { shell?: string; cwd?: string }): Promise<TerminalSessionMeta> {
+  async createSession(opts?: {
+    shell?: string;
+    cwd?: string;
+    title?: string;
+    owner?: TerminalSessionMeta["owner"];
+  }): Promise<TerminalSessionMeta> {
     if (!this.client) throw new Error("terminal client unavailable");
     const openRequest: {
       correlationId: string;
@@ -134,10 +144,11 @@ export class TerminalManager {
 
     return this.ensureSession({
       sessionId: response.sessionId,
-      title: `Terminal ${this.sessions.size + 1}`,
+      title: opts?.title ?? `Terminal ${this.listSessions("terminal").length + 1}`,
       shell: opts?.shell ?? "default",
       createdAtMs: Date.now(),
-      status: "running"
+      status: "running",
+      owner: opts?.owner ?? "terminal"
     });
   }
 
@@ -182,8 +193,11 @@ export class TerminalManager {
     const existing = this.sessions.get(sessionId);
     if (!existing) return null;
     const shell = existing.meta.shell === "default" ? undefined : existing.meta.shell;
+    const { owner, title } = existing.meta;
     await this.closeSession(sessionId);
-    return shell ? this.createSession({ shell }) : this.createSession();
+    return shell
+      ? this.createSession({ shell, owner, title })
+      : this.createSession({ owner, title });
   }
 
   async closeSession(sessionId: string): Promise<void> {

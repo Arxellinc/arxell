@@ -1293,6 +1293,10 @@ pub struct LooperLoopRecord {
     pub project_icon: String,
     pub project_description: String,
     #[serde(default)]
+    pub review_before_execute: bool,
+    #[serde(default)]
+    pub planner_plan: String,
+    #[serde(default)]
     pub pending_questions: Vec<LooperQuestion>,
 }
 
@@ -1313,6 +1317,12 @@ pub struct LooperStartRequest {
     pub project_type: String,
     pub project_icon: String,
     pub project_description: String,
+    #[serde(default = "default_true")]
+    pub review_before_execute: bool,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

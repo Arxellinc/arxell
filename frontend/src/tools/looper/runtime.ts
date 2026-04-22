@@ -86,6 +86,10 @@ export function normalizeLooperLoopRecord(record: LooperLoopRecord): LooperLoopR
       critic: normalizePhaseRecord("critic", record.phases.critic)
     },
     reviewResult,
+    reviewBeforeExecute: record.reviewBeforeExecute,
+    plannerPlan: record.plannerPlan,
+    pendingQuestions: record.pendingQuestions,
+    reviewAnswers: {},
     launchConfig: {
       cwd: record.cwd,
       taskPath: record.taskPath,
@@ -95,7 +99,8 @@ export function normalizeLooperLoopRecord(record: LooperLoopRecord): LooperLoopR
       projectName: record.projectName,
       projectType: record.projectType,
       projectIcon: record.projectIcon,
-      projectDescription: record.projectDescription
+      projectDescription: record.projectDescription,
+      reviewBeforeExecute: record.reviewBeforeExecute
     }
   };
 }
@@ -125,7 +130,11 @@ function createEventPlaceholderLoop(loopId: string, iteration: number, timestamp
       validator: makePhase("validator"),
       critic: makePhase("critic")
     },
-    reviewResult: null
+    reviewResult: null,
+    reviewBeforeExecute: true,
+    plannerPlan: "",
+    pendingQuestions: [],
+    reviewAnswers: {}
   };
 }
 

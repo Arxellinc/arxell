@@ -34,14 +34,15 @@ function registerLoopSessions(state: LooperToolState, deps: LooperActionsDeps): 
     for (const phase of LOOPER_PHASES) {
       const sessionId = loop.phases[phase].sessionId;
       if (!sessionId) continue;
-      deps.terminalManager.ensureSession({
-        sessionId,
-        title: `Loop ${loop.iteration} ${LOOPER_PHASE_LABELS[phase]}`,
-        shell: "remote",
-        createdAtMs: loop.startedAtMs,
-        status:
-          loop.phases[phase].status === "complete" ||
-          loop.phases[phase].status === "error" ||
+        deps.terminalManager.ensureSession({
+          sessionId,
+          title: `Loop ${loop.iteration} ${LOOPER_PHASE_LABELS[phase]}`,
+          shell: "remote",
+          createdAtMs: loop.startedAtMs,
+          owner: "looper",
+          status:
+            loop.phases[phase].status === "complete" ||
+            loop.phases[phase].status === "error" ||
           loop.status === "completed" ||
           loop.status === "failed"
             ? "exited"
@@ -144,8 +145,8 @@ export async function ensureLooperInit(
 export async function createLoop(
   state: LooperToolState,
   deps: LooperActionsDeps
-): Promise<void> {
-  if (state.busy) return;
+): Promise<string | null> {
+  if (state.busy) return null;
   const projectName = state.projectNameDraft.trim();
   if (projectName) {
     if (state.projectTypeDraft === "app-tool") {
@@ -180,11 +181,22 @@ export async function createLoop(
     projectIcon: state.projectIconDraft,
     projectDescription: state.projectDescriptionDraft
   };
+  loop.reviewBeforeExecute = state.reviewBeforeExecuteDraft;
   state.loops.push(loop);
   state.activeLoopId = loop.id;
   state.nextLoopIndex = loopIndex + 1;
   state.statusMessage = `Loop ${loop.iteration} ready to start.`;
   deps.renderAndBind();
+  return loop.id;
+}
+
+export async function createAndStartLoop(
+  state: LooperToolState,
+  deps: LooperActionsDeps
+): Promise<void> {
+  const loopId = await createLoop(state, deps);
+  if (!loopId) return;
+  await startLoop(state, deps, loopId);
 }
 
 function buildStartRequest(
@@ -208,7 +220,8 @@ function buildStartRequest(
     projectName: launchConfig?.projectName || state.projectNameDraft,
     projectType: launchConfig?.projectType || state.projectTypeDraft,
     projectIcon: launchConfig?.projectIcon || state.projectIconDraft,
-    projectDescription: launchConfig?.projectDescription || state.projectDescriptionDraft
+    projectDescription: launchConfig?.projectDescription || state.projectDescriptionDraft,
+    reviewBeforeExecute: loop.reviewBeforeExecute
   };
   if (Object.keys(launchConfig?.phaseModels || state.phaseModels).length) {
     request.phaseModels = { ...(launchConfig?.phaseModels || state.phaseModels) };
@@ -434,6 +447,55 @@ export function applyConfig(state: LooperToolState): void {
   state.specsGlob = state.configSpecsGlobDraft;
   state.maxIterations = state.configMaxIterationsDraft;
   state.configOpen = false;
+}
+
+export async function submitPlannerReview(
+  state: LooperToolState,
+  deps: LooperActionsDeps,
+  loopId: string
+): Promise<void> {
+  const loop = state.loops.find((item) => item.id === loopId);
+  if (!loop) return;
+  state.busy = true;
+  state.statusMessage = "Submitting planner review...";
+  deps.renderAndBind();
+  try {
+    const answers = loop.pendingQuestions
+      .map((question) => {
+        const answer = loop.reviewAnswers[question.id];
+        return {
+          questionId: question.id,
+          selectedOptionId: answer?.selectedOptionId || "",
+          freeformText: answer?.freeformText?.trim() || undefined
+        };
+      })
+      .filter((answer) => answer.selectedOptionId || answer.freeformText);
+    const correlationId = deps.nextCorrelationId();
+    const invokeResponse = await deps.client.toolInvoke({
+      correlationId,
+      toolId: "looper",
+      action: "submit-questions",
+      mode: "sandbox",
+      payload: {
+        correlationId,
+        loopId,
+        answers
+      }
+    });
+    if (!invokeResponse.ok) {
+      throw new Error(invokeResponse.error || "Failed to submit planner review.");
+    }
+    loop.pendingQuestions = [];
+    loop.plannerPlan = "";
+    loop.reviewAnswers = {};
+    state.statusMessage = "Planner review submitted.";
+    await refreshLooperState(state, deps);
+  } catch (error) {
+    state.statusMessage = error instanceof Error ? error.message : "Failed to submit planner review.";
+  } finally {
+    state.busy = false;
+    deps.renderAndBind();
+  }
 }
 
 export function dismissInstall(state: LooperToolState): void {

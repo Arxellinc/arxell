@@ -70,6 +70,7 @@ impl AppContext {
             hub.clone(),
             Arc::clone(&terminal),
             Arc::clone(&workspace_tools),
+            Arc::clone(&web_search),
         ));
         looper.set_data_path(workspace_tools.state_root_path().join("looper-state.json"));
         looper.load_from_disk();

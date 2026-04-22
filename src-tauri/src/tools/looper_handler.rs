@@ -27,6 +27,9 @@
 //! a `SHIP` or `REVISE` decision which controls iteration looping.
 
 use crate::app::terminal_service::TerminalService;
+use crate::app::web_search_service::{
+    WebSearchRequest as ServiceWebSearchRequest, WebSearchResult, WebSearchService,
+};
 use crate::contracts::{
     EventSeverity, EventStage, LooperAdvanceRequest, LooperAdvanceResponse,
     LooperCheckOpenCodeRequest, LooperCheckOpenCodeResponse, LooperCloseRequest,
@@ -380,6 +383,7 @@ pub struct LooperHandler {
     hub: EventHub,
     terminal: Arc<TerminalService>,
     workspace_tools: Arc<WorkspaceToolsService>,
+    web_search: Arc<WebSearchService>,
     loops: RwLock<HashMap<String, LooperLoop>>,
     data_path: RwLock<Option<PathBuf>>,
 }
@@ -403,6 +407,8 @@ struct LooperLoop {
     project_type: String,
     project_icon: String,
     project_description: String,
+    review_before_execute: bool,
+    planner_plan: String,
     pending_questions: Vec<LooperQuestion>,
     questions_answered: Vec<String>,
 }
@@ -433,11 +439,13 @@ impl LooperHandler {
         hub: EventHub,
         terminal: Arc<TerminalService>,
         workspace_tools: Arc<WorkspaceToolsService>,
+        web_search: Arc<WebSearchService>,
     ) -> Self {
         Self {
             hub,
             terminal,
             workspace_tools,
+            web_search,
             loops: RwLock::new(HashMap::new()),
             data_path: RwLock::new(None),
         }
@@ -580,6 +588,21 @@ impl LooperHandler {
             } else {
                 default_prompt.to_string()
             };
+            let prompt = if *phase_name == "planner" {
+                if req.review_before_execute {
+                    format!(
+                        "{}\n\nBefore execution begins, produce implementation_plan.md and, if there are meaningful open decisions, questions.md with user-facing options for review.",
+                        prompt
+                    )
+                } else {
+                    format!(
+                        "{}\n\nDo not ask the user follow-up questions or write user review options. Make the best decisions autonomously, document them clearly in implementation_plan.md, and continue without requiring plan approval.",
+                        prompt
+                    )
+                }
+            } else {
+                prompt
+            };
 
             // Define substeps for each phase based on loop type
             let substeps = get_substeps(phase_name, &req.loop_type);
@@ -616,6 +639,8 @@ impl LooperHandler {
             project_type: req.project_type.clone(),
             project_icon: req.project_icon.clone(),
             project_description: req.project_description.clone(),
+            review_before_execute: req.review_before_execute,
+            planner_plan: String::new(),
             pending_questions: Vec::new(),
             questions_answered: Vec::new(),
         };
@@ -829,6 +854,17 @@ impl LooperHandler {
         let answers_path = std::path::Path::new(&cwd).join("questions_answered.md");
         std::fs::write(&answers_path, &answers_content).map_err(|e| e.to_string())?;
 
+        let advance_from_planner_review = {
+            let loops = self.loops.read().map_err(|e| e.to_string())?;
+            loops
+                .get(&req.loop_id)
+                .map(|l| {
+                    l.active_phase.as_deref() == Some("planner")
+                        && l.status == LooperLoopStatus::Blocked
+                })
+                .unwrap_or(false)
+        };
+
         // Mark questions as answered and update status
         {
             let mut loops = self.loops.write().map_err(|e| e.to_string())?;
@@ -837,6 +873,7 @@ impl LooperHandler {
                     l.questions_answered.push(answer.question_id.clone());
                 }
                 l.pending_questions.clear();
+                l.planner_plan.clear();
                 l.status = LooperLoopStatus::Running;
             }
         }
@@ -853,8 +890,11 @@ impl LooperHandler {
             }),
         );
 
-        // Restart planner phase to continue with answers
-        if let Err(e) = self.start_phase(&loop_id, "planner", &correlation_id).await {
+        if advance_from_planner_review {
+            if let Err(e) = self.do_advance(&loop_id, "executor", &correlation_id).await {
+                eprintln!("looper: failed to advance to executor after planner review: {}", e);
+            }
+        } else if let Err(e) = self.start_phase(&loop_id, "planner", &correlation_id).await {
             eprintln!("looper: failed to restart planner after questions: {}", e);
         }
 
@@ -1057,7 +1097,7 @@ impl LooperHandler {
             self.create_phase_session(loop_id, phase).await?;
         }
 
-        let (session_id, prompt, model) = {
+        let (session_id, prompt, model, loop_type, cwd, project_name, project_type, project_description) = {
             let loops = self.loops.read().map_err(|e| e.to_string())?;
             let loopy = loops
                 .get(loop_id)
@@ -1071,8 +1111,35 @@ impl LooperHandler {
                 .clone()
                 .ok_or_else(|| format!("session not created for phase: {}", phase))?;
             let model = loopy.phase_models.get(phase).cloned();
-            (session_id, phase_state.prompt.clone(), model)
+            (
+                session_id,
+                phase_state.prompt.clone(),
+                model,
+                loopy.loop_type.clone(),
+                loopy.cwd.clone(),
+                loopy.project_name.clone(),
+                loopy.project_type.clone(),
+                loopy.project_description.clone(),
+            )
         };
+
+        let mut prompt = prompt;
+        if phase == "planner" {
+            if let Some(research_hint) = self
+                .prepare_planner_web_research(
+                    correlation_id,
+                    loop_id,
+                    &loop_type,
+                    &cwd,
+                    &project_name,
+                    &project_type,
+                    &project_description,
+                )
+                .await
+            {
+                prompt = format!("{}\n\n{}", prompt, research_hint);
+            }
+        }
 
         // Update phase status to running
         {
@@ -1102,24 +1169,21 @@ impl LooperHandler {
             }),
         );
 
-        // Send opencode command to start the session
-        // Note: model selection via phase_models requires .opencode.json config
-        // The model field is stored but not yet used via command-line
-        let _ = model;
+        // Start OpenCode with the selected model and the phase prompt so the
+        // first phase begins immediately without waiting for manual submit.
+        let mut command = String::from("opencode");
+        if let Some(model_id) = model.as_ref().filter(|value| !value.trim().is_empty()) {
+            command.push_str(" --model ");
+            command.push_str(&shell_quote(model_id));
+        }
+        if !prompt.trim().is_empty() {
+            command.push_str(" --prompt ");
+            command.push_str(&shell_quote(&prompt));
+        }
+        command.push('\n');
         let input_req = TerminalInputRequest {
             session_id: session_id.clone(),
-            input: "opencode\n".to_string(),
-            correlation_id: correlation_id.to_string(),
-        };
-        self.terminal.send_input(input_req)?;
-
-        // Small delay before sending the prompt to let opencode initialize
-        tokio::time::sleep(tokio::time::Duration::from_millis(1500)).await;
-
-        // Send the phase prompt
-        let input_req = TerminalInputRequest {
-            session_id,
-            input: format!("{}\n", prompt),
+            input: command,
             correlation_id: correlation_id.to_string(),
         };
         self.terminal.send_input(input_req)?;
@@ -1245,6 +1309,49 @@ impl LooperHandler {
                 "sessionId": session_id,
             }),
         );
+
+        if phase == "planner" {
+            let (cwd, review_before_execute) = {
+                let loops = self.loops.read().expect("loops lock poisoned");
+                loops
+                    .get(&loop_id)
+                    .map(|l| (l.cwd.clone(), l.review_before_execute))
+                    .unwrap_or_else(|| (String::new(), true))
+            };
+            if !review_before_execute {
+                // Autonomous mode skips the planner review gate and proceeds directly.
+            } else {
+            let (planner_plan, pending_questions) = read_planner_review_files(&cwd);
+            {
+                let mut loops = self.loops.write().expect("loops lock poisoned");
+                if let Some(loopy) = loops.get_mut(&loop_id) {
+                    loopy.status = LooperLoopStatus::Blocked;
+                    loopy.active_phase = Some("planner".to_string());
+                    loopy.planner_plan = planner_plan.clone();
+                    loopy.pending_questions = pending_questions.clone();
+                    if let Some(phase_state) = loopy.phases.get_mut("planner") {
+                        phase_state.status = LooperPhaseStatus::Blocked;
+                    }
+                }
+            }
+
+            self.emit_event(
+                &format!("looper-auto-{}", loop_id),
+                "looper.planner.review_ready",
+                EventStage::Complete,
+                EventSeverity::Info,
+                json!({
+                    "loopId": loop_id,
+                    "iteration": iteration,
+                    "phase": "planner",
+                    "questionsCount": pending_questions.len(),
+                    "hasPlan": !planner_plan.trim().is_empty(),
+                }),
+            );
+            self.save_to_disk();
+            return;
+            }
+        }
 
         // Determine the next phase
         let next_phase = match phase.as_str() {
@@ -1459,6 +1566,84 @@ impl LooperHandler {
             }
         }
     }
+
+    async fn prepare_planner_web_research(
+        &self,
+        correlation_id: &str,
+        loop_id: &str,
+        loop_type: &LooperLoopType,
+        cwd: &str,
+        project_name: &str,
+        project_type: &str,
+        project_description: &str,
+    ) -> Option<String> {
+        if cwd.trim().is_empty() {
+            return None;
+        }
+
+        let queries = build_planner_research_queries(loop_type, project_name, project_type, project_description);
+        if queries.is_empty() {
+            return None;
+        }
+
+        let mut sections = Vec::new();
+        for query in queries {
+            match self
+                .web_search
+                .search(ServiceWebSearchRequest {
+                    query: query.clone(),
+                    mode: None,
+                    num: Some(5),
+                    page: Some(1),
+                })
+                .await
+            {
+                Ok(result) => sections.push(format_web_research_section(&query, &result)),
+                Err(error) => {
+                    self.emit_event(
+                        correlation_id,
+                        "looper.planner.research_unavailable",
+                        EventStage::Complete,
+                        EventSeverity::Warn,
+                        json!({
+                            "loopId": loop_id,
+                            "query": query,
+                            "error": error,
+                        }),
+                    );
+                    continue;
+                }
+            }
+        }
+
+        if sections.is_empty() {
+            return None;
+        }
+
+        let content = format!(
+            "# Looper Web Research\n\n{}\n",
+            sections.join("\n\n")
+        );
+        let research_path = Path::new(cwd).join("looper_web_research.md");
+        if fs::write(&research_path, content).is_err() {
+            return None;
+        }
+
+        self.emit_event(
+            correlation_id,
+            "looper.planner.research_ready",
+            EventStage::Complete,
+            EventSeverity::Info,
+            json!({
+                "loopId": loop_id,
+                "path": research_path.to_string_lossy(),
+            }),
+        );
+
+        Some(
+            "Read looper_web_research.md if it exists and use it as supplementary research context. If it is missing or incomplete, continue planning with local context only.".to_string(),
+        )
+    }
 }
 
 impl LooperLoop {
@@ -1518,6 +1703,8 @@ impl LooperLoop {
             project_type: record.project_type,
             project_icon: record.project_icon,
             project_description: record.project_description,
+            review_before_execute: record.review_before_execute,
+            planner_plan: record.planner_plan,
             pending_questions: record.pending_questions,
             questions_answered: Vec::new(),
         }
@@ -1567,9 +1754,162 @@ impl LooperLoop {
             project_type: self.project_type.clone(),
             project_icon: self.project_icon.clone(),
             project_description: self.project_description.clone(),
+            review_before_execute: self.review_before_execute,
+            planner_plan: self.planner_plan.clone(),
             pending_questions: self.pending_questions.clone(),
         }
     }
+}
+
+fn read_planner_review_files(cwd: &str) -> (String, Vec<LooperQuestion>) {
+    if cwd.trim().is_empty() {
+        return (String::new(), Vec::new());
+    }
+    let plan = fs::read_to_string(Path::new(cwd).join("implementation_plan.md")).unwrap_or_default();
+    let questions = fs::read_to_string(Path::new(cwd).join("questions.md"))
+        .map(|content| parse_looper_questions(&content))
+        .unwrap_or_default();
+    (plan, questions)
+}
+
+fn build_planner_research_queries(
+    loop_type: &LooperLoopType,
+    project_name: &str,
+    project_type: &str,
+    project_description: &str,
+) -> Vec<String> {
+    let mut queries = Vec::new();
+    let scope = if project_name.trim().is_empty() {
+        project_type.trim().to_string()
+    } else {
+        format!("{} {}", project_name.trim(), project_type.trim())
+    };
+
+    if !scope.trim().is_empty() {
+        let topic = match loop_type {
+            LooperLoopType::Prd => "best practices competitor analysis examples",
+            LooperLoopType::Build => "architecture implementation best practices",
+        };
+        queries.push(format!("{} {}", scope.trim(), topic));
+    }
+
+    let description = project_description.trim();
+    if !description.is_empty() {
+        let compact = description.split_whitespace().take(24).collect::<Vec<_>>().join(" ");
+        if !compact.is_empty() {
+            queries.push(compact);
+        }
+    }
+
+    queries.truncate(2);
+    queries
+}
+
+fn format_web_research_section(query: &str, result: &WebSearchResult) -> String {
+    let mut lines = vec![format!("## Query: {}", query)];
+    let items = if result.items.is_empty() { &result.organic } else { &result.items };
+    for item in items.iter().take(5) {
+        let title = item.get("title").and_then(|value| value.as_str()).unwrap_or("Untitled");
+        let link = item
+            .get("link")
+            .or_else(|| item.get("url"))
+            .and_then(|value| value.as_str())
+            .unwrap_or("");
+        let snippet = item
+            .get("snippet")
+            .or_else(|| item.get("description"))
+            .and_then(|value| value.as_str())
+            .unwrap_or("");
+        lines.push(format!("- {}", title));
+        if !link.is_empty() {
+            lines.push(format!("  URL: {}", link));
+        }
+        if !snippet.is_empty() {
+            lines.push(format!("  Notes: {}", snippet));
+        }
+    }
+    lines.join("\n")
+}
+
+fn parse_looper_questions(content: &str) -> Vec<LooperQuestion> {
+    let mut questions = Vec::new();
+    let mut current: Option<LooperQuestion> = None;
+    let mut current_option: Option<crate::contracts::LooperQuestionOption> = None;
+
+    for raw_line in content.lines() {
+        let line = raw_line.trim();
+        if let Some(rest) = line.strip_prefix("## Question ") {
+            if let Some(option) = current_option.take() {
+                if let Some(question) = current.as_mut() {
+                    question.options.push(option);
+                }
+            }
+            if let Some(question) = current.take() {
+                questions.push(question);
+            }
+            let title = rest
+                .split_once(':')
+                .map(|(_, value)| value.trim())
+                .unwrap_or(rest)
+                .trim_matches('[')
+                .trim_matches(']')
+                .trim()
+                .to_string();
+            current = Some(LooperQuestion {
+                id: format!("question-{}", questions.len() + 1),
+                title,
+                prompt: String::new(),
+                options: Vec::new(),
+            });
+            continue;
+        }
+        if let Some(rest) = line.strip_prefix("**Question**:") {
+            if let Some(question) = current.as_mut() {
+                question.prompt = rest.trim().to_string();
+            }
+            continue;
+        }
+        if let Some(rest) = line.strip_prefix("### Option ") {
+            if let Some(option) = current_option.take() {
+                if let Some(question) = current.as_mut() {
+                    question.options.push(option);
+                }
+            }
+            current_option = Some(crate::contracts::LooperQuestionOption {
+                id: format!(
+                    "option-{}-{}",
+                    questions.len() + 1,
+                    current.as_ref().map(|q| q.options.len() + 1).unwrap_or(1)
+                ),
+                label: rest
+                    .split_once(':')
+                    .map(|(_, value)| value.trim())
+                    .unwrap_or(rest)
+                    .trim_matches('[')
+                    .trim_matches(']')
+                    .trim()
+                    .to_string(),
+                summary: None,
+            });
+            continue;
+        }
+        if let Some(rest) = line.strip_prefix("- **Summary**:") {
+            if let Some(option) = current_option.as_mut() {
+                option.summary = Some(rest.trim().to_string());
+            }
+        }
+    }
+
+    if let Some(option) = current_option {
+        if let Some(question) = current.as_mut() {
+            question.options.push(option);
+        }
+    }
+    if let Some(question) = current {
+        questions.push(question);
+    }
+
+    questions
 }
 
 pub fn build_project_context(
@@ -1597,6 +1937,11 @@ pub fn now_ms() -> i64 {
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_millis() as i64)
         .unwrap_or(0)
+}
+
+fn shell_quote(value: &str) -> String {
+    let escaped = value.replace("'", "'\"'\"'");
+    format!("'{}'", escaped)
 }
 
 fn check_opencode_installed() -> bool {
@@ -1641,6 +1986,8 @@ fn sanitize_tool_id(value: &str) -> String {
 mod tests {
     use super::*;
     use crate::app::terminal_service::TerminalService;
+    use crate::app::web_search_service::WebSearchService;
+    use crate::api_registry::ApiRegistryService;
     use std::sync::Arc;
 
     fn sample_handler() -> LooperHandler {
@@ -1649,6 +1996,7 @@ mod tests {
             hub.clone(),
             Arc::new(TerminalService::new(hub)),
             Arc::new(WorkspaceToolsService::new()),
+            Arc::new(WebSearchService::new(Arc::new(ApiRegistryService::new()))),
         )
     }
 

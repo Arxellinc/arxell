@@ -26,6 +26,15 @@ export interface LooperLoopRun {
   activePhase: LooperPhase | null;
   phases: Record<LooperPhase, LooperPhaseState>;
   reviewResult: "ship" | "revise" | null;
+  reviewBeforeExecute: boolean;
+  plannerPlan: string;
+  pendingQuestions: Array<{
+    id: string;
+    title: string;
+    prompt: string;
+    options: Array<{ id: string; label: string; summary?: string }>;
+  }>;
+  reviewAnswers: Record<string, { selectedOptionId: string; freeformText: string }>;
   launchConfig?: {
     cwd: string;
     taskPath: string;
@@ -36,6 +45,7 @@ export interface LooperLoopRun {
     projectType: string;
     projectIcon: string;
     projectDescription: string;
+    reviewBeforeExecute?: boolean;
   };
 }
 
@@ -59,6 +69,7 @@ export interface LooperToolState {
   projectTypeDraft: string;
   projectIconDraft: string;
   projectDescriptionDraft: string;
+  reviewBeforeExecuteDraft: boolean;
   phaseModels: Record<string, string>;
   availableModels: Array<{ id: string; label: string }>;
   installModalOpen: boolean;
@@ -186,7 +197,11 @@ export function createLoopRun(index: number, cwd: string, setup?: LooperProjectS
       validator: createPhaseState("validator"),
       critic: createPhaseState("critic")
     },
-    reviewResult: null
+    reviewResult: null,
+    reviewBeforeExecute: true,
+    plannerPlan: "",
+    pendingQuestions: [],
+    reviewAnswers: {}
   };
 }
 
@@ -211,6 +226,7 @@ export function getInitialLooperState(): LooperToolState {
     projectTypeDraft: "app-tool",
     projectIconDraft: "refresh-cw",
     projectDescriptionDraft: "",
+    reviewBeforeExecuteDraft: true,
     phaseModels: {},
     availableModels: [],
     installModalOpen: false,

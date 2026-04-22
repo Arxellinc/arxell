@@ -141,6 +141,10 @@ export function renderLooperToolBody(state: LooperToolState): string {
               ${renderPhaseModelOptions(state.availableModels, getAllPhaseModelSelection(state.phaseModels))}
             </select>
           </label>
+          <label class="looper-splash-check">
+            <input type="checkbox" ${state.reviewBeforeExecuteDraft ? "checked" : ""} ${LOOPER_DATA_ATTR.action}="toggle-review-before-execute" />
+            <span>Review planner output before Execute phase</span>
+          </label>
           <details class="looper-splash-advanced">
             <summary>Advanced</summary>
             <div class="looper-splash-advanced-grid">
@@ -174,7 +178,7 @@ export function renderLooperToolBody(state: LooperToolState): string {
             </div>
           </details>
         </div>
-        <button type="button" class="looper-placeholder-btn" ${LOOPER_DATA_ATTR.action}="new-loop">
+        <button type="button" class="looper-placeholder-btn" ${LOOPER_DATA_ATTR.action}="launch-loop">
           ${iconHtml("plus", { size: 16, tone: "dark" })} New Loop
         </button>
       </div>
@@ -192,6 +196,7 @@ export function renderLooperToolBody(state: LooperToolState): string {
 
   return `<div class="looper-workspace" ${LOOPER_DATA_ATTR.activeLoop}="${esc(loop.id)}">
     ${renderTimeline(loop)}
+    ${renderPlannerReview(loop)}
     ${renderTerminalGrid(loop, state)}
   </div>
     ${renderConfigModal(state)}
@@ -228,6 +233,39 @@ function renderTimeline(loop: LooperLoopRun): string {
   return `<div class="looper-timeline">${phasesHtml}</div>`;
 }
 
+function renderPlannerReview(loop: LooperLoopRun): string {
+  const needsReview = loop.reviewBeforeExecute && loop.activePhase === "planner" && (loop.status === "blocked" || loop.phases.planner.status === "blocked");
+  if (!needsReview) return "";
+
+  const questionsHtml = loop.pendingQuestions.map((question) => {
+    const answer = loop.reviewAnswers[question.id] || { selectedOptionId: "", freeformText: "" };
+    return `<div class="looper-review-question">
+      <div class="looper-review-question-title">${esc(question.title)}</div>
+      <div class="looper-review-question-prompt">${esc(question.prompt)}</div>
+      <div class="looper-review-options">
+        ${question.options.map((option) => `<label class="looper-review-option${answer.selectedOptionId === option.id ? " is-selected" : ""}">
+          <input type="radio" name="looper-review-${esc(question.id)}" value="${esc(option.id)}" ${answer.selectedOptionId === option.id ? "checked" : ""} ${LOOPER_DATA_ATTR.action}="review-option" data-looper-question-id="${esc(question.id)}" />
+          <span class="looper-review-option-label">${esc(option.label)}</span>
+          ${option.summary ? `<span class="looper-review-option-summary">${esc(option.summary)}</span>` : ""}
+        </label>`).join("")}
+      </div>
+      <textarea class="looper-review-notes" placeholder="Optional notes" ${LOOPER_DATA_ATTR.action}="review-notes" data-looper-question-id="${esc(question.id)}">${esc(answer.freeformText)}</textarea>
+    </div>`;
+  }).join("");
+
+  return `<div class="looper-review-panel">
+    <div class="looper-review-header">
+      <div>
+        <div class="looper-review-title">Planner Review</div>
+        <div class="looper-review-subtitle">Review the plan and answer any key questions before Execute begins.</div>
+      </div>
+      <button type="button" class="looper-review-continue" ${LOOPER_DATA_ATTR.action}="submit-review">Continue to Execute</button>
+    </div>
+    ${loop.plannerPlan ? `<pre class="looper-review-plan">${esc(loop.plannerPlan)}</pre>` : ""}
+    ${questionsHtml}
+  </div>`;
+}
+
 function renderPhaseStatusBadge(ps: LooperPhaseState): string {
   if (ps.status === "running") return `<span class="looper-badge is-running">●</span>`;
   if (ps.status === "complete") return `<span class="looper-badge is-complete">✓</span>`;
@@ -259,6 +297,7 @@ function renderTerminalGrid(loop: LooperLoopRun, state: LooperToolState): string
     const isActive = phase === activePhase;
     const cls = [
       "looper-terminal-panel",
+      `is-${phase}`,
       isActive ? "is-active" : "is-inactive"
     ].join(" ");
 
@@ -279,7 +318,7 @@ function renderTerminalGrid(loop: LooperLoopRun, state: LooperToolState): string
     </div>`;
   }).join("");
 
-  return `<div class="looper-terminal-grid">${terminalsHtml}</div>`;
+  return `<div class="looper-terminal-grid" data-looper-active-phase="${activePhase}">${terminalsHtml}</div>`;
 }
 
 function renderPromptEditor(loopId: string, phase: LooperPhase, ps: LooperPhaseState): string {

@@ -2434,11 +2434,11 @@ function render(): void {
   `;
 
   const terminalUiHtml = renderTerminalWorkspace(
-    terminalManager.listSessions(),
+    terminalManager.listSessions("terminal"),
     state.activeTerminalSessionId
   );
   const terminalActionsHtml = renderTerminalToolbar(
-    terminalManager.listSessions(),
+    terminalManager.listSessions("terminal"),
     state.activeTerminalSessionId,
     state.terminalShellProfile
   );
@@ -2618,7 +2618,7 @@ function render(): void {
     flowModelUnavailableMaxAttempts: state.flowModelUnavailableMaxAttempts,
     flowModelUnavailableStatus: state.flowModelUnavailableStatus,
     flowTerminalPhases: [...FLOW_TERMINAL_PHASES],
-    terminalSessions: terminalManager.listSessions().map((session) => ({
+    terminalSessions: terminalManager.listSessions("terminal").map((session) => ({
       sessionId: session.sessionId,
       title: session.title,
       status: session.status
@@ -7170,7 +7170,7 @@ function attachWorkspaceInteractions(sendMessage: (text: string) => Promise<void
           delete nextMap[phase];
           state.flowPhaseSessionByName = nextMap;
           if (state.activeTerminalSessionId === sessionId) {
-            state.activeTerminalSessionId = terminalManager.listSessions()[0]?.sessionId ?? null;
+            state.activeTerminalSessionId = terminalManager.listSessions("terminal")[0]?.sessionId ?? null;
           }
           persistFlowPhaseSessionMap(state.flowPhaseSessionByName);
         },
@@ -7702,7 +7702,8 @@ async function bootstrap(): Promise<void> {
             terminalManager.ensureSession({
               sessionId,
               title: `Looper ${phase}`,
-              shell: "remote"
+              shell: "remote",
+              owner: "looper"
             });
           }),
         maybeHandleFlowPhaseTerminalEvent

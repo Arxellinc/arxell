@@ -22,7 +22,11 @@ export async function checkOpenCodeInstalled(
 
   try {
     const correlationId = deps.nextCorrelationId();
-    const probe = await deps.terminalManager.createSession({ shell: "/bin/sh" });
+    const probe = await deps.terminalManager.createSession({
+      shell: "/bin/sh",
+      owner: "opencode",
+      title: "OpenCode Probe"
+    });
     const probeId = probe.sessionId;
 
     let outputBuffer = "";
@@ -85,7 +89,11 @@ export async function spawnAgent(
     const createOpts: { cwd?: string } = {};
     if (cwd) createOpts.cwd = cwd;
 
-    const session = await deps.terminalManager.createSession(createOpts);
+    const session = await deps.terminalManager.createSession({
+      ...createOpts,
+      owner: "opencode",
+      title: label
+    });
     const agent: OpenCodeAgent = {
       id: agentId,
       label,

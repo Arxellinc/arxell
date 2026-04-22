@@ -13,7 +13,9 @@ export async function createTerminalSessionForProfile(
   profile: TerminalShellProfile
 ): Promise<string> {
   const shell = shellProfileToCommand(profile);
-  const session = await terminalManager.createSession(shell ? { shell } : undefined);
+  const session = await terminalManager.createSession(
+    shell ? { shell, owner: "terminal" } : { owner: "terminal" }
+  );
   return session.sessionId;
 }
 
@@ -22,7 +24,7 @@ export async function closeTerminalSessionAndPickNext(
   sessionId: string
 ): Promise<string | null> {
   await terminalManager.closeSession(sessionId);
-  return terminalManager.listSessions()[0]?.sessionId ?? null;
+  return terminalManager.listSessions("terminal")[0]?.sessionId ?? null;
 }
 
 export async function ensureTerminalSessionForProfile(
@@ -30,8 +32,10 @@ export async function ensureTerminalSessionForProfile(
   activeSessionId: string | null,
   profile: TerminalShellProfile
 ): Promise<string | null> {
-  if (activeSessionId) return activeSessionId;
-  const first = terminalManager.listSessions().at(0);
+  if (activeSessionId && terminalManager.listSessions("terminal").some((session) => session.sessionId === activeSessionId)) {
+    return activeSessionId;
+  }
+  const first = terminalManager.listSessions("terminal").at(0);
   if (first) return first.sessionId;
   return createTerminalSessionForProfile(terminalManager, profile);
 }

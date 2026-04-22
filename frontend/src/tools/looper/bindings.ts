@@ -11,6 +11,12 @@ export function handleLooperClick(
   const actionEl = target.closest(`[${LOOPER_DATA_ATTR.action}]`);
   if (actionEl) {
     const actionValue = (actionEl as HTMLElement).getAttribute(LOOPER_DATA_ATTR.action);
+    if (actionValue === "launch-loop") {
+      void import("./actions").then(({ createAndStartLoop }) => {
+        void createAndStartLoop(state, deps);
+      });
+      return true;
+    }
     if (actionValue === "new-loop") {
       void import("./actions").then(({ createLoop }) => {
         void createLoop(state, deps);
@@ -81,6 +87,15 @@ export function handleLooperClick(
         applyConfig(state);
         deps.renderAndBind();
       });
+      return true;
+    }
+    if (actionValue === "submit-review") {
+      const loopId = state.activeLoopId;
+      if (loopId) {
+        void import("./actions").then(({ submitPlannerReview }) => {
+          void submitPlannerReview(state, deps, loopId);
+        });
+      }
       return true;
     }
     if (actionValue === "dismiss-install") {
@@ -176,6 +191,10 @@ export function handleLooperInput(
     state.projectDescriptionDraft = (target as HTMLTextAreaElement).value;
     return { handled: true, rerender: false };
   }
+  if (actionValue === "toggle-review-before-execute") {
+    state.reviewBeforeExecuteDraft = (target as HTMLInputElement).checked;
+    return { handled: true, rerender: false };
+  }
   if (actionValue === "set-phase-model") {
     const phaseModelSelect = target as HTMLSelectElement;
     const phase = phaseModelSelect.getAttribute(LOOPER_DATA_ATTR.phase);
@@ -211,6 +230,38 @@ export function handleLooperInput(
     const val = parseInt((target as HTMLInputElement).value, 10);
     if (!isNaN(val) && val > 0) {
       state.configMaxIterationsDraft = val;
+    }
+    return { handled: true, rerender: false };
+  }
+  if (actionValue === "review-option") {
+    const loopId = state.activeLoopId;
+    const questionId = (target as HTMLElement).getAttribute("data-looper-question-id") || "";
+    const loop = state.loops.find((item) => item.id === loopId);
+    if (loop && questionId) {
+      const existing = loop.reviewAnswers[questionId] || { selectedOptionId: "", freeformText: "" };
+      loop.reviewAnswers = {
+        ...loop.reviewAnswers,
+        [questionId]: {
+          ...existing,
+          selectedOptionId: (target as HTMLInputElement).value
+        }
+      };
+    }
+    return { handled: true, rerender: true };
+  }
+  if (actionValue === "review-notes") {
+    const loopId = state.activeLoopId;
+    const questionId = (target as HTMLElement).getAttribute("data-looper-question-id") || "";
+    const loop = state.loops.find((item) => item.id === loopId);
+    if (loop && questionId) {
+      const existing = loop.reviewAnswers[questionId] || { selectedOptionId: "", freeformText: "" };
+      loop.reviewAnswers = {
+        ...loop.reviewAnswers,
+        [questionId]: {
+          ...existing,
+          freeformText: (target as HTMLTextAreaElement).value
+        }
+      };
     }
     return { handled: true, rerender: false };
   }

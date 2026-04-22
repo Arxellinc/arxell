@@ -1186,6 +1186,8 @@ export interface LooperLoopRecord {
   projectType: string;
   projectIcon: string;
   projectDescription: string;
+  reviewBeforeExecute: boolean;
+  plannerPlan: string;
   pendingQuestions: LooperQuestion[];
 }
 
@@ -1204,6 +1206,7 @@ export interface LooperStartRequest {
   projectType: string;
   projectIcon: string;
   projectDescription: string;
+  reviewBeforeExecute: boolean;
 }
 
 export interface LooperStartResponse {
