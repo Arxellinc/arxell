@@ -34,6 +34,8 @@ pub struct CellState {
     pub input: String,
     pub computed: ComputedValue,
     pub error: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub style_id: Option<usize>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -62,6 +64,20 @@ pub struct WorkbookState {
     pub source: SheetSource,
     #[serde(default = "default_ai_model_id")]
     pub ai_model_id: String,
+    #[serde(default)]
+    pub styles: Vec<crate::services::sheets_jsonl::CellStyle>,
+    #[serde(default)]
+    pub undo_stack: Vec<WorkbookHistoryEntry>,
+    #[serde(default)]
+    pub redo_stack: Vec<WorkbookHistoryEntry>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkbookHistoryEntry {
+    pub sheets: Vec<SheetState>,
+    pub active_sheet: usize,
+    pub styles: Vec<crate::services::sheets_jsonl::CellStyle>,
 }
 
 fn default_source() -> SheetSource {
@@ -107,6 +123,14 @@ pub struct SheetCellSnapshot {
     pub display: String,
     pub kind: SheetCellKind,
     pub error: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub format: Option<String>,
+    #[serde(default)]
+    pub bold: bool,
+    #[serde(default)]
+    pub italic: bool,
+    #[serde(default)]
+    pub strikethrough: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -129,6 +153,10 @@ pub struct OpenSheetResult {
     pub sheet: SheetSnapshot,
     pub capabilities: CapabilitySet,
     pub ai_model_id: String,
+    #[serde(default)]
+    pub can_undo: bool,
+    #[serde(default)]
+    pub can_redo: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -153,6 +181,10 @@ pub struct InspectSheetResult {
     pub capabilities: Option<CapabilitySet>,
     #[serde(default = "default_ai_model_id")]
     pub ai_model_id: String,
+    #[serde(default)]
+    pub can_undo: bool,
+    #[serde(default)]
+    pub can_redo: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -223,12 +255,17 @@ impl CellState {
             input: String::new(),
             computed: ComputedValue::Empty,
             error: None,
+            style_id: None,
         }
     }
 }
 
 impl SheetState {
-    pub fn snapshot_cell(&self, coord: &CellCoord) -> SheetCellSnapshot {
+    pub fn snapshot_cell(
+        &self,
+        coord: &CellCoord,
+        styles: &[crate::services::sheets_jsonl::CellStyle],
+    ) -> SheetCellSnapshot {
         if let Some(cell) = self.cells.get(coord) {
             let kind = if cell.error.is_some() {
                 SheetCellKind::Error
@@ -240,16 +277,24 @@ impl SheetState {
                     ComputedValue::Boolean(_) => SheetCellKind::Boolean,
                 }
             };
+            let style = cell.style_id.and_then(|style_id| styles.get(style_id));
+            let format = style.and_then(|entry| entry.f.clone());
+            let marks = style.and_then(|entry| entry.m.as_ref());
             SheetCellSnapshot {
                 row: coord.row,
                 col: coord.col,
                 input: cell.input.clone(),
-                display: cell
-                    .error
-                    .clone()
-                    .unwrap_or_else(|| cell.computed.display_string()),
+                display: if cell.error.is_some() {
+                    "#ERROR".to_string()
+                } else {
+                    display_value_with_format(&cell.computed, format.as_deref())
+                },
                 kind,
                 error: cell.error.clone(),
+                format,
+                bold: has_style_mark(marks, "b"),
+                italic: has_style_mark(marks, "i"),
+                strikethrough: has_style_mark(marks, "s"),
             }
         } else {
             SheetCellSnapshot {
@@ -259,8 +304,33 @@ impl SheetState {
                 display: String::new(),
                 kind: SheetCellKind::Empty,
                 error: None,
+                format: None,
+                bold: false,
+                italic: false,
+                strikethrough: false,
             }
         }
+    }
+}
+
+fn has_style_mark(marks: Option<&Vec<String>>, mark: &str) -> bool {
+    marks
+        .map(|entries| entries.iter().any(|entry| entry == mark))
+        .unwrap_or(false)
+}
+
+fn display_value_with_format(value: &ComputedValue, format: Option<&str>) -> String {
+    match value {
+        ComputedValue::Number(number) => {
+            if let Some(pattern) = format {
+                if let Ok(rendered) = crate::services::sheets_formula::format_text_value(*number, pattern)
+                {
+                    return rendered;
+                }
+            }
+            format_number(*number)
+        }
+        _ => value.display_string(),
     }
 }
 

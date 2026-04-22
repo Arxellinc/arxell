@@ -12,7 +12,6 @@ Enable with:
 `TauriBridgeState` (in `src-tauri/src/ipc/tauri_bridge.rs`) holds managed state:
 - `chat: Arc<ChatCommandHandler>`
 - `terminal: Arc<TerminalCommandHandler>`
-- `flow_handler: Arc<FlowCommandHandler>`
 - `looper_handler: Arc<LooperCommandHandler>`
 - `voice_handler: Arc<VoiceCommandHandler>`
 - `hub: EventHub`
@@ -23,7 +22,8 @@ Enable with:
 - `permissions: Arc<PermissionService>`
 - `model_manager: Arc<ModelManagerService>`
 - `files: Arc<FilesService>`
-- `flow: Arc<FlowService>`
+- `sheets: Arc<SheetsService>`
+- `user_projects: Arc<UserProjectsService>`
 - `voice: Arc<VoiceRuntimeService>`
 
 Additional managed state (in `main.rs`):
@@ -95,13 +95,6 @@ All commands are registered via `tauri::generate_handler!` in `src-tauri/src/mai
 - `cmd_app_version`
 - `cmd_app_resource_usage`
 
-### Flow
-- `cmd_flow_start`
-- `cmd_flow_stop`
-- `cmd_flow_status`
-- `cmd_flow_list_runs`
-- `cmd_flow_rerun_validation`
-
 ### STT
 - `start_stt`
 - `stop_stt`
@@ -147,7 +140,7 @@ All commands are registered via `tauri::generate_handler!` in `src-tauri/src/mai
 2. Attach event forwarder:
    - `attach_event_forwarder(app.handle().clone(), app_context.ipc.event_hub())`
 3. Manage bridge state and auxiliary state:
-   - `TauriBridgeState { chat, terminal, flow_handler, looper_handler, voice_handler, hub, workspace_tools, api_registry, web_search, runtime, permissions, model_manager, files, flow, voice }`
+    - `TauriBridgeState { chat, terminal, looper_handler, voice_handler, hub, workspace_tools, api_registry, web_search, runtime, user_projects, permissions, model_manager, files, sheets, voice }`
    - `STTState::new()`
    - `TTSState::new()`
    - `AppResourceUsageState::new()`
@@ -159,7 +152,6 @@ All commands are registered via `tauri::generate_handler!` in `src-tauri/src/mai
 - Streaming actions include:
   - `chat.stream.start`, `chat.stream.chunk`, `chat.stream.reasoning_chunk`, `chat.stream.complete`, `chat.stream.error`
   - `terminal.output`
-  - `flow.run.start`, `flow.run.complete`, `flow.iteration.*`
   - `model.manager.*`
   - `conversation.*`
 

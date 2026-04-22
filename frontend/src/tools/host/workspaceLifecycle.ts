@@ -17,7 +17,6 @@ export interface WorkspaceToolLifecycleDeps {
   ensureSkillsLoaded: () => Promise<void>;
   ensureNotepadReady: () => Promise<void>;
   ensureSheetReady: () => Promise<void>;
-  refreshFlowRuns: () => Promise<void>;
   ensureOpenCodeInit: () => Promise<void>;
   ensureLooperInit: () => Promise<void>;
 }
@@ -60,11 +59,6 @@ export async function handleWorkspaceToolTabActivation(
 
   if (workspaceTab === "sheets-tool") {
     await deps.ensureSheetReady();
-    return true;
-  }
-
-  if (workspaceTab === "flow-tool") {
-    await deps.refreshFlowRuns();
     return true;
   }
 

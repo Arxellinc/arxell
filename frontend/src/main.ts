@@ -10,7 +10,6 @@ import type {
   ChatStreamReasoningChunkPayload,
   ConversationSummaryRecord,
   FilesListDirectoryEntry,
-  FlowRerunValidationResult,
   LlamaRuntimeStatusResponse,
   ModelManagerHfCandidate,
   ModelManagerInstalledModel,
@@ -61,12 +60,6 @@ import { renderWorkspaceToolsActions, renderWorkspaceToolsBody } from "./tools/m
 import { renderToolToolbar } from "./tools/ui/toolbar";
 import { DEFAULT_CHART_SOURCE } from "./tools/chart/bindings";
 import { renderMermaidInto } from "./tools/chart/runtime";
-import {
-  filterFlowEvents,
-  normalizeFlowRun as normalizeFlowRunView
-} from "./tools/flow/runtime";
-import type { FlowPhaseTranscriptEntry, FlowRunView } from "./tools/flow/state";
-import { applyFlowRuntimeEvent } from "./tools/host/flowEvents";
 import { applyLooperRuntimeEvent } from "./tools/host/looperEvents";
 import {
   dispatchWorkspaceToolChange,
@@ -80,10 +73,6 @@ import {
   dispatchWorkspaceToolSubmit,
   WORKSPACE_TOOL_TARGET_SELECTOR
 } from "./tools/host/workspaceDispatch";
-import {
-  createFlowRunsRefreshScheduler,
-  refreshFlowRunsFromToolInvoke
-} from "./tools/host/flowRefresh";
 import { handleWorkspaceToolTabActivation } from "./tools/host/workspaceLifecycle";
 import { createWorkspaceToolsRuntime } from "./tools/host/workspaceRuntime";
 import { buildWorkspaceToolViews } from "./tools/host/viewBuilder";
@@ -152,17 +141,10 @@ import {
 import { destroyOverlayScrollbars, syncOverlayScrollbars } from "./scrollbars";
 import {
   BOTTOM_BAR_PREF_KEYS,
-  FLOW_TERMINAL_PHASES,
   loadMicBubbleDismissed,
   loadPersistedBottomItem,
   loadPersistedChatModelId,
   loadPersistedChatRoutePreference,
-  loadPersistedFlowActivePhase,
-  loadPersistedFlowAdvancedOpen,
-  loadPersistedFlowAutoFollow,
-  loadPersistedFlowBottomPanel,
-  loadPersistedFlowPhaseSessionMap,
-  loadPersistedFlowSplit,
   loadPersistedLlamaMaxTokens,
   loadPersistedLlamaModelPath,
   loadPersistedShowAppResourcesCpu,
@@ -175,9 +157,6 @@ import {
   persistBottomItem,
   persistChatRoutePreference,
   persistChatModelId,
-  persistFlowPhaseSessionMap,
-  persistFlowActivePhase,
-  persistFlowWorkspacePrefs,
   persistLlamaMaxTokens,
   persistLlamaModelPath,
   persistMicBubbleDismissed,
@@ -225,7 +204,6 @@ import {
 } from "./app/events";
 import { createSendMessageHandler } from "./app/chatSend";
 import { installTauriSttListeners, registerClientEventBridge } from "./app/bootstrapEvents";
-import { createFlowPhaseTerminalEventHandler } from "./app/bootstrapFlowBridge";
 import { syncBootstrapRuntime, type TauriWindowHandle } from "./app/bootstrapRuntime";
 import { initializeSendMessageBinding } from "./app/sendMessageBootstrap";
 import { createWorkspaceToolManagerActions } from "./app/workspaceToolManagerActions";
@@ -248,11 +226,44 @@ let tauriWindowHandle: TauriWindowHandle | null = null;
 const FALLBACK_APP_VERSION = normalizeVersionLabel(APP_BUILD_VERSION);
 let preferredChatModelId = loadPersistedChatModelId();
 const initialWorkspaceTabCandidate = loadPersistedWorkspaceTab("events");
-const initialWorkspaceTab = isWorkspaceTab(initialWorkspaceTabCandidate)
+const initialWorkspaceTab = initialWorkspaceTabCandidate === "flow-tool"
+  ? "events"
+  : isWorkspaceTab(initialWorkspaceTabCandidate)
   ? initialWorkspaceTabCandidate
   : "events";
 type ConsoleView = "all" | "errors-warnings" | "security-events";
 type DisplayModePreference = DisplayMode | "system" | "terminal";
+type FlowRunView = { runId: string; status?: string; phaseSessionByName?: Record<string, string> };
+type FlowPhaseTranscriptEntry = unknown;
+type FlowRerunValidationResult = unknown;
+const FLOW_TERMINAL_PHASES: string[] = [];
+
+function filterFlowEvents(_events: AppEvent[], _filter: string, _limit: number): { forInspector: AppEvent[]; forRender: AppEvent[] } {
+  return { forInspector: [], forRender: [] };
+}
+
+function normalizeFlowRunView(run: { runId: string }): FlowRunView {
+  return { runId: run.runId };
+}
+
+function persistFlowPhaseSessionMap(_map: Record<string, string>): void {}
+function persistFlowActivePhase(_phase: string): void {}
+function persistFlowWorkspacePrefs(_state: unknown): void {}
+function loadPersistedFlowActivePhase(): string { return ""; }
+function loadPersistedFlowAdvancedOpen(): boolean { return false; }
+function loadPersistedFlowAutoFollow(): boolean { return false; }
+function loadPersistedFlowBottomPanel(): "terminal" | "validate" | "events" { return "events"; }
+function loadPersistedFlowPhaseSessionMap(): Record<string, string> { return {}; }
+function loadPersistedFlowSplit(): number { return 50; }
+
+async function refreshFlowRunsFromToolInvoke(_state: unknown, _deps: unknown): Promise<void> {}
+function createFlowRunsRefreshScheduler(_deps: { refresh: () => Promise<void>; delayMs?: number }): () => void {
+  return () => {};
+}
+function applyFlowRuntimeEvent(_state: unknown, _event: AppEvent, _scheduleRefresh: () => void): void {}
+function createFlowPhaseTerminalEventHandler(_deps: unknown): (event: AppEvent) => boolean {
+  return () => false;
+}
 type ChatModelOption = {
   id: string;
   label: string;
@@ -5939,6 +5950,12 @@ function mountActiveSheetsRuntime(sendMessage: (text: string) => Promise<void>):
         await workspaceToolsRuntime.ensureSheetReady();
       }
     },
+    undoSheet: async () => {
+      await workspaceToolsRuntime.undoSheet();
+    },
+    redoSheet: async () => {
+      await workspaceToolsRuntime.redoSheet();
+    },
     updateFormulaBarValue: (value) => {
       state.sheetsState.activeEditorValue = value;
     },
@@ -5957,6 +5974,9 @@ function mountActiveSheetsRuntime(sendMessage: (text: string) => Promise<void>):
     },
     fireWriteRange: async (startRow, startCol, values) => {
       await workspaceToolsRuntime.writeRange(startRow, startCol, values);
+    },
+    fireCopyPasteRange: async (srcStartRow, srcStartCol, srcEndRow, srcEndCol, destStartRow, destStartCol, values) => {
+      await workspaceToolsRuntime.copyPasteRange(srcStartRow, srcStartCol, srcEndRow, srcEndCol, destStartRow, destStartCol, values);
     },
     insertRows: async (index, count = 1) => {
       await workspaceToolsRuntime.insertRows(index, count);
@@ -7241,6 +7261,8 @@ function attachWorkspaceInteractions(sendMessage: (text: string) => Promise<void
         openSheetWithDialog: workspaceToolsRuntime.openSheetWithDialog,
         saveSheetCurrent: workspaceToolsRuntime.saveSheetCurrent,
         saveSheetWithDialog: workspaceToolsRuntime.saveSheetWithDialog,
+        undoSheet: workspaceToolsRuntime.undoSheet,
+        redoSheet: workspaceToolsRuntime.redoSheet,
         insertRows: workspaceToolsRuntime.insertRows,
         insertColumns: workspaceToolsRuntime.insertColumns,
         deleteRows: workspaceToolsRuntime.deleteRows,

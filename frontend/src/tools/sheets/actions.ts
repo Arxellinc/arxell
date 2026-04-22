@@ -1,9 +1,11 @@
 import type { ChatIpcClient } from "../../ipcClient.js";
+import { ensureUserProject, getActiveProjectName, getUserProjectRoots } from "../../projects.js";
 import {
   applySheetsSnapshotMeta,
   clearSheetsWorkbook,
   mergeSheetsCells,
   replaceSheetsCells,
+  resetSheetsViewState,
   syncEditorValue,
   type SheetsCellSnapshot,
   type SheetsInspectResult,
@@ -25,7 +27,7 @@ interface ToolInvokeResponse<T> {
 }
 
 export async function openSheetWithDialog(slice: SheetsToolState, deps: SheetsDeps): Promise<void> {
-  const requested = await pickOpenSheetPath(slice.filePath || undefined);
+  const requested = await pickOpenSheetPath(slice.filePath || undefined, deps);
   if (!requested) return;
   await openSheet(slice, deps, requested);
 }
@@ -41,6 +43,7 @@ export async function createNewSheet(slice: SheetsToolState, deps: SheetsDeps): 
   slice.statusMessage = "Creating sheet...";
   try {
     const meta = await invokeSheets<SheetsInspectResult>(deps, "new_sheet", {});
+    resetSheetsViewState(slice);
     applySheetsSnapshotMeta(slice, meta);
     if (meta.capabilities && Object.keys(meta.capabilities).length > 0) {
       slice.capabilities = meta.capabilities;
@@ -62,7 +65,11 @@ export async function createNewSheet(slice: SheetsToolState, deps: SheetsDeps): 
 
 export async function saveSheetWithDialog(slice: SheetsToolState, deps: SheetsDeps): Promise<void> {
   if (!slice.hasWorkbook) return;
-  const requested = await pickSaveSheetPath(slice.filePath || slice.fileName || "sheet.csv");
+  const requested = await pickSaveSheetPath(
+    slice.filePath || slice.fileName || `sheet${sheetExtension(slice.sourceKind)}`,
+    slice.sourceKind,
+    deps
+  );
   if (!requested) return;
   await saveSheet(slice, deps, requested);
 }
@@ -83,6 +90,7 @@ export async function openSheet(slice: SheetsToolState, deps: SheetsDeps, path: 
   slice.statusMessage = "Opening sheet...";
   try {
     const response = await invokeSheets<SheetsOpenSheetResult>(deps, "open_sheet", { path });
+    resetSheetsViewState(slice);
     applySheetsSnapshotMeta(slice, {
       filePath: response.filePath,
       fileName: response.fileName,
@@ -91,7 +99,9 @@ export async function openSheet(slice: SheetsToolState, deps: SheetsDeps, path: 
       usedRange: response.sheet.usedRange,
       dirty: response.sheet.dirty,
       revision: response.sheet.revision,
-      aiModelId: response.aiModelId
+      aiModelId: response.aiModelId,
+      canUndo: response.canUndo ?? false,
+      canRedo: response.canRedo ?? false
     });
     slice.capabilities = response.capabilities ?? {};
     slice.sourceKind = Object.keys(response.capabilities ?? {}).length > 0
@@ -200,6 +210,19 @@ export async function setCellInput(
     throw new Error("Sheets IPC client is unavailable or no workbook is open.");
   }
   slice.lastError = null;
+  const isAiFormula = looksLikeAiFormula(input);
+  if (isAiFormula) {
+    mergeSheetsCells(slice, [{
+      row,
+      col,
+      input,
+      display: "Processing...",
+      kind: "text",
+      error: null
+    }]);
+    syncEditorValue(slice);
+    slice.statusMessage = "Processing AI formula...";
+  }
   try {
     const result = await invokeSheets<{ revision: number; updatedCells: SheetsCellSnapshot[]; dirty: boolean }>(deps, "set_cell", {
       row,
@@ -209,11 +232,18 @@ export async function setCellInput(
     });
     slice.dirty = result.dirty;
     slice.revision = result.revision;
-    await refreshSheetSnapshot(slice, deps);
+    mergeSheetsCells(slice, result.updatedCells);
+    syncEditorValue(slice);
+    if (isAiFormula) slice.statusMessage = null;
   } catch (error) {
     slice.lastError = error instanceof Error ? error.message : String(error);
+    if (isAiFormula) slice.statusMessage = null;
     throw error;
   }
+}
+
+function looksLikeAiFormula(input: string): boolean {
+  return /^\s*=\s*AI\s*\(/i.test(input);
 }
 
 export async function writeRange(
@@ -238,6 +268,51 @@ export async function writeRange(
     slice.revision = result.revision;
 
     // Read back updated cells to get formula results
+    if (result.updatedRange) {
+      const readResult = await invokeSheets<{ cells: SheetsCellSnapshot[] }>(deps, "read_range", {
+        startRow: result.updatedRange.startRow,
+        startCol: result.updatedRange.startCol,
+        endRow: result.updatedRange.endRow,
+        endCol: result.updatedRange.endCol
+      });
+      mergeSheetsCells(slice, readResult.cells);
+      syncEditorValue(slice);
+    }
+  } catch (error) {
+    slice.lastError = error instanceof Error ? error.message : String(error);
+    throw error;
+  }
+}
+
+export async function copyPasteRange(
+  slice: SheetsToolState,
+  deps: SheetsDeps,
+  srcStartRow: number,
+  srcStartCol: number,
+  srcEndRow: number,
+  srcEndCol: number,
+  destStartRow: number,
+  destStartCol: number,
+  values: string[][]
+): Promise<void> {
+  if (!deps.client || !slice.hasWorkbook) {
+    throw new Error("Sheets IPC client is unavailable or no workbook is open.");
+  }
+  slice.lastError = null;
+  try {
+    const result = await invokeSheets<{ revision: number; updatedRange: { startRow: number; startCol: number; endRow: number; endCol: number } | null; dirty: boolean }>(deps, "copy_paste_range", {
+      srcStartRow,
+      srcStartCol,
+      srcEndRow,
+      srcEndCol,
+      destStartRow,
+      destStartCol,
+      values,
+      source: "user"
+    });
+    slice.dirty = result.dirty;
+    slice.revision = result.revision;
+
     if (result.updatedRange) {
       const readResult = await invokeSheets<{ cells: SheetsCellSnapshot[] }>(deps, "read_range", {
         startRow: result.updatedRange.startRow,
@@ -346,6 +421,34 @@ export async function deleteColumns(
   }
 }
 
+export async function undo(slice: SheetsToolState, deps: SheetsDeps): Promise<void> {
+  if (!deps.client || !slice.hasWorkbook) return;
+  slice.pending = true;
+  slice.lastError = null;
+  try {
+    await invokeSheets(deps, "undo", {});
+    await refreshSheetSnapshot(slice, deps);
+  } catch (error) {
+    slice.lastError = error instanceof Error ? error.message : String(error);
+  } finally {
+    slice.pending = false;
+  }
+}
+
+export async function redo(slice: SheetsToolState, deps: SheetsDeps): Promise<void> {
+  if (!deps.client || !slice.hasWorkbook) return;
+  slice.pending = true;
+  slice.lastError = null;
+  try {
+    await invokeSheets(deps, "redo", {});
+    await refreshSheetSnapshot(slice, deps);
+  } catch (error) {
+    slice.lastError = error instanceof Error ? error.message : String(error);
+  } finally {
+    slice.pending = false;
+  }
+}
+
 async function loadUsedRangeCells(
   deps: SheetsDeps,
   usedRange: SheetsUsedRange | null
@@ -395,7 +498,8 @@ function extractSheetsErrorMessage(value: string | undefined): string {
   return value;
 }
 
-async function pickOpenSheetPath(defaultPath?: string): Promise<string | null> {
+async function pickOpenSheetPath(defaultPath: string | undefined, deps: SheetsDeps): Promise<string | null> {
+  const resolvedDefaultPath = defaultPath || await getDefaultSheetsPath(deps, "sheet.csv");
   if ((window as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__) {
     try {
       const { invoke } = await import("@tauri-apps/api/core");
@@ -404,7 +508,7 @@ async function pickOpenSheetPath(defaultPath?: string): Promise<string | null> {
           title: "Open Sheet",
           directory: false,
           multiple: false,
-          defaultPath
+          defaultPath: resolvedDefaultPath
         }
       });
       if (Array.isArray(selected)) return selected[0] ?? null;
@@ -413,26 +517,79 @@ async function pickOpenSheetPath(defaultPath?: string): Promise<string | null> {
       // Fall back to prompt.
     }
   }
-  const entered = window.prompt("Open sheet path", defaultPath ?? "")?.trim();
+  const entered = window.prompt("Open sheet path", resolvedDefaultPath)?.trim();
   return entered || null;
 }
 
-async function pickSaveSheetPath(defaultPath: string): Promise<string | null> {
+async function pickSaveSheetPath(defaultPath: string, sourceKind: string, deps: SheetsDeps): Promise<string | null> {
+  const filters = saveDialogFilters(sourceKind);
+  const resolvedDefaultPath = await getDefaultSheetsPath(deps, defaultPath);
   if ((window as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__) {
     try {
       const { invoke } = await import("@tauri-apps/api/core");
-      return await invoke<string | null>("plugin:dialog|save", {
+      const selected = await invoke<string | null>("plugin:dialog|save", {
         options: {
           title: "Save Sheet",
-          defaultPath
+          defaultPath: ensurePathExtension(resolvedDefaultPath, sheetExtension(sourceKind)),
+          filters
         }
       });
+      return selected ? ensurePathExtension(selected, sheetExtension(sourceKind)) : null;
     } catch {
       // Fall back to prompt.
     }
   }
-  const entered = window.prompt("Save Sheet", defaultPath)?.trim();
-  return entered || null;
+  const entered = window.prompt(
+    `Save Sheet (${filters.map(filter => `${filter.name}: ${filter.extensions.map(ext => `.${ext}`).join(", ")}`).join(" | ")})`,
+    ensurePathExtension(resolvedDefaultPath, sheetExtension(sourceKind))
+  )?.trim();
+  return entered ? ensurePathExtension(entered, sheetExtension(sourceKind)) : null;
+}
+
+async function getDefaultSheetsPath(deps: SheetsDeps, fileName: string): Promise<string> {
+  const normalizedFileName = basename(fileName || "sheet.csv") || "sheet.csv";
+  if (!deps.client) return normalizedFileName;
+  const activeProjectName = getActiveProjectName();
+  if (activeProjectName) {
+    const project = await ensureUserProject(deps.client, deps.nextCorrelationId(), activeProjectName);
+    return joinPath(project.sheetsPath, normalizedFileName);
+  }
+  const roots = await getUserProjectRoots(deps.client, deps.nextCorrelationId());
+  return joinPath(roots.projectsRoot, normalizedFileName);
+}
+
+function joinPath(dir: string, name: string): string {
+  return `${dir.replace(/[\\/]+$/, "")}/${name.replace(/^[/\\]+/, "")}`;
+}
+
+function saveDialogFilters(sourceKind: string): Array<{ name: string; extensions: string[] }> {
+  if (sourceKind === "nativeJsonl") {
+    return [{ name: "Native Sheets", extensions: ["jsonl"] }];
+  }
+  if (sourceKind === "sqliteTable") {
+    return [{ name: "SQLite", extensions: ["sqlite"] }];
+  }
+  return [{ name: "CSV", extensions: ["csv"] }];
+}
+
+function sheetExtension(sourceKind: string): string {
+  if (sourceKind === "nativeJsonl") return ".jsonl";
+  if (sourceKind === "sqliteTable") return ".sqlite";
+  return ".csv";
+}
+
+function ensurePathExtension(path: string, extension: string): string {
+  const trimmed = path.trim();
+  if (!trimmed) return trimmed;
+  const normalizedExtension = extension.startsWith(".") ? extension : `.${extension}`;
+  const lastSlash = Math.max(trimmed.lastIndexOf("/"), trimmed.lastIndexOf("\\"));
+  const dir = lastSlash >= 0 ? trimmed.slice(0, lastSlash + 1) : "";
+  const file = lastSlash >= 0 ? trimmed.slice(lastSlash + 1) : trimmed;
+  if (!file) return `${trimmed}${normalizedExtension}`;
+  if (/\.[^./\\]+$/.test(file)) {
+    return `${dir}${file.replace(/\.[^./\\]+$/, normalizedExtension)}`;
+  }
+  return `${trimmed}${normalizedExtension}`;
 }
 
 function basename(path: string): string {

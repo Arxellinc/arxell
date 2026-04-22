@@ -194,21 +194,6 @@ Additional file operations via `cmd_tool_invoke` (`toolId: "files"`):
 
 ---
 
-## Flow Commands
-
-| Command | Input | Output |
-|---------|-------|--------|
-| `cmd_flow_start` | `FlowStartRequest` | `FlowStartResponse` |
-| `cmd_flow_stop` | `FlowStopRequest` | `FlowStopResponse` |
-| `cmd_flow_status` | `FlowStatusRequest` | `FlowStatusResponse` |
-| `cmd_flow_list_runs` | `FlowListRunsRequest` | `FlowListRunsResponse` |
-| `cmd_flow_rerun_validation` | `FlowRerunValidationRequest` | `FlowRerunValidationResponse` |
-
-Additional flow operations via `cmd_tool_invoke` (`toolId: "flow"`):
-- `pause` / `set-paused` → `FlowPauseRequest` / `FlowPauseResponse`
-- `nudge` / `redirect` → `FlowNudgeRequest` / `FlowNudgeResponse`
-
-### Flow Streaming Actions
 - `flow.run.start`
   - stage: `start`
   - payload: `{ runId, mode }`

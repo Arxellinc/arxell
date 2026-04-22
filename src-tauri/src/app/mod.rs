@@ -1,10 +1,10 @@
 pub mod chat_service;
 pub mod files_service;
-pub mod flow_service;
 pub mod model_manager_service;
 pub mod permission_service;
 pub mod runtime_service;
 pub mod terminal_service;
+pub mod user_projects_service;
 pub mod voice_handoff_service;
 pub mod voice_runtime_service;
 pub mod voice_speculation_service;
@@ -26,11 +26,11 @@ pub struct AppContext {
     pub api_registry: Arc<ApiRegistryService>,
     pub web_search: Arc<web_search_service::WebSearchService>,
     pub runtime: Arc<runtime_service::LlamaRuntimeService>,
+    pub user_projects: Arc<user_projects_service::UserProjectsService>,
     pub permissions: Arc<permission_service::PermissionService>,
     pub model_manager: Arc<model_manager_service::ModelManagerService>,
     pub files: Arc<files_service::FilesService>,
     pub sheets: Arc<SheetsService>,
-    pub flow: Arc<flow_service::FlowService>,
     pub looper: Arc<LooperHandler>,
     pub voice: Arc<voice_runtime_service::VoiceRuntimeService>,
 }
@@ -61,15 +61,11 @@ impl AppContext {
         ));
         let terminal = Arc::new(terminal_service::TerminalService::new(hub.clone()));
         let runtime = Arc::new(runtime_service::LlamaRuntimeService::new(hub.clone()));
+        let user_projects = Arc::new(user_projects_service::UserProjectsService::new());
+        let _ = user_projects.ensure_roots();
         let permissions = Arc::new(permission_service::PermissionService::new(hub.clone()));
         let model_manager = Arc::new(model_manager_service::ModelManagerService::new(hub.clone()));
         let files = Arc::new(files_service::FilesService::new());
-        let flow = Arc::new(flow_service::FlowService::new_with_registry(
-            hub.clone(),
-            Some(Arc::clone(&api_registry)),
-            Some(Arc::clone(&workspace_tools)),
-            Some(Arc::clone(&web_search)),
-        ));
         let looper = Arc::new(LooperHandler::new(
             hub.clone(),
             Arc::clone(&terminal),
@@ -85,7 +81,6 @@ impl AppContext {
             hub,
             service,
             Arc::clone(&terminal),
-            Arc::clone(&flow),
             Arc::clone(&looper),
             Arc::clone(&voice),
         );
@@ -95,11 +90,11 @@ impl AppContext {
             api_registry,
             web_search,
             runtime,
+            user_projects,
             permissions,
             model_manager,
             files,
             sheets,
-            flow,
             looper,
             voice,
         }
@@ -118,7 +113,6 @@ impl AppContext {
         crate::ipc::tauri_bridge::TauriBridgeState {
             chat: Arc::new(self.ipc.chat.clone()),
             terminal: Arc::new(self.ipc.terminal.clone()),
-            flow_handler: Arc::new(self.ipc.flow.clone()),
             looper_handler: Arc::new(self.ipc.looper.clone()),
             voice_handler: Arc::new(self.ipc.voice.clone()),
             hub: self.ipc.event_hub(),
@@ -126,11 +120,11 @@ impl AppContext {
             api_registry: Arc::clone(&self.api_registry),
             web_search: Arc::clone(&self.web_search),
             runtime: Arc::clone(&self.runtime),
+            user_projects: Arc::clone(&self.user_projects),
             permissions: Arc::clone(&self.permissions),
             model_manager: Arc::clone(&self.model_manager),
             files: Arc::clone(&self.files),
             sheets: Arc::clone(&self.sheets),
-            flow: Arc::clone(&self.flow),
             voice: Arc::clone(&self.voice),
         }
     }

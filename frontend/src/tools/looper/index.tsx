@@ -9,6 +9,7 @@ import type {
   LooperToolState
 } from "./state";
 import {
+  getLooperTargetDirectory,
   LOOPER_PHASES,
   LOOPER_PHASE_LABELS,
   LOOPER_PHASE_ICONS,
@@ -106,6 +107,7 @@ export function renderLooperToolActions(state: LooperToolState): string {
 
 export function renderLooperToolBody(state: LooperToolState): string {
   if (!state.loops.length) {
+    const targetDirectory = getLooperTargetDirectory(state);
     return `<div class="looper-workspace">
       <div class="looper-placeholder">
         ${iconHtml("refresh-cw", { size: 24, tone: "dark" })}
@@ -115,6 +117,7 @@ export function renderLooperToolBody(state: LooperToolState): string {
           <label class="looper-splash-field">
             <span>App/Project/Tool Name:</span>
             <input type="text" id="${LOOPER_UI_ID.splashProjectName}" value="${esc(state.projectNameDraft)}" ${LOOPER_DATA_ATTR.action}="splash-project-name" placeholder="my-project" />
+            <span class="looper-splash-path-preview">${esc(targetDirectory || "Target directory will appear here.")}</span>
           </label>
           <label class="looper-splash-field">
             <span>Project Type</span>
@@ -142,8 +145,8 @@ export function renderLooperToolBody(state: LooperToolState): string {
             <summary>Advanced</summary>
             <div class="looper-splash-advanced-grid">
               <label class="looper-splash-field">
-                <span>Working Directory</span>
-                <input type="text" value="${esc(state.configCwdDraft)}" ${LOOPER_DATA_ATTR.action}="config-cwd" placeholder="." />
+                <span>Project Directory</span>
+                <input type="text" value="${esc(state.configCwdDraft)}" ${LOOPER_DATA_ATTR.action}="config-cwd" placeholder="Documents/Arxell/Projects/my-project/looper" />
               </label>
               <label class="looper-splash-field">
                 <span>Max Iterations</span>
@@ -296,7 +299,7 @@ function renderConfigModal(state: LooperToolState): string {
     <div class="looper-modal">
       <h2>${iconHtml("settings", { size: 16, tone: "dark" })} Loop Configuration</h2>
       <div class="looper-field">
-        <label for="${LOOPER_UI_ID.configCwd}">Working Directory</label>
+        <label for="${LOOPER_UI_ID.configCwd}">Project Directory</label>
         <input type="text" id="${LOOPER_UI_ID.configCwd}" value="${esc(state.configCwdDraft)}" ${LOOPER_DATA_ATTR.action}="config-cwd" />
       </div>
       <div class="looper-field">

@@ -1,7 +1,7 @@
 import { renderToolToolbar } from "../ui/toolbar";
 import { resolveFileTabIcon } from "../ui/fileTabIcons";
 import { SHEETS_DATA_ATTR, SHEETS_UI_ID } from "../ui/constants";
-import type { SheetsToolState } from "./state.js";
+import { areSheetsColumnsFiltered, getSelectedSheetColumns, type SheetsToolState } from "./state.js";
 import "./styles.css";
 
 export function renderSheetsToolActions(view: SheetsToolState): string {
@@ -11,7 +11,17 @@ export function renderSheetsToolActions(view: SheetsToolState): string {
   const canInsertCols = can?.insertCols !== false;
   const canDeleteRows = can?.deleteRows !== false;
   const canDeleteCols = can?.deleteCols !== false;
+  const canUndo = view.canUndo;
+  const canRedo = view.canRedo;
+  const canFormat = can?.formats === true;
+  const canStyle = can?.styles === true;
+  const canFilter = can?.formats === true;
+  const canFreeze = can?.frozenPanes === true;
+  const canHyperlink = can?.styles === true;
   const disabled = !view.hasWorkbook || view.pending;
+  const selectedColumns = getSelectedSheetColumns(view);
+  const canToggleFilter = selectedColumns.length > 0;
+  const selectedColumnsFiltered = areSheetsColumnsFiltered(view, selectedColumns);
   return renderToolToolbar({
     tabsMode: "static",
     tabs: [
@@ -54,7 +64,7 @@ export function renderSheetsToolActions(view: SheetsToolState): string {
       {
         id: "sheets-save-as",
         title: "Save Sheet As",
-        icon: "file-output",
+        icon: "save-all",
         disabled,
         buttonAttrs: {
           [SHEETS_DATA_ATTR.action]: "save-sheet-as"
@@ -64,7 +74,7 @@ export function renderSheetsToolActions(view: SheetsToolState): string {
         id: "sheets-undo",
         title: "Undo",
         icon: "undo",
-        disabled,
+        disabled: disabled || !canUndo,
         buttonAttrs: {
           [SHEETS_DATA_ATTR.action]: "undo"
         }
@@ -73,110 +83,111 @@ export function renderSheetsToolActions(view: SheetsToolState): string {
         id: "sheets-redo",
         title: "Redo",
         icon: "redo",
-        disabled,
+        disabled: disabled || !canRedo,
         buttonAttrs: {
           [SHEETS_DATA_ATTR.action]: "redo"
         }
       },
       {
         id: "sheets-format-currency",
-        title: "Currency Format",
+        title: toolbarTitle("Currency Format", view.hasWorkbook, canFormat),
         icon: "dollar-sign",
         className: "sheets-toolbar-divider-before",
-        disabled,
+        disabled: disabled || !canFormat,
         buttonAttrs: {
           [SHEETS_DATA_ATTR.action]: "format-currency"
         }
       },
       {
         id: "sheets-format-percent",
-        title: "Percent Format",
+        title: toolbarTitle("Percent Format", view.hasWorkbook, canFormat),
         icon: "percent",
-        disabled,
+        disabled: disabled || !canFormat,
         buttonAttrs: {
           [SHEETS_DATA_ATTR.action]: "format-percent"
         }
       },
       {
         id: "sheets-format-number",
-        title: "Number Format",
+        title: toolbarTitle("Number Format", view.hasWorkbook, canFormat),
         icon: "hash",
-        disabled,
+        disabled: disabled || !canFormat,
         buttonAttrs: {
           [SHEETS_DATA_ATTR.action]: "format-number"
         }
       },
       {
         id: "sheets-format-date",
-        title: "Date Format",
+        title: toolbarTitle("Date Format", view.hasWorkbook, canFormat),
         icon: "calendar",
-        disabled,
+        disabled: disabled || !canFormat,
         buttonAttrs: {
           [SHEETS_DATA_ATTR.action]: "format-date"
         }
       },
       {
         id: "sheets-format-datetime",
-        title: "Date Time Format",
+        title: toolbarTitle("Date Time Format", view.hasWorkbook, canFormat),
         icon: "calendar-clock",
         className: "sheets-toolbar-divider-after",
-        disabled,
+        disabled: disabled || !canFormat,
         buttonAttrs: {
           [SHEETS_DATA_ATTR.action]: "format-datetime"
         }
       },
       {
         id: "sheets-style-bold",
-        title: "Bold",
+        title: toolbarTitle("Bold", view.hasWorkbook, canStyle),
         icon: "bold",
         className: "sheets-toolbar-divider-before",
-        disabled,
+        disabled: disabled || !canStyle,
         buttonAttrs: {
           [SHEETS_DATA_ATTR.action]: "style-bold"
         }
       },
       {
         id: "sheets-style-italic",
-        title: "Italic",
+        title: toolbarTitle("Italic", view.hasWorkbook, canStyle),
         icon: "italic",
-        disabled,
+        disabled: disabled || !canStyle,
         buttonAttrs: {
           [SHEETS_DATA_ATTR.action]: "style-italic"
         }
       },
       {
         id: "sheets-style-strikethrough",
-        title: "Strikethrough",
+        title: toolbarTitle("Strikethrough", view.hasWorkbook, canStyle),
         icon: "strikethrough",
         className: "sheets-toolbar-divider-after",
-        disabled,
+        disabled: disabled || !canStyle,
         buttonAttrs: {
           [SHEETS_DATA_ATTR.action]: "style-strikethrough"
         }
       },
       {
         id: "sheets-create-filter",
-        title: "Create Filter",
-        icon: "list-filter-plus",
-        disabled,
+        title: selectedColumnsFiltered ? "Remove Filter" : toolbarTitle("Add Filter", view.hasWorkbook, canFilter),
+        icon: "funnel-plus",
+        active: selectedColumnsFiltered,
+        disabled: disabled || !canFilter || !canToggleFilter,
         buttonAttrs: {
           [SHEETS_DATA_ATTR.action]: "create-filter"
         }
       },
       {
         id: "sheets-freeze-first-row",
-        title: "Freeze First Row",
+        title: toolbarTitle("Freeze First Row", view.hasWorkbook, canFreeze),
         icon: "panel-top",
-        disabled,
+        disabled: disabled || !canFreeze,
         buttonAttrs: {
           [SHEETS_DATA_ATTR.action]: "freeze-first-row"
         }
       },
       {
         id: "sheets-hyperlink",
-        title: "Hyperlink",
+        title: toolbarTitle("Hyperlink", view.hasWorkbook, canHyperlink),
         icon: "link",
-        disabled,
+        disabled: disabled || !canHyperlink,
         buttonAttrs: {
           [SHEETS_DATA_ATTR.action]: "hyperlink"
         }
@@ -184,7 +195,7 @@ export function renderSheetsToolActions(view: SheetsToolState): string {
       {
         id: "sheets-add-row",
         title: "Add Row",
-        icon: "plus",
+        icon: "between-horizontal-start",
         disabled: disabled || !canInsertRows,
         buttonAttrs: {
           [SHEETS_DATA_ATTR.action]: "add-row"
@@ -193,7 +204,7 @@ export function renderSheetsToolActions(view: SheetsToolState): string {
       {
         id: "sheets-add-column",
         title: "Add Column",
-        icon: "plus",
+        icon: "between-vertical-start",
         disabled: disabled || !canInsertCols,
         buttonAttrs: {
           [SHEETS_DATA_ATTR.action]: "add-column"
@@ -202,7 +213,7 @@ export function renderSheetsToolActions(view: SheetsToolState): string {
       {
         id: "sheets-delete-row",
         title: "Delete Selected Row",
-        icon: "minus",
+        icon: "fold-vertical",
         disabled: disabled || !canDeleteRows,
         buttonAttrs: {
           [SHEETS_DATA_ATTR.action]: "delete-row"
@@ -211,7 +222,7 @@ export function renderSheetsToolActions(view: SheetsToolState): string {
       {
         id: "sheets-delete-column",
         title: "Delete Selected Column",
-        icon: "minus",
+        icon: "fold-horizontal",
         disabled: disabled || !canDeleteCols,
         buttonAttrs: {
           [SHEETS_DATA_ATTR.action]: "delete-column"
@@ -219,6 +230,11 @@ export function renderSheetsToolActions(view: SheetsToolState): string {
       }
     ]
   });
+}
+
+function toolbarTitle(label: string, hasWorkbook: boolean, supported: boolean): string {
+  if (!hasWorkbook) return label;
+  return supported ? label : `${label} (Not supported in this format)`;
 }
 
 function getSheetTabLabel(view: SheetsToolState): string {

@@ -40,56 +40,8 @@ pub async fn invoke_tool(
     static REGISTRY: OnceLock<InvokeRegistry> = OnceLock::new();
     let registry = REGISTRY.get_or_init(build_registry);
 
-    // Enforce ToolMode for flow tool side-effect actions
-    if request.tool_id == "flow" {
-        match request.action.as_str() {
-            "start" => {
-                // dryRun=false requires non-sandbox mode
-                if let Some(dry_run) = request.payload.get("dryRun").and_then(|v| v.as_bool()) {
-                    if !dry_run && matches!(request.mode, ToolMode::Sandbox) {
-                        return Ok(tool_invoke_err(
-                            &request,
-                            "flow.start with dryRun=false requires mode other than sandbox"
-                                .to_string(),
-                        ));
-                    }
-                }
-                // autoPush=true requires non-sandbox mode
-                if let Some(auto_push) = request.payload.get("autoPush").and_then(|v| v.as_bool()) {
-                    if auto_push && matches!(request.mode, ToolMode::Sandbox) {
-                        return Ok(tool_invoke_err(
-                            &request,
-                            "flow.start with autoPush=true requires mode other than sandbox"
-                                .to_string(),
-                        ));
-                    }
-                }
-                // useAgent=true requires non-sandbox mode (agent can write/execute files)
-                if let Some(use_agent) = request.payload.get("useAgent").and_then(|v| v.as_bool()) {
-                    if use_agent && matches!(request.mode, ToolMode::Sandbox) {
-                        return Ok(tool_invoke_err(
-                            &request,
-                            "flow.start with useAgent=true requires mode other than sandbox"
-                                .to_string(),
-                        ));
-                    }
-                }
-            }
-            "rerun-validation" => {
-                if matches!(request.mode, ToolMode::Sandbox) {
-                    return Ok(tool_invoke_err(
-                        &request,
-                        "flow.rerun-validation requires mode other than sandbox".to_string(),
-                    ));
-                }
-            }
-            _ => {}
-        }
-    }
-
     // Gate tool invocation by workspace-tool enablement
     let tool_enablement_map: &[(&str, &str)] = &[
-        ("flow", "flow"),
         ("files", "files"),
         ("looper", "looper"),
         ("sheets", "sheets"),

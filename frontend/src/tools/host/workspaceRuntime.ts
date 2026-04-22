@@ -22,16 +22,6 @@ import {
 } from "../files/actions";
 import type { FilesConflictResolution } from "../files/actions";
 import {
-  nudgeFlowRun,
-  setFlowRunPaused,
-  rerunFlowValidation,
-  resumeFlowRun,
-  retryFlowRun,
-  startFlowRun,
-  stopFlowRun
-} from "../flow/actions";
-import type { FlowRunView, FlowRuntimeSlice } from "../flow/state";
-import {
   createAndActivateWebTab,
   ensureWebTabs,
   getActiveWebTab,
@@ -67,9 +57,12 @@ import {
   refreshSheetSnapshot,
   saveSheetCurrent,
   saveSheetWithDialog,
+  undo as undoSheets,
+  redo as redoSheets,
   setAiModel as setSheetsAiModel,
   setCellInput as setSheetsCellInput,
-  writeRange as writeSheetsRange
+  writeRange as writeSheetsRange,
+  copyPasteRange as copyPasteSheetsRange
 } from "../sheets/actions";
 import type { SheetsToolState } from "../sheets/state";
 
@@ -121,8 +114,7 @@ interface DocsRuntimeSlice {
 }
 
 export interface WorkspaceToolsRuntimeState
-  extends FlowRuntimeSlice,
-    FilesRuntimeSlice,
+  extends FilesRuntimeSlice,
     NotepadRuntimeSlice,
     DocsRuntimeSlice,
     Omit<WebSearchSlice, "apiConnections"> {
@@ -133,7 +125,6 @@ export interface WorkspaceToolsRuntimeState
 export interface WorkspaceToolsRuntimeDeps {
   getClient: () => ChatIpcClient | null;
   nextCorrelationId: () => string;
-  refreshFlowRuns: () => Promise<void>;
   refreshTools: () => Promise<void>;
   refreshApiConnections: () => Promise<void>;
   createWebTab: (index: number) => WebTabState;
@@ -142,9 +133,9 @@ export interface WorkspaceToolsRuntimeDeps {
 
 export interface WorkspaceToolsRuntime {
   startFlowRun: () => Promise<void>;
-  retryFlowRun: (baseRun: FlowRunView) => Promise<void>;
-  resumeFlowRun: (baseRun: FlowRunView) => Promise<void>;
-  rerunFlowValidation: (baseRun: FlowRunView) => Promise<void>;
+  retryFlowRun: (baseRun: { runId: string }) => Promise<void>;
+  resumeFlowRun: (baseRun: { runId: string }) => Promise<void>;
+  rerunFlowValidation: (baseRun: { runId: string }) => Promise<void>;
   stopFlowRun: () => Promise<void>;
   setFlowPaused: (paused: boolean) => Promise<void>;
   nudgeFlowRun: (message: string) => Promise<void>;
@@ -189,11 +180,14 @@ export interface WorkspaceToolsRuntime {
   openSheetWithDialog: () => Promise<void>;
   saveSheetCurrent: () => Promise<void>;
   saveSheetWithDialog: () => Promise<void>;
+  undoSheet: () => Promise<void>;
+  redoSheet: () => Promise<void>;
   refreshSheetSnapshot: () => Promise<void>;
   readVisibleRange: () => Promise<void>;
   setAiModel: (modelId: string) => Promise<void>;
   setCellInput: (row: number, col: number, input: string) => Promise<void>;
   writeRange: (startRow: number, startCol: number, values: string[][]) => Promise<void>;
+  copyPasteRange: (srcStartRow: number, srcStartCol: number, srcEndRow: number, srcEndCol: number, destStartRow: number, destStartCol: number, values: string[][]) => Promise<void>;
   insertRows: (index: number, count?: number) => Promise<void>;
   insertColumns: (index: number, count?: number) => Promise<void>;
   deleteRows: (index: number, count?: number) => Promise<void>;
@@ -209,14 +203,6 @@ export function createWorkspaceToolsRuntime(
   state: WorkspaceToolsRuntimeState,
   deps: WorkspaceToolsRuntimeDeps
 ): WorkspaceToolsRuntime {
-  const flowDeps = {
-    get client() {
-      return deps.getClient();
-    },
-    nextCorrelationId: deps.nextCorrelationId,
-    refreshFlowRuns: deps.refreshFlowRuns
-  };
-
   const filesDeps = {
     get client() {
       return deps.getClient();
@@ -249,27 +235,13 @@ export function createWorkspaceToolsRuntime(
   };
 
   return {
-    startFlowRun: async () => {
-      await startFlowRun(state, flowDeps);
-    },
-    retryFlowRun: async (baseRun) => {
-      await retryFlowRun(state, flowDeps, baseRun);
-    },
-    resumeFlowRun: async (baseRun) => {
-      await resumeFlowRun(state, flowDeps, baseRun);
-    },
-    rerunFlowValidation: async (baseRun) => {
-      await rerunFlowValidation(state, flowDeps, baseRun);
-    },
-    stopFlowRun: async () => {
-      await stopFlowRun(state, flowDeps);
-    },
-    setFlowPaused: async (paused) => {
-      await setFlowRunPaused(state, flowDeps, paused);
-    },
-    nudgeFlowRun: async (message) => {
-      await nudgeFlowRun(state, flowDeps, message);
-    },
+    startFlowRun: async () => {},
+    retryFlowRun: async (_baseRun) => {},
+    resumeFlowRun: async (_baseRun) => {},
+    rerunFlowValidation: async (_baseRun) => {},
+    stopFlowRun: async () => {},
+    setFlowPaused: async (_paused) => {},
+    nudgeFlowRun: async (_message) => {},
     getActiveWebTab: () => getActiveWebTab(state),
     withActiveWebTab: (mutator) => {
       withActiveWebTab(state, mutator);
@@ -378,6 +350,12 @@ export function createWorkspaceToolsRuntime(
     saveSheetWithDialog: async () => {
       await saveSheetWithDialog(state.sheetsState, sheetsDeps);
     },
+    undoSheet: async () => {
+      await undoSheets(state.sheetsState, sheetsDeps);
+    },
+    redoSheet: async () => {
+      await redoSheets(state.sheetsState, sheetsDeps);
+    },
     refreshSheetSnapshot: async () => {
       await refreshSheetSnapshot(state.sheetsState, sheetsDeps);
     },
@@ -392,6 +370,9 @@ export function createWorkspaceToolsRuntime(
     },
     writeRange: async (startRow, startCol, values) => {
       await writeSheetsRange(state.sheetsState, sheetsDeps, startRow, startCol, values);
+    },
+    copyPasteRange: async (srcStartRow, srcStartCol, srcEndRow, srcEndCol, destStartRow, destStartCol, values) => {
+      await copyPasteSheetsRange(state.sheetsState, sheetsDeps, srcStartRow, srcStartCol, srcEndRow, srcEndCol, destStartRow, destStartCol, values);
     },
     insertRows: async (index, count = 1) => {
       await insertSheetsRows(state.sheetsState, sheetsDeps, index, count);

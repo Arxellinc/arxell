@@ -47,7 +47,7 @@ let currentEditingCell: { state: SheetsToolState; row: number; col: number } | n
 export function startCellEdit(row: number, col: number, deps: EditorDeps, initialChar?: string): void {
   if (!inputEl) return;
   const { state } = deps;
-  const r = cellRect(col, row, state.scrollX, state.scrollY, state.colWidths, state.rowHeights);
+  const r = cellRect(col, row, state.scrollX, state.scrollY, state.colWidths, state.rowHeights, state.viewRowOrder);
 
   state.editingCell = { row, col };
   currentEditingCell = { state, row, col };

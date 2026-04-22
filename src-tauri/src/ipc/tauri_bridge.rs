@@ -2,15 +2,14 @@
 
 use crate::api_registry::ApiRegistryService;
 use crate::app::files_service::FilesService;
-use crate::app::flow_service::FlowService;
 use crate::app::model_manager_service::ModelManagerService;
 use crate::app::permission_service::PermissionService;
 use crate::app::runtime_service::LlamaRuntimeService;
+use crate::app::user_projects_service::UserProjectsService;
 use crate::app::voice_runtime_service::VoiceRuntimeService;
 use crate::app::web_search_service::WebSearchService;
 use crate::contracts::AppEvent;
 use crate::ipc::chat::ChatCommandHandler;
-use crate::ipc::flow::FlowCommandHandler;
 use crate::ipc::looper::LooperCommandHandler;
 use crate::ipc::terminal::TerminalCommandHandler;
 use crate::ipc::voice_commands::VoiceCommandHandler;
@@ -23,7 +22,6 @@ use tauri::{AppHandle, Emitter};
 pub struct TauriBridgeState {
     pub chat: Arc<ChatCommandHandler>,
     pub terminal: Arc<TerminalCommandHandler>,
-    pub flow_handler: Arc<FlowCommandHandler>,
     pub looper_handler: Arc<LooperCommandHandler>,
     pub voice_handler: Arc<VoiceCommandHandler>,
     pub hub: EventHub,
@@ -31,11 +29,11 @@ pub struct TauriBridgeState {
     pub api_registry: Arc<ApiRegistryService>,
     pub web_search: Arc<WebSearchService>,
     pub runtime: Arc<LlamaRuntimeService>,
+    pub user_projects: Arc<UserProjectsService>,
     pub permissions: Arc<PermissionService>,
     pub model_manager: Arc<ModelManagerService>,
     pub files: Arc<FilesService>,
     pub sheets: Arc<SheetsService>,
-    pub flow: Arc<FlowService>,
     pub voice: Arc<VoiceRuntimeService>,
 }
 

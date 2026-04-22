@@ -1816,7 +1816,7 @@ fn parse_value_string(text: &str) -> Result<f64, FormulaError> {
     ))
 }
 
-fn format_text_value(value: f64, pattern: &str) -> Result<String, FormulaError> {
+pub fn format_text_value(value: f64, pattern: &str) -> Result<String, FormulaError> {
     let normalized = pattern.trim().to_ascii_lowercase();
     if normalized == "0" {
         return Ok(format!("{}", value.round() as i64));
@@ -2214,6 +2214,7 @@ mod tests {
                     input: input.to_string(),
                     computed: ComputedValue::Empty,
                     error: None,
+                    style_id: None,
                 },
             );
         }

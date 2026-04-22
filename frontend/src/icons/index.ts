@@ -87,7 +87,12 @@ import calendarClock from "./calendar-clock.svg?raw";
 import bold from "./bold.svg?raw";
 import italic from "./italic.svg?raw";
 import strikethrough from "./strikethrough.svg?raw";
+import betweenHorizontalStart from "./between-horizontal-start.svg?raw";
+import betweenVerticalStart from "./between-vertical-start.svg?raw";
+import foldVertical from "./fold-vertical.svg?raw";
+import foldHorizontal from "./fold-horizontal.svg?raw";
 import listFilterPlus from "./list-filter-plus.svg?raw";
+import funnelPlus from "./funnel-plus.svg?raw";
 import panelTop from "./panel-top.svg?raw";
 import link from "./link.svg?raw";
 
@@ -181,7 +186,12 @@ const ICON_SVGS = {
   bold,
   italic,
   strikethrough,
+  "between-horizontal-start": betweenHorizontalStart,
+  "between-vertical-start": betweenVerticalStart,
+  "fold-vertical": foldVertical,
+  "fold-horizontal": foldHorizontal,
   "list-filter-plus": listFilterPlus,
+  "funnel-plus": funnelPlus,
   "panel-top": panelTop,
   link
 } as const;

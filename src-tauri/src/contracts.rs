@@ -365,6 +365,41 @@ pub struct WorkspaceToolsImportResponse {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct UserProjectsRootsRequest {
+    pub correlation_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UserProjectsRootsResponse {
+    pub correlation_id: String,
+    pub content_root: String,
+    pub projects_root: String,
+    pub tools_root: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UserProjectEnsureRequest {
+    pub correlation_id: String,
+    pub project_name: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UserProjectEnsureResponse {
+    pub correlation_id: String,
+    pub project_name: String,
+    pub project_slug: String,
+    pub root_path: String,
+    pub tasks_path: String,
+    pub sheets_path: String,
+    pub looper_path: String,
+    pub files_path: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct CustomToolCapabilityInvokeRequest {
     pub correlation_id: String,
     #[serde(alias = "pluginId")]

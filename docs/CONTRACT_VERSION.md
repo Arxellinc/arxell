@@ -71,14 +71,6 @@ This version pins the shared contracts between the TypeScript frontend (`fronten
 - command: `cmd_app_version` → `AppVersionResponse`
 - command: `cmd_app_resource_usage` → `AppResourceUsageRequest` / `AppResourceUsageResponse`
 
-### Flow
-- command: `cmd_flow_start` → `FlowStartRequest` / `FlowStartResponse`
-- command: `cmd_flow_stop` → `FlowStopRequest` / `FlowStopResponse`
-- command: `cmd_flow_status` → `FlowStatusRequest` / `FlowStatusResponse`
-- command: `cmd_flow_list_runs` → `FlowListRunsRequest` / `FlowListRunsResponse`
-- command: `cmd_flow_rerun_validation` → `FlowRerunValidationRequest` / `FlowRerunValidationResponse`
-- invoke actions: `pause`, `nudge` (via `cmd_tool_invoke`)
-
 ### Looper (via `cmd_tool_invoke`)
 - invoke actions: `start`, `stop`, `pause`, `advance`, `status`, `list`, `close`, `check-opencode`, `submit-questions`
 - contracts: `LooperStartRequest/Response`, `LooperStopRequest/Response`, `LooperPauseRequest/Response`, `LooperAdvanceRequest/Response`, `LooperStatusRequest/Response`, `LooperListRequest/Response`, `LooperCloseRequest/Response`, `LooperCheckOpenCodeRequest/Response`, `LooperSubmitQuestionsRequest/Response`

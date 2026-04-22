@@ -1,5 +1,4 @@
 import { COL_WIDTH, ROW_HEIGHT, GUTTER_WIDTH, HEADER_HEIGHT } from "./constants.js";
-import type { SheetsToolState } from "../state.js";
 
 export interface CellRect {
   x: number;
@@ -14,11 +13,12 @@ export function hitTest(
   scrollX: number,
   scrollY: number,
   colWidths: Map<number, number>,
-  rowHeights: Map<number, number>
+  rowHeights: Map<number, number>,
+  rowOrder?: number[]
 ): [col: number, row: number] | null {
   if (px < GUTTER_WIDTH || py < HEADER_HEIGHT) return null;
   const col = xToCol(px + scrollX - GUTTER_WIDTH, colWidths);
-  const row = yToRow(py + scrollY - HEADER_HEIGHT, rowHeights);
+  const row = resolveActualRow(yToViewRow(py + scrollY - HEADER_HEIGHT, rowHeights, rowOrder), rowOrder);
   return [col, row];
 }
 
@@ -28,12 +28,14 @@ export function cellRect(
   scrollX: number,
   scrollY: number,
   colWidths: Map<number, number>,
-  rowHeights: Map<number, number>
+  rowHeights: Map<number, number>,
+  rowOrder?: number[]
 ): CellRect {
   const x = colToX(col, colWidths) - scrollX + GUTTER_WIDTH;
-  const y = rowToY(row, rowHeights) - scrollY + HEADER_HEIGHT;
+  const viewRow = actualRowToViewRow(row, rowOrder);
+  const y = viewRowToY(viewRow, rowHeights, rowOrder) - scrollY + HEADER_HEIGHT;
   const w = colWidths.get(col) ?? COL_WIDTH;
-  const h = rowHeights.get(row) ?? ROW_HEIGHT;
+  const h = rowHeights.get(resolveActualRow(viewRow, rowOrder)) ?? ROW_HEIGHT;
   return { x, y, w, h };
 }
 
@@ -45,12 +47,13 @@ export function visibleRange(
   colCount: number,
   rowCount: number,
   colWidths: Map<number, number>,
-  rowHeights: Map<number, number>
+  rowHeights: Map<number, number>,
+  rowOrder?: number[]
 ): { colStart: number; colEnd: number; rowStart: number; rowEnd: number } {
   const colStart = xToCol(scrollX, colWidths);
   const colEnd   = Math.min(colCount - 1, xToCol(scrollX + canvasWidth  - GUTTER_WIDTH, colWidths));
-  const rowStart = yToRow(scrollY, rowHeights);
-  const rowEnd   = Math.min(rowCount - 1, yToRow(scrollY + canvasHeight - HEADER_HEIGHT, rowHeights));
+  const rowStart = yToViewRow(scrollY, rowHeights, rowOrder);
+  const rowEnd   = Math.min(rowCount - 1, yToViewRow(scrollY + canvasHeight - HEADER_HEIGHT, rowHeights, rowOrder));
   return { colStart, colEnd, rowStart, rowEnd };
 }
 
@@ -61,9 +64,11 @@ function colToX(col: number, widths: Map<number, number>): number {
   return x;
 }
 
-function rowToY(row: number, heights: Map<number, number>): number {
+function viewRowToY(viewRow: number, heights: Map<number, number>, rowOrder?: number[]): number {
   let y = 0;
-  for (let r = 0; r < row; r++) y += heights.get(r) ?? ROW_HEIGHT;
+  for (let viewIndex = 0; viewIndex < viewRow; viewIndex++) {
+    y += heights.get(resolveActualRow(viewIndex, rowOrder)) ?? ROW_HEIGHT;
+  }
   return y;
 }
 
@@ -77,12 +82,22 @@ function xToCol(x: number, widths: Map<number, number>): number {
   }
 }
 
-function yToRow(y: number, heights: Map<number, number>): number {
+function yToViewRow(y: number, heights: Map<number, number>, rowOrder?: number[]): number {
   let cursor = 0, row = 0;
   while (true) {
-    const h = heights.get(row) ?? ROW_HEIGHT;
+    const h = heights.get(resolveActualRow(row, rowOrder)) ?? ROW_HEIGHT;
     if (cursor + h > y) return row;
     cursor += h;
     row++;
   }
+}
+
+function resolveActualRow(viewRow: number, rowOrder?: number[]): number {
+  return rowOrder?.[viewRow] ?? viewRow;
+}
+
+function actualRowToViewRow(actualRow: number, rowOrder?: number[]): number {
+  if (!rowOrder || rowOrder.length === 0) return actualRow;
+  const index = rowOrder.indexOf(actualRow);
+  return index === -1 ? actualRow : index;
 }

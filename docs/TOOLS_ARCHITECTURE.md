@@ -59,7 +59,7 @@ Builtin workspace tools use a folder under `frontend/src/tools/<toolId>/`. Exist
 - `runtime.ts`: runtime integration for tools with polling, rendering engines, or external libraries.
 - `styles.css`: tool-specific styles.
 
-Not every tool needs every file. Static tools such as `memory` and `skills` may only need render and manifest files. Interactive tools such as `files`, `flow`, `looper`, and `webSearch` use state, bindings, actions, and styles.
+Not every tool needs every file. Static tools such as `memory` and `skills` may only need render and manifest files. Interactive tools such as `files`, `looper`, and `webSearch` use state, bindings, actions, and styles.
 
 ## Current Workspace Tools
 
@@ -67,7 +67,6 @@ Not every tool needs every file. Static tools such as `memory` and `skills` may 
 |---------|-----------|----------|-------------|
 | `chart` | `frontend/src/tools/chart/` | data | Chart visualization |
 | `files` | `frontend/src/tools/files/` | workspace | File browser and editor |
-| `flow` | `frontend/src/tools/flow/` | automation | Plan/build iteration engine |
 | `looper` | `frontend/src/tools/looper/` | automation | PRD/build loop orchestration with interactive questions |
 | `tasks` | `frontend/src/tools/tasks/` | workspace | Task tracking |
 | `memory` | `frontend/src/tools/memory/` | workspace | Memory/context display |

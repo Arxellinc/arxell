@@ -11,4 +11,4 @@ export const CELL_BORDER     = "rgba(0,0,0,0.15)";
 export const FONT_SIZE       = 13;
 export const FONT_FAMILY     = '"Anthropic Sans", system-ui, sans-serif';
 export const ERROR_COLOR     = "var(--error)";
-export const FORMULA_COLOR   = "var(--status-info)";
+export const FORMULA_COLOR   = "color-mix(in srgb, var(--ink) 80%, var(--status-info) 20%)";

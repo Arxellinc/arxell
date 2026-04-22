@@ -504,6 +504,7 @@ pub fn jsonl_to_sheet_state(data: &JsonlSheetData) -> SheetState {
                     input: c.input.clone(),
                     computed: ComputedValue::Empty,
                     error: None,
+                    style_id: c.style_id,
                 },
             );
         }
@@ -530,7 +531,7 @@ pub fn sheet_state_to_jsonl(
         row_map.entry(coord.row).or_default().push(CellTuple {
             col: coord.col,
             input: cell.input.clone(),
-            style_id: None,
+            style_id: cell.style_id,
         });
     }
     let rows: Vec<RowData> = row_map

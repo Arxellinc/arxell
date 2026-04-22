@@ -1,11 +1,21 @@
 import { SHEETS_DATA_ATTR } from "../ui/constants.js";
-import type { SheetsToolState } from "./state.js";
+import {
+  addSheetsColumnFilters,
+  areSheetsColumnsFiltered,
+  getSelectedSheetColumns,
+  redoSheetsViewChange,
+  removeSheetsColumnFilters,
+  undoSheetsViewChange,
+  type SheetsToolState
+} from "./state.js";
 
 interface SheetsBindingsDeps {
   createNewSheet: () => Promise<void>;
   openSheetWithDialog: () => Promise<void>;
   saveSheetCurrent: () => Promise<void>;
   saveSheetWithDialog: () => Promise<void>;
+  undoSheet: () => Promise<void>;
+  redoSheet: () => Promise<void>;
   insertRows: (index: number, count?: number) => Promise<void>;
   insertColumns: (index: number, count?: number) => Promise<void>;
   deleteRows: (index: number, count?: number) => Promise<void>;
@@ -36,6 +46,25 @@ export async function handleSheetsClick(
   }
   if (action === "save-sheet-as") {
     await deps.saveSheetWithDialog();
+    return true;
+  }
+  if (action === "undo") {
+    if (!undoSheetsViewChange(slice)) await deps.undoSheet();
+    return true;
+  }
+  if (action === "redo") {
+    if (!redoSheetsViewChange(slice)) await deps.redoSheet();
+    return true;
+  }
+  if (action === "create-filter") {
+    if (!checkCapability(slice, "formats")) return true;
+    const columns = getSelectedSheetColumns(slice);
+    if (columns.length === 0) {
+      window.alert("Select one or more full columns to add or remove a filter.");
+      return true;
+    }
+    if (areSheetsColumnsFiltered(slice, columns)) removeSheetsColumnFilters(slice, columns);
+    else addSheetsColumnFilters(slice, columns);
     return true;
   }
   if (isDisplayOnlyToolbarAction(action)) {
@@ -74,8 +103,6 @@ export async function handleSheetsClick(
 
 function isDisplayOnlyToolbarAction(action: string): boolean {
   return (
-    action === "undo" ||
-    action === "redo" ||
     action === "format-currency" ||
     action === "format-percent" ||
     action === "format-number" ||
@@ -84,7 +111,6 @@ function isDisplayOnlyToolbarAction(action: string): boolean {
     action === "style-bold" ||
     action === "style-italic" ||
     action === "style-strikethrough" ||
-    action === "create-filter" ||
     action === "freeze-first-row" ||
     action === "hyperlink"
   );

@@ -48,9 +48,6 @@ Core chat orchestration: message handling, agent loop, tool binding, streaming. 
 ### Terminal Service (`src-tauri/src/app/terminal_service.rs`)
 PTY-based terminal sessions: open, input, resize, close. Emits `terminal.output` streaming events.
 
-### Flow Service (`src-tauri/src/app/flow_service.rs`)
-Automated plan/build iteration engine. Runs multi-step build loops with validation, backpressure commands, and per-phase model selection.
-
 ### Looper Handler (`src-tauri/src/tools/looper_handler.rs`)
 PRD/build loop orchestration with multi-phase execution, interactive questions, and OpenCode integration. Routed through `cmd_tool_invoke`.
 

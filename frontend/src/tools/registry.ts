@@ -48,7 +48,6 @@ const PREFERRED_TOOL_ORDER = [
   "sheets",
   "webSearch",
   "chart",
-  "flow",
   "tasks",
   "memory",
   "skills",

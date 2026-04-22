@@ -102,9 +102,9 @@
   flex: 1 1 auto;
   overflow: auto;
   outline: none;
-  display: grid;
-  grid-template-columns: var(--notepad-editor-gutter-width, 4ch) minmax(0, 1fr);
-  align-items: start;
+  display: flex;
+  flex-direction: row;
+  align-items: stretch;
 }
 
 .notepad-editor-lines,
@@ -130,12 +130,10 @@
 }
 
 .notepad-editor-lines {
-  grid-column: 1;
-  grid-row: 1;
+  flex-shrink: 0;
   width: var(--notepad-editor-gutter-width, 4ch);
   min-width: var(--notepad-editor-gutter-width, 4ch);
   max-width: var(--notepad-editor-gutter-width, 4ch);
-  min-inline-size: 0;
   overflow: hidden;
   color: var(--muted);
   text-align: right;
@@ -147,12 +145,11 @@
 }
 
 .notepad-editor-code-wrap {
-  grid-column: 2;
-  grid-row: 1;
-  align-self: start;
-  position: relative;
+  flex: 1;
   min-width: 0;
+  position: relative;
   height: var(--notepad-editor-height, 220px);
+  overflow: var(--notepad-editor-overflow, auto);
 }
 
 .notepad-editor-highlight,

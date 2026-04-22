@@ -111,6 +111,10 @@ import type {
   WorkspaceToolsExportResponse,
   WorkspaceToolsImportRequest,
   WorkspaceToolsImportResponse,
+  UserProjectEnsureRequest,
+  UserProjectEnsureResponse,
+  UserProjectsRootsRequest,
+  UserProjectsRootsResponse,
   CustomToolCapabilityInvokeRequest,
   CustomToolCapabilityInvokeResponse,
   PluginCapabilityInvokeRequest,
@@ -152,6 +156,8 @@ export interface ChatIpcClient {
   listWorkspaceTools(request: WorkspaceToolsListRequest): Promise<WorkspaceToolsListResponse>;
   exportWorkspaceTools(request: WorkspaceToolsExportRequest): Promise<WorkspaceToolsExportResponse>;
   importWorkspaceTools(request: WorkspaceToolsImportRequest): Promise<WorkspaceToolsImportResponse>;
+  getUserProjectsRoots(request: UserProjectsRootsRequest): Promise<UserProjectsRootsResponse>;
+  ensureUserProject(request: UserProjectEnsureRequest): Promise<UserProjectEnsureResponse>;
   setWorkspaceToolEnabled(
     request: WorkspaceToolSetEnabledRequest
   ): Promise<WorkspaceToolSetEnabledResponse>;
@@ -435,6 +441,14 @@ class TauriChatIpcClient implements ChatIpcClient {
     request: WorkspaceToolsImportRequest
   ): Promise<WorkspaceToolsImportResponse> {
     return this.invokeFn<WorkspaceToolsImportResponse>("cmd_workspace_tools_import", { request });
+  }
+
+  getUserProjectsRoots(request: UserProjectsRootsRequest): Promise<UserProjectsRootsResponse> {
+    return this.invokeFn<UserProjectsRootsResponse>("cmd_user_projects_roots", { request });
+  }
+
+  ensureUserProject(request: UserProjectEnsureRequest): Promise<UserProjectEnsureResponse> {
+    return this.invokeFn<UserProjectEnsureResponse>("cmd_user_project_ensure", { request });
   }
 
   listApiConnections(request: ApiConnectionsListRequest): Promise<ApiConnectionsListResponse> {
@@ -973,6 +987,30 @@ export class MockChatIpcClient implements ChatIpcClient {
     return {
       correlationId: request.correlationId,
       tool
+    };
+  }
+
+  async getUserProjectsRoots(request: UserProjectsRootsRequest): Promise<UserProjectsRootsResponse> {
+    return {
+      correlationId: request.correlationId,
+      contentRoot: "/mock/Documents/Arxell",
+      projectsRoot: "/mock/Documents/Arxell/Projects",
+      toolsRoot: "/mock/plugins"
+    };
+  }
+
+  async ensureUserProject(request: UserProjectEnsureRequest): Promise<UserProjectEnsureResponse> {
+    const projectSlug = request.projectName.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "project";
+    const rootPath = `/mock/Documents/Arxell/Projects/${projectSlug}`;
+    return {
+      correlationId: request.correlationId,
+      projectName: request.projectName,
+      projectSlug,
+      rootPath,
+      tasksPath: `${rootPath}/tasks`,
+      sheetsPath: `${rootPath}/sheets`,
+      looperPath: `${rootPath}/looper`,
+      filesPath: `${rootPath}/files`
     };
   }
 

@@ -3,9 +3,8 @@ import { cellRect, visibleRange } from "./viewport.js";
 import { columnLabel } from "./cellLabel.js";
 import {
   ROW_HEIGHT, COL_WIDTH, HEADER_HEIGHT, GUTTER_WIDTH,
-  SELECTION_COLOR, SELECTION_BORDER, FILL_HANDLE_PX,
-  FONT_SIZE, FONT_FAMILY, CELL_BG, CELL_BORDER,
-  ERROR_COLOR, FORMULA_COLOR
+  FILL_HANDLE_PX,
+  FONT_SIZE, FONT_FAMILY
 } from "./constants.js";
 
 export interface PaintParams {
@@ -30,6 +29,7 @@ export interface ThemeColors {
   selectionBorder: string;
   errorColor: string;
   formulaColor: string;
+  filterColor: string;
 }
 
 // TODO: dirty-region clip - add dirtyRect parameter and clip painting to changed regions
@@ -49,14 +49,15 @@ export function paintGrid({
   ctx.clearRect(0, 0, width, height);
 
   const visible = visibleRange(width, height, scrollX, scrollY,
-    state.columnCount, state.rowCount, colWidths, rowHeights);
+    state.columnCount, state.rowCount, colWidths, rowHeights, state.viewRowOrder);
 
   ctx.font = `${FONT_SIZE}px ${FONT_FAMILY}`;
   ctx.textBaseline = "middle";
 
-  for (let row = visible.rowStart; row <= visible.rowEnd; row++) {
+  for (let viewRow = visible.rowStart; viewRow <= visible.rowEnd; viewRow++) {
+    const row = state.viewRowOrder[viewRow] ?? viewRow;
     for (let col = visible.colStart; col <= visible.colEnd; col++) {
-      const r = cellRect(col, row, scrollX, scrollY, colWidths, rowHeights);
+      const r = cellRect(col, row, scrollX, scrollY, colWidths, rowHeights, state.viewRowOrder);
 
       if (editingCell && editingCell.row === row && editingCell.col === col) continue;
 
@@ -74,8 +75,22 @@ export function paintGrid({
         else if (cell.input.startsWith("=")) ctx.fillStyle = theme.formulaColor;
         else ctx.fillStyle = theme.ink;
 
-        const text = cell.display || cell.input;
-        ctx.fillText(text, r.x + 5, r.y + r.h / 2, r.w - 10);
+        let text = cell.display || cell.input;
+        const maxWidth = r.w - 10;
+        if (maxWidth > 0) {
+          const measured = ctx.measureText(text);
+          if (measured.width > maxWidth) {
+            let truncated = text;
+            let ellipsis = "\u2026";
+            while (ctx.measureText(truncated + ellipsis).width > maxWidth && truncated.length > 1) {
+              truncated = truncated.slice(0, -1);
+            }
+            if (truncated.length < text.length) {
+              text = truncated + ellipsis;
+            }
+          }
+        }
+        ctx.fillText(text, r.x + 5, r.y + r.h / 2, maxWidth);
       }
     }
   }
@@ -90,11 +105,15 @@ export function paintGrid({
     ctx.fillStyle = theme.muted;
     ctx.textAlign = "center";
     ctx.fillText(columnLabel(col), r.x + r.w / 2, HEADER_HEIGHT / 2);
+    if (state.columnFilters.some((filter) => filter.column === col)) {
+      drawHeaderFilterIcon(ctx, r.x + r.w - 16, 7, theme.filterColor);
+    }
     ctx.textAlign = "left";
   }
 
-  for (let row = visible.rowStart; row <= visible.rowEnd; row++) {
-    const r = cellRect(0, row, scrollX, scrollY, colWidths, rowHeights);
+  for (let viewRow = visible.rowStart; viewRow <= visible.rowEnd; viewRow++) {
+    const row = state.viewRowOrder[viewRow] ?? viewRow;
+    const r = cellRect(0, row, scrollX, scrollY, colWidths, rowHeights, state.viewRowOrder);
     ctx.fillStyle = isRowSelected(state, row) ? theme.selectionBg : theme.headerBg;
     ctx.fillRect(0, r.y, GUTTER_WIDTH, r.h);
     ctx.strokeStyle = theme.cellBorder;
@@ -113,8 +132,8 @@ export function paintGrid({
   ctx.strokeRect(0.5, 0.5, GUTTER_WIDTH - 1, HEADER_HEIGHT - 1);
 
   if (selection) {
-    const tl = cellRect(selection.startCol, selection.startRow, scrollX, scrollY, colWidths, rowHeights);
-    const br = cellRect(selection.endCol,   selection.endRow,   scrollX, scrollY, colWidths, rowHeights);
+    const tl = cellRect(selection.startCol, selection.startRow, scrollX, scrollY, colWidths, rowHeights, state.viewRowOrder);
+    const br = cellRect(selection.endCol,   selection.endRow,   scrollX, scrollY, colWidths, rowHeights, state.viewRowOrder);
     const brW = colWidths.get(selection.endCol) ?? COL_WIDTH;
     const brH = rowHeights.get(selection.endRow) ?? ROW_HEIGHT;
     const sx = tl.x, sy = tl.y;
@@ -127,8 +146,8 @@ export function paintGrid({
     ctx.lineWidth = 2;
     ctx.strokeRect(sx + 1, sy + 1, sw - 2, sh - 2);
 
-const fx = sx + sw - FILL_HANDLE_PX;
-const fy = sy + sh - FILL_HANDLE_PX;
+    const fx = sx + sw - FILL_HANDLE_PX;
+    const fy = sy + sh - FILL_HANDLE_PX;
     ctx.fillStyle = theme.selectionBorder;
     ctx.fillRect(fx, fy, FILL_HANDLE_PX, FILL_HANDLE_PX);
   }
@@ -143,11 +162,34 @@ const fy = sy + sh - FILL_HANDLE_PX;
 
   const resizeRow = activeResizeRow ?? hoverResizeRow;
   if (resizeRow !== null) {
-    const r = cellRect(0, resizeRow, scrollX, scrollY, colWidths, rowHeights);
+    const r = cellRect(0, resizeRow, scrollX, scrollY, colWidths, rowHeights, state.viewRowOrder);
     const edgeY = Math.round(r.y + r.h) - 1;
     ctx.fillStyle = theme.selectionBorder;
     ctx.fillRect(0, edgeY, width, 2);
   }
+}
+
+function drawHeaderFilterIcon(
+  ctx: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D,
+  x: number,
+  y: number,
+  color: string
+): void {
+  ctx.save();
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 1.5;
+  ctx.lineCap = "round";
+  ctx.lineJoin = "round";
+  ctx.beginPath();
+  ctx.moveTo(x, y);
+  ctx.lineTo(x + 8, y);
+  ctx.lineTo(x + 5, y + 4);
+  ctx.lineTo(x + 5, y + 8);
+  ctx.lineTo(x + 3, y + 9);
+  ctx.lineTo(x + 3, y + 4);
+  ctx.closePath();
+  ctx.stroke();
+  ctx.restore();
 }
 
 function isEntireSheetSelected(state: SheetsToolState): boolean {

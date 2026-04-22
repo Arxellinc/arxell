@@ -244,6 +244,33 @@ export interface WorkspaceToolsImportResponse {
   tools: WorkspaceToolRecord[];
 }
 
+export interface UserProjectsRootsRequest {
+  correlationId: string;
+}
+
+export interface UserProjectsRootsResponse {
+  correlationId: string;
+  contentRoot: string;
+  projectsRoot: string;
+  toolsRoot: string;
+}
+
+export interface UserProjectEnsureRequest {
+  correlationId: string;
+  projectName: string;
+}
+
+export interface UserProjectEnsureResponse {
+  correlationId: string;
+  projectName: string;
+  projectSlug: string;
+  rootPath: string;
+  tasksPath: string;
+  sheetsPath: string;
+  looperPath: string;
+  filesPath: string;
+}
+
 export interface CustomToolCapabilityInvokeRequest {
   correlationId: string;
   customToolId: string;

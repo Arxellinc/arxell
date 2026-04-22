@@ -65,6 +65,7 @@ export interface LooperToolState {
   installChecking: boolean;
   installed: boolean | null;
   statusMessage: string | null;
+  directoryPreviewRoots: { projectsRoot: string; toolsRoot: string } | null;
 }
 
 export const LOOPER_PHASES: LooperPhase[] = ["planner", "executor", "validator", "critic"];
@@ -215,6 +216,96 @@ export function getInitialLooperState(): LooperToolState {
     installModalOpen: false,
     installChecking: false,
     installed: null,
-    statusMessage: null
+    statusMessage: null,
+    directoryPreviewRoots: getDefaultLooperDirectoryPreviewRoots()
   };
+}
+
+function getDefaultLooperDirectoryPreviewRoots(): { projectsRoot: string; toolsRoot: string } {
+  const documentsRoot = inferDocumentsRoot();
+  return {
+    projectsRoot: joinPath(documentsRoot, "Arxell/Projects"),
+    toolsRoot: inferToolsRoot()
+  };
+}
+
+function inferDocumentsRoot(): string {
+  const home = inferHomeDirectory();
+  return joinPath(home || "~", "Documents");
+}
+
+function inferHomeDirectory(): string {
+  const winHome = [
+    readGlobalEnv("USERPROFILE"),
+    joinPath(readGlobalEnv("HOMEDRIVE"), readGlobalEnv("HOMEPATH")),
+    readGlobalEnv("HOME")
+  ].find((value) => value && value.trim());
+  if (winHome) return winHome;
+  return readGlobalEnv("HOME") || "";
+}
+
+function readGlobalEnv(key: string): string {
+  const value = (globalThis as { __ARXELL_ENV__?: Record<string, string> }).__ARXELL_ENV__?.[key];
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function inferToolsRoot(): string {
+  const pathName = typeof window !== "undefined" ? window.location.pathname : "";
+  const normalized = pathName.replace(/\\/g, "/");
+  const srcTauriIndex = normalized.lastIndexOf("/src-tauri/");
+  if (srcTauriIndex >= 0) {
+    return `${normalized.slice(0, srcTauriIndex)}/plugins`;
+  }
+  return "plugins";
+}
+
+export function sanitizeLooperToolId(value: string): string {
+  let out = "";
+  let lastDash = false;
+  for (const raw of value.trim().toLowerCase()) {
+    const next = /[a-z0-9]/.test(raw) ? raw : "-";
+    if (next === "-") {
+      if (lastDash) continue;
+      lastDash = true;
+    } else {
+      lastDash = false;
+    }
+    out += next;
+    if (out.length >= 40) break;
+  }
+  return out.replace(/^-+|-+$/g, "");
+}
+
+export function sanitizeLooperProjectDirName(value: string): string {
+  let out = "";
+  let lastSpace = false;
+  for (const ch of value.trim()) {
+    let next = ch;
+    if (/[<>:"/\\|?*]/.test(ch)) next = "-";
+    else if (/\s/.test(ch)) next = " ";
+    if (next === " ") {
+      if (!out || lastSpace) continue;
+      lastSpace = true;
+    } else {
+      lastSpace = false;
+    }
+    out += next;
+  }
+  return out.replace(/^[ .]+|[ .]+$/g, "");
+}
+
+export function getLooperTargetDirectory(state: Pick<LooperToolState, "projectNameDraft" | "projectTypeDraft" | "directoryPreviewRoots">): string {
+  const name = state.projectNameDraft.trim();
+  const roots = state.directoryPreviewRoots;
+  if (!roots) return "";
+  if (state.projectTypeDraft === "app-tool") {
+    const toolId = sanitizeLooperToolId(name) || "project";
+    return joinPath(roots.toolsRoot, toolId);
+  }
+  const dirName = sanitizeLooperProjectDirName(name) || "Project";
+  return joinPath(roots.projectsRoot, dirName);
+}
+
+function joinPath(dir: string, name: string): string {
+  return `${dir.replace(/[\\/]+$/, "")}/${name.replace(/^[/\\]+/, "")}`;
 }

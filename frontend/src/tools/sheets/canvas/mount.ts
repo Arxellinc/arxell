@@ -7,10 +7,15 @@ import { attachFormulaAutocomplete, type FormulaAutocompleteBinding } from "../f
 import { iconHtml } from "../../../icons-all/index.js";
 import { APP_ICON } from "../../../icons-all/map.js";
 import {
+  getSheetsColumnFilter,
+  isSheetsColumnFiltered,
+  redoSheetsViewChange,
   setSheetsSelection,
-  syncEditorValue,
   applyOptimisticCellWrites,
   revertOptimisticCellWrites,
+  removeSheetsColumnFilters,
+  setSheetsColumnFilterSort,
+  undoSheetsViewChange,
   type SheetsToolState,
   type SheetsSelection
 } from "../state.js";
@@ -19,6 +24,8 @@ import { SHEETS_UI_ID } from "../../ui/constants.js";
 interface SheetsRuntimeDeps {
   rerender: () => void;
   ensureWorkbook: () => Promise<void>;
+  undoSheet: () => Promise<void>;
+  redoSheet: () => Promise<void>;
   updateFormulaBarValue: (value: string) => void;
   modelOptions: Array<{ id: string; label: string }>;
   aiModelId: string;
@@ -26,6 +33,7 @@ interface SheetsRuntimeDeps {
   commitFormulaBar: (value: string) => Promise<void>;
   fireSetCellInput: (row: number, col: number, value: string) => Promise<void>;
   fireWriteRange: (startRow: number, startCol: number, values: string[][]) => Promise<void>;
+  fireCopyPasteRange: (srcStartRow: number, srcStartCol: number, srcEndRow: number, srcEndCol: number, destStartRow: number, destStartCol: number, values: string[][]) => Promise<void>;
   insertRows: (index: number, count?: number) => Promise<void>;
   insertColumns: (index: number, count?: number) => Promise<void>;
   deleteRows: (index: number, count?: number) => Promise<void>;
@@ -58,7 +66,6 @@ let fillDragging = false;
 let fillAnchorRange: SheetsSelection | null = null;
 
 const HEADER_RESIZE_GRAB_PX = 1;
-const RESIZE_GUIDE_PX = 2;
 const MIN_COL_WIDTH = 40;
 const MIN_ROW_HEIGHT = 20;
 
@@ -198,7 +205,8 @@ function resolveTheme(el: Element): ThemeColors {
     selectionBg:     "rgba(66,133,244,0.15)",
     selectionBorder: "#4285F4",
     errorColor:      v("--error")          || "#d32f2f",
-    formulaColor:    v("--status-info")    || "#1565c0",
+    formulaColor:    `color-mix(in srgb, ${v("--ink") || "#111111"} 80%, ${v("--status-info") || "#1565c0"} 20%)`,
+    filterColor:     `color-mix(in srgb, ${v("--ink") || "#111111"} 78%, ${v("--status-info") || "#1565c0"} 22%)`,
   };
 }
 
@@ -216,6 +224,20 @@ function attachCanvasEvents(
   cvs.addEventListener("pointerdown", (e) => {
     hideContextMenu();
     const px = e.offsetX, py = e.offsetY;
+    const headerFilterCol = headerFilterHit(px, py, state);
+    if (headerFilterCol !== null) {
+      cvs.focus();
+      setSheetsSelection(state, {
+        startRow: 0,
+        startCol: headerFilterCol,
+        endRow: Math.max(0, state.rowCount - 1),
+        endCol: headerFilterCol
+      });
+      runtimeDeps?.rerender();
+      showFilterMenu(e.clientX, e.clientY, state, headerFilterCol);
+      markDirty();
+      return;
+    }
     const resizeHit = headerResizeHit(px, py, state);
     if (resizeHit) {
       cvs.focus();
@@ -249,15 +271,17 @@ function attachCanvasEvents(
           ? headerSelection.startRow
           : null;
       setSheetsSelection(state, headerSelection);
+      runtimeDeps?.rerender();
       markDirty();
       return;
     }
 
-    const hit = hitTest(px, py, state.scrollX, state.scrollY, state.colWidths, state.rowHeights);
+    const hit = hitTest(px, py, state.scrollX, state.scrollY, state.colWidths, state.rowHeights, state.viewRowOrder);
     if (hit && isFormulaEditActive(state)) {
       e.preventDefault();
       const [col, row] = hit;
       setSheetsSelection(state, { startRow: row, startCol: col, endRow: row, endCol: col });
+      runtimeDeps?.rerender();
       insertEditorText(`${columnLabel(col)}${row + 1}`, state, markDirty);
       markDirty();
       return;
@@ -269,13 +293,14 @@ function attachCanvasEvents(
 
     if (state.selection && isFillHandle(px, py, state)) {
       fillDragging = true;
-      fillAnchorRange = { ...state.selection };
+      fillAnchorRange = normalizedSelection(state.selection);
       return;
     }
 
     if (!hit) return;
     const [col, row] = hit;
     setSheetsSelection(state, { startRow: row, startCol: col, endRow: row, endCol: col });
+    runtimeDeps?.rerender();
     markDirty();
   });
 
@@ -318,6 +343,7 @@ function attachCanvasEvents(
           endRow: Math.max(0, state.rowCount - 1),
           endCol: Math.max(headerDragAnchor, endCol)
         });
+        runtimeDeps?.rerender();
         markDirty();
       }
       return;
@@ -332,26 +358,27 @@ function attachCanvasEvents(
           endRow: Math.max(headerDragAnchor, endRow),
           endCol: Math.max(0, state.columnCount - 1)
         });
+        runtimeDeps?.rerender();
         markDirty();
       }
       return;
     }
     if (fillDragging) {
-      const hit = hitTest(e.offsetX, e.offsetY, state.scrollX, state.scrollY, state.colWidths, state.rowHeights);
+      const hit = hitTest(e.offsetX, e.offsetY, state.scrollX, state.scrollY, state.colWidths, state.rowHeights, state.viewRowOrder);
       if (hit && fillAnchorRange) {
         const [col, row] = hit;
         state.selection = {
-          startRow: fillAnchorRange.startRow,
-          startCol: fillAnchorRange.startCol,
-          endRow:   Math.max(fillAnchorRange.endRow, row),
-          endCol:   Math.max(fillAnchorRange.endCol, col)
+          startRow: Math.min(fillAnchorRange.startRow, row),
+          startCol: Math.min(fillAnchorRange.startCol, col),
+          endRow: Math.max(fillAnchorRange.endRow, row),
+          endCol: Math.max(fillAnchorRange.endCol, col)
         };
         markDirty();
       }
       return;
     }
     if (state.selection) {
-      const hit = hitTest(e.offsetX, e.offsetY, state.scrollX, state.scrollY, state.colWidths, state.rowHeights);
+      const hit = hitTest(e.offsetX, e.offsetY, state.scrollX, state.scrollY, state.colWidths, state.rowHeights, state.viewRowOrder);
       if (hit) {
         const [col, row] = hit;
         state.selection = {
@@ -360,6 +387,7 @@ function attachCanvasEvents(
           endRow: row,
           endCol: col
         };
+        runtimeDeps?.rerender();
         markDirty();
       }
     }
@@ -369,7 +397,7 @@ function attachCanvasEvents(
     pointerDown = false;
     if (fillDragging && fillAnchorRange && state.selection) {
       fillDragging = false;
-      await executeFillDown(fillAnchorRange, state.selection, state);
+      await executeFill(fillAnchorRange, state.selection, state);
     }
     resizingCol = null;
     resizingRow = null;
@@ -397,11 +425,13 @@ function attachCanvasEvents(
     const headerSelection = headerSelectionHit(px, py, state);
     if (headerSelection) {
       setSheetsSelection(state, headerSelection);
+      runtimeDeps?.rerender();
     } else {
-      const hit = hitTest(px, py, state.scrollX, state.scrollY, state.colWidths, state.rowHeights);
+      const hit = hitTest(px, py, state.scrollX, state.scrollY, state.colWidths, state.rowHeights, state.viewRowOrder);
       if (hit) {
         const [col, row] = hit;
         setSheetsSelection(state, { startRow: row, startCol: col, endRow: row, endCol: col });
+        runtimeDeps?.rerender();
       }
     }
     markDirty();
@@ -411,6 +441,7 @@ function attachCanvasEvents(
 
   cvs.setAttribute("tabindex", "0");
   cvs.addEventListener("keydown", async (e) => {
+    if (await handleUndoRedoShortcut(e, state)) return;
     if (!state.selection) return;
     const { startRow: row, startCol: col } = state.selection;
 
@@ -444,15 +475,22 @@ function attachCanvasEvents(
       navigateSelection(arrowDir, state);
     }
 
-    if (e.key === "c" && (e.ctrlKey || e.metaKey)) copySelection(state);
-    if (e.key === "v" && (e.ctrlKey || e.metaKey)) await pasteIntoSelection(state);
+    if (e.key === "c" && (e.ctrlKey || e.metaKey)) {
+      e.preventDefault();
+      await copySelection(state);
+    }
+    if (e.key === "v" && (e.ctrlKey || e.metaKey)) {
+      e.preventDefault();
+      await pasteIntoSelection(state);
+    }
   });
 
   cvs.addEventListener("dblclick", (e) => {
-    const hit = hitTest(e.offsetX, e.offsetY, state.scrollX, state.scrollY, state.colWidths, state.rowHeights);
+    const hit = hitTest(e.offsetX, e.offsetY, state.scrollX, state.scrollY, state.colWidths, state.rowHeights, state.viewRowOrder);
     if (!hit) return;
     const [col, row] = hit;
     setSheetsSelection(state, { startRow: row, startCol: col, endRow: row, endCol: col });
+    runtimeDeps?.rerender();
     const rect = cvs.getBoundingClientRect();
     startCellEdit(row, col, {
       state,
@@ -464,6 +502,29 @@ function attachCanvasEvents(
       onRepaint: markDirty
     });
   });
+}
+
+async function handleUndoRedoShortcut(event: KeyboardEvent, state: SheetsToolState): Promise<boolean> {
+  if (!runtimeDeps || state.pending || !state.hasWorkbook) return false;
+  const primary = event.ctrlKey || event.metaKey;
+  if (!primary || event.altKey) return false;
+
+  const key = event.key.toLowerCase();
+  const wantsUndo = key === "z" && !event.shiftKey;
+  const wantsRedo = key === "y" || (key === "z" && event.shiftKey);
+  if (!wantsUndo && !wantsRedo) return false;
+
+  event.preventDefault();
+  if (wantsUndo) {
+    if (!state.canUndo) return true;
+    if (!undoSheetsViewChange(state)) await runtimeDeps.undoSheet();
+  } else {
+    if (!state.canRedo) return true;
+    if (!redoSheetsViewChange(state)) await runtimeDeps.redoSheet();
+  }
+  markDirty();
+  runtimeDeps.rerender();
+  return true;
 }
 
 function navigateSelection(
@@ -478,6 +539,7 @@ function navigateSelection(
   if (dir === "up")     row = Math.max(0, row - 1);
   if (dir === "escape") { markDirty(); return; }
   setSheetsSelection(state, { startRow: row, startCol: col, endRow: row, endCol: col });
+  runtimeDeps?.rerender();
   markDirty();
   requestAnimationFrame(() => {
     canvas?.focus();
@@ -511,28 +573,57 @@ async function commitCellValue(
   });
 }
 
-async function executeFillDown(
+async function executeFill(
   anchor: SheetsSelection,
   target: SheetsSelection,
   state: SheetsToolState
 ): Promise<void> {
   if (!runtimeDeps) return;
-  const values: string[][] = [];
-  for (let r = anchor.endRow + 1; r <= target.endRow; r++) {
-    const row: string[] = [];
-    for (let c = anchor.startCol; c <= anchor.endCol; c++) {
-      row.push(state.cellsByKey[`${anchor.startRow}:${c}`]?.input ?? "");
+  const normalizedAnchor = normalizedSelection(anchor);
+  const normalizedTarget = normalizedSelection(target);
+  const anchorHeight = normalizedAnchor.endRow - normalizedAnchor.startRow + 1;
+  const anchorWidth = normalizedAnchor.endCol - normalizedAnchor.startCol + 1;
+
+  const targetMatchesAnchor =
+    normalizedTarget.startRow === normalizedAnchor.startRow &&
+    normalizedTarget.startCol === normalizedAnchor.startCol &&
+    normalizedTarget.endRow === normalizedAnchor.endRow &&
+    normalizedTarget.endCol === normalizedAnchor.endCol;
+  if (targetMatchesAnchor) return;
+
+  for (let destRow = normalizedTarget.startRow; destRow <= normalizedTarget.endRow; destRow++) {
+    for (let destCol = normalizedTarget.startCol; destCol <= normalizedTarget.endCol; destCol++) {
+      const insideAnchor =
+        destRow >= normalizedAnchor.startRow &&
+        destRow <= normalizedAnchor.endRow &&
+        destCol >= normalizedAnchor.startCol &&
+        destCol <= normalizedAnchor.endCol;
+      if (insideAnchor) continue;
+
+      const srcRow = normalizedAnchor.startRow + positiveModulo(destRow - normalizedAnchor.startRow, anchorHeight);
+      const srcCol = normalizedAnchor.startCol + positiveModulo(destCol - normalizedAnchor.startCol, anchorWidth);
+      const value = state.cellsByKey[`${srcRow}:${srcCol}`]?.input ?? "";
+
+      await runtimeDeps.fireCopyPasteRange(
+        srcRow,
+        srcCol,
+        srcRow,
+        srcCol,
+        destRow,
+        destCol,
+        [[value]]
+      );
     }
-    values.push(row);
   }
-  if (values.length) {
-    await runtimeDeps?.fireWriteRange?.(anchor.endRow + 1, anchor.startCol, values);
-  }
+}
+
+function positiveModulo(value: number, divisor: number): number {
+  return ((value % divisor) + divisor) % divisor;
 }
 
 async function copySelection(state: SheetsToolState): Promise<void> {
   if (!state.selection) return;
-  const { startRow, startCol, endRow, endCol } = state.selection;
+  const { startRow, startCol, endRow, endCol } = normalizedSelection(state.selection);
   const rows: string[] = [];
   for (let r = startRow; r <= endRow; r++) {
     const cols: string[] = [];
@@ -541,6 +632,9 @@ async function copySelection(state: SheetsToolState): Promise<void> {
     }
     rows.push(cols.join("\t"));
   }
+  // Keep an internal source range even if browser clipboard access fails so in-app
+  // pastes can still preserve spreadsheet-style relative reference behavior.
+  state.copySelectionSource = { startRow, startCol, endRow, endCol };
   try {
     await navigator.clipboard.writeText(rows.join("\n"));
   } catch {}
@@ -551,7 +645,17 @@ async function pasteIntoSelection(state: SheetsToolState): Promise<void> {
   try {
     const text = await navigator.clipboard.readText();
     const rows = text.split("\n").map(row => row.split("\t"));
-    await runtimeDeps.fireWriteRange?.(state.selection.startRow, state.selection.startCol, rows);
+    const src = state.copySelectionSource;
+    if (src) {
+      await runtimeDeps.fireCopyPasteRange?.(
+        src.startRow, src.startCol, src.endRow, src.endCol,
+        state.selection.startRow, state.selection.startCol,
+        rows
+      );
+    } else {
+      await runtimeDeps.fireWriteRange?.(state.selection.startRow, state.selection.startCol, rows);
+    }
+    state.copySelectionSource = null;
   } catch {}
 }
 
@@ -640,7 +744,7 @@ function hideContextMenu(): void {
 function isFillHandle(px: number, py: number, state: SheetsToolState): boolean {
   if (!state.selection) return false;
   const { endCol, endRow } = state.selection;
-  const r = cellRect(endCol, endRow, state.scrollX, state.scrollY, state.colWidths, state.rowHeights);
+  const r = cellRect(endCol, endRow, state.scrollX, state.scrollY, state.colWidths, state.rowHeights, state.viewRowOrder);
   const fx = r.x + r.w - FILL_HANDLE_PX;
   const fy = r.y + r.h - FILL_HANDLE_PX;
   return px >= fx && px <= fx + FILL_HANDLE_PX + 4
@@ -662,7 +766,8 @@ function headerResizeHit(
       columnCount,
       rowCount,
       colWidths,
-      rowHeights
+      rowHeights,
+      state.viewRowOrder
     );
     let x = GUTTER_WIDTH - scrollX;
     for (let col = 0; col <= colEnd; col++) {
@@ -688,10 +793,11 @@ function headerResizeHit(
     );
     let y = HEADER_HEIGHT - scrollY;
     for (let row = 0; row <= rowEnd; row++) {
-      const h = rowHeights.get(row) ?? ROW_HEIGHT;
+      const actualRow = state.viewRowOrder[row] ?? row;
+      const h = rowHeights.get(actualRow) ?? ROW_HEIGHT;
       if (row >= rowStart) {
         const edge = y + h;
-        if (Math.abs(py - edge) <= HEADER_RESIZE_GRAB_PX) return { kind: "row", index: row };
+        if (Math.abs(py - edge) <= HEADER_RESIZE_GRAB_PX) return { kind: "row", index: actualRow };
       }
       y += h;
       if (y > py + 10) break;
@@ -711,7 +817,7 @@ function headerSelectionHit(px: number, py: number, state: SheetsToolState): She
   }
 
   if (py <= HEADER_HEIGHT && px > GUTTER_WIDTH) {
-    const hit = hitTest(px, HEADER_HEIGHT + 1, state.scrollX, state.scrollY, state.colWidths, state.rowHeights);
+    const hit = hitTest(px, HEADER_HEIGHT + 1, state.scrollX, state.scrollY, state.colWidths, state.rowHeights, state.viewRowOrder);
     if (!hit) return null;
     const [col] = hit;
     return {
@@ -723,7 +829,7 @@ function headerSelectionHit(px: number, py: number, state: SheetsToolState): She
   }
 
   if (px <= GUTTER_WIDTH && py > HEADER_HEIGHT) {
-    const hit = hitTest(GUTTER_WIDTH + 1, py, state.scrollX, state.scrollY, state.colWidths, state.rowHeights);
+    const hit = hitTest(GUTTER_WIDTH + 1, py, state.scrollX, state.scrollY, state.colWidths, state.rowHeights, state.viewRowOrder);
     if (!hit) return null;
     const [, row] = hit;
     return {
@@ -743,6 +849,8 @@ function updateCursor(cvs: HTMLCanvasElement, px: number, py: number, state: She
     cvs.style.cursor = "col-resize";
   } else if (resizeHit?.kind === "row") {
     cvs.style.cursor = "row-resize";
+  } else if (headerFilterHit(px, py, state) !== null) {
+    cvs.style.cursor = "pointer";
   } else if (headerSelectionHit(px, py, state)) {
     cvs.style.cursor = "pointer";
   } else if (state.selection && isFillHandle(px, py, state)) {
@@ -750,6 +858,46 @@ function updateCursor(cvs: HTMLCanvasElement, px: number, py: number, state: She
   } else {
     cvs.style.cursor = "cell";
   }
+}
+
+function headerFilterHit(px: number, py: number, state: SheetsToolState): number | null {
+  if (py > HEADER_HEIGHT || px <= GUTTER_WIDTH) return null;
+  const hit = hitTest(px, HEADER_HEIGHT + 1, state.scrollX, state.scrollY, state.colWidths, state.rowHeights, state.viewRowOrder);
+  if (!hit) return null;
+  const [col] = hit;
+  if (!isSheetsColumnFiltered(state, col)) return null;
+  const r = cellRect(col, 0, state.scrollX, state.scrollY, state.colWidths, state.rowHeights, state.viewRowOrder);
+  const iconLeft = r.x + r.w - 18;
+  return px >= iconLeft && px <= iconLeft + 14 ? col : null;
+}
+
+function showFilterMenu(clientX: number, clientY: number, state: SheetsToolState, column: number): void {
+  if (!contextMenuEl || !runtimeDeps) return;
+  const filter = getSheetsColumnFilter(state, column);
+  if (!filter) return;
+  const items: Array<{ label: string; disabled?: boolean; action: () => void }> = [
+    { label: "Sort A to Z", action: () => { setSheetsColumnFilterSort(state, column, "asc"); } },
+    { label: "Sort Z to A", action: () => { setSheetsColumnFilterSort(state, column, "desc"); } },
+    { label: "Clear Sort", disabled: filter.sortDirection === null, action: () => { setSheetsColumnFilterSort(state, column, null); } },
+    { label: "Remove Filter", action: () => { removeSheetsColumnFilters(state, [column]); } }
+  ];
+  contextMenuEl.replaceChildren(...items.map((item) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "sheets-context-menu-item";
+    button.textContent = item.label;
+    button.disabled = Boolean(item.disabled);
+    button.addEventListener("click", () => {
+      hideContextMenu();
+      item.action();
+      runtimeDeps?.rerender();
+      markDirty();
+    });
+    return button;
+  }));
+  contextMenuEl.style.display = "grid";
+  contextMenuEl.style.left = `${clientX}px`;
+  contextMenuEl.style.top = `${clientY}px`;
 }
 
 function resizedColumns(state: SheetsToolState, targetCol: number): number[] {

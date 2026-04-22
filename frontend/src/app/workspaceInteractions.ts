@@ -17,37 +17,18 @@ import {
 
 interface TerminalMountState {
   workspaceTab: string;
-  flowBottomPanel: "terminal" | "validate" | "events";
-  flowActiveTerminalPhase: string;
-  flowPhaseSessionByName: Record<string, string>;
   activeTerminalSessionId: string | null;
 }
 
 export function mountWorkspaceTerminalHosts(
   state: TerminalMountState,
   terminalManager: TerminalManager,
-  persistFlowPhaseSessionMap: (map: Record<string, string>) => void
+  _persistFlowPhaseSessionMap: (map: Record<string, string>) => void
 ): void {
   if (state.workspaceTab === "terminal") {
     const host = document.querySelector<HTMLElement>("#terminalHost");
     if (host && state.activeTerminalSessionId) {
       terminalManager.mountSession(state.activeTerminalSessionId, host);
-    }
-  }
-
-  if (state.workspaceTab === "flow-tool" && state.flowBottomPanel === "terminal") {
-    const host = document.querySelector<HTMLElement>("#flowPhaseTerminalHost");
-    const phase = state.flowActiveTerminalPhase;
-    const sessionId = state.flowPhaseSessionByName[phase];
-    if (sessionId && !terminalManager.listSessions().some((item) => item.sessionId === sessionId)) {
-      const nextMap = { ...state.flowPhaseSessionByName };
-      delete nextMap[phase];
-      state.flowPhaseSessionByName = nextMap;
-      persistFlowPhaseSessionMap(state.flowPhaseSessionByName);
-    }
-    const activeSessionId = state.flowPhaseSessionByName[phase];
-    if (host && activeSessionId) {
-      terminalManager.mountSession(activeSessionId, host);
     }
   }
 }
@@ -261,9 +242,6 @@ export async function handleWorkspacePaneClickPrelude(
       await deps.refreshTools();
     }
     await deps.onWorkspaceTabActivated(nextWorkspaceTab);
-    if (nextWorkspaceTab === "flow-tool") {
-      await deps.maybeOpenFlowProjectSetup();
-    }
     deps.rerender();
     return { handled: true, target };
   }

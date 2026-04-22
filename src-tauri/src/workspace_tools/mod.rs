@@ -68,14 +68,6 @@ const WORKSPACE_TOOL_MANIFESTS: &[WorkspaceToolManifest] = &[
         default_enabled: true,
     },
     WorkspaceToolManifest {
-        tool_id: "flow",
-        title: "Flow",
-        description: "Node-based workflow orchestration surface",
-        category: "agent",
-        core: false,
-        default_enabled: true,
-    },
-    WorkspaceToolManifest {
         tool_id: "tasks",
         title: "Tasks",
         description: "Task planning and status tracking",

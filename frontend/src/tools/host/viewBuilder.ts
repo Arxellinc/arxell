@@ -1,8 +1,6 @@
-import type { AppEvent, FilesListDirectoryEntry, FlowRerunValidationResult } from "../../contracts";
+import type { FilesListDirectoryEntry } from "../../contracts";
 import { renderFilesToolActions, renderFilesToolBody } from "../files";
 import type { FilesColumnWidths } from "../files/index";
-import { renderFlowToolActions, renderFlowToolBody, type FlowTerminalSessionView } from "../flow";
-import type { FlowPhaseTranscriptEntry, FlowRunView } from "../flow/state";
 import { renderMemoryToolActions, renderMemoryToolBody, type MemoryToolState } from "../memory";
 import { renderSkillsToolActions, renderSkillsToolBody } from "../skills";
 import { renderChartToolActions, renderChartToolBody } from "../chart";
@@ -86,7 +84,7 @@ export interface WorkspaceToolViewInput {
   tasksSortDirection: TaskSortDirection;
   tasksDetailsCollapsed: boolean;
   tasksJsonDraft: string;
-  flowRuns: FlowRunView[];
+  flowRuns: Array<{ runId: string }>;
   flowActiveRunId: string | null;
   flowMode: "plan" | "build";
   flowMaxIterations: number;
@@ -99,7 +97,7 @@ export interface WorkspaceToolViewInput {
   flowImplementCommand: string;
   flowBackpressureCommands: string;
   flowEventFilter: string;
-  flowValidationResults: FlowRerunValidationResult[];
+  flowValidationResults: unknown[];
   flowBusy: boolean;
   flowMessage: string | null;
   flowAdvancedOpen: boolean;
@@ -109,7 +107,7 @@ export interface WorkspaceToolViewInput {
   flowPhaseSessionByName: Record<string, string>;
   flowTerminalPhases: string[];
   flowAutoFocusPhaseTerminal: boolean;
-  flowPhaseTranscriptsByRun: Record<string, Record<string, FlowPhaseTranscriptEntry[]>>;
+  flowPhaseTranscriptsByRun: Record<string, Record<string, unknown[]>>;
   flowProjectSetupOpen: boolean;
   flowProjectNameDraft: string;
   flowProjectTypeDraft: string;
@@ -127,8 +125,8 @@ export interface WorkspaceToolViewInput {
   flowModelUnavailableAttempt: number;
   flowModelUnavailableMaxAttempts: number;
   flowModelUnavailableStatus: string;
-  terminalSessions: FlowTerminalSessionView[];
-  filteredFlowEvents: AppEvent[];
+  terminalSessions: Array<{ sessionId: string }>;
+  filteredFlowEvents: unknown[];
   opencodeState: OpenCodeToolState;
   looperState: LooperToolState;
   notepadOpenTabs: string[];
@@ -197,11 +195,6 @@ export interface WorkspaceToolViewInput {
 }
 
 export function buildWorkspaceToolViews(input: WorkspaceToolViewInput): Record<string, ToolViewHtml> {
-  const activeFlowRunId = input.flowActiveRunId ?? input.flowRuns[0]?.runId ?? null;
-  const activePhaseTranscript =
-    (activeFlowRunId
-      ? input.flowPhaseTranscriptsByRun[activeFlowRunId]?.[input.flowActiveTerminalPhase]
-      : null) ?? [];
   const filesBodyHtml = renderFilesToolBody({
     rootPath: input.filesRootPath,
     scopeRootPath: input.filesScopeRootPath,
@@ -329,100 +322,6 @@ export function buildWorkspaceToolViews(input: WorkspaceToolViewInput): Record<s
         error: input.filesError
       }),
       bodyHtml: filesBodyHtml
-    },
-    flow: {
-      actionsHtml: renderFlowToolActions({
-        runs: input.flowRuns,
-        activeRunId: activeFlowRunId,
-        mode: input.flowMode,
-        maxIterations: input.flowMaxIterations,
-        dryRun: input.flowDryRun,
-        autoPush: input.flowAutoPush,
-        promptPlanPath: input.flowPromptPlanPath,
-        promptBuildPath: input.flowPromptBuildPath,
-        planPath: input.flowPlanPath,
-        specsGlob: input.flowSpecsGlob,
-        implementCommand: input.flowImplementCommand,
-        backpressureCommands: input.flowBackpressureCommands,
-        eventFilter: input.flowEventFilter,
-        filteredEvents: input.filteredFlowEvents,
-        validationResults: input.flowValidationResults,
-        busy: input.flowBusy,
-        message: input.flowMessage,
-        advancedOpen: input.flowAdvancedOpen,
-        bottomPanel: input.flowBottomPanel,
-        workspaceSplit: input.flowWorkspaceSplit,
-        activeTerminalPhase: input.flowActiveTerminalPhase,
-        terminalPhases: input.flowTerminalPhases,
-        phaseSessionByName: input.flowPhaseSessionByName,
-        terminalSessions: input.terminalSessions,
-        autoFocusPhaseTerminal: input.flowAutoFocusPhaseTerminal,
-        activePhaseTranscript,
-        projectSetupOpen: input.flowProjectSetupOpen,
-        projectNameDraft: input.flowProjectNameDraft,
-        projectTypeDraft: input.flowProjectTypeDraft,
-        projectIconDraft: input.flowProjectIconDraft,
-        projectDescriptionDraft: input.flowProjectDescriptionDraft,
-        phaseModels: input.flowPhaseModels,
-        availableModels: input.flowAvailableModels,
-        paused: input.flowPaused,
-        useAgent: input.flowUseAgent,
-        modelUnavailableOpen: input.flowModelUnavailableOpen,
-        modelUnavailablePhase: input.flowModelUnavailablePhase,
-        modelUnavailableModel: input.flowModelUnavailableModel,
-        modelUnavailableFallbackModel: input.flowModelUnavailableFallbackModel,
-        modelUnavailableReason: input.flowModelUnavailableReason,
-        modelUnavailableAttempt: input.flowModelUnavailableAttempt,
-        modelUnavailableMaxAttempts: input.flowModelUnavailableMaxAttempts,
-        modelUnavailableStatus: input.flowModelUnavailableStatus,
-        embeddedFilesHtml: filesBodyHtml
-      }),
-      bodyHtml: renderFlowToolBody({
-        runs: input.flowRuns,
-        activeRunId: activeFlowRunId,
-        mode: input.flowMode,
-        maxIterations: input.flowMaxIterations,
-        dryRun: input.flowDryRun,
-        autoPush: input.flowAutoPush,
-        promptPlanPath: input.flowPromptPlanPath,
-        promptBuildPath: input.flowPromptBuildPath,
-        planPath: input.flowPlanPath,
-        specsGlob: input.flowSpecsGlob,
-        implementCommand: input.flowImplementCommand,
-        backpressureCommands: input.flowBackpressureCommands,
-        eventFilter: input.flowEventFilter,
-        filteredEvents: input.filteredFlowEvents,
-        validationResults: input.flowValidationResults,
-        busy: input.flowBusy,
-        message: input.flowMessage,
-        advancedOpen: input.flowAdvancedOpen,
-        bottomPanel: input.flowBottomPanel,
-        workspaceSplit: input.flowWorkspaceSplit,
-        activeTerminalPhase: input.flowActiveTerminalPhase,
-        terminalPhases: input.flowTerminalPhases,
-        phaseSessionByName: input.flowPhaseSessionByName,
-        terminalSessions: input.terminalSessions,
-        autoFocusPhaseTerminal: input.flowAutoFocusPhaseTerminal,
-        activePhaseTranscript,
-        projectSetupOpen: input.flowProjectSetupOpen,
-        projectNameDraft: input.flowProjectNameDraft,
-        projectTypeDraft: input.flowProjectTypeDraft,
-        projectIconDraft: input.flowProjectIconDraft,
-        projectDescriptionDraft: input.flowProjectDescriptionDraft,
-        phaseModels: input.flowPhaseModels,
-        availableModels: input.flowAvailableModels,
-        paused: input.flowPaused,
-        useAgent: input.flowUseAgent,
-        modelUnavailableOpen: input.flowModelUnavailableOpen,
-        modelUnavailablePhase: input.flowModelUnavailablePhase,
-        modelUnavailableModel: input.flowModelUnavailableModel,
-        modelUnavailableFallbackModel: input.flowModelUnavailableFallbackModel,
-        modelUnavailableReason: input.flowModelUnavailableReason,
-        modelUnavailableAttempt: input.flowModelUnavailableAttempt,
-        modelUnavailableMaxAttempts: input.flowModelUnavailableMaxAttempts,
-        modelUnavailableStatus: input.flowModelUnavailableStatus,
-        embeddedFilesHtml: filesBodyHtml
-      })
     },
     tasks: {
       actionsHtml: renderTasksToolActions({

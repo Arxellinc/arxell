@@ -68,6 +68,13 @@
   color: var(--muted);
 }
 
+.looper-splash-path-preview {
+  color: var(--muted);
+  font-size: var(--text-xs);
+  line-height: 1.4;
+  word-break: break-all;
+}
+
 .looper-splash-field input,
 .looper-splash-field textarea {
   border: 1px solid transparent;

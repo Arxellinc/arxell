@@ -8,10 +8,11 @@ import type {
   LooperStopResponse
 } from "../../contracts.js";
 import type { ChatIpcClient } from "../../ipcClient.js";
+import { ensureUserProject, getUserProjectRoots } from "../../projects.js";
 import type { TerminalManager } from "../terminal/index.js";
 import { normalizeLooperLoopRecord } from "./runtime.js";
 import type { LooperPhase, LooperToolState } from "./state.js";
-import { createLoopRun, LOOPER_PHASE_LABELS, LOOPER_PHASES } from "./state.js";
+import { createLoopRun, LOOPER_PHASE_LABELS, LOOPER_PHASES, sanitizeLooperToolId } from "./state.js";
 
 export interface LooperActionsDeps {
   terminalManager: TerminalManager;
@@ -126,6 +127,13 @@ export async function ensureLooperInit(
   state: LooperToolState,
   deps: LooperActionsDeps
 ): Promise<void> {
+  if (!state.directoryPreviewRoots) {
+    const roots = await getUserProjectRoots(deps.client, deps.nextCorrelationId());
+    state.directoryPreviewRoots = {
+      projectsRoot: roots.projectsRoot,
+      toolsRoot: roots.toolsRoot
+    };
+  }
   if (state.installed === null) {
     await checkOpenCodeInstalled(state, deps);
   }
@@ -138,6 +146,21 @@ export async function createLoop(
   deps: LooperActionsDeps
 ): Promise<void> {
   if (state.busy) return;
+  const projectName = state.projectNameDraft.trim();
+  if (projectName) {
+    if (state.projectTypeDraft === "app-tool") {
+      const toolId = sanitizeLooperToolId(projectName) || "project";
+      const toolsRoot = state.directoryPreviewRoots?.toolsRoot;
+      if (toolsRoot) {
+        state.configCwdDraft = `${toolsRoot.replace(/[\\/]+$/, "")}/${toolId}`;
+        state.cwd = state.configCwdDraft;
+      }
+    } else {
+      const project = await ensureUserProject(deps.client, deps.nextCorrelationId(), projectName);
+      state.configCwdDraft = project.rootPath;
+      state.cwd = project.rootPath;
+    }
+  }
   syncDraftConfigIntoLiveState(state, deps);
   const loopIndex = state.nextLoopIndex;
   const loop = createLoopRun(loopIndex, state.cwd || deps.defaultCwd || ".", {

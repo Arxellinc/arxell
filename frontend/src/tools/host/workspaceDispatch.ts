@@ -8,7 +8,6 @@ import {
   handleFilesPointerDown
 } from "../files/bindings";
 import type { FilesConflictResolution } from "../files/actions";
-import { handleFlowChange, handleFlowClick, handleFlowInput } from "../flow/bindings";
 import {
   handleWebChange,
   handleWebClick,
@@ -34,7 +33,6 @@ import { handleSheetsClick } from "../sheets/bindings";
 import {
   FILES_DATA_ATTR,
   FILES_UI_ID,
-  FLOW_DATA_ATTR,
   LOOPER_DATA_ATTR,
   MANAGER_DATA_ATTR,
   MANAGER_UI_ID,
@@ -47,8 +45,7 @@ import {
   WEB_DATA_ATTR,
   WORKSPACE_DATA_ATTR
 } from "../ui/constants";
-import type { FlowRunView, FlowRuntimeSlice } from "../flow/state";
-export type WorkspaceToolState = FlowRuntimeSlice & Record<string, unknown>;
+export type WorkspaceToolState = Record<string, unknown>;
 
 export const WORKSPACE_TOOL_TARGET_SELECTOR = [
   `[${WORKSPACE_DATA_ATTR.tab}]`,
@@ -72,8 +69,6 @@ export const WORKSPACE_TOOL_TARGET_SELECTOR = [
   `[${TASKS_DATA_ATTR.action}]`,
   `[${TASKS_DATA_ATTR.taskId}]`,
   `[${TASKS_DATA_ATTR.field}]`,
-  `[${FLOW_DATA_ATTR.action}]`,
-  `[${FLOW_DATA_ATTR.runId}]`,
   "[data-chart-action]",
   `[${OPENCODE_DATA_ATTR.action}]`,
   `[${LOOPER_DATA_ATTR.action}]`,
@@ -88,9 +83,9 @@ export interface WorkspaceToolDispatchDeps {
     refreshRuns: () => Promise<void>;
     startRun: () => Promise<void>;
     stopRun: () => Promise<void>;
-    resumeRun: (run: FlowRunView) => Promise<void>;
-    retryRun: (run: FlowRunView) => Promise<void>;
-    rerunValidation: (run: FlowRunView) => Promise<void>;
+    resumeRun: (run: { runId: string }) => Promise<void>;
+    retryRun: (run: { runId: string }) => Promise<void>;
+    rerunValidation: (run: { runId: string }) => Promise<void>;
     openPhaseTerminal: (phase: string) => Promise<void>;
     closePhaseTerminal: (phase: string) => Promise<void>;
     createProjectSetup: (
@@ -143,6 +138,8 @@ export interface WorkspaceToolDispatchDeps {
     openSheetWithDialog: () => Promise<void>;
     saveSheetCurrent: () => Promise<void>;
     saveSheetWithDialog: () => Promise<void>;
+    undoSheet: () => Promise<void>;
+    redoSheet: () => Promise<void>;
     insertRows: (index: number, count?: number) => Promise<void>;
     insertColumns: (index: number, count?: number) => Promise<void>;
     deleteRows: (index: number, count?: number) => Promise<void>;
@@ -197,9 +194,6 @@ export async function dispatchWorkspaceToolClick(
   state: WorkspaceToolState,
   deps: WorkspaceToolDispatchDeps
 ): Promise<boolean> {
-  if (await handleFlowClick(target, state as any, deps.flow)) {
-    return true;
-  }
   if (await handleFilesClick(target, state as any, deps.files)) {
     return true;
   }
@@ -239,9 +233,8 @@ export function dispatchWorkspaceToolChange(
   deps: WorkspaceToolDispatchDeps
 ): boolean {
   const webHandled = handleWebChange(target, { withActiveWebTab: deps.web.withActiveWebTab as any });
-  const flowHandled = handleFlowChange(target, state as any);
   const tasksHandled = handleTasksChange(target, state as any);
-  return webHandled || flowHandled || tasksHandled;
+  return webHandled || tasksHandled;
 }
 
 export function dispatchWorkspaceToolInput(
@@ -255,7 +248,6 @@ export function dispatchWorkspaceToolInput(
   const notepadResult = handleNotepadInput(target, state as any);
   const tasksHandled = handleTasksInput(target, state as any);
   const webHandled = handleWebInput(target, state as any, { withActiveWebTab: deps.web.withActiveWebTab as any });
-  const flowResult = handleFlowInput(target, state as any);
   const chartResult = handleChartInput(target, state as any);
   const looperResult = handleLooperInput(target, deps.looper.state);
   return {
@@ -266,7 +258,6 @@ export function dispatchWorkspaceToolInput(
       notepadResult.handled ||
       tasksHandled ||
       webHandled ||
-      flowResult.handled ||
       chartResult.handled ||
       looperResult.handled,
     rerender:
@@ -275,7 +266,6 @@ export function dispatchWorkspaceToolInput(
       docsResult.rerender ||
       notepadResult.rerender ||
       tasksHandled ||
-      flowResult.rerender ||
       chartResult.rerender ||
       looperResult.rerender
   };

@@ -65,14 +65,6 @@ Checks performed:
 2. Verify response includes `entries` array with `name`, `path`, `isDir`, `sizeBytes`.
 3. Invoke with a subdirectory path, verify entries match that directory.
 
-## Flow Start / Stop / Status
-
-1. Start a flow run (`cmd_flow_start` with `mode: "plan"`, `dryRun: true`).
-2. Verify response includes `runId` and `status: "queued"`.
-3. Query status (`cmd_flow_status`), verify run record returned.
-4. Stop the run (`cmd_flow_stop`), verify `stopped: true`.
-5. List runs (`cmd_flow_list_runs`), verify the stopped run appears.
-
 ## API Connection CRUD
 
 1. Create an API connection (`cmd_api_connection_create` with a test URL).
@@ -86,7 +78,7 @@ Checks performed:
 ## Workspace Tool Management
 
 1. List workspace tools (`cmd_workspace_tools_list`).
-2. Verify builtin tools (files, chart, flow, etc.) appear in the list.
+2. Verify builtin tools (files, chart, looper, etc.) appear in the list.
 3. Disable a tool (`cmd_workspace_tool_set_enabled` with `enabled: false`).
 4. Re-list tools, verify the tool is disabled.
 5. Re-enable it.

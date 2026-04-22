@@ -10,7 +10,7 @@ use arxell_lite::contracts::{
     ApiConnectionCreateRequest, ApiConnectionCreateResponse, ApiConnectionDeleteRequest,
     ApiConnectionDeleteResponse, ApiConnectionGetSecretRequest, ApiConnectionGetSecretResponse,
     ApiConnectionProbeRequest, ApiConnectionProbeResponse, ApiConnectionReverifyRequest,
-    ApiConnectionReverifyResponse, ApiConnectionStatus, ApiConnectionType,
+    ApiConnectionReverifyResponse,
     ApiConnectionUpdateRequest, ApiConnectionUpdateResponse, ApiConnectionsExportRequest,
     ApiConnectionsExportResponse, ApiConnectionsImportRequest, ApiConnectionsImportResponse,
     ApiConnectionsListRequest, ApiConnectionsListResponse, AppResourceUsageRequest,
@@ -20,9 +20,7 @@ use arxell_lite::contracts::{
     ChatSendRequest, ChatSendResponse, CustomToolCapabilityInvokeRequest,
     CustomToolCapabilityInvokeResponse, DevicesProbeMicrophoneRequest,
     DevicesProbeMicrophoneResponse, EventSeverity, EventStage, FilesListDirectoryRequest,
-    FilesListDirectoryResponse, FlowListRunsRequest, FlowListRunsResponse,
-    FlowRerunValidationRequest, FlowRerunValidationResponse, FlowStartRequest, FlowStartResponse,
-    FlowStatusRequest, FlowStatusResponse, FlowStopRequest, FlowStopResponse,
+    FilesListDirectoryResponse,
     LlamaRuntimeInstallRequest, LlamaRuntimeInstallResponse, LlamaRuntimeStartRequest,
     LlamaRuntimeStartResponse, LlamaRuntimeStatusRequest, LlamaRuntimeStatusResponse,
     LlamaRuntimeStopRequest, LlamaRuntimeStopResponse, ModelManagerDeleteInstalledRequest,
@@ -38,6 +36,8 @@ use arxell_lite::contracts::{
     TtsSelfTestRequest, TtsSelfTestResponse, TtsSettingsGetRequest, TtsSettingsGetResponse,
     TtsSettingsSetRequest, TtsSettingsSetResponse, TtsSpeakRequest, TtsSpeakResponse,
     TtsStatusRequest, TtsStatusResponse, TtsStopRequest, TtsStopResponse,
+    UserProjectEnsureRequest, UserProjectEnsureResponse, UserProjectsRootsRequest,
+    UserProjectsRootsResponse,
     VoiceGetRuntimeDiagnosticsRequest, VoiceGetVadSettingsRequest, VoiceGetVadSettingsResponse,
     VoiceListVadMethodsRequest, VoiceListVadMethodsResponse, VoiceRequestHandoffRequest,
     VoiceRuntimeSnapshotResponse, VoiceSetDuplexModeRequest, VoiceSetShadowMethodRequest,
@@ -142,7 +142,6 @@ fn main() {
     let state = TauriBridgeState {
         chat: std::sync::Arc::new(app_context.ipc.chat.clone()),
         terminal: std::sync::Arc::new(app_context.ipc.terminal.clone()),
-        flow_handler: std::sync::Arc::new(app_context.ipc.flow.clone()),
         looper_handler: std::sync::Arc::new(app_context.ipc.looper.clone()),
         voice_handler: std::sync::Arc::new(app_context.ipc.voice.clone()),
         hub: hub.clone(),
@@ -150,11 +149,11 @@ fn main() {
         api_registry: std::sync::Arc::clone(&app_context.api_registry),
         web_search: std::sync::Arc::clone(&app_context.web_search),
         runtime: std::sync::Arc::clone(&app_context.runtime),
+        user_projects: std::sync::Arc::clone(&app_context.user_projects),
         permissions: std::sync::Arc::clone(&app_context.permissions),
         model_manager: std::sync::Arc::clone(&app_context.model_manager),
         files: std::sync::Arc::clone(&app_context.files),
         sheets: std::sync::Arc::clone(&app_context.sheets),
-        flow: std::sync::Arc::clone(&app_context.flow),
         voice: std::sync::Arc::clone(&app_context.voice),
     };
 
@@ -228,6 +227,8 @@ fn main() {
             cmd_workspace_tool_create_app_plugin,
             cmd_workspace_tools_export,
             cmd_workspace_tools_import,
+            cmd_user_projects_roots,
+            cmd_user_project_ensure,
             cmd_api_connections_list,
             cmd_api_connections_export,
             cmd_api_connections_import,
@@ -254,11 +255,6 @@ fn main() {
             cmd_tool_invoke,
             cmd_custom_tool_capability_invoke,
             cmd_plugin_capability_invoke,
-            cmd_flow_start,
-            cmd_flow_stop,
-            cmd_flow_status,
-            cmd_flow_list_runs,
-            cmd_flow_rerun_validation,
             start_stt,
             stop_stt,
             stt_status,
@@ -780,6 +776,40 @@ async fn cmd_workspace_tools_import(
     Ok(WorkspaceToolsImportResponse {
         correlation_id: request.correlation_id,
         tools,
+    })
+}
+
+#[cfg(feature = "tauri-runtime")]
+#[tauri::command]
+async fn cmd_user_projects_roots(
+    state: State<'_, TauriBridgeState>,
+    request: UserProjectsRootsRequest,
+) -> Result<UserProjectsRootsResponse, String> {
+    let roots = state.user_projects.ensure_roots()?;
+    Ok(UserProjectsRootsResponse {
+        correlation_id: request.correlation_id,
+        content_root: arxell_lite::app::user_projects_service::path_to_string(&roots.content_root),
+        projects_root: arxell_lite::app::user_projects_service::path_to_string(&roots.projects_root),
+        tools_root: arxell_lite::app::user_projects_service::path_to_string(&roots.tools_root),
+    })
+}
+
+#[cfg(feature = "tauri-runtime")]
+#[tauri::command]
+async fn cmd_user_project_ensure(
+    state: State<'_, TauriBridgeState>,
+    request: UserProjectEnsureRequest,
+) -> Result<UserProjectEnsureResponse, String> {
+    let project = state.user_projects.ensure_project(&request.project_name)?;
+    Ok(UserProjectEnsureResponse {
+        correlation_id: request.correlation_id,
+        project_name: project.project_name,
+        project_slug: project.project_slug,
+        root_path: arxell_lite::app::user_projects_service::path_to_string(&project.root_path),
+        tasks_path: arxell_lite::app::user_projects_service::path_to_string(&project.tasks_path),
+        sheets_path: arxell_lite::app::user_projects_service::path_to_string(&project.sheets_path),
+        looper_path: arxell_lite::app::user_projects_service::path_to_string(&project.looper_path),
+        files_path: arxell_lite::app::user_projects_service::path_to_string(&project.files_path),
     })
 }
 
@@ -1475,106 +1505,6 @@ async fn cmd_files_list_directory(
         "cmd_files_list_directory",
         "files",
         "list-directory",
-        &request,
-    )
-    .await
-}
-
-#[cfg(feature = "tauri-runtime")]
-#[tauri::command]
-async fn cmd_flow_start(
-    state: State<'_, TauriBridgeState>,
-    request: FlowStartRequest,
-) -> Result<FlowStartResponse, String> {
-    // Compatibility wrapper retained for external callers still using cmd_flow_start.
-    // Canonical path is cmd_tool_invoke with toolId=flow, action=start.
-    let correlation_id = request.correlation_id.clone();
-    invoke_legacy_tool_command(
-        &state,
-        correlation_id.as_str(),
-        "cmd_flow_start",
-        "flow",
-        "start",
-        &request,
-    )
-    .await
-}
-
-#[cfg(feature = "tauri-runtime")]
-#[tauri::command]
-async fn cmd_flow_stop(
-    state: State<'_, TauriBridgeState>,
-    request: FlowStopRequest,
-) -> Result<FlowStopResponse, String> {
-    // Compatibility wrapper retained for external callers still using cmd_flow_stop.
-    // Canonical path is cmd_tool_invoke with toolId=flow, action=stop.
-    let correlation_id = request.correlation_id.clone();
-    invoke_legacy_tool_command(
-        &state,
-        correlation_id.as_str(),
-        "cmd_flow_stop",
-        "flow",
-        "stop",
-        &request,
-    )
-    .await
-}
-
-#[cfg(feature = "tauri-runtime")]
-#[tauri::command]
-async fn cmd_flow_status(
-    state: State<'_, TauriBridgeState>,
-    request: FlowStatusRequest,
-) -> Result<FlowStatusResponse, String> {
-    // Compatibility wrapper retained for external callers still using cmd_flow_status.
-    // Canonical path is cmd_tool_invoke with toolId=flow, action=status.
-    let correlation_id = request.correlation_id.clone();
-    invoke_legacy_tool_command(
-        &state,
-        correlation_id.as_str(),
-        "cmd_flow_status",
-        "flow",
-        "status",
-        &request,
-    )
-    .await
-}
-
-#[cfg(feature = "tauri-runtime")]
-#[tauri::command]
-async fn cmd_flow_list_runs(
-    state: State<'_, TauriBridgeState>,
-    request: FlowListRunsRequest,
-) -> Result<FlowListRunsResponse, String> {
-    // Compatibility wrapper retained for external callers still using cmd_flow_list_runs.
-    // Canonical path is cmd_tool_invoke with toolId=flow, action=list-runs.
-    let correlation_id = request.correlation_id.clone();
-    invoke_legacy_tool_command(
-        &state,
-        correlation_id.as_str(),
-        "cmd_flow_list_runs",
-        "flow",
-        "list-runs",
-        &request,
-    )
-    .await
-}
-
-#[cfg(feature = "tauri-runtime")]
-#[tauri::command]
-async fn cmd_flow_rerun_validation(
-    state: State<'_, TauriBridgeState>,
-    request: FlowRerunValidationRequest,
-) -> Result<FlowRerunValidationResponse, String> {
-    // Compatibility wrapper retained for external callers still using cmd_flow_rerun_validation.
-    // Canonical path is cmd_tool_invoke with toolId=flow, action=rerun-validation.
-    let correlation_id = request.correlation_id.clone();
-    invoke_legacy_tool_command(
-        &state,
-        correlation_id.as_str(),
-        "cmd_flow_rerun_validation",
-        "flow",
-        "rerun-validation",
         &request,
     )
     .await
