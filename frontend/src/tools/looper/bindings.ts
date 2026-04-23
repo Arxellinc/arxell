@@ -98,6 +98,51 @@ export function handleLooperClick(
       }
       return true;
     }
+    if (actionValue === "open-preview") {
+      const loopId = state.activeLoopId;
+      if (loopId) {
+        void import("./actions").then(({ openPreview }) => {
+          void openPreview(state, deps, loopId);
+        });
+      }
+      return true;
+    }
+    if (actionValue === "restart-preview") {
+      const loopId = state.activeLoopId;
+      if (loopId) {
+        void import("./actions").then(({ restartPreview }) => {
+          void restartPreview(state, deps, loopId);
+        });
+      }
+      return true;
+    }
+    if (actionValue === "stop-preview") {
+      const loopId = state.activeLoopId;
+      if (loopId) {
+        void import("./actions").then(({ stopPreview }) => {
+          void stopPreview(state, deps, loopId);
+        });
+      }
+      return true;
+    }
+    if (actionValue === "close-all-loops") {
+      void import("./actions").then(({ closeAllLoops }) => {
+        void closeAllLoops(state, deps);
+      });
+      return true;
+    }
+    if (actionValue === "save-session") {
+      void import("./actions").then(({ saveSessionAs }) => {
+        void saveSessionAs(state, deps);
+      });
+      return true;
+    }
+    if (actionValue === "open-session") {
+      void import("./actions").then(({ openSession }) => {
+        void openSession(state, deps);
+      });
+      return true;
+    }
     if (actionValue === "dismiss-install") {
       void import("./actions").then(({ dismissInstall }) => {
         dismissInstall(state);

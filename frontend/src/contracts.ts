@@ -670,6 +670,16 @@ export interface ModelManagerListCatalogCsvResponse {
   rows: ModelManagerCatalogCsvRow[];
 }
 
+export interface ModelManagerRefreshUnslothCatalogRequest {
+  correlationId: string;
+}
+
+export interface ModelManagerRefreshUnslothCatalogResponse {
+  correlationId: string;
+  rows: ModelManagerCatalogCsvRow[];
+  newCount: number;
+}
+
 export interface DevicesProbeMicrophoneRequest {
   correlationId: string;
   attemptOpen?: boolean;
@@ -1167,6 +1177,15 @@ export interface LooperQuestion {
   options: LooperQuestionOption[];
 }
 
+export interface LooperPreviewStateRecord {
+  status: string;
+  command?: string | null;
+  url?: string | null;
+  sessionId?: string | null;
+  lastError?: string | null;
+  lastStartedAtMs?: number | null;
+}
+
 export interface LooperLoopRecord {
   id: string;
   iteration: number;
@@ -1189,6 +1208,7 @@ export interface LooperLoopRecord {
   reviewBeforeExecute: boolean;
   plannerPlan: string;
   pendingQuestions: LooperQuestion[];
+  preview?: LooperPreviewStateRecord | null;
 }
 
 export interface LooperStartRequest {
@@ -1282,6 +1302,16 @@ export interface LooperCloseResponse {
   closed: boolean;
 }
 
+export interface LooperCloseAllResponse {
+  correlationId: string;
+  closedCount: number;
+}
+
+export interface LooperImportResponse {
+  correlationId: string;
+  importedCount: number;
+}
+
 export interface LooperCheckOpenCodeRequest {
   correlationId: string;
 }
@@ -1307,6 +1337,21 @@ export interface LooperSubmitQuestionsResponse {
   correlationId: string;
   loopId: string;
   submitted: boolean;
+}
+
+export interface LooperPreviewRequest {
+  correlationId: string;
+  loopId: string;
+}
+
+export interface LooperPreviewResponse {
+  correlationId: string;
+  loopId: string;
+  status: string;
+  command?: string | null;
+  url?: string | null;
+  sessionId?: string | null;
+  lastError?: string | null;
 }
 
 export interface ChatStreamStartPayload {

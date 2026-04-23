@@ -90,6 +90,19 @@ export function normalizeLooperLoopRecord(record: LooperLoopRecord): LooperLoopR
     plannerPlan: record.plannerPlan,
     pendingQuestions: record.pendingQuestions,
     reviewAnswers: {},
+    preview: {
+      status:
+        record.preview?.status === "starting" ||
+        record.preview?.status === "running" ||
+        record.preview?.status === "failed" ||
+        record.preview?.status === "stopped"
+          ? record.preview.status
+          : "idle",
+      command: record.preview?.command ?? null,
+      url: record.preview?.url ?? null,
+      sessionId: record.preview?.sessionId ?? null,
+      lastError: record.preview?.lastError ?? null
+    },
     launchConfig: {
       cwd: record.cwd,
       taskPath: record.taskPath,
@@ -134,7 +147,14 @@ function createEventPlaceholderLoop(loopId: string, iteration: number, timestamp
     reviewBeforeExecute: true,
     plannerPlan: "",
     pendingQuestions: [],
-    reviewAnswers: {}
+    reviewAnswers: {},
+    preview: {
+      status: "idle",
+      command: null,
+      url: null,
+      sessionId: null,
+      lastError: null
+    }
   };
 }
 

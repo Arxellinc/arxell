@@ -5,11 +5,12 @@
 
 use crate::contracts::{
     EventSeverity, EventStage, LooperAdvanceRequest, LooperAdvanceResponse,
-    LooperCheckOpenCodeRequest, LooperCheckOpenCodeResponse, LooperCloseRequest,
-    LooperCloseResponse, LooperListRequest, LooperListResponse, LooperPauseRequest,
-    LooperPauseResponse, LooperStartRequest, LooperStartResponse, LooperStatusRequest,
-    LooperStatusResponse, LooperStopRequest, LooperStopResponse, LooperSubmitQuestionsRequest,
-    LooperSubmitQuestionsResponse, Subsystem,
+    LooperCheckOpenCodeRequest, LooperCheckOpenCodeResponse, LooperCloseAllRequest,
+    LooperCloseAllResponse, LooperCloseRequest, LooperCloseResponse, LooperImportRequest,
+    LooperImportResponse, LooperListRequest, LooperListResponse, LooperPauseRequest,
+    LooperPauseResponse, LooperPreviewRequest, LooperPreviewResponse, LooperStartRequest,
+    LooperStartResponse, LooperStatusRequest, LooperStatusResponse, LooperStopRequest,
+    LooperStopResponse, LooperSubmitQuestionsRequest, LooperSubmitQuestionsResponse, Subsystem,
 };
 use crate::observability::EventHub;
 use crate::tools::looper_handler::LooperHandler;
@@ -204,6 +205,24 @@ impl LooperCommandHandler {
         result
     }
 
+    pub async fn start_preview(
+        &self,
+        req: LooperPreviewRequest,
+    ) -> Result<LooperPreviewResponse, String> {
+        self.handler.start_preview(req).await
+    }
+
+    pub async fn stop_preview(
+        &self,
+        req: LooperPreviewRequest,
+    ) -> Result<LooperPreviewResponse, String> {
+        self.handler.stop_preview(req).await
+    }
+
+    pub fn preview_url(&self, loop_id: &str) -> Option<String> {
+        self.handler.preview_url(loop_id)
+    }
+
     pub async fn list(&self, req: LooperListRequest) -> Result<LooperListResponse, String> {
         self.hub.emit(self.hub.make_event(
             &req.correlation_id,
@@ -260,6 +279,76 @@ impl LooperCommandHandler {
                 &req.correlation_id,
                 Subsystem::Ipc,
                 "cmd.looper.close",
+                EventStage::Error,
+                EventSeverity::Error,
+                json!({ "error": error }),
+            )),
+        }
+        result
+    }
+
+    pub async fn close_all(
+        &self,
+        req: LooperCloseAllRequest,
+    ) -> Result<LooperCloseAllResponse, String> {
+        self.hub.emit(self.hub.make_event(
+            &req.correlation_id,
+            Subsystem::Ipc,
+            "cmd.looper.close_all",
+            EventStage::Start,
+            EventSeverity::Info,
+            json!({}),
+        ));
+
+        let result = self.handler.close_all(req.clone()).await;
+        match &result {
+            Ok(response) => self.hub.emit(self.hub.make_event(
+                &response.correlation_id,
+                Subsystem::Ipc,
+                "cmd.looper.close_all",
+                EventStage::Complete,
+                EventSeverity::Info,
+                json!({ "closedCount": response.closed_count }),
+            )),
+            Err(error) => self.hub.emit(self.hub.make_event(
+                &req.correlation_id,
+                Subsystem::Ipc,
+                "cmd.looper.close_all",
+                EventStage::Error,
+                EventSeverity::Error,
+                json!({ "error": error }),
+            )),
+        }
+        result
+    }
+
+    pub fn import(
+        &self,
+        req: LooperImportRequest,
+    ) -> Result<LooperImportResponse, String> {
+        self.hub.emit(self.hub.make_event(
+            &req.correlation_id,
+            Subsystem::Ipc,
+            "cmd.looper.import",
+            EventStage::Start,
+            EventSeverity::Info,
+            json!({ "loopCount": req.loops.len() }),
+        ));
+
+        let result = self.handler.import(req.clone());
+        match &result {
+            Ok(response) => self.hub.emit(self.hub.make_event(
+                &response.correlation_id,
+                Subsystem::Ipc,
+                "cmd.looper.import",
+                EventStage::Complete,
+                EventSeverity::Info,
+                json!({ "importedCount": response.imported_count }),
+            )),
+            Err(error) => self.hub.emit(self.hub.make_event(
+                &req.correlation_id,
+                Subsystem::Ipc,
+                "cmd.looper.import",
                 EventStage::Error,
                 EventSeverity::Error,
                 json!({ "error": error }),

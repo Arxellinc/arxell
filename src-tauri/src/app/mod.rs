@@ -71,6 +71,7 @@ impl AppContext {
             Arc::clone(&terminal),
             Arc::clone(&workspace_tools),
             Arc::clone(&web_search),
+            Arc::clone(&api_registry),
         ));
         looper.set_data_path(workspace_tools.state_root_path().join("looper-state.json"));
         looper.load_from_disk();

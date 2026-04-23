@@ -26,18 +26,19 @@
 //! the handler automatically advances to the next phase. The critic phase produces
 //! a `SHIP` or `REVISE` decision which controls iteration looping.
 
+use crate::api_registry::ApiRegistryService;
 use crate::app::terminal_service::TerminalService;
 use crate::app::web_search_service::{
     WebSearchRequest as ServiceWebSearchRequest, WebSearchResult, WebSearchService,
 };
 use crate::contracts::{
-    EventSeverity, EventStage, LooperAdvanceRequest, LooperAdvanceResponse,
-    LooperCheckOpenCodeRequest, LooperCheckOpenCodeResponse, LooperCloseRequest,
-    LooperCloseResponse, LooperListRequest, LooperListResponse, LooperLoopRecord, LooperLoopStatus,
+    ApiConnectionType, EventSeverity, EventStage, LooperAdvanceRequest, LooperAdvanceResponse,
+    LooperCheckOpenCodeRequest, LooperCheckOpenCodeResponse,     LooperCloseAllRequest, LooperCloseAllResponse, LooperCloseRequest,
+    LooperCloseResponse, LooperImportRequest, LooperImportResponse, LooperListRequest, LooperListResponse, LooperLoopRecord, LooperLoopStatus,
     LooperLoopType, LooperPauseRequest, LooperPauseResponse, LooperPhaseState, LooperPhaseStatus,
-    LooperQuestion, LooperStartRequest, LooperStartResponse, LooperStatusRequest,
-    LooperStatusResponse, LooperStopRequest, LooperStopResponse, LooperSubStepStatus, Subsystem,
-    TerminalCloseSessionRequest, TerminalInputRequest, TerminalOpenSessionRequest,
+    LooperPreviewRequest, LooperPreviewResponse, LooperPreviewStateRecord, LooperQuestion,
+    LooperStartRequest, LooperStartResponse, LooperStatusRequest, LooperStatusResponse,
+    LooperStopRequest, LooperStopResponse, LooperSubStepStatus, Subsystem, TerminalCloseSessionRequest, TerminalInputRequest, TerminalOpenSessionRequest,
 };
 use crate::observability::EventHub;
 use crate::workspace_tools::WorkspaceToolsService;
@@ -384,6 +385,7 @@ pub struct LooperHandler {
     terminal: Arc<TerminalService>,
     workspace_tools: Arc<WorkspaceToolsService>,
     web_search: Arc<WebSearchService>,
+    api_registry: Arc<ApiRegistryService>,
     loops: RwLock<HashMap<String, LooperLoop>>,
     data_path: RwLock<Option<PathBuf>>,
 }
@@ -411,6 +413,7 @@ struct LooperLoop {
     planner_plan: String,
     pending_questions: Vec<LooperQuestion>,
     questions_answered: Vec<String>,
+    preview: Option<PreviewState>,
 }
 
 struct PhaseState {
@@ -419,6 +422,16 @@ struct PhaseState {
     session_id: Option<String>,
     substeps: Vec<SubStepState>,
     prompt: String,
+}
+
+#[derive(Clone)]
+struct PreviewState {
+    status: String,
+    command: Option<String>,
+    url: Option<String>,
+    session_id: Option<String>,
+    last_error: Option<String>,
+    last_started_at_ms: Option<i64>,
 }
 
 pub struct SubStepState {
@@ -440,12 +453,14 @@ impl LooperHandler {
         terminal: Arc<TerminalService>,
         workspace_tools: Arc<WorkspaceToolsService>,
         web_search: Arc<WebSearchService>,
+        api_registry: Arc<ApiRegistryService>,
     ) -> Self {
         Self {
             hub,
             terminal,
             workspace_tools,
             web_search,
+            api_registry,
             loops: RwLock::new(HashMap::new()),
             data_path: RwLock::new(None),
         }
@@ -515,6 +530,16 @@ impl LooperHandler {
                 if event.action == "terminal.exit" {
                     if let Some(session_id) = extract_session_id(&event.payload) {
                         handler.on_terminal_exit(&session_id, 0).await;
+                    }
+                } else if event.action == "terminal.output" {
+                    if let Some(session_id) = extract_session_id(&event.payload) {
+                        let chunk = event
+                            .payload
+                            .as_object()
+                            .and_then(|row| row.get("data"))
+                            .and_then(|value| value.as_str())
+                            .unwrap_or("");
+                        handler.on_terminal_output(&session_id, chunk);
                     }
                 }
             }
@@ -643,6 +668,7 @@ impl LooperHandler {
             planner_plan: String::new(),
             pending_questions: Vec::new(),
             questions_answered: Vec::new(),
+            preview: None,
         };
 
         // Store the loop
@@ -907,6 +933,113 @@ impl LooperHandler {
         })
     }
 
+    pub async fn start_preview(
+        &self,
+        req: LooperPreviewRequest,
+    ) -> Result<LooperPreviewResponse, String> {
+        let (cwd, command, existing_session_id) = {
+            let loops = self.loops.read().map_err(|e| e.to_string())?;
+            let loopy = loops
+                .get(&req.loop_id)
+                .ok_or_else(|| format!("loop not found: {}", req.loop_id))?;
+            let inferred = loopy
+                .preview
+                .as_ref()
+                .and_then(|p| p.command.clone())
+                .unwrap_or_else(|| infer_preview_command(&loopy.cwd));
+            let existing = loopy.preview.as_ref().and_then(|p| p.session_id.clone());
+            (loopy.cwd.clone(), inferred, existing)
+        };
+
+        if let Some(session_id) = existing_session_id {
+            let loops = self.loops.read().map_err(|e| e.to_string())?;
+            if let Some(loopy) = loops.get(&req.loop_id) {
+                if let Some(preview) = loopy.preview.as_ref() {
+                    if preview.status == "running" || preview.status == "starting" {
+                        return Ok(preview_response(req.correlation_id, req.loop_id, preview));
+                    }
+                }
+            }
+            let _ = self.terminal.close_session(TerminalCloseSessionRequest {
+                session_id,
+                correlation_id: format!("looper-preview-restart-{}", req.loop_id),
+            });
+        }
+
+        let open_req = TerminalOpenSessionRequest {
+            correlation_id: format!("looper-preview-{}", req.loop_id),
+            cols: Some(120),
+            rows: Some(24),
+            shell: Some("/bin/sh".to_string()),
+            cwd: if cwd.trim().is_empty() { None } else { Some(cwd) },
+            model: None,
+        };
+        let response = self.terminal.open_session(open_req)?;
+        let session_id = response.session_id;
+
+        self.terminal.send_input(TerminalInputRequest {
+            session_id: session_id.clone(),
+            input: format!("{}\n", command),
+            correlation_id: req.correlation_id.clone(),
+        })?;
+
+        let preview = PreviewState {
+            status: "starting".to_string(),
+            command: Some(command),
+            url: None,
+            session_id: Some(session_id.clone()),
+            last_error: None,
+            last_started_at_ms: Some(now_ms()),
+        };
+        {
+            let mut loops = self.loops.write().map_err(|e| e.to_string())?;
+            let loopy = loops
+                .get_mut(&req.loop_id)
+                .ok_or_else(|| format!("loop not found: {}", req.loop_id))?;
+            loopy.preview = Some(preview.clone());
+        }
+        self.save_to_disk();
+        Ok(preview_response(req.correlation_id, req.loop_id, &preview))
+    }
+
+    pub async fn stop_preview(
+        &self,
+        req: LooperPreviewRequest,
+    ) -> Result<LooperPreviewResponse, String> {
+        let session_id = {
+            let loops = self.loops.read().map_err(|e| e.to_string())?;
+            loops
+                .get(&req.loop_id)
+                .and_then(|l| l.preview.as_ref())
+                .and_then(|p| p.session_id.clone())
+        };
+        if let Some(session_id) = session_id {
+            let _ = self.terminal.close_session(TerminalCloseSessionRequest {
+                session_id,
+                correlation_id: req.correlation_id.clone(),
+            });
+        }
+        let preview = {
+            let mut loops = self.loops.write().map_err(|e| e.to_string())?;
+            let loopy = loops
+                .get_mut(&req.loop_id)
+                .ok_or_else(|| format!("loop not found: {}", req.loop_id))?;
+            let preview = loopy.preview.get_or_insert(PreviewState {
+                status: "stopped".to_string(),
+                command: None,
+                url: None,
+                session_id: None,
+                last_error: None,
+                last_started_at_ms: None,
+            });
+            preview.status = "stopped".to_string();
+            preview.session_id = None;
+            preview.clone()
+        };
+        self.save_to_disk();
+        Ok(preview_response(req.correlation_id, req.loop_id, &preview))
+    }
+
     /// Manually advances a loop to the next phase.
     /// This is typically called automatically when a phase's terminal exits,
     /// but can be triggered manually for testing or recovery.
@@ -984,6 +1117,58 @@ impl LooperHandler {
         })
     }
 
+    pub async fn close_all(
+        &self,
+        req: LooperCloseAllRequest,
+    ) -> Result<LooperCloseAllResponse, String> {
+        let all_session_ids: Vec<Vec<Option<String>>>;
+        let count: usize;
+        {
+            let mut loops = self.loops.write().map_err(|e| e.to_string())?;
+            all_session_ids = loops
+                .values()
+                .map(|l| {
+                    ["planner", "executor", "validator", "critic"]
+                        .iter()
+                        .map(|phase| l.phases.get(*phase).and_then(|p| p.session_id.clone()))
+                        .collect()
+                })
+                .collect();
+            count = loops.len();
+            loops.clear();
+        }
+
+        for session_ids in &all_session_ids {
+            self.close_phase_sessions(session_ids).await;
+        }
+
+        self.save_to_disk();
+
+        Ok(LooperCloseAllResponse {
+            correlation_id: req.correlation_id,
+            closed_count: count,
+        })
+    }
+
+    pub fn import(
+        &self,
+        req: LooperImportRequest,
+    ) -> Result<LooperImportResponse, String> {
+        let mut loops = self.loops.write().map_err(|e| e.to_string())?;
+        loops.clear();
+        for record in req.loops {
+            let loopy = LooperLoop::from_record(record);
+            loops.insert(loopy.id.clone(), loopy);
+        }
+
+        self.save_to_disk();
+
+        Ok(LooperImportResponse {
+            correlation_id: req.correlation_id,
+            imported_count: loops.len(),
+        })
+    }
+
     /// Checks if the OpenCode CLI is installed on the system.
     pub async fn check_opencode(
         &self,
@@ -1022,14 +1207,45 @@ impl LooperHandler {
         Ok(())
     }
 
+    fn resolve_model_name(&self, raw_model_id: &str) -> Option<String> {
+        let id = raw_model_id.trim();
+        if id.is_empty() || id == "auto" {
+            return None;
+        }
+        if let Some(rest) = id.strip_prefix("api:") {
+            let conn_id = rest.split(':').next().unwrap_or("").trim();
+            if !conn_id.is_empty() {
+                if let Some(conn) = self
+                    .api_registry
+                    .verified_for_agent()
+                    .into_iter()
+                    .find(|r| r.id == conn_id && matches!(r.api_type, ApiConnectionType::Llm))
+                {
+                    return Some(conn.model_name.unwrap_or_else(|| rest.splitn(3, ':').nth(2).unwrap_or(id).to_string()));
+                }
+            }
+            return Some(rest.splitn(3, ':').nth(2).unwrap_or(id).to_string());
+        }
+        if let Some(local_name) = id.strip_prefix("local:") {
+            let name = local_name.trim();
+            if !name.is_empty() {
+                return Some(name.to_string());
+            }
+            return None;
+        }
+        Some(id.to_string())
+    }
+
     async fn create_phase_session(&self, loop_id: &str, phase: &str) -> Result<String, String> {
-        let (cwd_raw, model) = {
+        let (cwd_raw, raw_model) = {
             let loops = self.loops.read().map_err(|e| e.to_string())?;
             let loopy = loops
                 .get(loop_id)
                 .ok_or_else(|| format!("loop not found: {}", loop_id))?;
             (loopy.cwd.clone(), loopy.phase_models.get(phase).cloned())
         };
+
+        let model = raw_model.as_deref().and_then(|m| self.resolve_model_name(m));
 
         let cwd = if cwd_raw.is_empty() || cwd_raw == "." {
             None
@@ -1097,7 +1313,7 @@ impl LooperHandler {
             self.create_phase_session(loop_id, phase).await?;
         }
 
-        let (session_id, prompt, model, loop_type, cwd, project_name, project_type, project_description) = {
+        let (session_id, prompt, raw_model, loop_type, cwd, project_name, project_type, project_description) = {
             let loops = self.loops.read().map_err(|e| e.to_string())?;
             let loopy = loops
                 .get(loop_id)
@@ -1122,6 +1338,8 @@ impl LooperHandler {
                 loopy.project_description.clone(),
             )
         };
+
+        let resolved_model = raw_model.as_deref().and_then(|m| self.resolve_model_name(m));
 
         let mut prompt = prompt;
         if phase == "planner" {
@@ -1172,9 +1390,9 @@ impl LooperHandler {
         // Start OpenCode with the selected model and the phase prompt so the
         // first phase begins immediately without waiting for manual submit.
         let mut command = String::from("opencode");
-        if let Some(model_id) = model.as_ref().filter(|value| !value.trim().is_empty()) {
+        if let Some(model_name) = resolved_model.as_ref().filter(|v| !v.trim().is_empty()) {
             command.push_str(" --model ");
-            command.push_str(&shell_quote(model_id));
+            command.push_str(&shell_quote(model_name));
         }
         if !prompt.trim().is_empty() {
             command.push_str(" --prompt ");
@@ -1273,6 +1491,10 @@ impl LooperHandler {
     /// This is called by the terminal event handler when a looper phase session exits.
     /// It automatically advances to the next phase.
     pub async fn on_terminal_exit(&self, session_id: &str, _exit_code: i32) {
+        if self.handle_preview_exit(session_id) {
+            self.save_to_disk();
+            return;
+        }
         // First find the loop and phase that match this session
         let (loop_id, phase) = match self.find_loop_by_session(session_id) {
             Some(pair) => pair,
@@ -1386,6 +1608,65 @@ impl LooperHandler {
                 }
             }
         }
+    }
+
+    fn on_terminal_output(&self, session_id: &str, chunk: &str) {
+        let Some(url) = detect_preview_url(chunk) else {
+            return;
+        };
+        let mut changed = false;
+        {
+            let mut loops = self.loops.write().expect("loops lock poisoned");
+            for loopy in loops.values_mut() {
+                let Some(preview) = loopy.preview.as_mut() else {
+                    continue;
+                };
+                if preview.session_id.as_deref() == Some(session_id) {
+                    preview.url = Some(url.clone());
+                    preview.status = "running".to_string();
+                    preview.last_error = None;
+                    changed = true;
+                    break;
+                }
+            }
+        }
+        if changed {
+            self.save_to_disk();
+        }
+    }
+
+    fn handle_preview_exit(&self, session_id: &str) -> bool {
+        let mut handled = false;
+        {
+            let mut loops = self.loops.write().expect("loops lock poisoned");
+            for loopy in loops.values_mut() {
+                let Some(preview) = loopy.preview.as_mut() else {
+                    continue;
+                };
+                if preview.session_id.as_deref() == Some(session_id) {
+                    preview.session_id = None;
+                    if preview.url.is_some() {
+                        preview.status = "stopped".to_string();
+                    } else {
+                        preview.status = "failed".to_string();
+                        if preview.last_error.is_none() {
+                            preview.last_error = Some("Preview process exited before a URL was detected.".to_string());
+                        }
+                    }
+                    handled = true;
+                    break;
+                }
+            }
+        }
+        handled
+    }
+
+    pub fn preview_url(&self, loop_id: &str) -> Option<String> {
+        let loops = self.loops.read().ok()?;
+        loops
+            .get(loop_id)
+            .and_then(|l| l.preview.as_ref())
+            .and_then(|p| p.url.clone())
     }
 
     /// Helper: finds a loop by its phase session ID.
@@ -1707,6 +1988,7 @@ impl LooperLoop {
             planner_plan: record.planner_plan,
             pending_questions: record.pending_questions,
             questions_answered: Vec::new(),
+            preview: record.preview.map(preview_from_record),
         }
     }
 
@@ -1757,7 +2039,42 @@ impl LooperLoop {
             review_before_execute: self.review_before_execute,
             planner_plan: self.planner_plan.clone(),
             pending_questions: self.pending_questions.clone(),
+            preview: self.preview.as_ref().map(preview_to_record),
         }
+    }
+}
+
+fn preview_from_record(record: LooperPreviewStateRecord) -> PreviewState {
+    PreviewState {
+        status: record.status,
+        command: record.command,
+        url: record.url,
+        session_id: record.session_id,
+        last_error: record.last_error,
+        last_started_at_ms: record.last_started_at_ms,
+    }
+}
+
+fn preview_to_record(preview: &PreviewState) -> LooperPreviewStateRecord {
+    LooperPreviewStateRecord {
+        status: preview.status.clone(),
+        command: preview.command.clone(),
+        url: preview.url.clone(),
+        session_id: preview.session_id.clone(),
+        last_error: preview.last_error.clone(),
+        last_started_at_ms: preview.last_started_at_ms,
+    }
+}
+
+fn preview_response(correlation_id: String, loop_id: String, preview: &PreviewState) -> LooperPreviewResponse {
+    LooperPreviewResponse {
+        correlation_id,
+        loop_id,
+        status: preview.status.clone(),
+        command: preview.command.clone(),
+        url: preview.url.clone(),
+        session_id: preview.session_id.clone(),
+        last_error: preview.last_error.clone(),
     }
 }
 
@@ -1829,6 +2146,27 @@ fn format_web_research_section(query: &str, result: &WebSearchResult) -> String 
         }
     }
     lines.join("\n")
+}
+
+fn infer_preview_command(cwd: &str) -> String {
+    let root = Path::new(cwd);
+    if root.join("package.json").exists() {
+        return "npm run dev".to_string();
+    }
+    if root.join("Cargo.toml").exists() && root.join("src-tauri").exists() {
+        return "cargo tauri dev".to_string();
+    }
+    "npm run dev".to_string()
+}
+
+fn detect_preview_url(chunk: &str) -> Option<String> {
+    for token in chunk.split_whitespace() {
+        let trimmed = token.trim_matches(|ch: char| matches!(ch, '\'' | '"' | '(' | ')' | '[' | ']' | ','));
+        if trimmed.starts_with("http://") || trimmed.starts_with("https://") {
+            return Some(trimmed.trim_end_matches('/').to_string());
+        }
+    }
+    None
 }
 
 fn parse_looper_questions(content: &str) -> Vec<LooperQuestion> {
@@ -1985,18 +2323,20 @@ fn sanitize_tool_id(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::api_registry::ApiRegistryService;
     use crate::app::terminal_service::TerminalService;
     use crate::app::web_search_service::WebSearchService;
-    use crate::api_registry::ApiRegistryService;
     use std::sync::Arc;
 
     fn sample_handler() -> LooperHandler {
         let hub = EventHub::new();
+        let api_registry = Arc::new(ApiRegistryService::new());
         LooperHandler::new(
             hub.clone(),
             Arc::new(TerminalService::new(hub)),
             Arc::new(WorkspaceToolsService::new()),
-            Arc::new(WebSearchService::new(Arc::new(ApiRegistryService::new()))),
+            Arc::new(WebSearchService::new(Arc::clone(&api_registry))),
+            api_registry,
         )
     }
 

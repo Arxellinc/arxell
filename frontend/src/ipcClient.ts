@@ -80,6 +80,8 @@ import type {
   ModelManagerListCatalogCsvResponse,
   ModelManagerListInstalledRequest,
   ModelManagerListInstalledResponse,
+  ModelManagerRefreshUnslothCatalogRequest,
+  ModelManagerRefreshUnslothCatalogResponse,
   ModelManagerSearchHfRequest,
   ModelManagerSearchHfResponse,
   WebSearchRequest,
@@ -132,7 +134,9 @@ import type {
   FlowStopRequest,
   FlowStopResponse,
   FlowPauseResponse,
-  FlowNudgeResponse
+  FlowNudgeResponse,
+  LooperPreviewRequest,
+  LooperPreviewResponse
 } from "./contracts";
 import { APP_BUILD_VERSION } from "./version";
 import { getAllToolManifests } from "./tools/registry";
@@ -153,6 +157,7 @@ export interface ChatIpcClient {
   closeTerminalSession(
     request: TerminalCloseSessionRequest
   ): Promise<TerminalCloseSessionResponse>;
+  openLooperPreviewWindow(request: LooperPreviewRequest): Promise<LooperPreviewResponse>;
   listWorkspaceTools(request: WorkspaceToolsListRequest): Promise<WorkspaceToolsListResponse>;
   exportWorkspaceTools(request: WorkspaceToolsExportRequest): Promise<WorkspaceToolsExportResponse>;
   importWorkspaceTools(request: WorkspaceToolsImportRequest): Promise<WorkspaceToolsImportResponse>;
@@ -358,6 +363,10 @@ class TauriChatIpcClient implements ChatIpcClient {
     return this.invokeFn<TerminalCloseSessionResponse>("cmd_terminal_close_session", { request });
   }
 
+  openLooperPreviewWindow(request: LooperPreviewRequest): Promise<LooperPreviewResponse> {
+    return this.invokeFn<LooperPreviewResponse>("cmd_looper_open_preview_window", { request });
+  }
+
   listWorkspaceTools(request: WorkspaceToolsListRequest): Promise<WorkspaceToolsListResponse> {
     return this.invokeFn<WorkspaceToolsListResponse>("cmd_workspace_tools_list", { request });
   }
@@ -557,6 +566,15 @@ class TauriChatIpcClient implements ChatIpcClient {
     return this.invokeFn<ModelManagerListCatalogCsvResponse>("cmd_model_manager_list_catalog_csv", {
       request
     });
+  }
+
+  modelManagerRefreshUnslothCatalog(
+    request: ModelManagerRefreshUnslothCatalogRequest
+  ): Promise<ModelManagerRefreshUnslothCatalogResponse> {
+    return this.invokeFn<ModelManagerRefreshUnslothCatalogResponse>(
+      "cmd_model_manager_refresh_unsloth_catalog",
+      { request }
+    );
   }
 
   probeMicrophoneDevice(
@@ -915,6 +933,17 @@ export class MockChatIpcClient implements ChatIpcClient {
     request: TerminalCloseSessionRequest
   ): Promise<TerminalCloseSessionResponse> {
     return { sessionId: request.sessionId, closed: true, correlationId: request.correlationId };
+  }
+
+  async openLooperPreviewWindow(
+    request: LooperPreviewRequest
+  ): Promise<LooperPreviewResponse> {
+    return {
+      correlationId: request.correlationId,
+      loopId: request.loopId,
+      status: "failed",
+      lastError: "Preview window is unavailable in mock mode."
+    };
   }
 
   async listWorkspaceTools(

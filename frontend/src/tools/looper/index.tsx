@@ -24,6 +24,7 @@ export function renderLooperToolActions(state: LooperToolState): string {
   const activeLoop = state.loops.find((l) => l.id === state.activeLoopId);
   const isRunning = activeLoop?.status === "running";
   const isPaused = activeLoop?.status === "paused";
+  const previewStatus = activeLoop?.preview.status ?? "idle";
 
   const toolbar = renderToolToolbar({
     tabsMode: "dynamic",
@@ -98,7 +99,53 @@ export function renderLooperToolActions(state: LooperToolState): string {
         title: "Configure",
         icon: "settings" as const,
         buttonAttrs: { [LOOPER_DATA_ATTR.action]: "open-config" }
-      }
+      },
+      {
+        id: "preview",
+        title:
+          previewStatus === "running"
+            ? "Open preview"
+            : previewStatus === "starting"
+            ? "Preview starting"
+            : "Preview",
+        icon: "monitor" as const,
+        active: previewStatus === "running",
+        buttonAttrs: { [LOOPER_DATA_ATTR.action]: "open-preview" }
+      },
+      {
+        id: "preview-restart",
+        title: "Restart preview",
+        icon: "refresh-cw" as const,
+        buttonAttrs: { [LOOPER_DATA_ATTR.action]: "restart-preview" }
+      },
+      {
+        id: "preview-stop",
+        title: "Stop preview",
+        icon: "square" as const,
+        buttonAttrs: { [LOOPER_DATA_ATTR.action]: "stop-preview" }
+      },
+      ...(state.loops.length > 0
+        ? [
+            {
+              id: "close-all",
+              title: "Close all loops",
+              icon: "x" as const,
+              buttonAttrs: { [LOOPER_DATA_ATTR.action]: "close-all-loops" }
+            },
+            {
+              id: "save-session",
+              title: "Save session as",
+              icon: "save" as const,
+              buttonAttrs: { [LOOPER_DATA_ATTR.action]: "save-session" }
+            },
+            {
+              id: "open-session",
+              title: "Open saved session",
+              icon: "folder-open" as const,
+              buttonAttrs: { [LOOPER_DATA_ATTR.action]: "open-session" }
+            }
+          ]
+        : [])
     ]
   });
 
@@ -197,10 +244,21 @@ export function renderLooperToolBody(state: LooperToolState): string {
   return `<div class="looper-workspace" ${LOOPER_DATA_ATTR.activeLoop}="${esc(loop.id)}">
     ${renderTimeline(loop)}
     ${renderPlannerReview(loop)}
+    ${renderPreviewBanner(loop)}
     ${renderTerminalGrid(loop, state)}
   </div>
     ${renderConfigModal(state)}
     ${renderInstallModal(state)}`;
+}
+
+function renderPreviewBanner(loop: LooperLoopRun): string {
+  if (loop.preview.status === "idle" && !loop.preview.lastError) return "";
+  const detail = loop.preview.url || loop.preview.lastError || loop.preview.command || "Preview unavailable.";
+  return `<div class="looper-preview-banner is-${loop.preview.status}">
+    <span class="looper-preview-banner-label">Preview: ${esc(loop.preview.status)}</span>
+    <span class="looper-preview-banner-detail">${esc(detail)}</span>
+    ${loop.preview.command ? `<span class="looper-preview-banner-command">${esc(loop.preview.command)}</span>` : ""}
+  </div>`;
 }
 
 function renderTimeline(loop: LooperLoopRun): string {

@@ -1,8 +1,11 @@
 import type {
   LooperCheckOpenCodeResponse,
+  LooperCloseAllResponse,
   LooperCloseResponse,
+  LooperImportResponse,
   LooperListResponse,
   LooperPauseResponse,
+  LooperPreviewResponse,
   LooperStartRequest,
   LooperStartResponse,
   LooperStopResponse
@@ -498,6 +501,92 @@ export async function submitPlannerReview(
   }
 }
 
+export async function openPreview(
+  state: LooperToolState,
+  deps: LooperActionsDeps,
+  loopId: string
+): Promise<void> {
+  const loop = state.loops.find((item) => item.id === loopId);
+  if (!loop) return;
+  state.busy = true;
+  state.statusMessage = loop.preview.status === "running" ? "Opening preview..." : "Starting preview...";
+  deps.renderAndBind();
+  try {
+    const response = await deps.client.openLooperPreviewWindow({
+      correlationId: deps.nextCorrelationId(),
+      loopId
+    });
+    applyPreviewResponse(loop, response);
+    state.statusMessage = response.url ? `Preview ready at ${response.url}` : response.lastError || "Preview is starting...";
+    await refreshLooperState(state, deps);
+  } catch (error) {
+    loop.preview.status = "failed";
+    loop.preview.lastError = error instanceof Error ? error.message : "Failed to open preview.";
+    state.statusMessage = loop.preview.lastError;
+  } finally {
+    state.busy = false;
+    deps.renderAndBind();
+  }
+}
+
+export async function stopPreview(
+  state: LooperToolState,
+  deps: LooperActionsDeps,
+  loopId: string
+): Promise<void> {
+  const loop = state.loops.find((item) => item.id === loopId);
+  if (!loop) return;
+  state.busy = true;
+  state.statusMessage = "Stopping preview...";
+  deps.renderAndBind();
+  try {
+    const response = await deps.client.toolInvoke({
+      correlationId: deps.nextCorrelationId(),
+      toolId: "looper",
+      action: "stop-preview",
+      mode: "sandbox",
+      payload: {
+        correlationId: deps.nextCorrelationId(),
+        loopId
+      }
+    });
+    if (!response.ok) {
+      throw new Error(response.error || "Failed to stop preview.");
+    }
+    applyPreviewResponse(loop, response.data as unknown as LooperPreviewResponse);
+    state.statusMessage = "Preview stopped.";
+    await refreshLooperState(state, deps);
+  } catch (error) {
+    state.statusMessage = error instanceof Error ? error.message : "Failed to stop preview.";
+  } finally {
+    state.busy = false;
+    deps.renderAndBind();
+  }
+}
+
+export async function restartPreview(
+  state: LooperToolState,
+  deps: LooperActionsDeps,
+  loopId: string
+): Promise<void> {
+  await stopPreview(state, deps, loopId);
+  await openPreview(state, deps, loopId);
+}
+
+function applyPreviewResponse(
+  loop: LooperToolState["loops"][number],
+  response: LooperPreviewResponse
+): void {
+  loop.preview.status =
+    response.status === "starting" || response.status === "running" || response.status === "stopped"
+      ? response.status
+      : "failed";
+  loop.preview.command = response.command ?? null;
+  loop.preview.url = response.url ?? null;
+  loop.preview.sessionId = response.sessionId ?? null;
+  loop.preview.lastError = response.lastError ?? null;
+}
+
 export function dismissInstall(state: LooperToolState): void {
   state.installModalOpen = false;
 }
@@ -512,4 +601,181 @@ export async function recheckInstall(
     state.installModalOpen = false;
   }
   deps.renderAndBind();
+}
+
+export async function closeAllLoops(
+  state: LooperToolState,
+  deps: LooperActionsDeps
+): Promise<void> {
+  if (state.busy || !state.loops.length) return;
+  state.busy = true;
+  state.statusMessage = "Closing all loops...";
+  deps.renderAndBind();
+  try {
+    const correlationId = deps.nextCorrelationId();
+    const invokeResponse = await deps.client.toolInvoke({
+      correlationId,
+      toolId: "looper",
+      action: "close-all",
+      mode: "sandbox",
+      payload: { correlationId }
+    });
+    if (!invokeResponse.ok) {
+      throw new Error(invokeResponse.error || "Failed to close all loops.");
+    }
+    const response = invokeResponse.data as unknown as LooperCloseAllResponse;
+    state.loops = [];
+    state.activeLoopId = null;
+    state.statusMessage = `Closed ${response.closedCount} loop(s).`;
+  } catch (error) {
+    state.statusMessage = error instanceof Error ? error.message : "Failed to close all loops.";
+  } finally {
+    state.busy = false;
+    deps.renderAndBind();
+  }
+}
+
+export async function saveSessionAs(
+  state: LooperToolState,
+  deps: LooperActionsDeps
+): Promise<void> {
+  if (state.busy || !state.loops.length) return;
+  state.busy = true;
+  state.statusMessage = "Saving session...";
+  deps.renderAndBind();
+  try {
+    const correlationId = deps.nextCorrelationId();
+    const listResponse = await deps.client.toolInvoke({
+      correlationId,
+      toolId: "looper",
+      action: "list",
+      mode: "sandbox",
+      payload: { correlationId }
+    });
+    if (!listResponse.ok) {
+      throw new Error(listResponse.error || "Failed to list loops for export.");
+    }
+    const listData = listResponse.data as unknown as LooperListResponse;
+    const projectName = listData.loops[0]?.projectName || "looper-session";
+    const defaultName = `${projectName}.looper.json`;
+    const savePath = await pickSavePath(defaultName);
+    if (!savePath) {
+      state.statusMessage = "Save cancelled.";
+      return;
+    }
+    const json = JSON.stringify(listData.loops, null, 2);
+    const writeResponse = await deps.client.toolInvoke({
+      correlationId: deps.nextCorrelationId(),
+      toolId: "files",
+      action: "write-file",
+      mode: "sandbox",
+      payload: { correlationId: deps.nextCorrelationId(), path: savePath, content: json }
+    });
+    if (!writeResponse.ok) {
+      throw new Error(writeResponse.error || "Failed to write session file.");
+    }
+    state.statusMessage = `Session saved to ${savePath}`;
+  } catch (error) {
+    state.statusMessage = error instanceof Error ? error.message : "Failed to save session.";
+  } finally {
+    state.busy = false;
+    deps.renderAndBind();
+  }
+}
+
+export async function openSession(
+  state: LooperToolState,
+  deps: LooperActionsDeps
+): Promise<void> {
+  if (state.busy) return;
+  const openPath = await pickOpenPath();
+  if (!openPath) {
+    state.statusMessage = "Open cancelled.";
+    deps.renderAndBind();
+    return;
+  }
+  state.busy = true;
+  state.statusMessage = "Loading session...";
+  deps.renderAndBind();
+  try {
+    const correlationId = deps.nextCorrelationId();
+    const readResponse = await deps.client.toolInvoke({
+      correlationId,
+      toolId: "files",
+      action: "read-file",
+      mode: "sandbox",
+      payload: { correlationId, path: openPath }
+    });
+    if (!readResponse.ok) {
+      throw new Error(readResponse.error || "Failed to read session file.");
+    }
+    const fileData = readResponse.data as { content: string };
+    const records = JSON.parse(fileData.content);
+    if (!Array.isArray(records)) {
+      throw new Error("Invalid session file: expected an array of loop records.");
+    }
+    const importResponse = await deps.client.toolInvoke({
+      correlationId: deps.nextCorrelationId(),
+      toolId: "looper",
+      action: "import",
+      mode: "sandbox",
+      payload: {
+        correlationId: deps.nextCorrelationId(),
+        loops: records
+      }
+    });
+    if (!importResponse.ok) {
+      throw new Error(importResponse.error || "Failed to import session.");
+    }
+    const importData = importResponse.data as unknown as LooperImportResponse;
+    state.statusMessage = `Loaded ${importData.importedCount} loop(s) from ${openPath}`;
+    await refreshLooperState(state, deps);
+  } catch (error) {
+    state.statusMessage = error instanceof Error ? error.message : "Failed to open session.";
+  } finally {
+    state.busy = false;
+    deps.renderAndBind();
+  }
+}
+
+async function pickSavePath(defaultName: string): Promise<string | null> {
+  if ((window as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__) {
+    try {
+      const { invoke } = await import("@tauri-apps/api/core");
+      const selected = await invoke<string | null>("plugin:dialog|save", {
+        options: {
+          title: "Save Looper Session",
+          defaultPath: defaultName,
+          filters: [{ name: "Looper Session", extensions: ["looper.json"] }]
+        }
+      });
+      return selected;
+    } catch {
+      // Fall through to manual prompt.
+    }
+  }
+  const entered = window.prompt("Save session path", defaultName)?.trim();
+  return entered || null;
+}
+
+async function pickOpenPath(): Promise<string | null> {
+  if ((window as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__) {
+    try {
+      const { invoke } = await import("@tauri-apps/api/core");
+      const selected = await invoke<string | string[] | null>("plugin:dialog|open", {
+        options: {
+          title: "Open Looper Session",
+          directory: false,
+          multiple: false,
+          filters: [{ name: "Looper Session", extensions: ["looper.json"] }]
+        }
+      });
+      if (Array.isArray(selected)) return selected[0] ?? null;
+      return selected;
+    } catch {
+      // Fall through to manual prompt.
+    }
+  }
+  const entered = window.prompt("Open session path")?.trim();
+  return entered || null;
 }

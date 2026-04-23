@@ -10,9 +10,9 @@
 //! transitions. The frontend observes state via events emitted by this handler.
 
 use crate::contracts::{
-    LooperAdvanceRequest, LooperCheckOpenCodeRequest, LooperCloseRequest, LooperListRequest,
-    LooperPauseRequest, LooperStartRequest, LooperStatusRequest, LooperStopRequest,
-    LooperSubmitQuestionsRequest,
+    LooperAdvanceRequest, LooperCheckOpenCodeRequest, LooperCloseAllRequest, LooperCloseRequest,
+    LooperImportRequest, LooperListRequest, LooperPauseRequest, LooperPreviewRequest,
+    LooperStartRequest, LooperStatusRequest, LooperStopRequest, LooperSubmitQuestionsRequest,
 };
 use crate::ipc::tauri_bridge::TauriBridgeState;
 use crate::tools::invoke::registry::{decode_payload, InvokeRegistry, ToolInvokeFuture};
@@ -26,6 +26,8 @@ pub fn register(registry: &mut InvokeRegistry) {
     registry.register("looper", &["status"], invoke_status);
     registry.register("looper", &["list"], invoke_list);
     registry.register("looper", &["close"], invoke_close);
+    registry.register("looper", &["close-all"], invoke_close_all);
+    registry.register("looper", &["import"], invoke_import);
     registry.register(
         "looper",
         &["check-opencode", "checkOpenCode"],
@@ -36,6 +38,8 @@ pub fn register(registry: &mut InvokeRegistry) {
         &["submit-questions", "submitQuestions"],
         invoke_submit_questions,
     );
+    registry.register("looper", &["start-preview", "startPreview"], invoke_start_preview);
+    registry.register("looper", &["stop-preview", "stopPreview"], invoke_stop_preview);
 }
 
 fn invoke_start(state: &TauriBridgeState, payload: Value) -> ToolInvokeFuture {
@@ -125,5 +129,45 @@ fn invoke_submit_questions(state: &TauriBridgeState, payload: Value) -> ToolInvo
         let result = handler.submit_questions(req).await?;
         serde_json::to_value(result)
             .map_err(|e| format!("failed serializing looper submit-questions response: {e}"))
+    })
+}
+
+fn invoke_start_preview(state: &TauriBridgeState, payload: Value) -> ToolInvokeFuture {
+    let handler = state.looper_handler.clone();
+    Box::pin(async move {
+        let req: LooperPreviewRequest = decode_payload(payload)?;
+        let result = handler.start_preview(req).await?;
+        serde_json::to_value(result)
+            .map_err(|e| format!("failed serializing looper start-preview response: {e}"))
+    })
+}
+
+fn invoke_stop_preview(state: &TauriBridgeState, payload: Value) -> ToolInvokeFuture {
+    let handler = state.looper_handler.clone();
+    Box::pin(async move {
+        let req: LooperPreviewRequest = decode_payload(payload)?;
+        let result = handler.stop_preview(req).await?;
+        serde_json::to_value(result)
+            .map_err(|e| format!("failed serializing looper stop-preview response: {e}"))
+    })
+}
+
+fn invoke_close_all(state: &TauriBridgeState, payload: Value) -> ToolInvokeFuture {
+    let handler = state.looper_handler.clone();
+    Box::pin(async move {
+        let req: LooperCloseAllRequest = decode_payload(payload)?;
+        let result = handler.close_all(req).await?;
+        serde_json::to_value(result)
+            .map_err(|e| format!("failed serializing looper close-all response: {e}"))
+    })
+}
+
+fn invoke_import(state: &TauriBridgeState, payload: Value) -> ToolInvokeFuture {
+    let handler = state.looper_handler.clone();
+    Box::pin(async move {
+        let req: LooperImportRequest = decode_payload(payload)?;
+        let result = handler.import(req)?;
+        serde_json::to_value(result)
+            .map_err(|e| format!("failed serializing looper import response: {e}"))
     })
 }

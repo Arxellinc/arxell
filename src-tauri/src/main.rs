@@ -28,7 +28,8 @@ use arxell_lite::contracts::{
     ModelManagerDownloadHfResponse, ModelManagerListCatalogCsvRequest,
     ModelManagerListCatalogCsvResponse, ModelManagerListInstalledRequest,
     ModelManagerListInstalledResponse, ModelManagerSearchHfRequest, ModelManagerSearchHfResponse,
-    PluginCapabilityInvokeRequest, PluginCapabilityInvokeResponse, Subsystem,
+    ModelManagerRefreshUnslothCatalogRequest, ModelManagerRefreshUnslothCatalogResponse,
+    LooperPreviewRequest, LooperPreviewResponse, PluginCapabilityInvokeRequest, PluginCapabilityInvokeResponse, Subsystem,
     TerminalCloseSessionRequest, TerminalCloseSessionResponse, TerminalInputRequest,
     TerminalInputResponse, TerminalOpenSessionRequest, TerminalOpenSessionResponse,
     TerminalResizeRequest, TerminalResizeResponse, ToolInvokeRequest, ToolInvokeResponse,
@@ -71,7 +72,7 @@ use std::time::Instant;
 #[cfg(feature = "tauri-runtime")]
 use sysinfo::{Networks, ProcessRefreshKind, ProcessesToUpdate, System};
 #[cfg(feature = "tauri-runtime")]
-use tauri::{Manager, State, WindowEvent};
+use tauri::{Manager, State, WebviewUrl, WebviewWindowBuilder, WindowEvent};
 
 #[cfg(not(feature = "tauri-runtime"))]
 #[tokio::main]
@@ -220,6 +221,7 @@ fn main() {
             cmd_terminal_send_input,
             cmd_terminal_resize,
             cmd_terminal_close_session,
+            cmd_looper_open_preview_window,
             cmd_workspace_tools_list,
             cmd_workspace_tool_set_enabled,
             cmd_workspace_tool_set_icon,
@@ -251,6 +253,7 @@ fn main() {
             cmd_model_manager_download_hf,
             cmd_model_manager_delete_installed,
             cmd_model_manager_list_catalog_csv,
+            cmd_model_manager_refresh_unsloth_catalog,
             cmd_files_list_directory,
             cmd_tool_invoke,
             cmd_custom_tool_capability_invoke,
@@ -667,6 +670,68 @@ async fn cmd_terminal_close_session(
     request: TerminalCloseSessionRequest,
 ) -> Result<TerminalCloseSessionResponse, String> {
     state.terminal.close_session(request).await
+}
+
+#[cfg(feature = "tauri-runtime")]
+#[tauri::command]
+async fn cmd_looper_open_preview_window(
+    app: tauri::AppHandle,
+    state: State<'_, TauriBridgeState>,
+    request: LooperPreviewRequest,
+) -> Result<LooperPreviewResponse, String> {
+    let mut preview = state.looper_handler.start_preview(request.clone()).await?;
+    if preview.url.is_none() {
+        for _ in 0..24 {
+            tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+            if let Some(url) = state.looper_handler.preview_url(&request.loop_id) {
+                if preview_url_ready(&url).await {
+                    preview.url = Some(url);
+                    preview.status = "running".to_string();
+                    break;
+                }
+            }
+        }
+    }
+    let url = preview
+        .url
+        .clone()
+        .ok_or_else(|| "Preview is still starting; URL not detected yet.".to_string())?;
+    let label = format!("looper-preview-{}", request.loop_id);
+    if let Some(window) = app.get_webview_window(&label) {
+        window
+            .navigate(url.parse().map_err(|e| format!("invalid preview URL: {e}"))?)
+            .map_err(|e| format!("failed to navigate preview window: {e}"))?;
+        let _ = window.show();
+        let _ = window.set_focus();
+        return Ok(preview);
+    }
+
+    let parsed = url.parse().map_err(|e| format!("invalid preview URL: {e}"))?;
+    let window = WebviewWindowBuilder::new(&app, &label, WebviewUrl::External(parsed))
+        .title("Looper Preview")
+        .inner_size(1280.0, 900.0)
+        .build()
+        .map_err(|e| format!("failed to build preview window: {e}"))?;
+    let _ = window.show();
+    let _ = window.set_focus();
+    Ok(preview)
+}
+
+#[cfg(feature = "tauri-runtime")]
+async fn preview_url_ready(url: &str) -> bool {
+    let client = match reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(2))
+        .build()
+    {
+        Ok(client) => client,
+        Err(_) => return false,
+    };
+    client
+        .get(url)
+        .send()
+        .await
+        .map(|response| response.status().is_success() || response.status().is_redirection())
+        .unwrap_or(false)
 }
 
 #[cfg(feature = "tauri-runtime")]
@@ -1268,6 +1333,35 @@ async fn cmd_model_manager_list_catalog_csv(
         correlation_id: request.correlation_id,
         list_name: request.list_name,
         rows,
+    })
+}
+
+#[cfg(feature = "tauri-runtime")]
+#[tauri::command]
+async fn cmd_model_manager_refresh_unsloth_catalog(
+    app: tauri::AppHandle,
+    state: State<'_, TauriBridgeState>,
+    request: ModelManagerRefreshUnslothCatalogRequest,
+) -> Result<ModelManagerRefreshUnslothCatalogResponse, String> {
+    let app_data = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("failed to resolve app data dir: {e}"))?;
+    let service = std::sync::Arc::clone(&state.model_manager);
+    let correlation_id = request.correlation_id.clone();
+    let app_data_owned = app_data.clone();
+    let (rows, new_count) = tokio::task::spawn_blocking(move || {
+        service.refresh_unsloth_ud_catalog(
+            correlation_id.as_str(),
+            app_data_owned.as_path(),
+        )
+    })
+    .await
+    .map_err(|e| format!("model manager refresh unsloth catalog task failed: {e}"))??;
+    Ok(ModelManagerRefreshUnslothCatalogResponse {
+        correlation_id: request.correlation_id,
+        rows,
+        new_count,
     })
 }
 

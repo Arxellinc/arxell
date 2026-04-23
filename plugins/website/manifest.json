@@ -1,0 +1,8 @@
+{
+  "category": "workspace",
+  "entry": "dist/index.html",
+  "icon": "refresh-cw",
+  "id": "website",
+  "name": "website",
+  "version": "1.0.0"
+}

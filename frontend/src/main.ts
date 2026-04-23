@@ -3900,10 +3900,10 @@ async function refreshModelManagerUnslothUdCatalog(): Promise<void> {
   if (!clientRef) return;
   state.modelManagerUnslothUdLoading = true;
   try {
-    const csv = await clientRef.modelManagerListCatalogCsv({
-      correlationId: nextCorrelationId(),
-      listName: "Unsloth Dynamic Quants"
+    const resp = await clientRef.modelManagerRefreshUnslothCatalog({
+      correlationId: nextCorrelationId()
     });
+    const csv = resp.rows;
     const grouped = new Map<
       string,
       {
@@ -3913,7 +3913,7 @@ async function refreshModelManagerUnslothUdCatalog(): Promise<void> {
         udAssets: Array<{ fileName: string; quant: string; sizeGb: string }>;
       }
     >();
-    for (const row of csv.rows) {
+    for (const row of csv) {
       if (!row.quant || !row.fileName) continue;
       const key = row.repoId;
       const current = grouped.get(key) ?? {
@@ -3950,14 +3950,15 @@ async function refreshModelManagerUnslothUdCatalog(): Promise<void> {
     if (rows.length > 0) {
       state.modelManagerUnslothUdCatalog = rows;
       state.modelManagerUnslothUdLoading = false;
-      state.modelManagerMessage = `Loaded ${rows.length} UD model(s) from CSV.`;
+      const extra = resp.newCount > 0 ? ` (+${resp.newCount} new from HuggingFace)` : "";
+      state.modelManagerMessage = `Loaded ${rows.length} UD model(s) from catalog.${extra}`;
       return;
     }
     state.modelManagerUnslothUdCatalog = [];
-    state.modelManagerMessage = "No UD models found in CSV catalog.";
+    state.modelManagerMessage = "No UD models found in catalog.";
   } catch {
     state.modelManagerUnslothUdCatalog = [];
-    state.modelManagerMessage = "Failed to load UD CSV catalog.";
+    state.modelManagerMessage = "Failed to load UD catalog.";
   }
   state.modelManagerUnslothUdLoading = false;
 }

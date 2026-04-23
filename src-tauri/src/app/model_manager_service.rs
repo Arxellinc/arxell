@@ -25,6 +25,18 @@ struct HfSibling {
     size: Option<u64>,
 }
 
+#[derive(Debug, Deserialize)]
+struct HfCollectionItem {
+    id: String,
+    #[serde(default)]
+    num_parameters: Option<u64>,
+}
+
+#[derive(Debug, Deserialize)]
+struct HfCollectionResponse {
+    items: Vec<HfCollectionItem>,
+}
+
 #[derive(Debug, Clone)]
 struct BestAsset {
     repo_id: String,
@@ -392,6 +404,102 @@ impl ModelManagerService {
         Ok(rows)
     }
 
+    pub fn refresh_unsloth_ud_catalog(
+        &self,
+        correlation_id: &str,
+        app_data_dir: &Path,
+    ) -> Result<(Vec<ModelManagerCatalogCsvRow>, u32), String> {
+        self.emit(
+            correlation_id,
+            "model.manager.refresh_unsloth_ud_catalog",
+            EventStage::Start,
+            EventSeverity::Info,
+            json!({}),
+        );
+
+        let csv_rows = self.list_catalog_csv(correlation_id, "Unsloth Dynamic Quants")?;
+
+        let known_repo_ids: std::collections::HashSet<String> =
+            csv_rows.iter().map(|r| r.repo_id.clone()).collect();
+
+        let cache_path = app_data_dir.join("catalog-cache");
+        std::fs::create_dir_all(&cache_path)
+            .map_err(|e| format!("failed to create catalog cache dir: {e}"))?;
+        let cache_file = cache_path.join("unsloth-ud.json");
+        let cached_rows = read_cached_rows(&cache_file);
+
+        let client = reqwest::blocking::Client::builder()
+            .user_agent("arxell-model-manager/0.1")
+            .timeout(std::time::Duration::from_secs(30))
+            .build()
+            .map_err(|e| format!("failed to create HTTP client: {e}"))?;
+
+        let collection: HfCollectionResponse = match client
+            .get("https://huggingface.co/api/collections/unsloth/unsloth-dynamic-20-quants")
+            .send()
+            .and_then(|r| r.error_for_status())
+        {
+            Ok(resp) => resp
+                .json()
+                .map_err(|e| format!("failed to parse HF collection response: {e}"))?,
+            Err(e) => {
+                self.emit(
+                    correlation_id,
+                    "model.manager.refresh_unsloth_ud_catalog",
+                    EventStage::Complete,
+                    EventSeverity::Info,
+                    json!({ "source": "csv+cache", "error": format!("{e}"), "count": csv_rows.len() + cached_rows.len() }),
+                );
+                let merged = merge_rows(csv_rows, cached_rows);
+                return Ok((merged, 0));
+            }
+        };
+
+        let new_items: Vec<&HfCollectionItem> = collection
+            .items
+            .iter()
+            .filter(|item| !known_repo_ids.contains(&item.id))
+            .collect();
+
+        let mut live_rows: Vec<ModelManagerCatalogCsvRow> = Vec::new();
+
+        for item in &new_items {
+            match fetch_repo_ud_rows(&client, &item.id, item.num_parameters) {
+                Ok(rows) => live_rows.extend(rows),
+                Err(e) => {
+                    self.emit(
+                        correlation_id,
+                        "model.manager.refresh_unsloth_ud_catalog.repo_skip",
+                        EventStage::Error,
+                        EventSeverity::Warn,
+                        json!({ "repo_id": item.id, "error": e }),
+                    );
+                }
+            }
+        }
+
+        let new_count = live_rows.len() as u32;
+
+        if !live_rows.is_empty() {
+            if let Ok(json_str) = serde_json::to_string(&live_rows) {
+                let _ = File::create(&cache_file).and_then(|mut f| f.write_all(json_str.as_bytes()));
+            }
+        }
+
+        let all_cached = read_cached_rows(&cache_file);
+        let merged = merge_rows(csv_rows, merge_rows(all_cached, live_rows));
+
+        self.emit(
+            correlation_id,
+            "model.manager.refresh_unsloth_ud_catalog",
+            EventStage::Complete,
+            EventSeverity::Info,
+            json!({ "source": "csv+live", "new": new_count, "total": merged.len() }),
+        );
+
+        Ok((merged, new_count))
+    }
+
     fn emit(
         &self,
         correlation_id: &str,
@@ -578,4 +686,141 @@ fn is_gguf(path: &Path) -> bool {
         .and_then(|e| e.to_str())
         .map(|e| e.eq_ignore_ascii_case("gguf"))
         == Some(true)
+}
+
+fn fetch_repo_ud_rows(
+    client: &reqwest::blocking::Client,
+    repo_id: &str,
+    num_parameters: Option<u64>,
+) -> Result<Vec<ModelManagerCatalogCsvRow>, String> {
+    let detail_url = format!("https://huggingface.co/api/models/{repo_id}");
+    let detail: HfModelDetail = client
+        .get(detail_url.as_str())
+        .send()
+        .and_then(|r| r.error_for_status())
+        .map_err(|e| format!("repo detail fetch failed for {repo_id}: {e}"))?
+        .json()
+        .map_err(|e| format!("repo detail parse failed for {repo_id}: {e}"))?;
+
+    let siblings = detail
+        .siblings
+        .unwrap_or_default();
+
+    let ud_files: Vec<&HfSibling> = siblings
+        .iter()
+        .filter(|s| {
+            let name = s.rfilename.to_ascii_lowercase();
+            name.ends_with(".gguf")
+                && !name.contains("mmproj")
+                && !name.contains("vision-proj")
+                && !name.contains("clip")
+        })
+        .filter(|s| {
+            let name = s.rfilename.to_ascii_lowercase();
+            name.contains("-ud-") || name.contains("-ud_")
+        })
+        .collect();
+
+    if ud_files.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let model_name = prettify_repo_id(repo_id);
+    let param_label = format_param_count(num_parameters);
+
+    let mut rows = Vec::new();
+    for sibling in ud_files {
+        let file_name = sibling.rfilename.clone();
+        let quant = extract_quant_from_filename(&file_name);
+        let size_mb = sibling.size.map(|b| b / (1024 * 1024));
+        let download_url = format!(
+            "https://huggingface.co/{repo_id}/resolve/main/{file_name}?download=true"
+        );
+        rows.push(ModelManagerCatalogCsvRow {
+            repo_id: repo_id.to_string(),
+            model_name: model_name.clone(),
+            parameter_count: param_label.clone(),
+            file_name,
+            quant,
+            size_mb,
+            download_url,
+        });
+    }
+
+    Ok(rows)
+}
+
+fn prettify_repo_id(repo_id: &str) -> String {
+    let name = repo_id
+        .strip_prefix("unsloth/")
+        .unwrap_or(repo_id)
+        .strip_suffix("-GGUF")
+        .unwrap_or(repo_id);
+    let mut result = String::new();
+    for ch in name.chars() {
+        if ch == '-' || ch == '_' {
+            result.push(' ');
+        } else if result.is_empty() {
+            for c in ch.to_uppercase() {
+                result.push(c);
+            }
+        } else {
+            result.push(ch);
+        }
+    }
+    result
+}
+
+fn format_param_count(num_parameters: Option<u64>) -> String {
+    let n = match num_parameters {
+        Some(n) => n,
+        None => return String::new(),
+    };
+    if n >= 1_000_000_000_000 {
+        format!("{:.0}T", n as f64 / 1_000_000_000_000.0)
+    } else if n >= 1_000_000_000 {
+        format!("{:.0}B", n as f64 / 1_000_000_000.0)
+    } else if n >= 1_000_000 {
+        format!("{:.0}M", n as f64 / 1_000_000.0)
+    } else {
+        format!("{n}")
+    }
+}
+
+fn extract_quant_from_filename(file_name: &str) -> String {
+    let lower = file_name.to_ascii_lowercase();
+    let stem = lower.strip_suffix(".gguf").unwrap_or(&lower);
+    if let Some(idx) = stem.rfind("-ud-") {
+        return stem[idx + 4..].to_uppercase().replace('_', "-");
+    }
+    if let Some(idx) = stem.rfind("-ud_") {
+        return stem[idx + 4..].to_uppercase().replace('_', "-");
+    }
+    file_name.to_string()
+}
+
+fn read_cached_rows(cache_file: &Path) -> Vec<ModelManagerCatalogCsvRow> {
+    let raw = match std::fs::read_to_string(cache_file) {
+        Ok(s) => s,
+        Err(_) => return Vec::new(),
+    };
+    serde_json::from_str(&raw).unwrap_or_default()
+}
+
+fn merge_rows(
+    base: Vec<ModelManagerCatalogCsvRow>,
+    extra: Vec<ModelManagerCatalogCsvRow>,
+) -> Vec<ModelManagerCatalogCsvRow> {
+    let mut seen: std::collections::HashSet<String> = base
+        .iter()
+        .map(|r| format!("{}:{}", r.repo_id, r.file_name))
+        .collect();
+    let mut merged = base;
+    for row in extra {
+        let key = format!("{}:{}", row.repo_id, row.file_name);
+        if seen.insert(key) {
+            merged.push(row);
+        }
+    }
+    merged
 }

@@ -35,6 +35,13 @@ export interface LooperLoopRun {
     options: Array<{ id: string; label: string; summary?: string }>;
   }>;
   reviewAnswers: Record<string, { selectedOptionId: string; freeformText: string }>;
+  preview: {
+    status: "idle" | "starting" | "running" | "failed" | "stopped";
+    command: string | null;
+    url: string | null;
+    sessionId: string | null;
+    lastError: string | null;
+  };
   launchConfig?: {
     cwd: string;
     taskPath: string;
@@ -201,7 +208,14 @@ export function createLoopRun(index: number, cwd: string, setup?: LooperProjectS
     reviewBeforeExecute: true,
     plannerPlan: "",
     pendingQuestions: [],
-    reviewAnswers: {}
+    reviewAnswers: {},
+    preview: {
+      status: "idle",
+      command: null,
+      url: null,
+      sessionId: null,
+      lastError: null
+    }
   };
 }
 
