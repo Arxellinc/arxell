@@ -125,6 +125,7 @@ export interface WorkspaceToolsRuntimeState
 export interface WorkspaceToolsRuntimeDeps {
   getClient: () => ChatIpcClient | null;
   nextCorrelationId: () => string;
+  refreshFlowRuns?: () => Promise<void>;
   refreshTools: () => Promise<void>;
   refreshApiConnections: () => Promise<void>;
   createWebTab: (index: number) => WebTabState;

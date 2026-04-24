@@ -13,6 +13,8 @@ pub struct ChatSendRequest {
     pub model_name: Option<String>,
     pub max_tokens: Option<u32>,
     pub attachments: Option<Vec<ChatAttachment>>,
+    pub always_load_tool_keys: Option<Vec<String>>,
+    pub always_load_skill_keys: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -101,6 +103,164 @@ pub struct ChatListConversationsRequest {
 pub struct ChatListConversationsResponse {
     pub conversations: Vec<ConversationSummaryRecord>,
     pub correlation_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChatInspectContextRequest {
+    pub conversation_id: String,
+    pub correlation_id: String,
+    pub chat_mode: Option<String>,
+    pub always_load_tool_keys: Option<Vec<String>>,
+    pub always_load_skill_keys: Option<Vec<String>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChatContextBreakdownItem {
+    pub section: String,
+    pub category: String,
+    pub key: String,
+    pub value: String,
+    pub source_path: Option<String>,
+    pub load_method: String,
+    pub load_reason: String,
+    pub token_estimate: i64,
+    pub char_count: usize,
+    pub word_count: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChatInspectContextResponse {
+    pub conversation_id: String,
+    pub correlation_id: String,
+    pub route_mode: String,
+    pub total_token_estimate: i64,
+    pub items: Vec<ChatContextBreakdownItem>,
+    pub conversations: Vec<ConversationSummaryRecord>,
+    pub memory_items: Vec<ChatContextBreakdownItem>,
+    pub skills_items: Vec<ChatContextBreakdownItem>,
+    pub tools_items: Vec<ChatContextBreakdownItem>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MemoryUpsertRequest {
+    pub namespace: String,
+    pub key: String,
+    pub value: String,
+    pub correlation_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MemoryUpsertResponse {
+    pub namespace: String,
+    pub key: String,
+    pub correlation_id: String,
+    pub ok: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MemoryDeleteRequest {
+    pub namespace: String,
+    pub key: String,
+    pub correlation_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MemoryDeleteResponse {
+    pub namespace: String,
+    pub key: String,
+    pub correlation_id: String,
+    pub deleted: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SystemPromptSetRequest {
+    pub value: String,
+    pub correlation_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SystemPromptSetResponse {
+    pub value: String,
+    pub correlation_id: String,
+    pub ok: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CustomItemUpsertRequest {
+    pub section: String,
+    pub key: String,
+    pub value: String,
+    pub correlation_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CustomItemUpsertResponse {
+    pub section: String,
+    pub key: String,
+    pub correlation_id: String,
+    pub ok: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CustomItemDeleteRequest {
+    pub section: String,
+    pub key: String,
+    pub correlation_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CustomItemDeleteResponse {
+    pub section: String,
+    pub key: String,
+    pub correlation_id: String,
+    pub deleted: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillCreateRequest {
+    pub name: String,
+    pub description: String,
+    pub content: String,
+    pub correlation_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillCreateResponse {
+    pub name: String,
+    pub file_path: String,
+    pub correlation_id: String,
+    pub ok: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReferenceFileSetRequest {
+    pub path: String,
+    pub value: String,
+    pub correlation_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReferenceFileSetResponse {
+    pub path: String,
+    pub correlation_id: String,
+    pub ok: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

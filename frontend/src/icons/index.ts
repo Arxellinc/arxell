@@ -75,6 +75,7 @@ import separatorVertical from "./separator-vertical.svg?raw";
 import panelRightClose from "./panel-right-close.svg?raw";
 import panelLeftOpen from "./panel-left-open.svg?raw";
 import circleQuestionMark from "./circle-question-mark.svg?raw";
+import circleX from "./circle-x.svg?raw";
 import database from "./database.svg?raw";
 import bookOpenText from "./book-open-text.svg?raw";
 import undo from "./undo.svg?raw";
@@ -176,6 +177,7 @@ const ICON_SVGS = {
   "panel-right-close": panelRightClose,
   "panel-left-open": panelLeftOpen,
   "circle-question-mark": circleQuestionMark,
+  "circle-x": circleX,
   undo,
   redo,
   "dollar-sign": dollarSign,
@@ -198,7 +200,7 @@ const ICON_SVGS = {
 
 export type IconName = keyof typeof ICON_SVGS;
 export type IconSize = 16 | 24;
-export type IconTone = "light" | "dark";
+export type IconTone = "light" | "dark" | "inactive";
 
 export function iconHtml(
   name: IconName,

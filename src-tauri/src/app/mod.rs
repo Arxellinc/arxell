@@ -36,12 +36,12 @@ pub struct AppContext {
 }
 
 impl AppContext {
-    pub fn new() -> Self {
+    pub fn new() -> Result<Self, String> {
         let hub = EventHub::new();
         let memory = Arc::new(InMemoryMemoryManager::new());
         let conversation_repo = Arc::new(
             SqliteConversationRepository::new(SqliteConversationRepository::default_path())
-                .expect("failed to initialize conversation repository"),
+                .map_err(|err| format!("failed to initialize conversation repository: {err}"))?,
         );
         let api_registry = Arc::new(ApiRegistryService::new());
         let workspace_tools = Arc::new(WorkspaceToolsService::new());
@@ -86,7 +86,7 @@ impl AppContext {
             Arc::clone(&looper),
             Arc::clone(&voice),
         );
-        Self {
+        Ok(Self {
             ipc,
             workspace_tools,
             api_registry,
@@ -99,13 +99,13 @@ impl AppContext {
             sheets,
             looper,
             voice,
-        }
+        })
     }
 }
 
 impl Default for AppContext {
     fn default() -> Self {
-        Self::new()
+        Self::new().expect("failed to initialize app context")
     }
 }
 

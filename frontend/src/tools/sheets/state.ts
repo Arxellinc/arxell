@@ -420,9 +420,12 @@ function compareSheetCellValues(left: SheetsCellSnapshot | null, right: SheetsCe
   const rightComparable = toComparableValue(right);
   if (leftComparable.rank !== rightComparable.rank) return leftComparable.rank - rightComparable.rank;
   if (leftComparable.type === "number" && rightComparable.type === "number") {
-    return leftComparable.value - rightComparable.value;
+    return Number(leftComparable.value) - Number(rightComparable.value);
   }
-  return leftComparable.value.localeCompare(rightComparable.value, undefined, { numeric: true, sensitivity: "base" });
+  return String(leftComparable.value).localeCompare(String(rightComparable.value), undefined, {
+    numeric: true,
+    sensitivity: "base"
+  });
 }
 
 function toComparableValue(cell: SheetsCellSnapshot | null): { rank: number; type: "number" | "text"; value: number | string } {

@@ -16,8 +16,9 @@ use arxell_lite::contracts::{
     ApiConnectionsListRequest, ApiConnectionsListResponse, AppResourceUsageRequest,
     AppResourceUsageResponse, AppVersionResponse, ChatCancelRequest, ChatCancelResponse,
     ChatDeleteConversationRequest, ChatDeleteConversationResponse, ChatGetMessagesRequest,
-    ChatGetMessagesResponse, ChatListConversationsRequest, ChatListConversationsResponse,
-    ChatSendRequest, ChatSendResponse, CustomToolCapabilityInvokeRequest,
+    ChatGetMessagesResponse, ChatInspectContextRequest, ChatInspectContextResponse,
+    ChatListConversationsRequest, ChatListConversationsResponse, ChatSendRequest,
+    ChatSendResponse, CustomToolCapabilityInvokeRequest,
     CustomToolCapabilityInvokeResponse, DevicesProbeMicrophoneRequest,
     DevicesProbeMicrophoneResponse, EventSeverity, EventStage, FilesListDirectoryRequest,
     FilesListDirectoryResponse,
@@ -29,7 +30,12 @@ use arxell_lite::contracts::{
     ModelManagerListCatalogCsvResponse, ModelManagerListInstalledRequest,
     ModelManagerListInstalledResponse, ModelManagerSearchHfRequest, ModelManagerSearchHfResponse,
     ModelManagerRefreshUnslothCatalogRequest, ModelManagerRefreshUnslothCatalogResponse,
-    LooperPreviewRequest, LooperPreviewResponse, PluginCapabilityInvokeRequest, PluginCapabilityInvokeResponse, Subsystem,
+    CustomItemDeleteRequest, CustomItemDeleteResponse, CustomItemUpsertRequest,
+    CustomItemUpsertResponse, LooperPreviewRequest, LooperPreviewResponse, MemoryDeleteRequest,
+    MemoryDeleteResponse, MemoryUpsertRequest, MemoryUpsertResponse,
+    PluginCapabilityInvokeRequest, PluginCapabilityInvokeResponse, ReferenceFileSetRequest,
+    ReferenceFileSetResponse, SkillCreateRequest, SkillCreateResponse, Subsystem,
+    SystemPromptSetRequest, SystemPromptSetResponse,
     TerminalCloseSessionRequest, TerminalCloseSessionResponse, TerminalInputRequest,
     TerminalInputResponse, TerminalOpenSessionRequest, TerminalOpenSessionResponse,
     TerminalResizeRequest, TerminalResizeResponse, ToolInvokeRequest, ToolInvokeResponse,
@@ -77,7 +83,13 @@ use tauri::{Manager, State, WebviewUrl, WebviewWindowBuilder, WindowEvent};
 #[cfg(not(feature = "tauri-runtime"))]
 #[tokio::main]
 async fn main() {
-    let app = AppContext::new();
+    let app = match AppContext::new() {
+        Ok(app) => app,
+        Err(err) => {
+            eprintln!("failed to initialize app context: {err}");
+            std::process::exit(1);
+        }
+    };
     let mut rx = app.ipc.event_stream();
     tokio::spawn(async move {
         while let Ok(event) = rx.recv().await {
@@ -98,6 +110,8 @@ async fn main() {
         model_name: None,
         max_tokens: None,
         attachments: None,
+        always_load_tool_keys: None,
+        always_load_skill_keys: None,
     };
 
     let result = app.ipc.chat.send_message(request).await;
@@ -138,7 +152,13 @@ impl AppResourceUsageState {
 
 #[cfg(feature = "tauri-runtime")]
 fn main() {
-    let app_context = AppContext::new();
+    let app_context = match AppContext::new() {
+        Ok(app_context) => app_context,
+        Err(err) => {
+            eprintln!("failed to initialize app context: {err}");
+            std::process::exit(1);
+        }
+    };
     let hub = app_context.ipc.event_hub();
     let state = TauriBridgeState {
         chat: std::sync::Arc::new(app_context.ipc.chat.clone()),
@@ -217,6 +237,14 @@ fn main() {
             cmd_chat_delete_conversation,
             cmd_chat_get_messages,
             cmd_chat_list_conversations,
+            cmd_chat_inspect_context,
+            cmd_memory_upsert,
+            cmd_memory_delete,
+            cmd_system_prompt_set,
+            cmd_custom_item_upsert,
+            cmd_custom_item_delete,
+            cmd_skill_create,
+            cmd_reference_file_set,
             cmd_terminal_open_session,
             cmd_terminal_send_input,
             cmd_terminal_resize,
@@ -634,6 +662,78 @@ async fn cmd_chat_list_conversations(
     request: ChatListConversationsRequest,
 ) -> Result<ChatListConversationsResponse, String> {
     state.chat.list_conversations(request).await
+}
+
+#[cfg(feature = "tauri-runtime")]
+#[tauri::command]
+async fn cmd_chat_inspect_context(
+    state: State<'_, TauriBridgeState>,
+    request: ChatInspectContextRequest,
+) -> Result<ChatInspectContextResponse, String> {
+    state.chat.inspect_context(request).await
+}
+
+#[cfg(feature = "tauri-runtime")]
+#[tauri::command]
+async fn cmd_memory_upsert(
+    state: State<'_, TauriBridgeState>,
+    request: MemoryUpsertRequest,
+) -> Result<MemoryUpsertResponse, String> {
+    state.chat.upsert_memory(request).await
+}
+
+#[cfg(feature = "tauri-runtime")]
+#[tauri::command]
+async fn cmd_memory_delete(
+    state: State<'_, TauriBridgeState>,
+    request: MemoryDeleteRequest,
+) -> Result<MemoryDeleteResponse, String> {
+    state.chat.delete_memory(request).await
+}
+
+#[cfg(feature = "tauri-runtime")]
+#[tauri::command]
+async fn cmd_system_prompt_set(
+    state: State<'_, TauriBridgeState>,
+    request: SystemPromptSetRequest,
+) -> Result<SystemPromptSetResponse, String> {
+    state.chat.set_system_prompt(request).await
+}
+
+#[cfg(feature = "tauri-runtime")]
+#[tauri::command]
+async fn cmd_custom_item_upsert(
+    state: State<'_, TauriBridgeState>,
+    request: CustomItemUpsertRequest,
+) -> Result<CustomItemUpsertResponse, String> {
+    state.chat.upsert_custom_item(request).await
+}
+
+#[cfg(feature = "tauri-runtime")]
+#[tauri::command]
+async fn cmd_custom_item_delete(
+    state: State<'_, TauriBridgeState>,
+    request: CustomItemDeleteRequest,
+) -> Result<CustomItemDeleteResponse, String> {
+    state.chat.delete_custom_item(request).await
+}
+
+#[cfg(feature = "tauri-runtime")]
+#[tauri::command]
+async fn cmd_skill_create(
+    state: State<'_, TauriBridgeState>,
+    request: SkillCreateRequest,
+) -> Result<SkillCreateResponse, String> {
+    state.chat.create_skill(request).await
+}
+
+#[cfg(feature = "tauri-runtime")]
+#[tauri::command]
+async fn cmd_reference_file_set(
+    state: State<'_, TauriBridgeState>,
+    request: ReferenceFileSetRequest,
+) -> Result<ReferenceFileSetResponse, String> {
+    state.chat.set_reference_file(request).await
 }
 
 #[cfg(feature = "tauri-runtime")]

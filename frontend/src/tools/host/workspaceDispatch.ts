@@ -23,9 +23,6 @@ import type { OpenCodeActionsDeps } from "../opencode/actions";
 import { handleLooperClick, handleLooperInput } from "../looper/bindings";
 import type { LooperToolState } from "../looper/state";
 import type { LooperActionsDeps } from "../looper/actions";
-import { handleSkillsClick, handleSkillsInput, handleSkillsKeyDown, handleSkillsPointerDown } from "../skills/bindings";
-import type { SkillsToolViewState } from "../skills/state";
-import { SKILLS_DATA_ATTR } from "../skills/constants";
 import { handleDocsClick, handleDocsPointerDown } from "../docs/bindings";
 import { handleDocsInput, handleDocsKeyDown } from "../docs/bindings";
 import { handleNotepadClick, handleNotepadInput, handleNotepadKeyDown } from "../notepad/bindings";
@@ -69,15 +66,15 @@ export const WORKSPACE_TOOL_TARGET_SELECTOR = [
   `[${TASKS_DATA_ATTR.action}]`,
   `[${TASKS_DATA_ATTR.taskId}]`,
   `[${TASKS_DATA_ATTR.field}]`,
+  "#memoryRefreshBtn",
+  "[data-memory-action]",
   "[data-chart-action]",
   `[${OPENCODE_DATA_ATTR.action}]`,
   `[${OPENCODE_DATA_ATTR.closeAgentId}]`,
   `[${LOOPER_DATA_ATTR.action}]`,
   `[${LOOPER_DATA_ATTR.closeLoopId}]`,
   `[${LOOPER_DATA_ATTR.loopId}]`,
-  `[${LOOPER_DATA_ATTR.phase}]`,
-  `[${SKILLS_DATA_ATTR.action}]`,
-  `[${SKILLS_DATA_ATTR.skillId}]`
+  `[${LOOPER_DATA_ATTR.phase}]`
 ].join(", ");
 
 export interface WorkspaceToolDispatchDeps {
@@ -160,19 +157,6 @@ export interface WorkspaceToolDispatchDeps {
     saveActiveDocsTabAs: (path: string) => Promise<void>;
     saveAllDocsTabs: () => Promise<void>;
   };
-  skills: {
-    listSkillsDirectory: (path?: string) => Promise<void>;
-    selectSkillsPath: (path: string) => Promise<void>;
-    toggleSkillsNode: (path: string) => Promise<void>;
-    openSkillsFile: (path: string) => Promise<void>;
-    createNewSkillsFile: (path: string) => Promise<void>;
-    activateSkillsTab: (path: string) => void;
-    closeSkillsTab: (path: string) => void;
-    updateSkillsBuffer: (path: string, content: string) => void;
-    saveActiveSkillsTab: () => Promise<void>;
-    saveActiveSkillsTabAs: (path: string) => Promise<void>;
-    saveAllSkillsTabs: () => Promise<void>;
-  };
   web: {
     runWebSearch: () => Promise<void>;
     createAndActivateWebTab: () => void;
@@ -220,9 +204,6 @@ export async function dispatchWorkspaceToolClick(
   if (handleLooperClick(target, deps.looper.state, deps.looper.actionsDeps)) {
     return true;
   }
-  if (await handleSkillsClick(target, state as unknown as SkillsToolViewState, deps.skills)) {
-    return true;
-  }
   if (await handleDocsClick(target, state as any, deps.docs)) {
     return true;
   }
@@ -245,7 +226,6 @@ export function dispatchWorkspaceToolInput(
   deps: WorkspaceToolDispatchDeps
 ): { handled: boolean; rerender: boolean } {
   const filesResult = handleFilesInput(target, state as any);
-  const skillsResult = handleSkillsInput(target, state as unknown as SkillsToolViewState);
   const docsResult = handleDocsInput(target, state as any);
   const notepadResult = handleNotepadInput(target, state as any);
   const tasksHandled = handleTasksInput(target, state as any);
@@ -255,7 +235,6 @@ export function dispatchWorkspaceToolInput(
   return {
     handled:
       filesResult.handled ||
-      skillsResult.handled ||
       docsResult.handled ||
       notepadResult.handled ||
       tasksHandled ||
@@ -264,7 +243,6 @@ export function dispatchWorkspaceToolInput(
       looperResult.handled,
     rerender:
       filesResult.rerender ||
-      skillsResult.rerender ||
       docsResult.rerender ||
       notepadResult.rerender ||
       tasksHandled ||
@@ -317,9 +295,6 @@ export async function dispatchWorkspaceToolKeyDown(
   if (await handleDocsKeyDown(event, state as any, deps.docs)) {
     return true;
   }
-  if (await handleSkillsKeyDown(event, state as unknown as SkillsToolViewState, deps.skills)) {
-    return true;
-  }
   return handleWebKeyDown(event, {
     runWebSearch: deps.web.runWebSearch,
     withActiveWebTab: deps.web.withActiveWebTab as any
@@ -358,9 +333,6 @@ export function dispatchWorkspaceToolPointerDown(
   state: WorkspaceToolState
 ): boolean {
   if (handleFilesPointerDown(event, target, state as any)) {
-    return true;
-  }
-  if (handleSkillsPointerDown(event, target, state as unknown as SkillsToolViewState)) {
     return true;
   }
   if (handleDocsPointerDown(event, target, state as any)) {

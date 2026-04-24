@@ -1,7 +1,6 @@
 use chrono::Local;
 
 use crate::compaction::{generate_summary, is_overflow};
-use crate::context::agents::format_agents_files_for_prompt;
 use crate::context::skills::format_skills_for_prompt;
 use crate::context::Context;
 use crate::events::Event;
@@ -330,10 +329,6 @@ impl Agent {
 
 pub fn build_system_prompt(cwd: &str, context: &Context, config: &Config) -> String {
     let mut prompt = config.llm.system_prompt.clone();
-    if !context.agents_files.is_empty() {
-        prompt.push_str("\n\n");
-        prompt.push_str(&format_agents_files_for_prompt(&context.agents_files));
-    }
     if !context.skills.is_empty() {
         prompt.push_str("\n\n");
         prompt.push_str(&format_skills_for_prompt(&context.skills));

@@ -3,6 +3,7 @@ use std::sync::{Arc, RwLock};
 
 pub trait MemoryManager: Send + Sync {
     fn upsert(&self, namespace: &str, key: &str, value: &str);
+    fn delete(&self, namespace: &str, key: &str) -> bool;
     fn list_namespace(&self, namespace: &str) -> Vec<(String, String)>;
 }
 
@@ -22,6 +23,14 @@ impl MemoryManager for InMemoryMemoryManager {
         let mut guard = self.inner.write().expect("memory write lock poisoned");
         let ns = guard.entry(namespace.to_string()).or_default();
         ns.insert(key.to_string(), value.to_string());
+    }
+
+    fn delete(&self, namespace: &str, key: &str) -> bool {
+        let mut guard = self.inner.write().expect("memory write lock poisoned");
+        let Some(ns) = guard.get_mut(namespace) else {
+            return false;
+        };
+        ns.remove(key).is_some()
     }
 
     fn list_namespace(&self, namespace: &str) -> Vec<(String, String)> {

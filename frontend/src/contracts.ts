@@ -27,6 +27,8 @@ export interface ChatSendRequest {
   modelName?: string;
   maxTokens?: number;
   attachments?: ChatAttachment[];
+  alwaysLoadToolKeys?: string[];
+  alwaysLoadSkillKeys?: string[];
 }
 
 export interface ChatAttachment {
@@ -90,6 +92,130 @@ export interface ChatListConversationsRequest {
 export interface ChatListConversationsResponse {
   conversations: ConversationSummaryRecord[];
   correlationId: string;
+}
+
+export interface ChatInspectContextRequest {
+  conversationId: string;
+  correlationId: string;
+  chatMode?: string;
+  alwaysLoadToolKeys?: string[];
+  alwaysLoadSkillKeys?: string[];
+}
+
+export interface ChatContextBreakdownItem {
+  section: string;
+  category: string;
+  key: string;
+  value: string;
+  sourcePath?: string | null;
+  loadMethod: string;
+  loadReason: string;
+  tokenEstimate: number;
+  charCount: number;
+  wordCount: number;
+}
+
+export interface ChatInspectContextResponse {
+  conversationId: string;
+  correlationId: string;
+  routeMode: string;
+  totalTokenEstimate: number;
+  items: ChatContextBreakdownItem[];
+  conversations: ConversationSummaryRecord[];
+  memoryItems: ChatContextBreakdownItem[];
+  skillsItems: ChatContextBreakdownItem[];
+  toolsItems: ChatContextBreakdownItem[];
+}
+
+export interface MemoryUpsertRequest {
+  namespace: string;
+  key: string;
+  value: string;
+  correlationId: string;
+}
+
+export interface MemoryUpsertResponse {
+  namespace: string;
+  key: string;
+  correlationId: string;
+  ok: boolean;
+}
+
+export interface MemoryDeleteRequest {
+  namespace: string;
+  key: string;
+  correlationId: string;
+}
+
+export interface MemoryDeleteResponse {
+  namespace: string;
+  key: string;
+  correlationId: string;
+  deleted: boolean;
+}
+
+export interface SystemPromptSetRequest {
+  value: string;
+  correlationId: string;
+}
+
+export interface SystemPromptSetResponse {
+  value: string;
+  correlationId: string;
+  ok: boolean;
+}
+
+export interface CustomItemUpsertRequest {
+  section: string;
+  key: string;
+  value: string;
+  correlationId: string;
+}
+
+export interface CustomItemUpsertResponse {
+  section: string;
+  key: string;
+  correlationId: string;
+  ok: boolean;
+}
+
+export interface CustomItemDeleteRequest {
+  section: string;
+  key: string;
+  correlationId: string;
+}
+
+export interface CustomItemDeleteResponse {
+  section: string;
+  key: string;
+  correlationId: string;
+  deleted: boolean;
+}
+
+export interface SkillCreateRequest {
+  name: string;
+  description: string;
+  content: string;
+  correlationId: string;
+}
+
+export interface SkillCreateResponse {
+  name: string;
+  filePath: string;
+  correlationId: string;
+  ok: boolean;
+}
+
+export interface ReferenceFileSetRequest {
+  path: string;
+  value: string;
+  correlationId: string;
+}
+
+export interface ReferenceFileSetResponse {
+  path: string;
+  correlationId: string;
+  ok: boolean;
 }
 
 export interface ChatDeleteConversationRequest {

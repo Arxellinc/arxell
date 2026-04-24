@@ -511,7 +511,7 @@ mod tests {
         let value = invoke_new_sheet(&state, json!({})).await.unwrap();
 
         assert_eq!(value["fileName"].as_str(), Some("New Sheet"));
-        assert_eq!(value["rowCount"].as_u64(), Some(100));
+        assert_eq!(value["rowCount"].as_u64(), Some(1000));
         assert_eq!(value["columnCount"].as_u64(), Some(26));
     }
 

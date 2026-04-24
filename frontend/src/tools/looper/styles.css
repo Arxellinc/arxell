@@ -583,14 +583,13 @@
 }
 
 .looper-prompt-editor-close {
-  width: 16px;
-  height: 16px;
+  width: 22px;
+  height: 22px;
   border: none;
-  border-radius: 3px;
+  border-radius: 4px;
   background: transparent;
   color: var(--muted);
   cursor: pointer;
-  font-size: 10px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -598,6 +597,10 @@
 
 .looper-prompt-editor-close:hover {
   background: var(--surface-hover);
+}
+
+.looper-prompt-editor-close:hover .icon-inactive {
+  color: var(--icon-dark);
 }
 
 .looper-prompt-textarea {

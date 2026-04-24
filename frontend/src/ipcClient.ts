@@ -26,6 +26,22 @@ import type {
   ChatCancelResponse,
   ChatDeleteConversationRequest,
   ChatDeleteConversationResponse,
+  ChatInspectContextRequest,
+  ChatInspectContextResponse,
+  CustomItemDeleteRequest,
+  CustomItemDeleteResponse,
+  CustomItemUpsertRequest,
+  CustomItemUpsertResponse,
+  MemoryDeleteRequest,
+  MemoryDeleteResponse,
+  MemoryUpsertRequest,
+  MemoryUpsertResponse,
+  ReferenceFileSetRequest,
+  ReferenceFileSetResponse,
+  SkillCreateRequest,
+  SkillCreateResponse,
+  SystemPromptSetRequest,
+  SystemPromptSetResponse,
   ChatGetMessagesRequest,
   ChatGetMessagesResponse,
   ChatListConversationsRequest,
@@ -148,6 +164,14 @@ export interface ChatIpcClient {
   cancelMessage(request: ChatCancelRequest): Promise<ChatCancelResponse>;
   getMessages(request: ChatGetMessagesRequest): Promise<ChatGetMessagesResponse>;
   listConversations(request: ChatListConversationsRequest): Promise<ChatListConversationsResponse>;
+  inspectChatContext(request: ChatInspectContextRequest): Promise<ChatInspectContextResponse>;
+  upsertMemory(request: MemoryUpsertRequest): Promise<MemoryUpsertResponse>;
+  deleteMemory(request: MemoryDeleteRequest): Promise<MemoryDeleteResponse>;
+  upsertCustomItem(request: CustomItemUpsertRequest): Promise<CustomItemUpsertResponse>;
+  deleteCustomItem(request: CustomItemDeleteRequest): Promise<CustomItemDeleteResponse>;
+  createSkill(request: SkillCreateRequest): Promise<SkillCreateResponse>;
+  setReferenceFile(request: ReferenceFileSetRequest): Promise<ReferenceFileSetResponse>;
+  setSystemPrompt(request: SystemPromptSetRequest): Promise<SystemPromptSetResponse>;
   deleteConversation(
     request: ChatDeleteConversationRequest
   ): Promise<ChatDeleteConversationResponse>;
@@ -216,6 +240,9 @@ export interface ChatIpcClient {
   modelManagerListCatalogCsv(
     request: ModelManagerListCatalogCsvRequest
   ): Promise<ModelManagerListCatalogCsvResponse>;
+  modelManagerRefreshUnslothCatalog(
+    request: ModelManagerRefreshUnslothCatalogRequest
+  ): Promise<ModelManagerRefreshUnslothCatalogResponse>;
   probeMicrophoneDevice(
     request: DevicesProbeMicrophoneRequest
   ): Promise<DevicesProbeMicrophoneResponse>;
@@ -333,6 +360,40 @@ class TauriChatIpcClient implements ChatIpcClient {
     return this.invokeFn<ChatListConversationsResponse>("cmd_chat_list_conversations", {
       request
     });
+  }
+
+  inspectChatContext(
+    request: ChatInspectContextRequest
+  ): Promise<ChatInspectContextResponse> {
+    return this.invokeFn<ChatInspectContextResponse>("cmd_chat_inspect_context", { request });
+  }
+
+  upsertMemory(request: MemoryUpsertRequest): Promise<MemoryUpsertResponse> {
+    return this.invokeFn<MemoryUpsertResponse>("cmd_memory_upsert", { request });
+  }
+
+  deleteMemory(request: MemoryDeleteRequest): Promise<MemoryDeleteResponse> {
+    return this.invokeFn<MemoryDeleteResponse>("cmd_memory_delete", { request });
+  }
+
+  upsertCustomItem(request: CustomItemUpsertRequest): Promise<CustomItemUpsertResponse> {
+    return this.invokeFn<CustomItemUpsertResponse>("cmd_custom_item_upsert", { request });
+  }
+
+  deleteCustomItem(request: CustomItemDeleteRequest): Promise<CustomItemDeleteResponse> {
+    return this.invokeFn<CustomItemDeleteResponse>("cmd_custom_item_delete", { request });
+  }
+
+  createSkill(request: SkillCreateRequest): Promise<SkillCreateResponse> {
+    return this.invokeFn<SkillCreateResponse>("cmd_skill_create", { request });
+  }
+
+  setReferenceFile(request: ReferenceFileSetRequest): Promise<ReferenceFileSetResponse> {
+    return this.invokeFn<ReferenceFileSetResponse>("cmd_reference_file_set", { request });
+  }
+
+  setSystemPrompt(request: SystemPromptSetRequest): Promise<SystemPromptSetResponse> {
+    return this.invokeFn<SystemPromptSetResponse>("cmd_system_prompt_set", { request });
   }
 
   deleteConversation(
@@ -874,6 +935,83 @@ export class MockChatIpcClient implements ChatIpcClient {
         }
       ],
       correlationId: request.correlationId
+    };
+  }
+
+  async inspectChatContext(
+    request: ChatInspectContextRequest
+  ): Promise<ChatInspectContextResponse> {
+    return {
+      conversationId: request.conversationId,
+      correlationId: request.correlationId,
+      routeMode: request.chatMode || "auto",
+      totalTokenEstimate: 0,
+      items: [],
+      conversations: [],
+      memoryItems: [],
+      skillsItems: [],
+      toolsItems: []
+    };
+  }
+
+  async upsertMemory(request: MemoryUpsertRequest): Promise<MemoryUpsertResponse> {
+    return {
+      namespace: request.namespace,
+      key: request.key,
+      correlationId: request.correlationId,
+      ok: true
+    };
+  }
+
+  async deleteMemory(request: MemoryDeleteRequest): Promise<MemoryDeleteResponse> {
+    return {
+      namespace: request.namespace,
+      key: request.key,
+      correlationId: request.correlationId,
+      deleted: true
+    };
+  }
+
+  async upsertCustomItem(request: CustomItemUpsertRequest): Promise<CustomItemUpsertResponse> {
+    return {
+      section: request.section,
+      key: request.key,
+      correlationId: request.correlationId,
+      ok: true
+    };
+  }
+
+  async deleteCustomItem(request: CustomItemDeleteRequest): Promise<CustomItemDeleteResponse> {
+    return {
+      section: request.section,
+      key: request.key,
+      correlationId: request.correlationId,
+      deleted: true
+    };
+  }
+
+  async createSkill(request: SkillCreateRequest): Promise<SkillCreateResponse> {
+    return {
+      name: request.name,
+      filePath: `skills/${request.name}.md`,
+      correlationId: request.correlationId,
+      ok: true
+    };
+  }
+
+  async setReferenceFile(request: ReferenceFileSetRequest): Promise<ReferenceFileSetResponse> {
+    return {
+      path: request.path,
+      correlationId: request.correlationId,
+      ok: true
+    };
+  }
+
+  async setSystemPrompt(request: SystemPromptSetRequest): Promise<SystemPromptSetResponse> {
+    return {
+      value: request.value,
+      correlationId: request.correlationId,
+      ok: true
     };
   }
 
@@ -1796,6 +1934,16 @@ export class MockChatIpcClient implements ChatIpcClient {
       correlationId: request.correlationId,
       listName: request.listName,
       rows: []
+    };
+  }
+
+  async modelManagerRefreshUnslothCatalog(
+    request: ModelManagerRefreshUnslothCatalogRequest
+  ): Promise<ModelManagerRefreshUnslothCatalogResponse> {
+    return {
+      correlationId: request.correlationId,
+      rows: [],
+      newCount: 0
     };
   }
 

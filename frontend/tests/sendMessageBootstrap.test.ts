@@ -22,6 +22,8 @@ function makeState() {
     chatThinkingPlacementByCorrelation: {} as Record<string, "before" | "after">,
     chatTtsEnabled: false,
     chatFirstAssistantChunkMsByCorrelation: {} as Record<string, number>,
+    memoryAlwaysLoadToolKeys: [] as string[],
+    memoryAlwaysLoadSkillKeys: [] as string[],
     events: [] as Array<{
       timestampMs: number;
       correlationId: string;

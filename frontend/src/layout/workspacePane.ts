@@ -83,6 +83,8 @@ function renderWorkspaceTopbar(activeTab: WorkspaceTab, workspaceTools: Workspac
       title: "Tool Manager"
     }
   ] satisfies Array<{ tabId: WorkspacePrimaryTab; icon: IconName; title: string }>;
+  const docsTool = workspaceTools.find((tool) => tool.enabled && tool.icon !== false && tool.toolId === "docs");
+  const docsButtonHtml = docsTool ? renderWorkspaceToolButton(docsTool, activeTab) : "";
   const toolButtons = renderWorkspaceToolButtons(activeTab, workspaceTools);
   const leftButtonsHtml = [
     ...leftButtons.map((button) =>
@@ -91,6 +93,8 @@ function renderWorkspaceTopbar(activeTab: WorkspaceTab, workspaceTools: Workspac
     toolButtons
   ].join("");
   const rightButtonsHtml = rightButtons
+    .slice()
+    .reverse()
     .map((button) => renderWorkspaceTopbarButton(button.tabId, button.icon, button.title, activeTab))
     .join("");
   const workspaceMenuHtml = renderPaneMenu("workspacePaneMenu", APP_ICON.action.paneMenu);
@@ -99,6 +103,7 @@ function renderWorkspaceTopbar(activeTab: WorkspaceTab, workspaceTools: Workspac
       ${leftButtonsHtml}
     </div>
     <div class="workspace-topbar-right">
+      ${docsButtonHtml}
       ${rightButtonsHtml}
       ${workspaceMenuHtml}
     </div>
@@ -123,6 +128,7 @@ function renderWorkspaceToolButtons(activeTab: WorkspaceTab, workspaceTools: Wor
   return workspaceTools
     .filter((tool) => tool.enabled && tool.icon !== false)
     .filter((tool) => tool.toolId !== "terminal")
+    .filter((tool) => tool.toolId !== "docs")
     .filter((tool) => {
       if (seenToolIds.has(tool.toolId)) return false;
       seenToolIds.add(tool.toolId);
@@ -134,15 +140,17 @@ function renderWorkspaceToolButtons(activeTab: WorkspaceTab, workspaceTools: Wor
       if (aIndex !== bIndex) return aIndex - bIndex;
       return a.toolId.localeCompare(b.toolId);
     })
-    .map((tool) => {
-      const toolId = tool.toolId === "web" ? "webSearch" : tool.toolId;
-      const manifest = getToolManifest(toolId);
-      const tabId = toWorkspaceToolTabId(toolId);
-      const icon = manifest?.icon || "wrench";
-      const title = manifest?.title || tool.title || tool.toolId;
-      return `<button type="button" class="topbar-icon-btn ${activeTab === tabId ? "is-active" : ""}" ${WORKSPACE_DATA_ATTR.tab}="${tabId}" data-title="${title}" title="${title}" aria-label="${title}">
-      ${iconHtml(icon, { size: 16, tone: "dark" })}
-    </button>`;
-    })
+    .map((tool) => renderWorkspaceToolButton(tool, activeTab))
     .join("");
+}
+
+function renderWorkspaceToolButton(tool: WorkspaceToolRecord, activeTab: WorkspaceTab): string {
+  const toolId = tool.toolId === "web" ? "webSearch" : tool.toolId;
+  const manifest = getToolManifest(toolId);
+  const tabId = toWorkspaceToolTabId(toolId);
+  const icon = manifest?.icon || "wrench";
+  const title = manifest?.title || tool.title || tool.toolId;
+  return `<button type="button" class="topbar-icon-btn ${activeTab === tabId ? "is-active" : ""}" ${WORKSPACE_DATA_ATTR.tab}="${tabId}" data-title="${title}" title="${title}" aria-label="${title}">
+    ${iconHtml(icon, { size: 16, tone: "dark" })}
+  </button>`;
 }

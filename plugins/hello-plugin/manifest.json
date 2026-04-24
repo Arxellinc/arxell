@@ -1,9 +1,0 @@
-{
-  "id": "hello-plugin",
-  "name": "Hello Custom Tool",
-  "version": "0.1.0",
-  "entry": "dist/index.html",
-  "icon": "plug",
-  "category": "workspace",
-  "minHostVersion": "0.1.8"
-}

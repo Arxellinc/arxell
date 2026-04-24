@@ -383,7 +383,7 @@ function renderPromptEditor(loopId: string, phase: LooperPhase, ps: LooperPhaseS
   return `<div class="looper-prompt-editor">
     <div class="looper-prompt-editor-header">
       <span>${LOOPER_PHASE_LABELS[phase]} prompt</span>
-      <button type="button" class="looper-prompt-editor-close" ${LOOPER_DATA_ATTR.action}="toggle-prompt" ${LOOPER_DATA_ATTR.phase}="${phase}" title="Close">✕</button>
+      <button type="button" class="looper-prompt-editor-close" ${LOOPER_DATA_ATTR.action}="toggle-prompt" ${LOOPER_DATA_ATTR.phase}="${phase}" title="Close">${iconHtml("circle-x", { size: 16, tone: "inactive" })}</button>
     </div>
     <textarea ${LOOPER_DATA_ATTR.phase}="${phase}" class="looper-prompt-textarea">${esc(ps.promptDraft)}</textarea>
   </div>`;

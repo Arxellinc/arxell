@@ -1,5 +1,4 @@
 use crate::config::{DEFAULT_LOCAL_SKILLS_DIR, LEGACY_LOCAL_SKILLS_DIR, LOCAL_SKILLS_DIR_ENV};
-use crate::context::shared::escape_xml;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
@@ -158,31 +157,42 @@ pub fn load_skills(cwd: Option<&str>) -> LoadSkillsResult {
         }
     }
 
-    LoadSkillsResult {
-        skills: map.into_values().collect(),
-        warnings,
-    }
+    let mut skills = map.into_values().collect::<Vec<_>>();
+    skills.sort_by(|a, b| a.name.to_ascii_lowercase().cmp(&b.name.to_ascii_lowercase()));
+
+    LoadSkillsResult { skills, warnings }
 }
 
 pub fn format_skills_for_prompt(skills: &[Skill]) -> String {
     if skills.is_empty() {
         return String::new();
     }
-    let mut lines = vec![
-        "# Skills".to_string(),
-        String::new(),
-        "<available_skills>".to_string(),
-    ];
+    let mut lines = vec!["# Skills".to_string(), String::new()];
     for s in skills {
-        lines.push("<skill>".to_string());
-        lines.push(format!("<name>{}</name>", escape_xml(&s.name)));
-        lines.push(format!(
-            "<description>{}</description>",
-            escape_xml(&s.description)
-        ));
-        lines.push(format!("<location>{}</location>", escape_xml(&s.file_path)));
-        lines.push("</skill>".to_string());
+        let summary = summarize_skill_description(s.description.as_str());
+        lines.push(format!("- {}: {}", s.name, summary));
     }
-    lines.push("</available_skills>".to_string());
     lines.join("\n")
+}
+
+fn summarize_skill_description(description: &str) -> String {
+    let trimmed = description.trim();
+    let sentence = trimmed
+        .split(['.', '!', '?'])
+        .next()
+        .unwrap_or(trimmed)
+        .trim();
+    let normalized = sentence
+        .replace("This skill should be used when the user asks to", "Use for")
+        .replace("This skill should be used when the user wants to", "Use for")
+        .replace("This skill should be used when", "Use for")
+        .replace("Provides comprehensive guidance for", "Guidance for")
+        .replace("Provides comprehensive", "")
+        .replace("Provides", "")
+        .replace("  ", " ");
+    let words = normalized.split_whitespace().collect::<Vec<_>>();
+    if words.len() <= 12 {
+        return words.join(" ");
+    }
+    format!("{}...", words[..12].join(" "))
 }

@@ -6,17 +6,19 @@ export interface WorkspaceToolLifecycleState {
   webSetupMessage: string | null;
   opencodeNeedsInit: boolean;
   looperNeedsInit: boolean;
+  memoryLoading: boolean;
 }
 
 export interface WorkspaceToolLifecycleDeps {
   ensureWebTabs: () => void;
   refreshApiConnections: () => Promise<void>;
+  refreshFlowRuns?: () => Promise<void>;
   hasVerifiedSearchConnection: () => boolean;
   ensureFilesExplorerLoaded: () => Promise<void>;
   ensureDocsLoaded: () => Promise<void>;
-  ensureSkillsLoaded: () => Promise<void>;
   ensureNotepadReady: () => Promise<void>;
   ensureSheetReady: () => Promise<void>;
+  ensureMemoryLoaded: () => Promise<void>;
   ensureOpenCodeInit: () => Promise<void>;
   ensureLooperInit: () => Promise<void>;
 }
@@ -47,11 +49,6 @@ export async function handleWorkspaceToolTabActivation(
     return true;
   }
 
-  if (workspaceTab === "skills-tool") {
-    await deps.ensureSkillsLoaded();
-    return true;
-  }
-
   if (workspaceTab === "notepad-tool") {
     await deps.ensureNotepadReady();
     return true;
@@ -59,6 +56,13 @@ export async function handleWorkspaceToolTabActivation(
 
   if (workspaceTab === "sheets-tool") {
     await deps.ensureSheetReady();
+    return true;
+  }
+
+  if (workspaceTab === "memory-tool") {
+    if (!state.memoryLoading) {
+      await deps.ensureMemoryLoaded();
+    }
     return true;
   }
 

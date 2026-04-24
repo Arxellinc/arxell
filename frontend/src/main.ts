@@ -6,6 +6,7 @@ import type {
   AppResourceUsageResponse,
   AppEvent,
   ChatAttachment,
+  ChatContextBreakdownItem,
   ChatStreamChunkPayload,
   ChatStreamReasoningChunkPayload,
   ConversationSummaryRecord,
@@ -48,6 +49,7 @@ import type {
 } from "./panels/types";
 import type { DisplayMode, LayoutOrientation, WorkspaceTab } from "./layout";
 import { escapeHtml } from "./panels/utils";
+import { renderHighlightedCode } from "./tools/notepad/shared";
 import { TerminalManager, renderTerminalToolbar, renderTerminalWorkspace } from "./tools/terminal/index";
 import type { TerminalShellProfile } from "./tools/terminal/types";
 import {
@@ -109,20 +111,6 @@ import {
 import { getInitialSheetsState } from "./tools/sheets/state";
 import type { SheetsToolState } from "./tools/sheets/state";
 import { mountSheetsRuntime, unmountSheetsRuntime } from "./tools/sheets/canvas/mount";
-import {
-  activateSkillsTab,
-  closeSkillsTab,
-  createNewSkillsFile,
-  ensureSkillsLoaded,
-  listSkillsDirectory,
-  openSkillsFile,
-  saveActiveSkillsTab,
-  saveActiveSkillsTabAs,
-  saveAllSkillsTabs,
-  selectSkillsPath,
-  toggleSkillsNode,
-  updateSkillsBuffer
-} from "./tools/skills/actions";
 import { loadPersistedTasksById } from "./tools/tasks/actions";
 import type { TaskFolder, TaskSortDirection, TaskSortKey, TaskRecord } from "./tools/tasks/state";
 import { resetTtsStateForEngine, type TtsEngine } from "./tts/engineRules";
@@ -145,6 +133,8 @@ import {
   loadPersistedBottomItem,
   loadPersistedChatModelId,
   loadPersistedChatRoutePreference,
+  loadPersistedMemoryAlwaysLoadTools,
+  loadPersistedMemoryAlwaysLoadSkills,
   loadPersistedLlamaMaxTokens,
   loadPersistedLlamaModelPath,
   loadPersistedShowAppResourcesCpu,
@@ -157,6 +147,8 @@ import {
   persistBottomItem,
   persistChatRoutePreference,
   persistChatModelId,
+  persistMemoryAlwaysLoadTools,
+  persistMemoryAlwaysLoadSkills,
   persistLlamaMaxTokens,
   persistLlamaModelPath,
   persistMicBubbleDismissed,
@@ -228,6 +220,8 @@ let preferredChatModelId = loadPersistedChatModelId();
 const initialWorkspaceTabCandidate = loadPersistedWorkspaceTab("events");
 const initialWorkspaceTab = initialWorkspaceTabCandidate === "flow-tool"
   ? "events"
+  : initialWorkspaceTabCandidate === "skills-tool"
+  ? "memory-tool"
   : isWorkspaceTab(initialWorkspaceTabCandidate)
   ? initialWorkspaceTabCandidate
   : "events";
@@ -257,7 +251,11 @@ function loadPersistedFlowPhaseSessionMap(): Record<string, string> { return {};
 function loadPersistedFlowSplit(): number { return 50; }
 
 async function refreshFlowRunsFromToolInvoke(_state: unknown, _deps: unknown): Promise<void> {}
-function createFlowRunsRefreshScheduler(_deps: { refresh: () => Promise<void>; delayMs?: number }): () => void {
+function createFlowRunsRefreshScheduler(_deps: {
+  refresh: () => Promise<void>;
+  onRefreshed?: () => void;
+  delayMs?: number;
+}): () => void {
   return () => {};
 }
 function applyFlowRuntimeEvent(_state: unknown, _event: AppEvent, _scheduleRefresh: () => void): void {}
@@ -481,6 +479,32 @@ const state: {
   skillsFindCaseSensitive: boolean;
   skillsLineWrap: boolean;
   skillsError: string | null;
+  memoryContextItems: ChatContextBreakdownItem[];
+  memoryChatHistory: ConversationSummaryRecord[];
+  memoryPersistentItems: ChatContextBreakdownItem[];
+  memorySkillsItems: ChatContextBreakdownItem[];
+  memoryToolsItems: ChatContextBreakdownItem[];
+  memoryAlwaysLoadToolKeys: string[];
+  memoryAlwaysLoadSkillKeys: string[];
+  memoryModalOpen: boolean;
+  memoryModalMode: "edit" | "create";
+  memoryModalSection: "context" | "history" | "memory" | "skills" | "tools" | null;
+  memoryModalTitle: string;
+  memoryModalValue: string;
+  memoryModalEditable: boolean;
+  memoryModalTarget: "memory" | "system-prompt" | "custom-item" | null;
+  memoryModalNamespace: string | null;
+  memoryModalKey: string | null;
+  memoryModalSourcePath: string | null;
+  memoryModalConversationId: string | null;
+  memoryModalDraftKey: string;
+  memoryModalDraftCategory: string;
+  memoryModalDraftDescription: string;
+  memoryActiveTab: "context" | "history" | "memory" | "skills" | "tools";
+  memoryRouteMode: string;
+  memoryTotalTokenEstimate: number;
+  memoryLoading: boolean;
+  memoryError: string | null;
   tasksById: Record<string, TaskRecord>;
   tasksSelectedId: string | null;
   tasksFolder: TaskFolder;
@@ -842,6 +866,32 @@ const state: {
   skillsFindCaseSensitive: false,
   skillsLineWrap: false,
   skillsError: null,
+  memoryContextItems: [],
+  memoryChatHistory: [],
+  memoryPersistentItems: [],
+  memorySkillsItems: [],
+  memoryToolsItems: [],
+  memoryAlwaysLoadToolKeys: loadPersistedMemoryAlwaysLoadTools(),
+  memoryAlwaysLoadSkillKeys: loadPersistedMemoryAlwaysLoadSkills(),
+  memoryModalOpen: false,
+  memoryModalMode: "edit",
+  memoryModalSection: null,
+  memoryModalTitle: "",
+  memoryModalValue: "",
+  memoryModalEditable: false,
+  memoryModalTarget: null,
+  memoryModalNamespace: null,
+  memoryModalKey: null,
+  memoryModalSourcePath: null,
+  memoryModalConversationId: null,
+  memoryModalDraftKey: "",
+  memoryModalDraftCategory: "directive",
+  memoryModalDraftDescription: "",
+  memoryActiveTab: "context",
+  memoryRouteMode: "auto",
+  memoryTotalTokenEstimate: 0,
+  memoryLoading: false,
+  memoryError: null,
   tasksById: loadPersistedTasksById(),
   tasksSelectedId: null,
   tasksFolder: "inbox",
@@ -1257,6 +1307,18 @@ function createSecondaryChatSendState(
     },
     set events(value) {
       state.events = value;
+    },
+    get memoryAlwaysLoadToolKeys() {
+      return state.memoryAlwaysLoadToolKeys;
+    },
+    set memoryAlwaysLoadToolKeys(value) {
+      state.memoryAlwaysLoadToolKeys = value;
+    },
+    get memoryAlwaysLoadSkillKeys() {
+      return state.memoryAlwaysLoadSkillKeys;
+    },
+    set memoryAlwaysLoadSkillKeys(value) {
+      state.memoryAlwaysLoadSkillKeys = value;
     }
   };
 }
@@ -2570,6 +2632,71 @@ function render(): void {
     skillsFindCaseSensitive: state.skillsFindCaseSensitive,
     skillsLineWrap: state.skillsLineWrap,
     skillsError: state.skillsError,
+    memoryContextItems: state.memoryContextItems.map((item) => ({
+      key: item.key,
+      value: item.value,
+      category: item.category,
+      loadMethod: item.loadMethod,
+      loadReason: item.loadReason,
+      tokenEstimate: item.tokenEstimate,
+      charCount: item.charCount,
+      wordCount: item.wordCount
+    })),
+    memoryChatHistory: state.memoryChatHistory,
+    memoryPersistentItems: state.memoryPersistentItems.map((item) => ({
+      key: item.key,
+      value: item.value,
+      type:
+        item.category === "fact" || item.category === "personality" || item.category === "directive"
+          ? item.category
+          : "other",
+      loadMethod: item.loadMethod,
+      loadReason: item.loadReason,
+      tokenEstimate: item.tokenEstimate,
+      charCount: item.charCount,
+      wordCount: item.wordCount
+    })),
+    memorySkillsItems: state.memorySkillsItems.map((item) => ({
+      key: item.key,
+      value: item.value,
+      category: item.category,
+      loadMethod: item.loadMethod,
+      loadReason: item.loadReason,
+      tokenEstimate: item.tokenEstimate,
+      charCount: item.charCount,
+      wordCount: item.wordCount
+    })),
+    memoryToolsItems: state.memoryToolsItems.map((item) => ({
+      key: item.key,
+      value: item.value,
+      category: item.category,
+      loadMethod: item.loadMethod,
+      loadReason: item.loadReason,
+      tokenEstimate: item.tokenEstimate,
+      charCount: item.charCount,
+      wordCount: item.wordCount
+    })),
+    memoryAlwaysLoadToolKeys: state.memoryAlwaysLoadToolKeys,
+    memoryAlwaysLoadSkillKeys: state.memoryAlwaysLoadSkillKeys,
+    memoryModalOpen: state.memoryModalOpen,
+    memoryModalMode: state.memoryModalMode,
+    memoryModalSection: state.memoryModalSection,
+    memoryModalTitle: state.memoryModalTitle,
+    memoryModalValue: state.memoryModalValue,
+    memoryModalEditable: state.memoryModalEditable,
+    memoryModalTarget: state.memoryModalTarget,
+    memoryModalNamespace: state.memoryModalNamespace,
+    memoryModalKey: state.memoryModalKey,
+    memoryModalSourcePath: state.memoryModalSourcePath,
+    memoryModalConversationId: state.memoryModalConversationId,
+    memoryModalDraftKey: state.memoryModalDraftKey,
+    memoryModalDraftCategory: state.memoryModalDraftCategory,
+    memoryModalDraftDescription: state.memoryModalDraftDescription,
+    memoryActiveTab: state.memoryActiveTab,
+    memoryRouteMode: state.memoryRouteMode,
+    memoryTotalTokenEstimate: state.memoryTotalTokenEstimate,
+    memoryLoading: state.memoryLoading,
+    memoryError: state.memoryError,
     tasksById: state.tasksById,
     tasksSelectedId: state.tasksSelectedId,
     tasksFolder: state.tasksFolder,
@@ -2888,6 +3015,27 @@ function pushConsoleEntry(
   if (state.consoleEntries.length > MAX_CONSOLE_ENTRIES) {
     state.consoleEntries.splice(0, state.consoleEntries.length - MAX_CONSOLE_ENTRIES);
   }
+}
+
+function scheduleDeferredStartupTask(
+  label: string,
+  run: () => Promise<void>,
+  rerender: () => void
+): void {
+  pushConsoleEntry("info", "app", `Deferred startup queued: ${label}.`);
+  window.setTimeout(() => {
+    pushConsoleEntry("info", "app", `Deferred startup started: ${label}.`);
+    void run()
+      .then(() => {
+        pushConsoleEntry("info", "app", `Deferred startup completed: ${label}.`);
+      })
+      .catch((error) => {
+        pushConsoleEntry("warn", "app", `Deferred startup failed: ${label}: ${String(error)}`);
+      })
+      .finally(() => {
+        rerender();
+      });
+  }, 0);
 }
 
 function updateAssistantDraft(correlationId: string, delta: string): void {
@@ -3286,6 +3434,196 @@ async function refreshConversations(): Promise<void> {
   state.conversations = list.conversations;
 }
 
+function mapMemoryContextItem(item: ChatContextBreakdownItem) {
+  return {
+    section: item.section,
+    key: item.key,
+    value: item.value,
+    category: item.category,
+    sourcePath: item.sourcePath ?? null,
+    loadMethod: item.loadMethod,
+    loadReason: item.loadReason,
+    tokenEstimate: item.tokenEstimate,
+    charCount: item.charCount,
+    wordCount: item.wordCount
+  };
+}
+
+async function loadMemoryContext(): Promise<void> {
+  if (!clientRef) return;
+  state.memoryLoading = true;
+  state.memoryError = null;
+  try {
+    const response = await clientRef.inspectChatContext({
+      conversationId: state.conversationId,
+      correlationId: nextCorrelationId(),
+      chatMode: state.chatRoutePreference,
+      alwaysLoadToolKeys: state.memoryAlwaysLoadToolKeys,
+      alwaysLoadSkillKeys: state.memoryAlwaysLoadSkillKeys
+    });
+    state.memoryContextItems = response.items.map(mapMemoryContextItem);
+    state.memoryChatHistory = response.conversations;
+    state.memoryPersistentItems = response.memoryItems.map(mapMemoryContextItem);
+    state.memorySkillsItems = response.skillsItems.map(mapMemoryContextItem);
+    state.memoryToolsItems = response.toolsItems.map(mapMemoryContextItem);
+    state.memoryRouteMode = response.routeMode;
+    state.memoryTotalTokenEstimate = response.totalTokenEstimate;
+  } catch (error) {
+    state.memoryError = error instanceof Error ? error.message : String(error);
+  } finally {
+    state.memoryLoading = false;
+  }
+}
+
+function closeMemoryModal(): void {
+  state.memoryModalOpen = false;
+  state.memoryModalMode = "edit";
+  state.memoryModalSection = null;
+  state.memoryModalTitle = "";
+  state.memoryModalValue = "";
+  state.memoryModalEditable = false;
+  state.memoryModalTarget = null;
+  state.memoryModalNamespace = null;
+  state.memoryModalKey = null;
+  state.memoryModalSourcePath = null;
+  state.memoryModalConversationId = null;
+  state.memoryModalDraftKey = "";
+  state.memoryModalDraftCategory = "directive";
+  state.memoryModalDraftDescription = "";
+}
+
+function openMemoryCreateModal(section: "context" | "history" | "memory" | "skills" | "tools"): void {
+  state.memoryModalOpen = true;
+  state.memoryModalMode = "create";
+  state.memoryModalSection = section;
+  state.memoryModalTitle = `Add New ${section.charAt(0).toUpperCase()}${section.slice(1)} Item`;
+  state.memoryModalValue = "";
+  state.memoryModalEditable = true;
+  state.memoryModalTarget = null;
+  state.memoryModalNamespace = null;
+  state.memoryModalKey = null;
+  state.memoryModalSourcePath = null;
+  state.memoryModalConversationId = null;
+  state.memoryModalDraftKey = "";
+  state.memoryModalDraftCategory = section === "memory" ? "directive" : "";
+  state.memoryModalDraftDescription = "";
+}
+
+function openHistoryIndexModal(): void {
+  const value = state.memoryChatHistory
+    .slice(0, 10)
+    .map((chat) => {
+      const date = formatMemoryTimestamp(chat.updatedAtMs);
+      const title = chat.title?.trim() || chat.lastMessagePreview || chat.conversationId;
+      const preview = chat.lastMessagePreview || title;
+      return `- ${date} | ${title} | ${chat.messageCount} msgs | ${preview}`;
+    })
+    .join("\n");
+  state.memoryModalOpen = true;
+  state.memoryModalMode = "edit";
+  state.memoryModalSection = "history";
+  state.memoryModalTitle = "History Index";
+  state.memoryModalValue = `# History\n\n${value}`;
+  state.memoryModalEditable = false;
+  state.memoryModalTarget = null;
+  state.memoryModalNamespace = null;
+  state.memoryModalKey = null;
+  state.memoryModalSourcePath = null;
+  state.memoryModalConversationId = null;
+}
+
+function refreshMemoryModalEditor(textarea: HTMLTextAreaElement): void {
+  const panel = textarea.closest(".notepad-editor-panel") as HTMLElement | null;
+  if (!panel) return;
+  const content = textarea.value;
+  const lineCount = Math.max(1, content.split("\n").length);
+  const displayLines = Math.max(99, lineCount);
+  const lineNumbers = panel.querySelector<HTMLElement>(".notepad-editor-lines");
+  if (lineNumbers) {
+    const previousLineCount = Number(lineNumbers.dataset.notepadLineCount || "0");
+    if (previousLineCount !== lineCount) {
+      let nums = "";
+      for (let i = 1; i <= displayLines; i += 1) {
+        nums += `${i}${i === displayLines ? "" : "\n"}`;
+      }
+      lineNumbers.textContent = nums;
+      lineNumbers.dataset.notepadLineCount = String(lineCount);
+    }
+  }
+  const plainTextMode = content.length > 20000;
+  panel.classList.toggle("is-plain-text", plainTextMode);
+  const highlight = panel.querySelector<HTMLElement>(".notepad-editor-highlight");
+  if (highlight) {
+    if (plainTextMode) {
+      highlight.textContent = "";
+    } else {
+      try {
+        highlight.innerHTML = renderHighlightedCode(content);
+      } catch {
+        highlight.textContent = content;
+      }
+    }
+  }
+  const fallback = displayLines * 20 + 20;
+  const height = Math.max(220, fallback);
+  textarea.style.height = `${height}px`;
+  textarea.closest<HTMLElement>(".notepad-editor-code-wrap")?.style.setProperty(
+    "--notepad-editor-height",
+    `${height}px`
+  );
+}
+
+function openMemoryModal(section: "context" | "history" | "memory" | "skills" | "tools", index: number): void {
+  if (section === "history") {
+    const item = state.memoryChatHistory.slice(0, 10)[index];
+    if (!item) return;
+    const title = item.title?.trim() || item.lastMessagePreview || item.conversationId;
+    const isCustomHistory = item.conversationId.startsWith("custom-history:");
+    state.memoryModalOpen = true;
+    state.memoryModalMode = "edit";
+    state.memoryModalSection = section;
+    state.memoryModalTitle = title;
+    state.memoryModalValue = item.lastMessagePreview || "";
+    state.memoryModalEditable = isCustomHistory;
+    state.memoryModalTarget = isCustomHistory ? "custom-item" : null;
+    state.memoryModalNamespace = isCustomHistory ? "history" : null;
+    state.memoryModalKey = isCustomHistory ? item.title : null;
+    state.memoryModalConversationId = isCustomHistory ? null : item.conversationId;
+    return;
+  }
+
+  const source =
+    section === "memory"
+      ? state.memoryPersistentItems
+      : section === "skills"
+        ? state.memorySkillsItems
+        : section === "tools"
+          ? state.memoryToolsItems
+          : state.memoryContextItems;
+  const item = source[index];
+  if (!item) return;
+  const namespaceKey = section === "memory" ? item.key.split(":") : [];
+  const isIndex = item.category === "skill-index" || item.category === "tool-index";
+  const isReadOnlyKey = item.key === "Skill Index" || item.key === "Tool Index" || item.key === "Runtime metadata" || item.key === "Verified API registry context";
+  const isSystemPrompt = section === "context" && item.key === "Base system prompt";
+  const isCustomContext = section === "context" && item.category === "custom-context";
+  const isCustomTool = section === "tools" && item.category === "tool-note";
+  const isSkillFile = section === "skills" && !!item.sourcePath;
+  const editable = isSystemPrompt || isCustomContext || isCustomTool || isSkillFile || (section === "memory" && !isIndex && !isReadOnlyKey);
+  const modalValue = item.value;
+  state.memoryModalOpen = true;
+  state.memoryModalMode = "edit";
+  state.memoryModalSection = section;
+  state.memoryModalTitle = item.key;
+  state.memoryModalValue = modalValue;
+  state.memoryModalEditable = editable;
+  state.memoryModalTarget = section === "memory" ? "memory" : isSystemPrompt ? "system-prompt" : isCustomContext || isCustomTool ? "custom-item" : isSkillFile ? null : null;
+  state.memoryModalNamespace = section === "memory" ? namespaceKey[0] || null : isCustomContext || isCustomTool ? section : null;
+  state.memoryModalKey = section === "memory" ? namespaceKey.slice(1).join(":") || item.key : isCustomContext || isCustomTool ? item.key : null;
+  state.memoryModalSourcePath = item.sourcePath || null;
+  state.memoryModalConversationId = null;
+}
+
 async function loadConversation(conversationId: string): Promise<void> {
   if (!clientRef) return;
   state.conversationId = conversationId;
@@ -3309,6 +3647,9 @@ async function loadConversation(conversationId: string): Promise<void> {
   state.chatFirstReasoningChunkMsByCorrelation = {};
   state.chatTtsLatencyMs = null;
   chatTtsLatencyCapturedByCorrelation.clear();
+  if (state.workspaceTab === "memory-tool") {
+    await loadMemoryContext();
+  }
 }
 
 async function refreshTools(): Promise<void> {
@@ -3394,6 +3735,57 @@ function pickTextFile(accept: string): Promise<{ name: string; text: string } | 
     };
     input.click();
   });
+}
+
+function parseMarkdownTemplate(text: string): { frontmatter: Record<string, string>; body: string } {
+  if (!text.startsWith("---\n")) {
+    return { frontmatter: {}, body: text.trim() };
+  }
+  const end = text.indexOf("\n---", 4);
+  if (end < 0) {
+    return { frontmatter: {}, body: text.trim() };
+  }
+  const rawFrontmatter = text.slice(4, end).trim();
+  const body = text.slice(end + 4).trim();
+  const frontmatter: Record<string, string> = {};
+  for (const line of rawFrontmatter.split("\n")) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#")) continue;
+    const [key, ...rest] = trimmed.split(":");
+    if (!key || rest.length === 0) continue;
+    frontmatter[key.trim().toLowerCase()] = rest.join(":").trim().replace(/^"|"$/g, "");
+  }
+  return { frontmatter, body };
+}
+
+function buildMemoryTemplate(): { fileName: string; content: string } {
+  return {
+    fileName: "memory-item-template.md",
+    content: `---
+kind: memory
+type: directive
+key: sample-memory-key
+enabled: false
+---
+
+Write the memory content here.
+`
+  };
+}
+
+function buildSkillTemplate(): { fileName: string; content: string } {
+  return {
+    fileName: "skill-template.md",
+    content: `---
+kind: skill
+name: sample-skill
+description: Short description of what this skill does.
+enabled: false
+---
+
+Write the skill content here.
+`
+  };
 }
 
 function normalizePortableApiType(raw: string | null | undefined): ApiConnectionPortableRecord["apiType"] {
@@ -3876,6 +4268,17 @@ function looksLikeIpv4(host: string): boolean {
     const value = Number.parseInt(part, 10);
     return Number.isInteger(value) && value >= 0 && value <= 255;
   });
+}
+
+function formatMemoryTimestamp(timestampMs: number): string {
+  if (!timestampMs || timestampMs <= 0) return "--";
+  const date = new Date(timestampMs);
+  const yy = String(date.getFullYear()).slice(-2);
+  const mm = String(date.getMonth() + 1).padStart(2, "0");
+  const dd = String(date.getDate()).padStart(2, "0");
+  const hh = String(date.getHours()).padStart(2, "0");
+  const min = String(date.getMinutes()).padStart(2, "0");
+  return `${yy}/${mm}/${dd} ${hh}:${min}`;
 }
 
 const workspaceToolsRuntime = createWorkspaceToolsRuntime(state, {
@@ -7282,19 +7685,6 @@ function attachWorkspaceInteractions(sendMessage: (text: string) => Promise<void
         saveActiveDocsTabAs: (path: string) => saveActiveDocsTabAs(state, { client: clientRef!, nextCorrelationId }, path),
         saveAllDocsTabs: () => saveAllDocsTabs(state, { client: clientRef!, nextCorrelationId })
       },
-      skills: {
-        listSkillsDirectory: (path?: string) => listSkillsDirectory(state, { client: clientRef!, nextCorrelationId }, path),
-        selectSkillsPath: (path: string) => selectSkillsPath(state, { client: clientRef!, nextCorrelationId }, path),
-        toggleSkillsNode: (path: string) => toggleSkillsNode(state, { client: clientRef!, nextCorrelationId }, path),
-        openSkillsFile: (path: string) => openSkillsFile(state, { client: clientRef!, nextCorrelationId }, path),
-        createNewSkillsFile: (path: string) => createNewSkillsFile(state, { client: clientRef!, nextCorrelationId }, path),
-        activateSkillsTab: (path: string) => activateSkillsTab(state, path),
-        closeSkillsTab: (path: string) => closeSkillsTab(state, path),
-        updateSkillsBuffer: (path: string, content: string) => updateSkillsBuffer(state, path, content),
-        saveActiveSkillsTab: () => saveActiveSkillsTab(state, { client: clientRef!, nextCorrelationId }),
-        saveActiveSkillsTabAs: (path: string) => saveActiveSkillsTabAs(state, { client: clientRef!, nextCorrelationId }, path),
-        saveAllSkillsTabs: () => saveAllSkillsTabs(state, { client: clientRef!, nextCorrelationId })
-      },
       web: {
         runWebSearch: workspaceToolsRuntime.runWebSearch,
         createAndActivateWebTab: workspaceToolsRuntime.createAndActivateWebTab,
@@ -7338,10 +7728,10 @@ function attachWorkspaceInteractions(sendMessage: (text: string) => Promise<void
              hasVerifiedSearchConnection: workspaceToolsRuntime.hasVerifiedSearchConnection,
              ensureFilesExplorerLoaded: workspaceToolsRuntime.ensureFilesExplorerLoaded,
               ensureDocsLoaded: () => ensureDocsLoaded(state, { client: clientRef!, nextCorrelationId }),
-              ensureSkillsLoaded: () => ensureSkillsLoaded(state, { client: clientRef!, nextCorrelationId }),
               ensureNotepadReady: workspaceToolsRuntime.ensureNotepadReady,
-             ensureSheetReady: workspaceToolsRuntime.ensureSheetReady,
-             refreshFlowRuns,
+              ensureSheetReady: workspaceToolsRuntime.ensureSheetReady,
+              ensureMemoryLoaded: loadMemoryContext,
+              refreshFlowRuns,
              ensureOpenCodeInit: async () => {
               const opencodeDeps: OpenCodeActionsDeps = {
                 terminalManager,
@@ -7378,6 +7768,285 @@ if (workspaceTab === "sheets-tool") {
       if (prelude.handled) return;
       const target = prelude.target;
       if (!target) return;
+
+      const rawClickTarget = event.target as HTMLElement;
+      const backdropEl = rawClickTarget?.closest<HTMLElement>(".memory-modal-backdrop");
+      if (backdropEl && rawClickTarget === backdropEl) {
+        closeMemoryModal();
+        renderAndBind(sendMessage);
+        return;
+      }
+
+      const memoryAction = target.getAttribute("data-memory-action");
+      if (memoryAction === "open-row") {
+        const section = target.getAttribute("data-memory-section");
+        const rawIndex = target.getAttribute("data-memory-index");
+        const index = rawIndex ? Number.parseInt(rawIndex, 10) : Number.NaN;
+        if (
+          (section === "context" || section === "history" || section === "memory" || section === "skills" || section === "tools") &&
+          Number.isFinite(index)
+        ) {
+          openMemoryModal(section, index);
+          renderAndBind(sendMessage);
+          return;
+        }
+      }
+      if (memoryAction === "open-history-index") {
+        openHistoryIndexModal();
+        renderAndBind(sendMessage);
+        return;
+      }
+      if (memoryAction === "tab") {
+        const tab = target.getAttribute("data-memory-tab");
+        if (
+          tab === "context" ||
+          tab === "history" ||
+          tab === "memory" ||
+          tab === "skills" ||
+          tab === "tools"
+        ) {
+          state.memoryActiveTab = tab;
+          renderAndBind(sendMessage);
+          return;
+        }
+      }
+      if (memoryAction === "toggle-always-load-tool") {
+        const toolKey = target.getAttribute("data-memory-tool-key")?.trim();
+        if (toolKey) {
+          const checked = target instanceof HTMLInputElement ? target.checked : false;
+          state.memoryAlwaysLoadToolKeys = checked
+            ? Array.from(new Set([...state.memoryAlwaysLoadToolKeys, toolKey]))
+            : state.memoryAlwaysLoadToolKeys.filter((item) => item !== toolKey);
+          persistMemoryAlwaysLoadTools(state.memoryAlwaysLoadToolKeys);
+          await loadMemoryContext();
+          renderAndBind(sendMessage);
+          return;
+        }
+      }
+      if (memoryAction === "toggle-always-load-skill") {
+        const skillKey = target.getAttribute("data-memory-skill-key")?.trim();
+        if (skillKey) {
+          const checked = target instanceof HTMLInputElement ? target.checked : false;
+          state.memoryAlwaysLoadSkillKeys = checked
+            ? Array.from(new Set([...state.memoryAlwaysLoadSkillKeys, skillKey]))
+            : state.memoryAlwaysLoadSkillKeys.filter((item) => item !== skillKey);
+          persistMemoryAlwaysLoadSkills(state.memoryAlwaysLoadSkillKeys);
+          await loadMemoryContext();
+          renderAndBind(sendMessage);
+          return;
+        }
+      }
+      if (memoryAction === "close-modal") {
+        closeMemoryModal();
+        renderAndBind(sendMessage);
+        return;
+      }
+      if (memoryAction === "open-create-modal") {
+        const section = target.getAttribute("data-memory-section");
+        if (section === "context" || section === "history" || section === "memory" || section === "skills" || section === "tools") {
+          openMemoryCreateModal(section);
+          renderAndBind(sendMessage);
+          return;
+        }
+      }
+      if (memoryAction === "export-markdown") {
+        const section = target.getAttribute("data-memory-section");
+        if (section === "memory") {
+          const template = buildMemoryTemplate();
+          downloadTextFile(template.fileName, template.content, "text/markdown");
+          return;
+        }
+        if (section === "skills") {
+          const template = buildSkillTemplate();
+          downloadTextFile(template.fileName, template.content, "text/markdown");
+          return;
+        }
+      }
+      if (memoryAction === "import-markdown") {
+        const section = target.getAttribute("data-memory-section");
+        if (!clientRef || (section !== "memory" && section !== "skills")) return;
+        const picked = await pickTextFile(".md,text/markdown,text/plain");
+        if (!picked) return;
+        const parsed = parseMarkdownTemplate(picked.text);
+        if (section === "memory") {
+          const key = parsed.frontmatter.key?.trim();
+          const type = (parsed.frontmatter.type?.trim() || "directive").toLowerCase();
+          if (!key) {
+            state.memoryError = "Imported memory markdown is missing 'key' frontmatter.";
+            renderAndBind(sendMessage);
+            return;
+          }
+          await clientRef.upsertMemory({
+            namespace: type || "other",
+            key,
+            value: parsed.body,
+            correlationId: nextCorrelationId()
+          });
+        } else if (section === "skills") {
+          const name = parsed.frontmatter.name?.trim();
+          const description = parsed.frontmatter.description?.trim();
+          if (!name || !description) {
+            state.memoryError = "Imported skill markdown requires 'name' and 'description' frontmatter.";
+            renderAndBind(sendMessage);
+            return;
+          }
+          await clientRef.createSkill({
+            name,
+            description,
+            content: parsed.body,
+            correlationId: nextCorrelationId()
+          });
+        }
+        await loadMemoryContext();
+        renderAndBind(sendMessage);
+        return;
+      }
+      if (memoryAction === "open-conversation") {
+        const conversationId = target.getAttribute("data-memory-conversation-id")?.trim();
+        if (conversationId) {
+          state.sidebarTab = "chat";
+          await loadConversation(conversationId);
+          closeMemoryModal();
+          renderAndBind(sendMessage);
+          return;
+        }
+      }
+      if (memoryAction === "save-modal-memory") {
+        if (!clientRef || !state.memoryModalEditable) return;
+        const editor = document.querySelector<HTMLTextAreaElement>("#memoryModalEditor");
+        const value = editor?.value ?? state.memoryModalValue;
+        state.memoryModalValue = value;
+        const modalMode = state.memoryModalMode;
+        const modalTarget = state.memoryModalTarget;
+        const modalSection = state.memoryModalSection;
+        const modalNamespace = state.memoryModalNamespace;
+        const modalKey = state.memoryModalKey;
+        const modalSourcePath = state.memoryModalSourcePath;
+        const draftKey = state.memoryModalDraftKey.trim();
+        const draftCategory = state.memoryModalDraftCategory.trim();
+        const draftDescription = state.memoryModalDraftDescription.trim();
+        closeMemoryModal();
+        renderAndBind(sendMessage);
+        try {
+          if (modalMode === "create") {
+            if (!modalSection || !draftKey) throw new Error("A key or name is required.");
+            if (modalSection === "memory") {
+              await clientRef.upsertMemory({
+                namespace: draftCategory || "other",
+                key: draftKey,
+                value,
+                correlationId: nextCorrelationId()
+              });
+            } else if (modalSection === "skills") {
+              if (!draftDescription) throw new Error("A description is required for a skill.");
+              await clientRef.createSkill({
+                name: draftKey,
+                description: draftDescription,
+                content: value,
+                correlationId: nextCorrelationId()
+              });
+            } else {
+              await clientRef.upsertCustomItem({
+                section: modalSection,
+                key: draftKey,
+                value,
+                correlationId: nextCorrelationId()
+              });
+            }
+          } else if (modalTarget === "memory") {
+            if (!modalNamespace || !modalKey) return;
+            await clientRef.upsertMemory({
+              namespace: modalNamespace,
+              key: modalKey,
+              value,
+              correlationId: nextCorrelationId()
+            });
+          } else if (modalTarget === "system-prompt") {
+            await clientRef.setSystemPrompt({
+              value,
+              correlationId: nextCorrelationId()
+            });
+          } else if (modalTarget === "custom-item") {
+            if (!modalSection || !modalKey) return;
+            await clientRef.upsertCustomItem({
+              section: modalSection,
+              key: modalKey,
+              value,
+              correlationId: nextCorrelationId()
+            });
+          } else if (modalSourcePath) {
+            await clientRef.setReferenceFile({
+              path: modalSourcePath,
+              value,
+              correlationId: nextCorrelationId()
+            });
+          }
+          await loadMemoryContext();
+          renderAndBind(sendMessage);
+        } catch (error) {
+          state.memoryError = error instanceof Error ? error.message : String(error);
+          renderAndBind(sendMessage);
+        }
+        return;
+      }
+      if (memoryAction === "delete-modal-memory") {
+        if (!clientRef || !state.memoryModalNamespace || !state.memoryModalKey) return;
+        const confirmed = window.confirm("Delete this memory item?");
+        if (!confirmed) return;
+        if (state.memoryModalTarget === "custom-item") {
+          await clientRef.deleteCustomItem({
+            section: state.memoryModalNamespace,
+            key: state.memoryModalKey,
+            correlationId: nextCorrelationId()
+          });
+        } else {
+          await clientRef.deleteMemory({
+            namespace: state.memoryModalNamespace,
+            key: state.memoryModalKey,
+            correlationId: nextCorrelationId()
+          });
+        }
+        closeMemoryModal();
+        await loadMemoryContext();
+        renderAndBind(sendMessage);
+        return;
+      }
+
+      const memoryOpenId = target.getAttribute("data-memory-open-id")?.trim();
+      if (memoryOpenId) {
+        state.sidebarTab = "chat";
+        await loadConversation(memoryOpenId);
+        renderAndBind(sendMessage);
+        return;
+      }
+      const memoryEditKey = target.getAttribute("data-memory-edit-key")?.trim();
+      if (memoryEditKey) {
+        const index = state.memoryPersistentItems.findIndex((item) => item.key === memoryEditKey);
+        if (index >= 0) {
+          openMemoryModal("memory", index);
+          renderAndBind(sendMessage);
+          return;
+        }
+      }
+      const memoryDeleteKey = target.getAttribute("data-memory-delete-key")?.trim();
+      if (memoryDeleteKey) {
+        const item = state.memoryPersistentItems.find((entry) => entry.key === memoryDeleteKey);
+        if (!clientRef || !item) return;
+        const namespace = item.key.split(":")[0] || "other";
+        const key = item.key.split(":").slice(1).join(":") || item.key;
+        const confirmed = window.confirm("Delete this memory item?");
+        if (!confirmed) return;
+        await clientRef.deleteMemory({ namespace, key, correlationId: nextCorrelationId() });
+        await loadMemoryContext();
+        renderAndBind(sendMessage);
+        return;
+      }
+
+      if (target.id === "memoryRefreshBtn") {
+        await loadMemoryContext();
+        renderAndBind(sendMessage);
+        return;
+      }
 
       if (
         await handleManagerAndTerminalClick({
@@ -7479,6 +8148,49 @@ if (workspaceTab === "sheets-tool") {
       persistWorkspaceTab: (tab: string) => persistWorkspaceTab(tab),
       rerender: () => renderAndBind(sendMessage)
     });
+    workspacePane.addEventListener("input", (event: Event) => {
+      const input = event.target as HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement;
+      const action = input.getAttribute?.("data-memory-action");
+      if (action === "editor-input" && input instanceof HTMLTextAreaElement) {
+        state.memoryModalValue = input.value;
+        refreshMemoryModalEditor(input);
+        return;
+      }
+      if (action === "modal-draft-key") {
+        state.memoryModalDraftKey = input.value;
+        return;
+      }
+      if (action === "modal-draft-category") {
+        state.memoryModalDraftCategory = input.value;
+        return;
+      }
+      if (action === "modal-draft-description") {
+        state.memoryModalDraftDescription = input.value;
+      }
+    });
+    workspacePane.addEventListener("change", (event: Event) => {
+      const input = event.target as HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement;
+      const action = input.getAttribute?.("data-memory-action");
+      if (action === "modal-draft-category") {
+        state.memoryModalDraftCategory = input.value;
+      }
+    });
+    workspacePane.addEventListener("keydown", (event: KeyboardEvent) => {
+      const ta = event.target as HTMLTextAreaElement;
+      if (ta.getAttribute?.("data-memory-action") !== "editor-input") return;
+      if (event.key === "Tab") {
+        event.preventDefault();
+        const start = ta.selectionStart;
+        const end = ta.selectionEnd;
+        ta.value = ta.value.substring(0, start) + "\t" + ta.value.substring(end);
+        ta.selectionStart = ta.selectionEnd = start + 1;
+        refreshMemoryModalEditor(ta);
+      }
+      if (event.key === "Escape") {
+        closeMemoryModal();
+        renderAndBind(sendMessage);
+      }
+    });
   }
   if (shellPopover) {
     shellPopover.onclick = (event) => {
@@ -7572,16 +8284,11 @@ async function bootstrap(): Promise<void> {
     refreshDevicesState,
     refreshLlamaRuntime,
     refreshModelManagerInstalled,
-    shouldRefreshUnslothUdCatalog: () => state.modelManagerCollection === "unsloth_ud",
+    shouldRefreshUnslothUdCatalog: () => false,
     refreshModelManagerUnslothUdCatalog,
     autoStartLlamaRuntimeIfConfigured,
     loadConversation: () => loadConversation(state.conversationId)
   });
-  try {
-    await refreshVadState();
-  } catch (error) {
-    state.vadMessage = `VAD bootstrap failed: ${String(error)}`;
-  }
 
   appResourcePolling.restart(1000);
 
@@ -7707,7 +8414,9 @@ async function bootstrap(): Promise<void> {
               owner: "looper"
             });
           }),
-        maybeHandleFlowPhaseTerminalEvent
+        maybeHandleFlowPhaseTerminalEvent: async (eventItem) => {
+          void maybeHandleFlowPhaseTerminalEvent(eventItem);
+        }
       });
     },
     handleChatEvent: (event) =>
@@ -7812,42 +8521,72 @@ async function bootstrap(): Promise<void> {
     appResourceRenderSendMessageRef = boundSendMessage;
   });
 
-  await handleWorkspaceToolTabActivation(state.workspaceTab, state, {
-    ensureWebTabs: workspaceToolsRuntime.ensureWebTabs,
-    refreshApiConnections,
-    hasVerifiedSearchConnection: workspaceToolsRuntime.hasVerifiedSearchConnection,
-    ensureFilesExplorerLoaded: workspaceToolsRuntime.ensureFilesExplorerLoaded,
-    ensureDocsLoaded: () => ensureDocsLoaded(state, { client: clientRef!, nextCorrelationId }),
-    ensureSkillsLoaded: () => ensureSkillsLoaded(state, { client: clientRef!, nextCorrelationId }),
-    ensureNotepadReady: workspaceToolsRuntime.ensureNotepadReady,
-    ensureSheetReady: workspaceToolsRuntime.ensureSheetReady,
-    refreshFlowRuns,
-    ensureOpenCodeInit: async () => {
-      const opencodeDeps: OpenCodeActionsDeps = {
-        terminalManager,
-        client: clientRef!,
-        nextCorrelationId,
-        renderAndBind: () => renderAndBind(sendMessage)
-      };
-      const installed = await checkOpenCodeInstalled(state.opencodeState, opencodeDeps);
-      if (installed) {
-        await spawnAgent(state.opencodeState, opencodeDeps, { label: "Agent 1" });
-      }
-    },
-    ensureLooperInit: async () => {
-      const looperDeps: LooperActionsDeps = {
-        terminalManager,
-        client: clientRef!,
-        nextCorrelationId,
-        renderAndBind: () => renderAndBind(sendMessage)
-      };
-      await ensureLooperInit(state.looperState, looperDeps);
-    }
-  });
-
   installCustomToolBridge(sendMessage);
   renderAndBind(sendMessage);
   installThinkingToggleDelegation(sendMessage);
+
+  const runWorkspaceTabStartup = async () => {
+    await handleWorkspaceToolTabActivation(state.workspaceTab, state, {
+      ensureWebTabs: workspaceToolsRuntime.ensureWebTabs,
+      refreshApiConnections,
+      hasVerifiedSearchConnection: workspaceToolsRuntime.hasVerifiedSearchConnection,
+      ensureFilesExplorerLoaded: workspaceToolsRuntime.ensureFilesExplorerLoaded,
+      ensureDocsLoaded: () => ensureDocsLoaded(state, { client: clientRef!, nextCorrelationId }),
+      ensureNotepadReady: workspaceToolsRuntime.ensureNotepadReady,
+      ensureSheetReady: workspaceToolsRuntime.ensureSheetReady,
+      ensureMemoryLoaded: loadMemoryContext,
+      refreshFlowRuns,
+      ensureOpenCodeInit: async () => {
+        const opencodeDeps: OpenCodeActionsDeps = {
+          terminalManager,
+          client: clientRef!,
+          nextCorrelationId,
+          renderAndBind: () => renderAndBind(sendMessage)
+        };
+        const installed = await checkOpenCodeInstalled(state.opencodeState, opencodeDeps);
+        if (installed) {
+          await spawnAgent(state.opencodeState, opencodeDeps, { label: "Agent 1" });
+        }
+      },
+      ensureLooperInit: async () => {
+        const looperDeps: LooperActionsDeps = {
+          terminalManager,
+          client: clientRef!,
+          nextCorrelationId,
+          renderAndBind: () => renderAndBind(sendMessage)
+        };
+        await ensureLooperInit(state.looperState, looperDeps);
+      }
+    });
+    if (state.workspaceTab === "sheets-tool") {
+      mountActiveSheetsRuntime(sendMessage);
+    } else {
+      unmountSheetsRuntime();
+    }
+  };
+
+  scheduleDeferredStartupTask("workspace tab activation", runWorkspaceTabStartup, () => {
+    renderAndBind(sendMessage);
+  });
+
+  scheduleDeferredStartupTask("voice activity detection state", async () => {
+    try {
+      await refreshVadState();
+    } catch (error) {
+      state.vadMessage = `VAD bootstrap failed: ${String(error)}`;
+      throw error;
+    }
+  }, () => {
+    renderAndBind(sendMessage);
+  });
+
+  if (state.modelManagerCollection === "unsloth_ud") {
+    scheduleDeferredStartupTask("model catalog refresh", async () => {
+      await refreshModelManagerUnslothUdCatalog();
+    }, () => {
+      renderAndBind(sendMessage);
+    });
+  }
 }
 
 function installConsoleCapture(): void {

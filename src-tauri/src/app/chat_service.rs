@@ -6,20 +6,27 @@ use crate::api_registry::ApiRegistryService;
 use crate::app::web_search_service::WebSearchService;
 use crate::contracts::{
     ApiConnectionType, ChatAttachment, ChatCancelResponse, ChatDeleteConversationResponse,
-    ChatGetMessagesRequest, ChatGetMessagesResponse, ChatListConversationsRequest,
+    ChatContextBreakdownItem, ChatGetMessagesRequest, ChatGetMessagesResponse,
+    ChatInspectContextRequest, ChatInspectContextResponse, ChatListConversationsRequest,
     ChatListConversationsResponse, ChatSendRequest, ChatSendResponse, ChatStreamChunkPayload,
     ChatStreamCompletePayload, ChatStreamReasoningChunkPayload, ChatStreamStartPayload,
-    ConversationMessageRecord, EventSeverity, EventStage, MessageRole, Subsystem,
+    ConversationMessageRecord, ConversationSummaryRecord, CustomItemDeleteRequest,
+    CustomItemDeleteResponse, CustomItemUpsertRequest, CustomItemUpsertResponse, EventSeverity,
+    EventStage, MemoryDeleteRequest, MemoryDeleteResponse, MemoryUpsertRequest,
+    MemoryUpsertResponse, MessageRole, ReferenceFileSetRequest, ReferenceFileSetResponse,
+    SkillCreateRequest, SkillCreateResponse, Subsystem, SystemPromptSetRequest,
+    SystemPromptSetResponse,
 };
 use crate::memory::MemoryManager;
 use crate::observability::EventHub;
 use crate::persistence::ConversationRepository;
 use crate::services::sheets_service::SheetsService;
 use crate::workspace_tools::WorkspaceToolsService;
+use arx_rs::context::skills::format_skills_for_prompt;
 use arx_rs::events::Event as AgentEvent;
 use arx_rs::provider::openai_compatible::OpenAiCompatibleProvider;
 use arx_rs::provider::ProviderConfig;
-use arx_rs::tools::Tool as AgentTool;
+use arx_rs::tools::{tool_definitions, Tool as AgentTool};
 use arx_rs::types::{
     ContentPart as AgentContentPart, Message as AgentMessage, StopReason as AgentStopReason,
     UserContent as AgentUserContent,
@@ -28,8 +35,11 @@ use arx_rs::{Agent, AgentConfig, Session};
 use reqwest::StatusCode;
 use serde_json::json;
 use std::collections::HashSet;
+use std::path::Path;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::Mutex;
+use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::watch;
 use tokio::time::Duration;
 
@@ -232,6 +242,7 @@ impl ChatService {
                     &req.conversation_id,
                     &req.correlation_id,
                     &req.user_message,
+                    req.always_load_tool_keys.as_deref(),
                     req.attachments.as_deref(),
                     thinking_enabled,
                     req.model_id.as_deref(),
@@ -251,13 +262,14 @@ impl ChatService {
             }
             ChatRouteMode::Auto => {
                 match self
-                    .request_agent_response(
-                        &req.conversation_id,
-                        &req.correlation_id,
-                        &req.user_message,
-                        req.attachments.as_deref(),
-                        thinking_enabled,
-                        req.model_id.as_deref(),
+                        .request_agent_response(
+                            &req.conversation_id,
+                            &req.correlation_id,
+                            &req.user_message,
+                            req.always_load_tool_keys.as_deref(),
+                            req.attachments.as_deref(),
+                            thinking_enabled,
+                            req.model_id.as_deref(),
                         req.model_name.as_deref(),
                         req.max_tokens,
                     )
@@ -426,6 +438,7 @@ impl ChatService {
         conversation_id: &str,
         correlation_id: &str,
         user_message: &str,
+        always_load_tool_keys: Option<&[String]>,
         attachments: Option<&[ChatAttachment]>,
         thinking_enabled: bool,
         requested_model_id: Option<&str>,
@@ -481,8 +494,18 @@ impl ChatService {
             user_message,
         )?;
 
+        let recent_history = self
+            .conversation_repo
+            .list_messages(conversation_id)
+            .unwrap_or_default();
         let provider = OpenAiCompatibleProvider::new(provider_config);
-        let agent_tools = self.resolve_enabled_agent_tools(correlation_id);
+        let available_tools = self.resolve_enabled_agent_tools(correlation_id);
+        let agent_tools = self.select_agent_tools_for_request(
+            available_tools,
+            user_message,
+            &recent_history,
+            always_load_tool_keys,
+        );
         let enabled_tool_names: Vec<String> = agent_tools
             .iter()
             .map(|tool| tool.name().to_string())
@@ -912,6 +935,23 @@ impl ChatService {
             }
         }
         resolved
+    }
+
+    fn select_agent_tools_for_request(
+        &self,
+        available_tools: Vec<Box<dyn AgentTool>>,
+        user_message: &str,
+        history: &[ConversationMessageRecord],
+        always_load_tool_keys: Option<&[String]>,
+    ) -> Vec<Box<dyn AgentTool>> {
+        let selected = select_agent_tool_names(user_message, history, &available_tools, always_load_tool_keys);
+        if selected.is_empty() {
+            return Vec::new();
+        }
+        available_tools
+            .into_iter()
+            .filter(|tool| selected.contains(tool.name()))
+            .collect()
     }
 
     async fn maybe_generate_conversation_title(
@@ -1690,6 +1730,181 @@ impl ChatService {
         })
     }
 
+    pub async fn inspect_context(
+        &self,
+        req: ChatInspectContextRequest,
+    ) -> Result<ChatInspectContextResponse, String> {
+        let route_mode = resolve_chat_route_mode(req.chat_mode.as_deref());
+        let history = self
+            .conversation_repo
+            .list_messages(req.conversation_id.as_str())
+            .map_err(|e| format!("failed reading conversation history: {e}"))?;
+        let conversations = self
+            .conversation_repo
+            .list_conversations()
+            .map_err(|e| format!("failed reading conversations: {e}"))?;
+        let custom_history_items = self.collect_custom_history_items();
+        let all_conversations = conversations
+            .into_iter()
+            .chain(custom_history_items.into_iter())
+            .map(|mut item| {
+                if item.title.trim().is_empty() {
+                    item.title = truncate_for_error(item.last_message_preview.as_str());
+                }
+                item
+            })
+            .collect::<Vec<_>>();
+        let memory_items = self.collect_memory_items();
+        let skills_items = self.collect_skills_items(history.as_slice(), req.always_load_skill_keys.as_deref());
+        let tools_items = self.collect_tools_items(
+            req.correlation_id.as_str(),
+            history.as_slice(),
+            req.always_load_tool_keys.as_deref(),
+        );
+        let items = match route_mode {
+            ChatRouteMode::Legacy => self.inspect_legacy_context(&history),
+            ChatRouteMode::Agent | ChatRouteMode::Auto => {
+                self.inspect_agent_context(
+                    req.correlation_id.as_str(),
+                    &history,
+                    all_conversations.as_slice(),
+                    req.always_load_tool_keys.as_deref(),
+                )
+            }
+        };
+        let total_token_estimate = items
+            .iter()
+            .chain(skills_items.iter())
+            .chain(tools_items.iter())
+            .filter(|item| item.load_method == "default")
+            .map(|item| item.token_estimate)
+            .sum();
+        Ok(ChatInspectContextResponse {
+            conversation_id: req.conversation_id,
+            correlation_id: req.correlation_id,
+            route_mode: route_mode.as_str().to_string(),
+            total_token_estimate,
+            items,
+            conversations: all_conversations,
+            memory_items,
+            skills_items,
+            tools_items,
+        })
+    }
+
+    pub async fn upsert_memory(
+        &self,
+        req: MemoryUpsertRequest,
+    ) -> Result<MemoryUpsertResponse, String> {
+        self.memory
+            .upsert(req.namespace.as_str(), req.key.as_str(), req.value.as_str());
+        Ok(MemoryUpsertResponse {
+            namespace: req.namespace,
+            key: req.key,
+            correlation_id: req.correlation_id,
+            ok: true,
+        })
+    }
+
+    pub async fn delete_memory(
+        &self,
+        req: MemoryDeleteRequest,
+    ) -> Result<MemoryDeleteResponse, String> {
+        let deleted = self.memory.delete(req.namespace.as_str(), req.key.as_str());
+        Ok(MemoryDeleteResponse {
+            namespace: req.namespace,
+            key: req.key,
+            correlation_id: req.correlation_id,
+            deleted,
+        })
+    }
+
+    pub async fn set_system_prompt(
+        &self,
+        req: SystemPromptSetRequest,
+    ) -> Result<SystemPromptSetResponse, String> {
+        let mut config = arx_rs::Config::load().map_err(|err| err.to_string())?;
+        config.llm.system_prompt = req.value.clone();
+        config.save().map_err(|err| err.to_string())?;
+        Ok(SystemPromptSetResponse {
+            value: req.value,
+            correlation_id: req.correlation_id,
+            ok: true,
+        })
+    }
+
+    pub async fn upsert_custom_item(
+        &self,
+        req: CustomItemUpsertRequest,
+    ) -> Result<CustomItemUpsertResponse, String> {
+        let namespace = custom_item_namespace(req.section.as_str())?;
+        self.memory.upsert(namespace, req.key.as_str(), req.value.as_str());
+        Ok(CustomItemUpsertResponse {
+            section: req.section,
+            key: req.key,
+            correlation_id: req.correlation_id,
+            ok: true,
+        })
+    }
+
+    pub async fn delete_custom_item(
+        &self,
+        req: CustomItemDeleteRequest,
+    ) -> Result<CustomItemDeleteResponse, String> {
+        let namespace = custom_item_namespace(req.section.as_str())?;
+        let deleted = self.memory.delete(namespace, req.key.as_str());
+        Ok(CustomItemDeleteResponse {
+            section: req.section,
+            key: req.key,
+            correlation_id: req.correlation_id,
+            deleted,
+        })
+    }
+
+    pub async fn create_skill(
+        &self,
+        req: SkillCreateRequest,
+    ) -> Result<SkillCreateResponse, String> {
+        let cwd = resolve_agent_cwd();
+        let root = resolve_local_skills_dir(Path::new(&cwd));
+        let slug = slugify_skill_name(req.name.as_str());
+        if slug.is_empty() {
+            return Err("skill name is required".to_string());
+        }
+        let skill_dir = root.join(slug);
+        std::fs::create_dir_all(&skill_dir).map_err(|err| format!("failed creating skill dir: {err}"))?;
+        let skill_path = skill_dir.join("SKILL.md");
+        if skill_path.exists() {
+            return Err(format!("skill already exists: {}", skill_path.display()));
+        }
+        let content = format!(
+            "---\nname: {}\ndescription: {}\n---\n\n{}\n",
+            req.name.trim(),
+            req.description.trim(),
+            req.content.trim()
+        );
+        std::fs::write(&skill_path, content).map_err(|err| format!("failed writing skill file: {err}"))?;
+        Ok(SkillCreateResponse {
+            name: req.name,
+            file_path: skill_path.display().to_string(),
+            correlation_id: req.correlation_id,
+            ok: true,
+        })
+    }
+
+    pub async fn set_reference_file(
+        &self,
+        req: ReferenceFileSetRequest,
+    ) -> Result<ReferenceFileSetResponse, String> {
+        std::fs::write(req.path.as_str(), req.value.as_bytes())
+            .map_err(|err| format!("failed writing reference file: {err}"))?;
+        Ok(ReferenceFileSetResponse {
+            path: req.path,
+            correlation_id: req.correlation_id,
+            ok: true,
+        })
+    }
+
     fn append_message(
         &self,
         correlation_id: &str,
@@ -1751,6 +1966,544 @@ impl ChatService {
         }
         Some(lines.join("\n"))
     }
+
+    fn inspect_agent_context(
+        &self,
+        correlation_id: &str,
+        history: &[ConversationMessageRecord],
+        conversations: &[ConversationSummaryRecord],
+        always_load_tool_keys: Option<&[String]>,
+    ) -> Vec<ChatContextBreakdownItem> {
+        let cwd = resolve_agent_cwd();
+        let all_tools = self.resolve_enabled_agent_tools(correlation_id);
+        let user_message = history
+            .iter()
+            .rev()
+            .find(|item| matches!(item.role, MessageRole::User))
+            .map(|item| item.content.as_str())
+            .unwrap_or("");
+        let tools = self.select_agent_tools_for_request(
+            all_tools,
+            user_message,
+            history,
+            always_load_tool_keys,
+        );
+        let enabled_tool_names: Vec<String> = tools.iter().map(|tool| tool.name().to_string()).collect();
+        let available_tool_defs = tool_definitions(&self.resolve_enabled_agent_tools(correlation_id));
+        let context = arx_rs::context::Context::load(cwd.clone());
+        let app_config = arx_rs::Config::load().unwrap_or_default();
+
+        let mut items = Vec::new();
+        push_context_item(
+            &mut items,
+            "context",
+            "system",
+            "Base system prompt",
+            None,
+            "default",
+            "runtime",
+            app_config.llm.system_prompt,
+        );
+        for (key, value) in self.memory.list_namespace("custom-context") {
+            push_context_item(
+                &mut items,
+                "context",
+                "custom-context",
+                key,
+                None,
+                "default",
+                "always",
+                value,
+            );
+        }
+        if !context.skills.is_empty() {
+            push_context_item(
+                &mut items,
+                "context",
+                "system",
+                "Skill Index",
+                None,
+                "default",
+                "runtime",
+                format_skills_for_prompt(&context.skills),
+            );
+        }
+        if !available_tool_defs.is_empty() {
+            let tools_catalog = available_tool_defs
+                .iter()
+                .map(|tool_def| format!("- {}: {}", tool_def.name, tool_def.description))
+                .collect::<Vec<_>>()
+                .join("\n");
+            push_context_item(
+                &mut items,
+                "context",
+                "system",
+                "Tool Index",
+                None,
+                "default",
+                "runtime",
+                format!("# Tools\n\n{}", tools_catalog),
+            );
+        }
+        if !conversations.is_empty() {
+            push_context_item(
+                &mut items,
+                "context",
+                "system",
+                "History Index",
+                None,
+                "default",
+                "runtime",
+                format_history_index(conversations),
+            );
+        }
+        push_context_item(
+            &mut items,
+            "context",
+            "system",
+            "Runtime metadata",
+            None,
+            "default",
+            "runtime",
+            format!("Current working directory: {cwd}"),
+        );
+        let mut routing_hints = String::new();
+        apply_tool_routing_hints(&mut routing_hints, &enabled_tool_names);
+        if !routing_hints.trim().is_empty() {
+            push_context_item(
+                &mut items,
+                "context",
+                "system",
+                "Tool routing hints",
+                None,
+                "default",
+                "runtime",
+                routing_hints.trim().to_string(),
+            );
+        }
+        if let Some(api_context) = self.build_api_registry_context() {
+            push_context_item(
+                &mut items,
+                "context",
+                "system",
+                "Verified API registry context",
+                None,
+                "default",
+                "runtime",
+                api_context,
+            );
+        }
+        extend_history_items(
+            &mut items,
+            history.iter().rev().take(24).collect::<Vec<_>>().into_iter().rev(),
+            "default",
+        );
+        items
+    }
+
+    fn inspect_legacy_context(&self, history: &[ConversationMessageRecord]) -> Vec<ChatContextBreakdownItem> {
+        let model = std::env::var("FOUNDATION_LLM_MODEL").unwrap_or_else(|_| "local-model".to_string());
+        let model_family = infer_model_family(model.as_str());
+        let strategy = self.resolve_thinking_strategy(model_family.as_str());
+        let mut items = Vec::new();
+        if matches!(
+            strategy,
+            ThinkingDisableStrategy::SystemPrompt | ThinkingDisableStrategy::Both
+        ) {
+            push_context_item(
+                &mut items,
+                "context",
+                "system",
+                "Thinking suppression instruction",
+                None,
+                "default",
+                "runtime",
+                "Return only the final answer. Do not include chain-of-thought, reasoning traces, or <think> tags.".to_string(),
+            );
+        }
+        if let Some(api_context) = self.build_api_registry_context() {
+            push_context_item(
+                &mut items,
+                "context",
+                "system",
+                "Verified API registry context",
+                None,
+                "default",
+                "runtime",
+                api_context,
+            );
+        }
+        extend_history_items(
+            &mut items,
+            history.iter().rev().take(24).collect::<Vec<_>>().into_iter().rev(),
+            "default",
+        );
+        items
+    }
+
+    fn collect_memory_items(&self) -> Vec<ChatContextBreakdownItem> {
+        let namespaces = [
+            ("episodic", "other"),
+            ("fact", "fact"),
+            ("personality", "personality"),
+            ("directive", "directive"),
+            ("other", "other"),
+        ];
+        let mut items = Vec::new();
+        for (namespace, category) in namespaces {
+            for (key, value) in self.memory.list_namespace(namespace) {
+                push_context_item(
+                    &mut items,
+                    "memory",
+                    category,
+                    format!("{namespace}:{key}"),
+                    None,
+                    "dynamic",
+                    "on_demand",
+                    value,
+                );
+            }
+        }
+        items
+    }
+
+    fn collect_skills_items(
+        &self,
+        history: &[ConversationMessageRecord],
+        always_load_skill_keys: Option<&[String]>,
+    ) -> Vec<ChatContextBreakdownItem> {
+        let cwd = resolve_agent_cwd();
+        let context = arx_rs::context::Context::load(cwd);
+        let selected = select_skill_names(
+            history
+                .iter()
+                .rev()
+                .find(|item| matches!(item.role, MessageRole::User))
+                .map(|item| item.content.as_str())
+                .unwrap_or(""),
+            history,
+            &context.skills,
+            always_load_skill_keys,
+        );
+        let mut items = Vec::new();
+        for file in &context.agents_files {
+            push_context_item(
+                &mut items,
+                "skills",
+                "project-instructions",
+                format!(
+                    "Project instructions: {}",
+                    Path::new(&file.path)
+                        .file_name()
+                        .map(|n| n.to_string_lossy().into_owned())
+                        .unwrap_or_else(|| file.path.clone())
+                ),
+                Some(file.path.clone()),
+                "dynamic",
+                "on_demand",
+                file.content.clone(),
+            );
+        }
+        if !context.skills.is_empty() {
+            push_context_item(
+                &mut items,
+                "skills",
+                "skill-index",
+                "Skill Index",
+                None,
+                "default",
+                "index",
+                format_skills_for_prompt(&context.skills),
+            );
+        }
+        for skill in &context.skills {
+            let detail = std::fs::read_to_string(skill.file_path.as_str())
+                .unwrap_or_else(|_| format!("Unable to read {}", skill.file_path));
+            push_context_item(
+                &mut items,
+                "skills",
+                "skill-detail",
+                skill.name.clone(),
+                Some(skill.file_path.clone()),
+                if selected.contains(skill.name.as_str()) { "default" } else { "dynamic" },
+                if always_load_skill_keys.unwrap_or(&[]).iter().any(|item| item == &skill.name) {
+                    "always"
+                } else if selected.contains(skill.name.as_str()) {
+                    "keyword_match"
+                } else {
+                    "on_demand"
+                },
+                detail,
+            );
+        }
+        items
+    }
+
+    fn collect_custom_history_items(&self) -> Vec<ConversationSummaryRecord> {
+        let now_ms = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_millis() as i64)
+            .unwrap_or(0);
+        self.memory
+            .list_namespace("custom-history")
+            .into_iter()
+            .map(|(key, value)| ConversationSummaryRecord {
+                conversation_id: format!("custom-history:{key}"),
+                title: key,
+                message_count: 1,
+                last_message_preview: truncate_for_error(value.as_str()),
+                updated_at_ms: now_ms,
+            })
+            .collect()
+    }
+
+    fn collect_tools_items(
+        &self,
+        correlation_id: &str,
+        history: &[ConversationMessageRecord],
+        always_load_tool_keys: Option<&[String]>,
+    ) -> Vec<ChatContextBreakdownItem> {
+        let tools = self.resolve_enabled_agent_tools(correlation_id);
+        let selected = select_agent_tool_names(
+            history
+                .iter()
+                .rev()
+                .find(|item| matches!(item.role, MessageRole::User))
+                .map(|item| item.content.as_str())
+                .unwrap_or(""),
+            history,
+            &tools,
+            always_load_tool_keys,
+        );
+        let tool_defs = tool_definitions(&tools);
+        let mut items = Vec::new();
+        for (key, value) in self.memory.list_namespace("custom-tools") {
+            push_context_item(
+                &mut items,
+                "tools",
+                "tool-note",
+                key,
+                None,
+                "dynamic",
+                "on_demand",
+                value,
+            );
+        }
+        if !tool_defs.is_empty() {
+            let index_value = tool_defs
+                .iter()
+                .map(|tool_def| format!("- {}: {}", tool_def.name, tool_def.description))
+                .collect::<Vec<_>>()
+                .join("\n");
+            push_context_item(
+                &mut items,
+                "tools",
+                "tool-index",
+                "Tool Index",
+                None,
+                "default",
+                "index",
+                format!("# Tools\n\n{}", index_value),
+            );
+        }
+        for tool_def in tool_defs {
+            let detail_load_method = if selected.contains(tool_def.name.as_str()) {
+                "default"
+            } else {
+                "dynamic"
+            };
+            let schema = serde_json::to_string_pretty(&tool_def.parameters)
+                .unwrap_or_else(|_| "{}".to_string());
+            push_context_item(
+                &mut items,
+                "tools",
+                "tool-detail",
+                tool_def.name.clone(),
+                None,
+                detail_load_method,
+                if always_load_tool_keys.unwrap_or(&[]).iter().any(|item| item == &tool_def.name) {
+                    "always"
+                } else if selected.contains(tool_def.name.as_str()) {
+                    "keyword_match"
+                } else {
+                    "on_demand"
+                },
+                format!("{}\n{}\n{}", tool_def.name, tool_def.description, schema),
+            );
+        }
+        items
+    }
+
+}
+
+fn estimate_token_count(text: &str) -> i64 {
+    if text.is_empty() {
+        return 0;
+    }
+    let char_count = text.chars().count() as f64;
+    let word_count = count_words(text) as f64;
+    ((0.25 * char_count) + (0.5 * word_count)).round() as i64
+}
+
+fn count_words(text: &str) -> usize {
+    text.split_whitespace().count()
+}
+
+fn push_context_item(
+    items: &mut Vec<ChatContextBreakdownItem>,
+    section: &str,
+    category: &str,
+    key: impl Into<String>,
+    source_path: Option<String>,
+    load_method: &str,
+    load_reason: &str,
+    value: String,
+) {
+    let char_count = value.chars().count();
+    let word_count = count_words(value.as_str());
+    items.push(ChatContextBreakdownItem {
+        section: section.to_string(),
+        category: category.to_string(),
+        key: key.into(),
+        source_path,
+        load_method: load_method.to_string(),
+        load_reason: load_reason.to_string(),
+        token_estimate: estimate_token_count(value.as_str()),
+        char_count,
+        word_count,
+        value,
+    });
+}
+
+fn extend_history_items<'a>(
+    items: &mut Vec<ChatContextBreakdownItem>,
+    history: impl IntoIterator<Item = &'a ConversationMessageRecord>,
+    load_method: &str,
+) {
+    for (index, message) in history.into_iter().enumerate() {
+        let category = match message.role {
+            MessageRole::User => "history-user",
+            MessageRole::Assistant => "history-assistant",
+        };
+        let role = match message.role {
+            MessageRole::User => "User",
+            MessageRole::Assistant => "Assistant",
+        };
+        push_context_item(
+            items,
+            "history",
+            category,
+            format!("{role} message {}", index + 1),
+            None,
+            load_method,
+            "runtime",
+            message.content.clone(),
+        );
+    }
+}
+
+fn select_agent_tool_names(
+    user_message: &str,
+    history: &[ConversationMessageRecord],
+    available_tools: &[Box<dyn AgentTool>],
+    always_load_tool_keys: Option<&[String]>,
+) -> HashSet<String> {
+    let mut selected: HashSet<String> = always_load_tool_keys
+        .unwrap_or(&[])
+        .iter()
+        .map(|item| item.trim().to_string())
+        .filter(|item| !item.is_empty())
+        .collect();
+    let tool_names: HashSet<&str> = available_tools.iter().map(|tool| tool.name()).collect();
+    let recent_user_text = history
+        .iter()
+        .rev()
+        .filter(|item| matches!(item.role, MessageRole::User))
+        .take(3)
+        .map(|item| item.content.as_str())
+        .collect::<Vec<_>>();
+    let mut text = user_message.to_ascii_lowercase();
+    if !recent_user_text.is_empty() {
+        text.push('\n');
+        text.push_str(&recent_user_text.join("\n").to_ascii_lowercase());
+    }
+
+    if matches_any(&text, &["bash", "shell", "command", "terminal", "git", "npm", "cargo", "docker", "run ", "build", "install"]) {
+        selected.insert("bash".to_string());
+    }
+    if matches_any(&text, &["file", "files", "folder", "directory", "path", "code", "source", "repo", "project", "read", "edit", "write", "search", "grep", "find", "rename", "move"]) {
+        selected.extend([
+            "read", "edit", "write", "ls", "mkdir", "move", "grep", "find"
+        ].iter().map(|item| item.to_string()));
+    }
+    if matches_any(&text, &["document", "notepad", "draft", "spec", "markdown", "write-up", "notes"]) {
+        selected.extend([
+            "notepad_read", "notepad_write", "notepad_edit_lines"
+        ].iter().map(|item| item.to_string()));
+    }
+    if matches_any(&text, &["web", "search", "google", "url", "http", "https", "docs", "documentation", "research", "latest"]) {
+        selected.insert("web_search".to_string());
+    }
+    if matches_any(&text, &["diagram", "chart", "flowchart", "mermaid", "architecture", "sequence diagram", "graph"]) {
+        selected.insert("chart_set".to_string());
+    }
+    if matches_any(&text, &["sheet", "spreadsheet", "cell", "row", "column", "csv", "table", "formula"]) {
+        selected.insert("sheets".to_string());
+    }
+
+    selected.retain(|name| tool_names.contains(name.as_str()));
+    selected
+}
+
+fn select_skill_names(
+    user_message: &str,
+    history: &[ConversationMessageRecord],
+    available_skills: &[arx_rs::context::skills::Skill],
+    always_load_skill_keys: Option<&[String]>,
+) -> HashSet<String> {
+    let mut selected: HashSet<String> = always_load_skill_keys
+        .unwrap_or(&[])
+        .iter()
+        .map(|item| item.trim().to_string())
+        .filter(|item| !item.is_empty())
+        .collect();
+    let skill_names: HashSet<&str> = available_skills.iter().map(|skill| skill.name.as_str()).collect();
+    let recent_user_text = history
+        .iter()
+        .rev()
+        .filter(|item| matches!(item.role, MessageRole::User))
+        .take(3)
+        .map(|item| item.content.as_str())
+        .collect::<Vec<_>>();
+    let mut text = user_message.to_ascii_lowercase();
+    if !recent_user_text.is_empty() {
+        text.push('\n');
+        text.push_str(&recent_user_text.join("\n").to_ascii_lowercase());
+    }
+
+    for skill in available_skills {
+        let skill_name = skill.name.to_ascii_lowercase();
+        if text.contains(skill_name.as_str()) {
+            selected.insert(skill.name.clone());
+            continue;
+        }
+        let keywords = skill
+            .description
+            .split(|c: char| !c.is_alphanumeric() && c != '-' && c != '_')
+            .map(|item| item.trim().to_ascii_lowercase())
+            .filter(|item| item.len() >= 5)
+            .collect::<Vec<_>>();
+        if keywords.iter().any(|keyword| text.contains(keyword.as_str())) {
+            selected.insert(skill.name.clone());
+        }
+    }
+
+    selected.retain(|name| skill_names.contains(name.as_str()));
+    selected
+}
+
+fn matches_any(text: &str, needles: &[&str]) -> bool {
+    needles.iter().any(|needle| text.contains(needle))
 }
 
 fn apply_tool_routing_hints(system_prompt: &mut String, enabled_tool_names: &[String]) {
@@ -1767,6 +2520,29 @@ fn apply_tool_routing_hints(system_prompt: &mut String, enabled_tool_names: &[St
             "\n\nTool routing hint:\n- If the user asks for a flowchart, diagram, architecture map, process map, or system overview, use `chart_set` with a valid Mermaid definition and present the result in the Chart workspace tool.\n- For Mermaid flowcharts, start with `flowchart TD` or `flowchart LR`. Use edge labels like `A -->|label| B`, `A -- text --> B`, or dotted arrows like `A -.->|label| B`. Do not use invalid dotted-label forms such as `A -.|label|-. B`.",
         );
     }
+}
+
+fn format_history_index(conversations: &[ConversationSummaryRecord]) -> String {
+    let rows = conversations
+        .iter()
+        .take(10)
+        .map(|item| {
+            let date = format_timestamp_yy_mm_dd_hh_mm(item.updated_at_ms);
+            let title = truncate_for_error(item.title.as_str());
+            let preview = truncate_for_error(item.last_message_preview.as_str());
+            format!("- {date} | {title} | {} msgs | {preview}", item.message_count)
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    format!("# History\n\n{}", rows)
+}
+
+fn format_timestamp_yy_mm_dd_hh_mm(timestamp_ms: i64) -> String {
+    if timestamp_ms <= 0 {
+        return "--".to_string();
+    }
+    let secs = timestamp_ms / 1000;
+    format!("{}", secs)
 }
 
 fn resolve_chat_endpoint(api_url: &str, api_standard_path: Option<&str>) -> String {
@@ -1858,6 +2634,49 @@ fn resolve_agent_cwd() -> String {
             .unwrap_or(cwd);
     }
     cwd
+}
+
+fn custom_item_namespace(section: &str) -> Result<&'static str, String> {
+    match section {
+        "context" => Ok("custom-context"),
+        "history" => Ok("custom-history"),
+        "tools" => Ok("custom-tools"),
+        _ => Err(format!("unsupported custom item section: {section}")),
+    }
+}
+
+fn resolve_local_skills_dir(cwd: &Path) -> PathBuf {
+    if let Ok(local_override) = std::env::var(arx_rs::config::LOCAL_SKILLS_DIR_ENV) {
+        let trimmed = local_override.trim();
+        if !trimmed.is_empty() {
+            let override_path = PathBuf::from(trimmed);
+            return if override_path.is_absolute() {
+                override_path
+            } else {
+                cwd.join(override_path)
+            };
+        }
+    }
+    cwd.join(arx_rs::config::DEFAULT_LOCAL_SKILLS_DIR)
+}
+
+fn slugify_skill_name(input: &str) -> String {
+    let mut out = String::new();
+    let mut prev_dash = false;
+    for ch in input.trim().chars() {
+        let next = if ch.is_ascii_alphanumeric() {
+            prev_dash = false;
+            ch.to_ascii_lowercase()
+        } else {
+            if prev_dash {
+                continue;
+            }
+            prev_dash = true;
+            '-'
+        };
+        out.push(next);
+    }
+    out.trim_matches('-').to_string()
 }
 
 fn truncate_for_error(input: &str) -> String {

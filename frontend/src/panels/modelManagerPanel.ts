@@ -132,7 +132,43 @@ function estimateParameterCount(modelName: string): string {
   return "-";
 }
 
+function renderLocalModelsSection(state: PrimaryPanelRenderState): string {
+  const installedRows = state.modelManagerInstalled.length
+    ? state.modelManagerInstalled
+        .map(
+          (model) => `
+      <div class="model-manager-installed-row">
+        <span class="model-manager-installed-model" title="${escapeHtml(model.name)}">${escapeHtml(model.name)}</span>
+        <span class="model-manager-installed-size">${escapeHtml(formatModelSize(model.sizeMb))}</span>
+        <span class="model-manager-installed-capabilities">${capabilityIconsForModel(model.name)}</span>
+        <span class="model-manager-installed-actions">
+          <button type="button" class="model-manager-row-icon-btn" title="Load in llama.cpp" aria-label="Load in llama.cpp" data-model-use-path="${escapeHtml(model.path)}">▶</button>
+          <button type="button" class="model-manager-row-icon-btn is-danger" title="Delete model" aria-label="Delete model" data-model-delete-id="${escapeHtml(model.id)}">🗑</button>
+        </span>
+      </div>
+    `
+        )
+        .join("")
+    : `<div class="model-manager-installed-row is-empty"><span>No local GGUF models</span><span>-</span><span>-</span><span>-</span></div>`;
+
+  return `
+    <div class="llama-form">
+      <h3 class="model-manager-title">My Local Models</h3>
+      <div class="model-manager-installed-table">
+        <div class="model-manager-installed-header">
+          <span>Model</span>
+          <span>Size</span>
+          <span>Capabilities</span>
+          <span>Action</span>
+        </div>
+        ${installedRows}
+      </div>
+    </div>
+  `;
+}
+
 function renderAllModelsTable(state: PrimaryPanelRenderState): string {
+  const localModelsHtml = renderLocalModelsSection(state);
   const allOptions = state.allModelsList;
   if (!allOptions.length) {
     return `<div class="mm-all-table"><div class="mm-all-row is-empty"><span>No models available. Connect an API or load a local model.</span></div></div>
@@ -185,6 +221,9 @@ function renderAllModelsTable(state: PrimaryPanelRenderState): string {
     .join("");
 
   return `
+    ${localModelsHtml}
+    <div style="height: 2rem;"></div>
+    <h3 class="model-manager-title">All Available Models (Local and API)</h3>
     <div class="mm-all-table">
       ${headerHtml}
       ${rowsHtml}
@@ -241,7 +280,7 @@ function renderModelInfoModal(state: PrimaryPanelRenderState): string {
       <div class="mm-modal">
         <div class="mm-modal-header">
           <h3>${escapeHtml(modelName)}</h3>
-          <button type="button" class="mm-modal-close" id="mmInfoModalClose" aria-label="Close">✕</button>
+          <button type="button" class="mm-modal-close" id="mmInfoModalClose" aria-label="Close">${iconHtml("circle-x", { size: 16, tone: "inactive" })}</button>
         </div>
         <div class="mm-modal-caps">${capIcons}</div>
         <div class="mm-modal-details">
@@ -283,24 +322,6 @@ function renderDownloadTab(state: PrimaryPanelRenderState): string {
     return `<option value="${escapeHtml(item.id)}"${selected}>${escapeHtml(item.label)}</option>`;
   }).join("");
 
-  const installedRows = state.modelManagerInstalled.length
-    ? state.modelManagerInstalled
-        .map(
-          (model) => `
-      <div class="model-manager-installed-row">
-        <span class="model-manager-installed-model" title="${escapeHtml(model.name)}">${escapeHtml(model.name)}</span>
-        <span class="model-manager-installed-size">${escapeHtml(formatModelSize(model.sizeMb))}</span>
-        <span class="model-manager-installed-capabilities">${capabilityIconsForModel(model.name)}</span>
-        <span class="model-manager-installed-actions">
-          <button type="button" class="model-manager-row-icon-btn" title="Load in llama.cpp" aria-label="Load in llama.cpp" data-model-use-path="${escapeHtml(model.path)}">▶</button>
-          <button type="button" class="model-manager-row-icon-btn is-danger" title="Delete model" aria-label="Delete model" data-model-delete-id="${escapeHtml(model.id)}">🗑</button>
-        </span>
-      </div>
-    `
-        )
-        .join("")
-    : `<div class="model-manager-installed-row is-empty"><span>No local GGUF models</span><span>-</span><span>-</span><span>-</span></div>`;
-
   const searchRows = state.modelManagerSearchResults.length
     ? state.modelManagerSearchResults
         .map(
@@ -333,13 +354,15 @@ function renderDownloadTab(state: PrimaryPanelRenderState): string {
     return row.repoId.toLowerCase().includes(query) || row.modelName.toLowerCase().includes(query);
   });
 
+  const collectionLinkHtml =
+    state.modelManagerCollection === "unsloth_ud"
+      ? `<div class="model-manager-collection-link-row"><a href="${UNSLOTH_UD_COLLECTION_URL}" target="_blank" rel="noreferrer">Open collection</a></div>`
+      : "";
+
   const unslothTableHtml =
     state.modelManagerCollection === "unsloth_ud"
       ? `
         <div class="llama-form">
-          <div class="model-manager-collection-link-row">
-            <a href="${UNSLOTH_UD_COLLECTION_URL}" target="_blank" rel="noreferrer">Open collection</a>
-          </div>
           <div class="model-manager-simple-table">
             <div class="model-manager-simple-header">
               <span>Model name</span>
@@ -401,19 +424,7 @@ function renderDownloadTab(state: PrimaryPanelRenderState): string {
 
   return `
     <div class="llama-form">
-      <h3 class="model-manager-title">My Local Models</h3>
-      <div class="model-manager-installed-table">
-        <div class="model-manager-installed-header">
-          <span>Model</span>
-          <span>Size</span>
-          <span>Capabilities</span>
-          <span>Action</span>
-        </div>
-        ${installedRows}
-      </div>
-    </div>
-
-    <div class="llama-form">
+      ${collectionLinkHtml}
       <label class="config-row">
         <select id="modelManagerCollectionSelect" class="llama-input model-manager-collection-select">${collectionOptions}</select>
         <input

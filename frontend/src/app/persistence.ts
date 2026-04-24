@@ -12,6 +12,8 @@ const SHOW_BOTTOM_CONTEXT_STORAGE_KEY = "arxell.settings.showBottom.context";
 const SHOW_BOTTOM_SPEED_STORAGE_KEY = "arxell.settings.showBottom.speed";
 const SHOW_BOTTOM_TTS_LATENCY_STORAGE_KEY = "arxell.settings.showBottom.ttsLatency";
 const CHAT_MODEL_ID_STORAGE_KEY = "arxell.chat.modelId";
+const MEMORY_ALWAYS_LOAD_TOOLS_STORAGE_KEY = "arxell.memory.alwaysLoadTools";
+const MEMORY_ALWAYS_LOAD_SKILLS_STORAGE_KEY = "arxell.memory.alwaysLoadSkills";
 const STT_BACKEND_STORAGE_KEY = "arxell.stt.backend";
 const MIC_PERMISSION_BUBBLE_DISMISSED_KEY = "arxell.micPermissionBubbleDismissed";
 const FLOW_ADVANCED_OPEN_STORAGE_KEY = "arxell.flow.advancedOpen";
@@ -187,6 +189,67 @@ export function persistChatModelId(modelId: string): void {
       return;
     }
     window.localStorage.setItem(CHAT_MODEL_ID_STORAGE_KEY, normalized);
+  } catch {}
+}
+
+export function loadPersistedMemoryAlwaysLoadTools(): string[] {
+  try {
+    const raw = window.localStorage.getItem(MEMORY_ALWAYS_LOAD_TOOLS_STORAGE_KEY);
+    if (!raw) return ["bash"];
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return ["bash"];
+    const values = parsed
+      .filter((item): item is string => typeof item === "string")
+      .map((item) => item.trim())
+      .filter((item) => item.length > 0);
+    return Array.from(new Set(values.length ? values : ["bash"]));
+  } catch {
+    return ["bash"];
+  }
+}
+
+export function persistMemoryAlwaysLoadTools(toolKeys: string[]): void {
+  try {
+    const normalized = Array.from(
+      new Set(toolKeys.map((item) => item.trim()).filter((item) => item.length > 0))
+    );
+    if (!normalized.length) {
+      window.localStorage.removeItem(MEMORY_ALWAYS_LOAD_TOOLS_STORAGE_KEY);
+      return;
+    }
+    window.localStorage.setItem(MEMORY_ALWAYS_LOAD_TOOLS_STORAGE_KEY, JSON.stringify(normalized));
+  } catch {}
+}
+
+export function loadPersistedMemoryAlwaysLoadSkills(): string[] {
+  try {
+    const raw = window.localStorage.getItem(MEMORY_ALWAYS_LOAD_SKILLS_STORAGE_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return Array.from(
+      new Set(
+        parsed
+          .filter((item): item is string => typeof item === "string")
+          .map((item) => item.trim())
+          .filter((item) => item.length > 0)
+      )
+    );
+  } catch {
+    return [];
+  }
+}
+
+export function persistMemoryAlwaysLoadSkills(skillKeys: string[]): void {
+  try {
+    const normalized = Array.from(
+      new Set(skillKeys.map((item) => item.trim()).filter((item) => item.length > 0))
+    );
+    if (!normalized.length) {
+      window.localStorage.removeItem(MEMORY_ALWAYS_LOAD_SKILLS_STORAGE_KEY);
+      return;
+    }
+    window.localStorage.setItem(MEMORY_ALWAYS_LOAD_SKILLS_STORAGE_KEY, JSON.stringify(normalized));
   } catch {}
 }
 

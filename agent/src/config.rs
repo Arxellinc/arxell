@@ -103,6 +103,15 @@ impl Config {
         }
     }
 
+    pub fn save(&self) -> KonResult<()> {
+        std::fs::create_dir_all(Self::config_dir())?;
+        let path = Self::config_file();
+        let txt = toml::to_string_pretty(self)
+            .map_err(|err| KonError::InvalidArgument(format!("failed to serialize config: {err}")))?;
+        std::fs::write(path, txt)?;
+        Ok(())
+    }
+
     pub fn validate(&self) -> KonResult<()> {
         if self.agent.max_turns <= 0 {
             return Err(KonError::InvalidArgument(

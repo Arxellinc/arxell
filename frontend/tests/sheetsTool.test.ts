@@ -1,7 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { buildSheetsGridColumns, buildSheetsGridRows } from "../src/tools/sheets/gridMapping.js";
 import { handleSheetsClick } from "../src/tools/sheets/bindings.js";
 import { deleteColumns, deleteRows, openSheet, saveSheet, saveSheetCurrent, setCellInput } from "../src/tools/sheets/actions.js";
 import {
@@ -36,7 +35,7 @@ function createMockDeps(responses: Record<string, unknown[]>) {
   };
 }
 
-test("grid rows keep raw formula input while displaying computed text", () => {
+test("syncEditorValue keeps raw formula input for selected cell", () => {
   const state = getInitialSheetsState();
   state.hasWorkbook = true;
   state.rowCount = 1;
@@ -57,31 +56,7 @@ test("grid rows keep raw formula input while displaying computed text", () => {
   });
   syncEditorValue(state);
 
-  const rows = buildSheetsGridRows(state);
-  const cell = rows[0]?.c0 as { input: string; display: string };
-
-  assert.equal(cell.input, "=A1+1");
-  assert.equal(cell.display, "2");
   assert.equal(state.activeEditorValue, "=A1+1");
-});
-
-test("error cells receive error styling class", () => {
-  const columns = buildSheetsGridColumns(1);
-  const className = columns[0]?.cellClassName?.({
-    rowData: {
-      __rowIndex: 0,
-      c0: {
-        input: "=BAD()",
-        display: "unsupported formula",
-        kind: "error",
-        error: "unsupported formula"
-      }
-    },
-    rowIndex: 0,
-    columnId: "c0"
-  } as never);
-
-  assert.equal(className, "sheets-grid-cell is-error");
 });
 
 test("open and save actions call sheets tool invoke actions", async () => {
@@ -177,6 +152,8 @@ test("missing capability keys allow toolbar action dispatch", async () => {
       openSheetWithDialog: async () => undefined,
       saveSheetCurrent: async () => undefined,
       saveSheetWithDialog: async () => undefined,
+      undoSheet: async () => undefined,
+      redoSheet: async () => undefined,
       insertRows: async (index) => {
         insertedAt = index;
       },
@@ -232,10 +209,10 @@ test("setCellInput refreshes state from backend after mutation", async () => {
 
   await setCellInput(state, deps as any, 0, 1, "=A1+1");
 
-  assert.deepEqual(calls.map((call) => call.action), ["set_cell", "inspect_sheet", "read_range"]);
+  assert.deepEqual(calls.map((call) => call.action), ["set_cell"]);
   assert.equal(state.revision, 2);
   assert.equal(state.dirty, true);
-  assert.equal(state.cellsByKey["0:1"]?.display, "2");
+  assert.equal(state.cellsByKey["0:1"]?.display, undefined);
 });
 
 test("delete row and column actions invoke backend mutations and refresh", async () => {

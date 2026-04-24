@@ -1,8 +1,13 @@
 import type { FilesListDirectoryEntry } from "../../contracts";
 import { renderFilesToolActions, renderFilesToolBody } from "../files";
 import type { FilesColumnWidths } from "../files/index";
-import { renderMemoryToolActions, renderMemoryToolBody, type MemoryToolState } from "../memory";
-import { renderSkillsToolActions, renderSkillsToolBody } from "../skills";
+import {
+  renderMemoryToolActions,
+  renderMemoryToolBody,
+  type MemoryContextItem,
+  type MemoryPersistentItem,
+  type MemoryToolState
+} from "../memory";
 import { renderChartToolActions, renderChartToolBody } from "../chart";
 import { renderTasksToolActions, renderTasksToolBody } from "../tasks";
 import type { TaskFolder, TaskSortDirection, TaskSortKey, TaskRecord } from "../tasks/state";
@@ -192,6 +197,32 @@ export interface WorkspaceToolViewInput {
   skillsFindCaseSensitive: boolean;
   skillsLineWrap: boolean;
   skillsError: string | null;
+  memoryContextItems: MemoryContextItem[];
+  memoryChatHistory: MemoryToolState["chatHistory"];
+  memoryPersistentItems: MemoryPersistentItem[];
+  memorySkillsItems: MemoryContextItem[];
+  memoryToolsItems: MemoryContextItem[];
+  memoryAlwaysLoadToolKeys: string[];
+  memoryAlwaysLoadSkillKeys: string[];
+  memoryModalOpen: boolean;
+  memoryModalMode: MemoryToolState["modalMode"];
+  memoryModalSection: MemoryToolState["modalSection"];
+  memoryModalTitle: string;
+  memoryModalValue: string;
+  memoryModalEditable: boolean;
+  memoryModalTarget: MemoryToolState["modalTarget"];
+  memoryModalNamespace: string | null;
+  memoryModalKey: string | null;
+  memoryModalSourcePath: string | null;
+  memoryModalConversationId: string | null;
+  memoryModalDraftKey: string;
+  memoryModalDraftCategory: string;
+  memoryModalDraftDescription: string;
+  memoryActiveTab: MemoryToolState["activeTab"];
+  memoryRouteMode: string;
+  memoryTotalTokenEstimate: number;
+  memoryLoading: boolean;
+  memoryError: string | null;
 }
 
 export function buildWorkspaceToolViews(input: WorkspaceToolViewInput): Record<string, ToolViewHtml> {
@@ -344,65 +375,34 @@ export function buildWorkspaceToolViews(input: WorkspaceToolViewInput): Record<s
       })
     },
     memory: {
-      actionsHtml: renderMemoryToolActions(),
+      actionsHtml: renderMemoryToolActions(input.memoryActiveTab),
       bodyHtml: renderMemoryToolBody({
-        contextItems: [],
-        chatHistory: [],
-        persistentItems: [],
-        loading: false,
-        error: null
-      })
-    },
-    skills: {
-      actionsHtml: renderSkillsToolActions({
-        skillsRootPath: input.skillsRootPath,
-        skillsSelectedPath: input.skillsSelectedPath,
-        skillsSelectedEntryPath: input.skillsSelectedEntryPath,
-        skillsExpandedByPath: input.skillsExpandedByPath,
-        skillsEntriesByPath: input.skillsEntriesByPath,
-        skillsLoadingByPath: input.skillsLoadingByPath,
-        skillsOpenTabs: input.skillsOpenTabs,
-        skillsActiveTabPath: input.skillsActiveTabPath,
-        skillsContentByPath: input.skillsContentByPath,
-        skillsSavedContentByPath: input.skillsSavedContentByPath,
-        skillsDirtyByPath: input.skillsDirtyByPath,
-        skillsLoadingFileByPath: input.skillsLoadingFileByPath,
-        skillsSavingFileByPath: input.skillsSavingFileByPath,
-        skillsReadOnlyByPath: input.skillsReadOnlyByPath,
-        skillsSizeByPath: input.skillsSizeByPath,
-        skillsSidebarWidth: input.skillsSidebarWidth,
-        skillsSidebarCollapsed: input.skillsSidebarCollapsed,
-        skillsFindOpen: input.skillsFindOpen,
-        skillsFindQuery: input.skillsFindQuery,
-        skillsReplaceQuery: input.skillsReplaceQuery,
-        skillsFindCaseSensitive: input.skillsFindCaseSensitive,
-        skillsLineWrap: input.skillsLineWrap,
-        skillsError: input.skillsError
-      }),
-      bodyHtml: renderSkillsToolBody({
-        skillsRootPath: input.skillsRootPath,
-        skillsSelectedPath: input.skillsSelectedPath,
-        skillsSelectedEntryPath: input.skillsSelectedEntryPath,
-        skillsExpandedByPath: input.skillsExpandedByPath,
-        skillsEntriesByPath: input.skillsEntriesByPath,
-        skillsLoadingByPath: input.skillsLoadingByPath,
-        skillsOpenTabs: input.skillsOpenTabs,
-        skillsActiveTabPath: input.skillsActiveTabPath,
-        skillsContentByPath: input.skillsContentByPath,
-        skillsSavedContentByPath: input.skillsSavedContentByPath,
-        skillsDirtyByPath: input.skillsDirtyByPath,
-        skillsLoadingFileByPath: input.skillsLoadingFileByPath,
-        skillsSavingFileByPath: input.skillsSavingFileByPath,
-        skillsReadOnlyByPath: input.skillsReadOnlyByPath,
-        skillsSizeByPath: input.skillsSizeByPath,
-        skillsSidebarWidth: input.skillsSidebarWidth,
-        skillsSidebarCollapsed: input.skillsSidebarCollapsed,
-        skillsFindOpen: input.skillsFindOpen,
-        skillsFindQuery: input.skillsFindQuery,
-        skillsReplaceQuery: input.skillsReplaceQuery,
-        skillsFindCaseSensitive: input.skillsFindCaseSensitive,
-        skillsLineWrap: input.skillsLineWrap,
-        skillsError: input.skillsError
+        contextItems: input.memoryContextItems,
+        chatHistory: input.memoryChatHistory,
+        persistentItems: input.memoryPersistentItems,
+        skillsItems: input.memorySkillsItems,
+        toolsItems: input.memoryToolsItems,
+        alwaysLoadToolKeys: input.memoryAlwaysLoadToolKeys,
+        alwaysLoadSkillKeys: input.memoryAlwaysLoadSkillKeys,
+        modalOpen: input.memoryModalOpen,
+        modalMode: input.memoryModalMode,
+        modalSection: input.memoryModalSection,
+        modalTitle: input.memoryModalTitle,
+        modalValue: input.memoryModalValue,
+        modalEditable: input.memoryModalEditable,
+        modalTarget: input.memoryModalTarget,
+        modalNamespace: input.memoryModalNamespace,
+        modalKey: input.memoryModalKey,
+        modalSourcePath: input.memoryModalSourcePath,
+        modalConversationId: input.memoryModalConversationId,
+        modalDraftKey: input.memoryModalDraftKey,
+        modalDraftCategory: input.memoryModalDraftCategory,
+        modalDraftDescription: input.memoryModalDraftDescription,
+        activeTab: input.memoryActiveTab,
+        routeMode: input.memoryRouteMode,
+        totalTokenEstimate: input.memoryTotalTokenEstimate,
+        loading: input.memoryLoading,
+        error: input.memoryError
       })
     },
     opencode: {

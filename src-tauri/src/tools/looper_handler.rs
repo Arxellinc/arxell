@@ -2406,8 +2406,11 @@ mod tests {
             project_type: "app-tool".to_string(),
             project_icon: "wrench".to_string(),
             project_description: "test project".to_string(),
+            review_before_execute: true,
+            planner_plan: String::new(),
             pending_questions: vec![],
             questions_answered: vec![],
+            preview: None,
         }
     }
 

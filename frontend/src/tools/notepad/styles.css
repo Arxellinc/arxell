@@ -104,7 +104,34 @@
   outline: none;
   display: flex;
   flex-direction: row;
-  align-items: stretch;
+  align-items: flex-start;
+  scrollbar-width: thin;
+  scrollbar-color: #6f7780 transparent;
+}
+
+.notepad-editor-scroll::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+  background: transparent;
+}
+
+.notepad-editor-scroll::-webkit-scrollbar-track,
+.notepad-editor-scroll::-webkit-scrollbar-corner {
+  background: transparent;
+  border: none;
+  box-shadow: none;
+}
+
+.notepad-editor-scroll::-webkit-scrollbar-thumb {
+  background: #6f7780;
+  border: none;
+  border-radius: 4px;
+  box-shadow: none;
+}
+
+.notepad-editor-scroll::-webkit-scrollbar-thumb:hover,
+.notepad-editor-scroll::-webkit-scrollbar-thumb:active {
+  background: #858d96;
 }
 
 .notepad-editor-lines,
@@ -122,7 +149,7 @@
     "Liberation Mono",
     "Courier New",
     monospace;
-  font-size: 13px;
+  font-size: 12px;
   line-height: 19px;
   font-variant-ligatures: none;
   letter-spacing: 0;
@@ -131,10 +158,9 @@
 
 .notepad-editor-lines {
   flex-shrink: 0;
-  width: var(--notepad-editor-gutter-width, 4ch);
-  min-width: var(--notepad-editor-gutter-width, 4ch);
-  max-width: var(--notepad-editor-gutter-width, 4ch);
-  overflow: hidden;
+  width: 8ch;
+  min-width: 8ch;
+  max-width: 8ch;
   color: var(--muted);
   text-align: right;
   white-space: pre;
@@ -149,7 +175,6 @@
   min-width: 0;
   position: relative;
   height: var(--notepad-editor-height, 220px);
-  overflow: var(--notepad-editor-overflow, auto);
 }
 
 .notepad-editor-highlight,

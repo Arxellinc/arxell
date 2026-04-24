@@ -18,6 +18,8 @@ interface ChatSendState {
   chatThinkingExpandedByCorrelation: Record<string, boolean>;
   chatThinkingPlacementByCorrelation: Record<string, "before" | "after">;
   chatTtsEnabled: boolean;
+  memoryAlwaysLoadToolKeys: string[];
+  memoryAlwaysLoadSkillKeys: string[];
   chatFirstAssistantChunkMsByCorrelation: Record<string, number>;
   events: AppEvent[];
 }
@@ -79,7 +81,9 @@ export function createSendMessageHandler(
         thinkingEnabled: deps.state.chatThinkingEnabled,
         chatMode: deps.state.chatRoutePreference,
         modelId: deps.state.chatActiveModelId,
-        modelName: selectedChatModel?.modelName || deps.state.chatActiveModelLabel
+        modelName: selectedChatModel?.modelName || deps.state.chatActiveModelLabel,
+        alwaysLoadToolKeys: deps.state.memoryAlwaysLoadToolKeys,
+        alwaysLoadSkillKeys: deps.state.memoryAlwaysLoadSkillKeys
       } as const;
       const requestPayload = attachments?.length
         ? {

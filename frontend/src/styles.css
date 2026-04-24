@@ -2285,6 +2285,10 @@ body {
   color: var(--icon-light);
 }
 
+.icon-inactive {
+  color: var(--icon-inactive);
+}
+
 .llama-actions {
   display: inline-flex;
   gap: 6px;
@@ -2852,18 +2856,19 @@ body {
 .mm-tab-bar {
   display: flex;
   gap: 0;
+  justify-content: center;
   flex: 1 1 auto;
   min-width: 0;
 }
 
 .mm-tab-btn {
-  padding: 4px 10px;
+  padding: 2px 16px;
   border: none;
   border-bottom: 2px solid transparent;
   background: transparent;
   color: var(--muted);
-  font-size: var(--text-sm);
-  font-weight: 500;
+  font-size: var(--text-md);
+  font-weight: 600;
   cursor: pointer;
   transition: color 0.15s, border-color 0.15s;
   white-space: nowrap;
@@ -2875,7 +2880,7 @@ body {
 
 .mm-tab-btn.is-active {
   color: var(--ink);
-  border-bottom-color: rgba(117, 200, 224, 0.65);
+  border-bottom-color: var(--accent);
 }
 
 [data-theme="light"] .mm-tab-btn {
@@ -2888,7 +2893,7 @@ body {
 
 [data-theme="light"] .mm-tab-btn.is-active {
   color: #1f2933;
-  border-bottom-color: #2d5f9a;
+  border-bottom-color: var(--accent);
 }
 
 /* All Available Models Table */
@@ -3191,20 +3196,21 @@ body {
   width: 28px;
   height: 28px;
   border-radius: 6px;
-  border: 1px solid var(--border);
-  background: var(--surface-strong);
-  color: var(--text-muted);
+  border: none;
+  background: transparent;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  font-size: 14px;
   cursor: pointer;
   flex-shrink: 0;
 }
 
 .mm-modal-close:hover {
   background: var(--surface-hover);
-  color: var(--text);
+}
+
+.mm-modal-close:hover .icon-inactive {
+  color: var(--icon-dark);
 }
 
 .mm-modal-caps {

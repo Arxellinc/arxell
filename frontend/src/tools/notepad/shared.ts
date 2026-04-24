@@ -38,16 +38,16 @@ export function renderNotepadEditorPane(input: NotepadEditorRenderInput): string
       input.sizeBytes
     )}).</div>`;
   }
-  const lineNumbers = createLineNumbers(input.lineCount);
+  const displayLines = Math.max(99, input.lineCount);
+  const lineNumbers = createLineNumbers(displayLines);
   const plainTextMode = shouldUsePlainTextMode(input.content);
   const highlighted = plainTextMode ? "" : renderHighlightedCode(input.content, input.filePath);
-  const editorHeight = Math.max(220, input.lineCount * 20 + 20);
-  const gutterWidth = getEditorGutterWidth(input.lineCount);
+  const editorHeight = Math.max(220, displayLines * 20 + 20);
   const pathAttr =
     input.dataAttrs.path && input.filePath
       ? ` ${input.dataAttrs.path}="${escapeHtml(input.filePath)}"`
       : "";
-  return `<div class="notepad-editor-panel ${input.wrap ? "is-wrap" : ""}${plainTextMode ? " is-plain-text" : ""}" style="--notepad-editor-gutter-width:${gutterWidth}ch;">
+  return `<div class="notepad-editor-panel ${input.wrap ? "is-wrap" : ""}${plainTextMode ? " is-plain-text" : ""}">
     <div class="notepad-editor-scroll">
       <pre class="notepad-editor-lines" data-notepad-line-count="${input.lineCount}">${escapeHtml(lineNumbers)}</pre>
       <div class="notepad-editor-code-wrap" style="--notepad-editor-height:${editorHeight}px;">
@@ -118,10 +118,9 @@ export function refreshNotepadEditorDecorations(
   const previousLineCount = Number(lineNumbers?.dataset.notepadLineCount || "0");
   const lineCountChanged = previousLineCount !== lineCount;
   panel.classList.toggle("is-plain-text", plainTextMode);
-  panel.style.setProperty("--notepad-editor-gutter-width", `${getEditorGutterWidth(lineCount)}ch`);
   if (lineNumbers) {
     if (lineCountChanged) {
-      lineNumbers.textContent = createLineNumbers(lineCount);
+      lineNumbers.textContent = createLineNumbers(Math.max(99, lineCount));
       lineNumbers.dataset.notepadLineCount = String(lineCount);
     }
   }
@@ -159,10 +158,6 @@ export function scheduleNotepadEditorRefresh(
     textarea.dataset.notepadRefreshScheduled = "false";
     refreshNotepadEditorDecorations(textarea, textarea.dataset.notepadRefreshContent ?? textarea.value, dataAttrs);
   });
-}
-
-function getEditorGutterWidth(lineCount: number): number {
-  return Math.max(4, String(Math.max(1, lineCount)).length + 2);
 }
 
 export function getSelectedNotepadText(documentId: string, dataAttrs: NotepadDataAttrs): string {
@@ -373,7 +368,7 @@ function createLineNumbers(lineCount: number): string {
   return value;
 }
 
-function renderHighlightedCode(input: string, filePath?: string | null): string {
+export function renderHighlightedCode(input: string, filePath?: string | null): string {
   if (input.length > MAX_HIGHLIGHT_CHARS) {
     return escapeHtml(input);
   }
