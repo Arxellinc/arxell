@@ -31,6 +31,8 @@
     "resources": [
       "resources/llama-runtime/*",
       "resources/llama-runtime/**/*",
+      "resources/kokoro-runtime/*",
+      "resources/kokoro-runtime/**/*",
       "resources/whisper/*",
       "resources/whisper/**/*"
     ]

@@ -23,16 +23,10 @@ jobs:
         platform:
           - name: linux-x64
             os: ubuntu-latest
-            artifact_name: arxell
-            artifact_path: src-tauri/target/release/arxell
           - name: macos-x64
-            os: macos-latest
-            artifact_name: arxell
-            artifact_path: src-tauri/target/release/arxell
+            os: macos-13
           - name: windows-x64
             os: windows-latest
-            artifact_name: arxell.exe
-            artifact_path: src-tauri/target/release/arxell.exe
 
     steps:
       - name: Checkout
@@ -79,6 +73,9 @@ jobs:
 
       - name: Setup Rust toolchain
         uses: dtolnay/rust-toolchain@stable
+
+      - name: Install Tauri CLI
+        run: cargo install tauri-cli --locked --version "^2.0.0"
 
       - name: Cache Rust build artifacts
         uses: Swatinem/rust-cache@v2
@@ -562,20 +559,29 @@ jobs:
           print(f"[kokoro-runtime] manifest written for {archive.name}")
           PY
 
-      - name: Build desktop binary
-        run: cargo build --release --manifest-path src-tauri/Cargo.toml --features tauri-runtime
+      - name: Build Tauri app bundle
+        working-directory: src-tauri
+        run: cargo tauri build -- --features tauri-runtime
 
-      - name: Verify desktop binary path
+      - name: Verify Tauri bundle output
         shell: bash
         run: |
           set -euo pipefail
-          test -f "${{ matrix.platform.artifact_path }}"
+          test -d src-tauri/target/release/bundle
+          python - <<'PY'
+          import pathlib
+          files = [p for p in pathlib.Path("src-tauri/target/release/bundle").rglob("*") if p.is_file()]
+          if not files:
+            raise SystemExit("No Tauri bundle files were produced")
+          for path in files:
+            print(path)
+          PY
 
-      - name: Upload binary artifact
+      - name: Upload Tauri bundle artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.platform.name }}-v${{ steps.app_version.outputs.version }}
-          path: ${{ matrix.platform.artifact_path }}
+          name: ${{ matrix.platform.name }}-v${{ steps.app_version.outputs.version }}-tauri-bundle
+          path: src-tauri/target/release/bundle/**/*
           if-no-files-found: error
 
       - name: Upload bundled runtime manifest
@@ -612,8 +618,6 @@ jobs:
         env:
           PLATFORM_NAME: ${{ matrix.platform.name }}
           APP_VERSION: ${{ steps.app_version.outputs.version }}
-          BINARY_PATH: ${{ matrix.platform.artifact_path }}
-          BINARY_NAME: ${{ matrix.platform.artifact_name }}
         run: |
           set -euo pipefail
           python - <<'PY'
@@ -624,12 +628,7 @@ jobs:
 
           platform_name = os.environ["PLATFORM_NAME"]
           app_version = os.environ["APP_VERSION"]
-          binary_path = pathlib.Path(os.environ["BINARY_PATH"])
-          binary_name = os.environ["BINARY_NAME"]
           github_output = pathlib.Path(os.environ["GITHUB_OUTPUT"])
-
-          if not binary_path.is_file():
-              raise RuntimeError(f"binary missing: {binary_path}")
 
           out_root = pathlib.Path("release-assets")
           out_root.mkdir(parents=True, exist_ok=True)
@@ -638,7 +637,14 @@ jobs:
               shutil.rmtree(bundle_dir)
           bundle_dir.mkdir(parents=True, exist_ok=True)
 
-          shutil.copy2(binary_path, bundle_dir / binary_name)
+          tauri_bundle_dir = pathlib.Path("src-tauri/target/release/bundle")
+          tauri_bundle_files = [p for p in tauri_bundle_dir.rglob("*") if p.is_file()]
+          if not tauri_bundle_files:
+              raise RuntimeError(f"no Tauri bundle files found under {tauri_bundle_dir}")
+          for source in tauri_bundle_files:
+              destination = bundle_dir / "tauri-bundle" / source.relative_to(tauri_bundle_dir)
+              destination.parent.mkdir(parents=True, exist_ok=True)
+              shutil.copy2(source, destination)
 
           llama_manifest = pathlib.Path("src-tauri/resources/llama-runtime/manifest.json")
           if llama_manifest.is_file():

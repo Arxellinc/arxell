@@ -7,7 +7,7 @@
     "dev": "vite",
     "build": "vite build",
     "check": "tsc --noEmit",
-    "test:unit": "rm -rf .tmp-tests && tsc -p tsconfig.tests.json && node --test .tmp-tests/tests/*.test.js",
+    "test:unit": "node tests/run-unit-tests.mjs",
     "test": "npm run -s test:unit",
     "icons:sync-ignore": "node ../scripts/sync-icon-gitignore.mjs",
     "version:sync": "node ../scripts/version-sync.mjs",
