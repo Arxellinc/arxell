@@ -4159,6 +4159,165 @@ body {
   background: var(--hover-bg);
 }
 
+.first-run-backdrop {
+  position: fixed;
+  z-index: 140;
+  padding: 16px;
+}
+
+.first-run-modal-box {
+  max-width: 720px;
+  max-height: min(86vh, 760px);
+  overflow: auto;
+}
+
+.first-run-modal-box .tts-setup-modal-bundle-btn {
+  justify-content: center;
+  min-height: 28px;
+  height: 28px;
+  padding: 0 14px;
+  text-align: center;
+}
+
+.first-run-modal-box .first-run-tts-download {
+  width: min(100%, 430px);
+  margin: 0 auto;
+}
+
+.first-run-modal-box .first-run-tts-download .tts-setup-modal-bundle-name {
+  flex: 0 1 auto;
+  text-align: center;
+}
+
+.first-run-modal-box .first-run-tts-download .tts-setup-modal-bundle-size {
+  margin-left: 12px;
+}
+
+.first-run-steps {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 2px;
+}
+
+.first-run-step {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--muted);
+  font-size: var(--text-xs);
+}
+
+.first-run-step.is-active {
+  border-color: var(--accent);
+  color: var(--accent-ink);
+  background: var(--accent);
+}
+
+.first-run-checklist,
+.first-run-model-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.first-run-checklist {
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-soft);
+  color: var(--muted);
+  font-size: var(--text-sm);
+  line-height: 1.45;
+}
+
+.first-run-checklist a {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.first-run-checklist a:hover {
+  text-decoration: underline;
+}
+
+.first-run-terms {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--ink);
+  font-size: var(--text-sm);
+}
+
+.first-run-model-option {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-soft);
+  cursor: pointer;
+}
+
+.first-run-model-option.is-selected {
+  border-color: var(--accent);
+  background: color-mix(in oklab, var(--accent) 13%, var(--surface-soft));
+}
+
+.first-run-model-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.first-run-model-title {
+  color: var(--ink);
+  font-weight: 600;
+  font-size: var(--text-sm);
+}
+
+.first-run-model-title small,
+.first-run-model-desc {
+  color: var(--muted);
+  font-weight: 400;
+  font-size: var(--text-xs);
+}
+
+.first-run-message {
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface-soft);
+  color: var(--ink);
+  font-size: var(--text-xs);
+}
+
+.first-run-progress {
+  margin-bottom: 0;
+}
+
+.first-run-custom-path {
+  padding: 8px 10px;
+  border: 1px dashed var(--line);
+  border-radius: 6px;
+  color: var(--muted);
+  font-size: var(--text-xs);
+  word-break: break-all;
+}
+
+.first-run-actions,
+.first-run-action-group {
+  gap: 8px;
+}
+
+.first-run-action-group {
+  display: inline-flex;
+  align-items: center;
+}
+
 .tts-download-progress {
   display: flex;
   flex-direction: column;

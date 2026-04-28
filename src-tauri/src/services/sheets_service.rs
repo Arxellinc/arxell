@@ -1400,7 +1400,7 @@ where
 
 fn mutate_workbook_sheet<F>(
     workbook: &mut WorkbookState,
-    formula_engine: &dyn FormulaEngine,
+    _formula_engine: &dyn FormulaEngine,
     source: EditSource,
     operation: &str,
     summary: Option<String>,
@@ -2014,6 +2014,7 @@ fn coord_label(row: usize, col: usize) -> String {
     )
 }
 
+#[allow(dead_code)]
 pub(crate) fn detect_format(path: &str) -> &'static str {
     if path.ends_with(".sheet.jsonl") {
         "jsonl"

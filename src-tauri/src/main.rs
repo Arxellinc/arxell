@@ -1285,7 +1285,7 @@ async fn cmd_llama_runtime_install_engine(
 #[cfg(feature = "tauri-runtime")]
 #[tauri::command]
 async fn cmd_llama_runtime_start(
-    app: tauri::AppHandle,
+    _app: tauri::AppHandle,
     state: State<'_, TauriBridgeState>,
     request: LlamaRuntimeStartRequest,
 ) -> Result<LlamaRuntimeStartResponse, String> {
@@ -1305,7 +1305,7 @@ async fn cmd_llama_runtime_stop(
 #[cfg(feature = "tauri-runtime")]
 #[tauri::command]
 async fn cmd_model_manager_list_installed(
-    app: tauri::AppHandle,
+    _app: tauri::AppHandle,
     state: State<'_, TauriBridgeState>,
     request: ModelManagerListInstalledRequest,
 ) -> Result<ModelManagerListInstalledResponse, String> {
@@ -1348,7 +1348,7 @@ async fn cmd_model_manager_search_hf(
 #[cfg(feature = "tauri-runtime")]
 #[tauri::command]
 async fn cmd_model_manager_download_hf(
-    app: tauri::AppHandle,
+    _app: tauri::AppHandle,
     state: State<'_, TauriBridgeState>,
     request: ModelManagerDownloadHfRequest,
 ) -> Result<ModelManagerDownloadHfResponse, String> {
@@ -1377,7 +1377,7 @@ async fn cmd_model_manager_download_hf(
 #[cfg(feature = "tauri-runtime")]
 #[tauri::command]
 async fn cmd_model_manager_delete_installed(
-    app: tauri::AppHandle,
+    _app: tauri::AppHandle,
     state: State<'_, TauriBridgeState>,
     request: ModelManagerDeleteInstalledRequest,
 ) -> Result<ModelManagerDeleteInstalledResponse, String> {
@@ -1426,7 +1426,7 @@ async fn cmd_model_manager_list_catalog_csv(
 #[cfg(feature = "tauri-runtime")]
 #[tauri::command]
 async fn cmd_model_manager_refresh_unsloth_catalog(
-    app: tauri::AppHandle,
+    _app: tauri::AppHandle,
     state: State<'_, TauriBridgeState>,
     request: ModelManagerRefreshUnslothCatalogRequest,
 ) -> Result<ModelManagerRefreshUnslothCatalogResponse, String> {
@@ -1721,7 +1721,7 @@ struct PersistedWindowState {
 }
 
 #[cfg(feature = "tauri-runtime")]
-fn window_state_path(handle: &tauri::AppHandle) -> PathBuf {
+fn window_state_path(_handle: &tauri::AppHandle) -> PathBuf {
     let base = app_paths::app_data_dir();
     base.join("window-state.json")
 }

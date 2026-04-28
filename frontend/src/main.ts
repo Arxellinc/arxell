@@ -131,7 +131,7 @@ import {
   type ProjectRecord
 } from "./projectsStore";
 import { ensureUserProject } from "./projects";
-import { resetTtsStateForEngine, type TtsEngine } from "./tts/engineRules";
+import { KOKORO_BUNDLE_OPTIONS, resetTtsStateForEngine, type TtsEngine } from "./tts/engineRules";
 import { getAllToolManifests } from "./tools/registry";
 import { renderChatMessages } from "./panels/chatPanel";
 import { renderAvatarPreview } from "./panels/avatarPanel";
@@ -217,6 +217,7 @@ import {
   composeAppFrameHtml,
   composePrimaryPaneHtml,
   conversationMarkdownFilename,
+  formatBytesShort,
   formatConsoleEntryLine,
   getVisibleConsoleEntries,
   modelNameFromPath,
@@ -257,7 +258,7 @@ let customToolBridgeInstalled = false;
 let tauriWindowHandle: TauriWindowHandle | null = null;
 const FALLBACK_APP_VERSION = normalizeVersionLabel(APP_BUILD_VERSION);
 let preferredChatModelId = loadPersistedChatModelId();
-const initialWorkspaceTabCandidate = loadPersistedWorkspaceTab("events");
+const initialWorkspaceTabCandidate = loadPersistedWorkspaceTab("tasks-tool");
 const initialWorkspaceTab = initialWorkspaceTabCandidate === "flow-tool"
   ? "events"
   : initialWorkspaceTabCandidate === "skills-tool"
@@ -265,6 +266,64 @@ const initialWorkspaceTab = initialWorkspaceTabCandidate === "flow-tool"
   : isWorkspaceTab(initialWorkspaceTabCandidate)
   ? initialWorkspaceTabCandidate
   : "events";
+const FIRST_RUN_ONBOARDING_DISMISSED_KEY = "arxell.firstRunOnboarding.dismissed";
+type FirstRunOnboardingStep = "welcome" | "model" | "tts";
+interface FirstRunModelOption {
+  id: string;
+  name: string;
+  size: string;
+  description: string;
+  repoId?: string;
+  fileName?: string;
+  custom?: boolean;
+}
+const FIRST_RUN_MODEL_OPTIONS: FirstRunModelOption[] = [
+  {
+    id: "qwen35-2b",
+    name: "Qwen3.5 2B",
+    size: "~2 GB",
+    description: "Fast startup option for lower-end hardware and responsive voice mode.",
+    repoId: "unsloth/Qwen3.5-2B-GGUF",
+    fileName: "Qwen3.5-2B-UD-Q4_K_XL.gguf"
+  },
+  {
+    id: "qwen35-4b",
+    name: "Qwen3.5 4B",
+    size: "~4 GB",
+    description: "Balanced baseline for everyday chat and tool-assisted work.",
+    repoId: "unsloth/Qwen3.5-4B-GGUF",
+    fileName: "Qwen3.5-4B-UD-Q4_K_XL.gguf"
+  },
+  {
+    id: "gpt-oss-20b",
+    name: "GPT-OSS 20B",
+    size: "~13 GB",
+    description: "Higher quality output for machines with more memory.",
+    repoId: "Arxell/gpt-oss-20b-MXFP4",
+    fileName: "gpt-oss-20b-MXFP4.gguf"
+  },
+  {
+    id: "custom-gguf",
+    name: "Select Custom GGUF",
+    size: "Local file",
+    description: "Use an existing .gguf model already on this machine.",
+    custom: true
+  }
+];
+
+function loadFirstRunOnboardingDismissed(): boolean {
+  try {
+    return window.localStorage.getItem(FIRST_RUN_ONBOARDING_DISMISSED_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function persistFirstRunOnboardingDismissed(): void {
+  try {
+    window.localStorage.setItem(FIRST_RUN_ONBOARDING_DISMISSED_KEY, "1");
+  } catch {}
+}
 type ConsoleView = "all" | "errors-warnings" | "security-events";
 type DisplayModePreference = DisplayMode | "system" | "terminal";
 const FLOW_TERMINAL_PHASES: string[] = [];
@@ -734,6 +793,13 @@ const state: {
   llamaRuntimeContextTokens: number | null;
   llamaRuntimeContextCapacity: number | null;
   llamaRuntimeTokensPerSecond: number | null;
+  firstRunOnboardingOpen: boolean;
+  firstRunOnboardingStep: FirstRunOnboardingStep;
+  firstRunSelectedModelId: string;
+  firstRunTermsAccepted: boolean;
+  firstRunCustomModelPath: string;
+  firstRunBusy: boolean;
+  firstRunMessage: string | null;
   modelManagerInstalled: ModelManagerInstalledModel[];
   modelManagerActiveTab: "all_models" | "download";
   modelManagerDisabledModelIds: string[];
@@ -985,6 +1051,13 @@ const state: {
   llamaRuntimeContextTokens: null,
   llamaRuntimeContextCapacity: null,
   llamaRuntimeTokensPerSecond: null,
+  firstRunOnboardingOpen: !loadFirstRunOnboardingDismissed(),
+  firstRunOnboardingStep: "welcome",
+  firstRunSelectedModelId: FIRST_RUN_MODEL_OPTIONS[0]?.id ?? "",
+  firstRunTermsAccepted: false,
+  firstRunCustomModelPath: "",
+  firstRunBusy: false,
+  firstRunMessage: null,
   modelManagerInstalled: [],
   modelManagerActiveTab: "all_models",
   modelManagerDisabledModelIds: loadPersistedModelManagerDisabledModelIds(),
@@ -2594,6 +2667,113 @@ async function requestSpeakerAccess(): Promise<void> {
   await refreshDevicesState();
 }
 
+function renderFirstRunOnboardingModal(): string {
+  if (!state.firstRunOnboardingOpen) return "";
+  const selectedModel =
+    FIRST_RUN_MODEL_OPTIONS.find((model) => model.id === state.firstRunSelectedModelId) ??
+    FIRST_RUN_MODEL_OPTIONS[0];
+  const busyAttr = state.firstRunBusy ? " disabled" : "";
+  const step = state.firstRunOnboardingStep;
+  const nextDisabledAttr = state.firstRunBusy || (step === "welcome" && !state.firstRunTermsAccepted) ? " disabled" : "";
+  const stepsHtml = ["welcome", "model", "tts"]
+    .map((item, idx) => `<span class="first-run-step${step === item ? " is-active" : ""}">${idx + 1}</span>`)
+    .join("");
+  const messageHtml = state.firstRunMessage
+    ? `<div class="first-run-message">${escapeHtml(state.firstRunMessage)}</div>`
+    : "";
+  const progressValue = Number.isFinite(state.tts.downloadPercent ?? NaN)
+    ? Math.max(0, Math.min(100, state.tts.downloadPercent ?? 0))
+    : null;
+  const progressLabel = progressValue !== null
+    ? `${progressValue.toFixed(0)}%`
+    : state.tts.downloadReceivedBytes !== null
+    ? formatBytesShort(state.tts.downloadReceivedBytes)
+    : "Downloading";
+  const progressDetail = state.tts.downloadReceivedBytes !== null
+    ? state.tts.downloadTotalBytes !== null
+      ? `${formatBytesShort(state.tts.downloadReceivedBytes)} of ${formatBytesShort(state.tts.downloadTotalBytes)}`
+      : formatBytesShort(state.tts.downloadReceivedBytes)
+    : "";
+  const progressHtml = state.firstRunOnboardingStep === "tts" && state.firstRunBusy
+    ? `<div class="tts-download-progress first-run-progress" role="status" aria-live="polite">
+        <div class="tts-download-progress-top">
+          <span>Downloading Kokoro voice bundle</span>
+          <span>${escapeHtml(progressLabel)}</span>
+        </div>
+        <progress ${progressValue !== null ? `value="${progressValue.toFixed(2)}" max="100"` : ""}></progress>
+        ${progressDetail ? `<div class="tts-download-progress-detail">${escapeHtml(progressDetail)}</div>` : ""}
+      </div>`
+    : "";
+
+  const bodyHtml =
+    step === "welcome"
+      ? `<div class="tts-setup-modal-title">Welcome to Arxell</div>
+        <div class="tts-setup-modal-desc">Arxell is a local-first AI workstation for chat, voice, tools, files, terminals, and agent workflows. It is under active development and some tools may be incomplete.</div>
+        <div class="first-run-checklist">
+          <div><strong>Features.</strong> Local GGUF models, API models, voice input/output, workspace tools, and configurable guardrails.</div>
+          <div><strong>Setup.</strong> Pick a starter model that fits your RAM/VRAM, then download a Kokoro voice bundle.</div>
+          <div><strong>Safety.</strong> This software is experimental and provided with no guarantees. You are responsible for reviewing output and using guardrails before autonomous workflows.</div>
+          <div><strong>License.</strong> Personal use is free. Commercial use requires a valid license. Review the <a href="https://www.arxell.com/legal" target="_blank" rel="noreferrer noopener">Terms</a>.</div>
+        </div>
+        <label class="first-run-terms"><input type="checkbox" id="firstRunTermsCheckbox" ${state.firstRunTermsAccepted ? "checked" : ""}${busyAttr} /> I have read and agree to the terms of use.</label>`
+      : step === "model"
+      ? `<div class="tts-setup-modal-title">Choose your first model</div>
+        <div class="tts-setup-modal-desc">Download a starter model or select an existing local .gguf file. Use Next when you are ready to continue.</div>
+        <div class="first-run-model-list">
+          ${FIRST_RUN_MODEL_OPTIONS.map((model) => `
+            <label class="first-run-model-option${model.id === state.firstRunSelectedModelId ? " is-selected" : ""}">
+              <input type="radio" name="firstRunModel" value="${escapeHtml(model.id)}" ${model.id === state.firstRunSelectedModelId ? "checked" : ""}${busyAttr} />
+              <span class="first-run-model-copy">
+                <span class="first-run-model-title">${escapeHtml(model.name)} <small>${escapeHtml(model.size)}</small></span>
+                <span class="first-run-model-desc">${escapeHtml(model.description)}</span>
+              </span>
+            </label>
+          `).join("")}
+        </div>
+        ${state.firstRunSelectedModelId === "custom-gguf" ? `<div class="first-run-custom-path">${escapeHtml(state.firstRunCustomModelPath || "No local model selected yet.")}</div>` : ""}`
+      : `<div class="tts-setup-modal-title">Install voice bundle</div>
+        <div class="tts-setup-modal-desc">Download a compatible sherpa-onnx Kokoro bundle so voice mode and read-aloud work on first use.</div>
+        <div class="tts-setup-modal-bundles">
+          ${KOKORO_BUNDLE_OPTIONS.map((bundle, idx) => `
+            <button type="button" class="tts-setup-modal-bundle-btn first-run-tts-download" data-url="${escapeHtml(bundle.url)}"${busyAttr}>
+              <span class="tts-setup-modal-bundle-name">Kokoro ${escapeHtml(bundle.label)}${idx === 0 ? " (recommended)" : ""}</span>
+              <span class="tts-setup-modal-bundle-size">${escapeHtml(bundle.sizeLabel)}</span>
+            </button>
+          `).join("")}
+        </div>`;
+
+  const primaryAction =
+    step === "welcome"
+      ? `<button type="button" class="tts-setup-modal-bundle-btn first-run-next"${nextDisabledAttr}>Next</button>`
+      : step === "model"
+      ? `<button type="button" class="tts-setup-modal-bundle-btn first-run-next"${busyAttr}>Next</button>`
+      : `<button type="button" class="tts-setup-modal-cancel-btn first-run-finish"${busyAttr}>Finish</button>`;
+  const stepAction =
+    step === "model"
+      ? selectedModel?.custom
+        ? `<button type="button" class="tts-setup-modal-cancel-btn first-run-select-custom-model"${busyAttr}>Select GGUF</button>`
+        : `<button type="button" class="tts-setup-modal-cancel-btn first-run-download-model"${busyAttr}>${state.firstRunBusy ? "Downloading..." : "Download"}</button>`
+      : "";
+
+  return `<div class="tts-setup-modal-backdrop first-run-backdrop">
+    <div class="tts-setup-modal-box first-run-modal-box">
+      <button type="button" class="tts-setup-modal-close first-run-skip"${busyAttr}>${iconHtml("x", { size: 16, tone: "dark", label: "Close" })}</button>
+      <div class="first-run-steps">${stepsHtml}</div>
+      ${bodyHtml}
+      ${messageHtml}
+      ${progressHtml}
+      <div class="tts-setup-modal-actions first-run-actions">
+        ${step !== "welcome" ? `<button type="button" class="tts-setup-modal-cancel-btn first-run-skip-step"${busyAttr}>Skip step</button>` : ""}
+        <div class="first-run-action-group">
+          ${step !== "welcome" ? `<button type="button" class="tts-setup-modal-cancel-btn first-run-back"${busyAttr}>Back</button>` : ""}
+          ${stepAction}
+          ${primaryAction}
+        </div>
+      </div>
+    </div>
+  </div>`;
+}
+
 function render(): void {
   syncPrimaryChatPanelFromFlatState();
   const app = document.querySelector<HTMLDivElement>("#app");
@@ -2945,7 +3125,7 @@ function render(): void {
       micPermissionBubbleDismissed: state.micPermissionBubbleDismissed
     }),
     appBodyHtml,
-    bottombarHtml: renderGlobalBottombar(currentBottomStatus())
+    bottombarHtml: `${renderGlobalBottombar(currentBottomStatus())}${renderFirstRunOnboardingModal()}`
   });
   restoreAvatarPreviewAfterRender(preservedAvatarPreview);
   restoreEditableFocusAfterRender(preservedEditableFocus);
@@ -4841,10 +5021,30 @@ function renderAndBind(sendMessage: (text: string) => Promise<void>): void {
     }
 
     if (!state.tts.ready) {
-      state.tts.status = "error";
-      state.tts.message = "Voice mode requires a ready TTS bundle. Configure TTS first.";
+      if (!state.tts.modelPath && !state.tts.availableModelPaths.length) {
+        state.tts.status = "error";
+        state.tts.message = "Voice mode requires a TTS bundle. Install one in the TTS panel first.";
+        renderAndBind(sendMessage);
+        return;
+      }
+      state.tts.status = "busy";
+      state.tts.message = "Starting TTS engine...";
       renderAndBind(sendMessage);
-      return;
+      try {
+        const selfTest = await clientRef!.ttsSelfTest({ correlationId: nextCorrelationId() });
+        await refreshTtsState();
+        if (!selfTest.ok) {
+          state.tts.status = "error";
+          state.tts.message = selfTest.message || "TTS engine failed to start.";
+          renderAndBind(sendMessage);
+          return;
+        }
+      } catch (error) {
+        state.tts.status = "error";
+        state.tts.message = `TTS engine start failed: ${formatTtsError(error)}`;
+        renderAndBind(sendMessage);
+        return;
+      }
     }
 
     if (!state.chatTtsEnabled) {
@@ -5053,6 +5253,148 @@ syncOverlayScrollbars();
         renderAndBind(sendMessage);
       };
     }
+  }
+  const dismissFirstRunOnboarding = () => {
+    state.firstRunOnboardingOpen = false;
+    state.firstRunBusy = false;
+    state.firstRunMessage = null;
+    persistFirstRunOnboardingDismissed();
+    renderAndBind(sendMessage);
+  };
+  document.querySelectorAll<HTMLButtonElement>(".first-run-skip").forEach((btn) => {
+    btn.onclick = dismissFirstRunOnboarding;
+  });
+  const termsCheckbox = document.querySelector<HTMLInputElement>("#firstRunTermsCheckbox");
+  if (termsCheckbox) {
+    termsCheckbox.onchange = () => {
+      state.firstRunTermsAccepted = termsCheckbox.checked;
+      state.firstRunMessage = null;
+      renderAndBind(sendMessage);
+    };
+  }
+  const firstRunSkipStep = document.querySelector<HTMLButtonElement>(".first-run-skip-step");
+  if (firstRunSkipStep) {
+    firstRunSkipStep.onclick = () => {
+      if (state.firstRunOnboardingStep === "welcome") {
+        state.firstRunOnboardingStep = "model";
+      } else if (state.firstRunOnboardingStep === "model") {
+        state.firstRunOnboardingStep = "tts";
+      } else {
+        dismissFirstRunOnboarding();
+        return;
+      }
+      state.firstRunMessage = null;
+      renderAndBind(sendMessage);
+    };
+  }
+  const firstRunNext = document.querySelector<HTMLButtonElement>(".first-run-next");
+  if (firstRunNext) {
+    firstRunNext.onclick = () => {
+      if (state.firstRunOnboardingStep === "welcome" && !state.firstRunTermsAccepted) return;
+      state.firstRunOnboardingStep = state.firstRunOnboardingStep === "welcome" ? "model" : "tts";
+      state.firstRunMessage = null;
+      renderAndBind(sendMessage);
+    };
+  }
+  const firstRunBack = document.querySelector<HTMLButtonElement>(".first-run-back");
+  if (firstRunBack) {
+    firstRunBack.onclick = () => {
+      state.firstRunOnboardingStep = state.firstRunOnboardingStep === "tts" ? "model" : "welcome";
+      state.firstRunMessage = null;
+      renderAndBind(sendMessage);
+    };
+  }
+  document.querySelectorAll<HTMLInputElement>('input[name="firstRunModel"]').forEach((input) => {
+    input.onchange = () => {
+      state.firstRunSelectedModelId = input.value;
+      state.firstRunMessage = null;
+      renderAndBind(sendMessage);
+    };
+  });
+  const firstRunDownloadModel = document.querySelector<HTMLButtonElement>(".first-run-download-model");
+  if (firstRunDownloadModel) {
+    firstRunDownloadModel.onclick = async () => {
+      if (!clientRef || state.firstRunBusy) return;
+      const model = FIRST_RUN_MODEL_OPTIONS.find((item) => item.id === state.firstRunSelectedModelId) ?? FIRST_RUN_MODEL_OPTIONS[0];
+      if (!model || model.custom || !model.repoId || !model.fileName) return;
+      state.firstRunBusy = true;
+      state.firstRunMessage = `Downloading ${model.name}...`;
+      renderAndBind(sendMessage);
+      try {
+        const response = await clientRef.modelManagerDownloadHf({
+          correlationId: nextCorrelationId(),
+          repoId: model.repoId,
+          fileName: model.fileName
+        });
+        state.llamaRuntimeModelPath = response.model.path;
+        persistLlamaModelPath(response.model.path);
+        await refreshModelManagerInstalled();
+        state.firstRunOnboardingStep = "tts";
+        state.firstRunMessage = `Downloaded ${response.model.name}. Next, install voice output.`;
+      } catch (error) {
+        state.firstRunMessage = `Model download failed: ${String(error)}`;
+      } finally {
+        state.firstRunBusy = false;
+      }
+      renderAndBind(sendMessage);
+    };
+  }
+  const firstRunSelectCustomModel = document.querySelector<HTMLButtonElement>(".first-run-select-custom-model");
+  if (firstRunSelectCustomModel) {
+    firstRunSelectCustomModel.onclick = async () => {
+      if (state.firstRunBusy) return;
+      const selectedPath = await browseModelPath();
+      if (!selectedPath) return;
+      state.firstRunCustomModelPath = selectedPath;
+      state.llamaRuntimeModelPath = selectedPath;
+      persistLlamaModelPath(selectedPath);
+      state.firstRunMessage = `Selected local model: ${selectedPath}`;
+      renderAndBind(sendMessage);
+    };
+  }
+  document.querySelectorAll<HTMLButtonElement>(".first-run-tts-download").forEach((btn) => {
+    btn.onclick = async () => {
+      if (!clientRef || state.firstRunBusy) return;
+      const url = btn.dataset.url;
+      if (!url) return;
+      state.firstRunBusy = true;
+      state.firstRunMessage = "Downloading Kokoro voice bundle...";
+      state.tts.downloadReceivedBytes = 0;
+      state.tts.downloadTotalBytes = null;
+      state.tts.downloadPercent = null;
+      renderAndBind(sendMessage);
+      try {
+        const response = await clientRef.ttsDownloadModel({ correlationId: nextCorrelationId(), url });
+        await refreshTtsState();
+        if (!state.tts.ready) {
+          state.firstRunMessage = "Initializing TTS engine...";
+          renderAndBind(sendMessage);
+          try {
+            const selfTest = await clientRef.ttsSelfTest({ correlationId: nextCorrelationId() });
+            await refreshTtsState();
+            state.firstRunMessage = selfTest.ok
+              ? "Kokoro voice bundle installed and engine ready."
+              : (selfTest.message || "Bundle installed but engine not ready. You can enable voice mode later.");
+          } catch (initError) {
+            state.firstRunMessage = `Bundle installed. Engine init skipped: ${formatTtsError(initError)}`;
+          }
+        } else {
+          state.firstRunMessage = response.message || "Kokoro voice bundle installed and ready.";
+        }
+      } catch (error) {
+        state.firstRunMessage = `TTS download failed: ${formatTtsError(error)}`;
+      } finally {
+        state.firstRunBusy = false;
+        state.tts.downloadReceivedBytes = null;
+        state.tts.downloadTotalBytes = null;
+        state.tts.downloadPercent = null;
+      }
+      renderAndBind(sendMessage);
+    };
+  });
+  const firstRunFinish = document.querySelector<HTMLButtonElement>(".first-run-finish");
+  if (firstRunFinish) {
+    firstRunFinish.onclick = dismissFirstRunOnboarding;
   }
   attachPrimaryPanelInteractions(state.sidebarTab, currentPrimaryPanelRenderState(), {
     onSendMessage: sendMessage,

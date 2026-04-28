@@ -23,7 +23,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tar::Archive;
-use tauri::{AppHandle, Emitter, Manager};
+use tauri::{AppHandle, Emitter};
 
 const DEFAULT_VOICE: &str = "af_heart";
 const DEFAULT_SPEED: f32 = 1.0;
@@ -53,6 +53,7 @@ impl TTSState {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[allow(dead_code)]
 struct PersistedTtsSettings {
     #[serde(default = "default_engine")]
     engine: String,
@@ -296,7 +297,7 @@ fn now_ms() -> i64 {
         .unwrap_or(0)
 }
 
-fn ensure_assets(app: &AppHandle) -> Result<KokoroPaths, String> {
+fn ensure_assets(_app: &AppHandle) -> Result<KokoroPaths, String> {
     let app_data_dir = app_paths::app_data_dir();
     let kokoro_dir = app_data_dir.join("kokoro");
     fs::create_dir_all(&kokoro_dir).map_err(|e| format!("failed creating kokoro dir: {e}"))?;
@@ -332,11 +333,35 @@ fn find_voice_bin_in_dir(dir: &Path) -> Option<PathBuf> {
         if lower == "voices.bin" {
             return Some(path);
         }
-        if lower.ends_with(".bin") && (lower.starts_with("voices") || lower.contains("voice")) {
+        if lower.ends_with(".bin")
+            && (lower.starts_with("voices")
+                || lower.contains("voice")
+                || lower == "af_heart.bin"
+                || lower == "af.bin")
+        {
             named_match = Some(path);
         }
     }
     named_match
+}
+
+fn recursive_find_voice_bin(root: &Path, max_depth: usize) -> Option<PathBuf> {
+    if max_depth == 0 || !root.is_dir() {
+        return None;
+    }
+    if let Some(found) = find_voice_bin_in_dir(root) {
+        return Some(found);
+    }
+    let entries = fs::read_dir(root).ok()?;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            if let Some(found) = recursive_find_voice_bin(&path, max_depth - 1) {
+                return Some(found);
+            }
+        }
+    }
+    None
 }
 
 fn recursive_find_file_named(root: &Path, file_name: &str, max_depth: usize) -> Option<PathBuf> {
@@ -667,6 +692,9 @@ fn resolve_paths_for_settings(
                 ])
             })
             .or_else(|| recursive_find_file_named(&kokoro_dir, "voices.bin", 4))
+            .or_else(|| recursive_find_voice_bin(&tts_engine_dir, 4))
+            .or_else(|| recursive_find_voice_bin(&engine_dir, 4))
+            .or_else(|| recursive_find_voice_bin(&kokoro_dir, 4))
     } else {
         configured_voices_path
             .or(auto_voices_path)

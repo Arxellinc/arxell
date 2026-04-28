@@ -178,7 +178,7 @@ fn resolve_sherpa_model(app: &tauri::AppHandle) -> Option<SherpaOfflineModel> {
 }
 
 #[cfg(feature = "tauri-runtime")]
-fn list_installed_sherpa_model_names(app: &tauri::AppHandle) -> Vec<String> {
+fn list_installed_sherpa_model_names(_app: &tauri::AppHandle) -> Vec<String> {
     fn collect_model_names_under(root: &Path, out: &mut Vec<String>) {
         if !root.is_dir() {
             return;

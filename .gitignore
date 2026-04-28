@@ -21,6 +21,9 @@ src-tauri/resources/llama-runtime/**
 !src-tauri/resources/llama-runtime/.gitkeep
 !src-tauri/resources/llama-runtime/README.md
 src-tauri/resources/kokoro-runtime/**
+!src-tauri/resources/kokoro-runtime/
+!src-tauri/resources/kokoro-runtime/.gitkeep
+!src-tauri/resources/kokoro-runtime/README.md
 
 # Logs
 *.log
