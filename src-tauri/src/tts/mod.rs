@@ -1,5 +1,6 @@
 #![cfg(feature = "tauri-runtime")]
 
+use crate::app_paths;
 use crate::contracts::{
     AppEvent, EventSeverity, EventStage, Subsystem, TtsDownloadModelRequest,
     TtsDownloadModelResponse, TtsListVoicesRequest, TtsListVoicesResponse, TtsSelfTestRequest,
@@ -57,18 +58,22 @@ struct PersistedTtsSettings {
     engine: String,
     voice: String,
     speed: f32,
-    model_path: Option<String>,
-    secondary_path: Option<String>,
-    voices_path: Option<String>,
-    tokens_path: Option<String>,
-    data_dir: Option<String>,
     #[serde(default)]
     engine_settings: HashMap<String, PersistedEnginePaths>,
     provider: Option<String>,
     num_threads: Option<u32>,
-    // Backward-compatible field kept for old persisted settings.
     #[serde(default)]
     python_path: Option<String>,
+    #[serde(default, skip_serializing)]
+    model_path: Option<String>,
+    #[serde(default, skip_serializing)]
+    secondary_path: Option<String>,
+    #[serde(default, skip_serializing)]
+    voices_path: Option<String>,
+    #[serde(default, skip_serializing)]
+    tokens_path: Option<String>,
+    #[serde(default, skip_serializing)]
+    data_dir: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -87,15 +92,15 @@ impl Default for PersistedTtsSettings {
             engine: default_engine(),
             voice: DEFAULT_VOICE.to_string(),
             speed: DEFAULT_SPEED,
+            engine_settings: HashMap::new(),
+            provider: Some(DEFAULT_PROVIDER.to_string()),
+            num_threads: None,
+            python_path: None,
             model_path: None,
             secondary_path: None,
             voices_path: None,
             tokens_path: None,
             data_dir: None,
-            engine_settings: HashMap::new(),
-            provider: Some(DEFAULT_PROVIDER.to_string()),
-            num_threads: None,
-            python_path: None,
         }
     }
 }
@@ -189,12 +194,10 @@ fn load_settings(app_data_dir: &Path) -> PersistedTtsSettings {
     if !path.exists() {
         return PersistedTtsSettings::default();
     }
-    let mut settings = match fs::read_to_string(path) {
+    match fs::read_to_string(path) {
         Ok(raw) => serde_json::from_str::<PersistedTtsSettings>(&raw).unwrap_or_default(),
         Err(_) => PersistedTtsSettings::default(),
-    };
-    migrate_legacy_engine_paths(&mut settings);
-    settings
+    }
 }
 
 fn save_settings(app_data_dir: &Path, settings: &PersistedTtsSettings) -> Result<(), String> {
@@ -202,30 +205,6 @@ fn save_settings(app_data_dir: &Path, settings: &PersistedTtsSettings) -> Result
     let payload = serde_json::to_string_pretty(settings)
         .map_err(|e| format!("failed serializing tts settings: {e}"))?;
     fs::write(path, format!("{payload}\n")).map_err(|e| format!("failed saving tts settings: {e}"))
-}
-
-fn migrate_legacy_engine_paths(settings: &mut PersistedTtsSettings) {
-    if settings.engine_settings.contains_key("kokoro") {
-        return;
-    }
-    let has_legacy = settings.model_path.is_some()
-        || settings.secondary_path.is_some()
-        || settings.voices_path.is_some()
-        || settings.tokens_path.is_some()
-        || settings.data_dir.is_some();
-    if !has_legacy {
-        return;
-    }
-    settings.engine_settings.insert(
-        "kokoro".to_string(),
-        PersistedEnginePaths {
-            model_path: settings.model_path.clone(),
-            secondary_path: settings.secondary_path.clone(),
-            voices_path: settings.voices_path.clone(),
-            tokens_path: settings.tokens_path.clone(),
-            data_dir: settings.data_dir.clone(),
-        },
-    );
 }
 
 fn emit_tts_event(
@@ -317,55 +296,17 @@ fn now_ms() -> i64 {
         .unwrap_or(0)
 }
 
-fn resolve_resource_path(app: &AppHandle, rel_candidates: &[&str]) -> Option<PathBuf> {
-    for rel in rel_candidates {
-        if let Ok(path) = app
-            .path()
-            .resolve(rel, tauri::path::BaseDirectory::Resource)
-        {
-            if path.exists() {
-                return Some(path);
-            }
-        }
-    }
-    None
-}
+fn ensure_assets(app: &AppHandle) -> Result<KokoroPaths, String> {
+    let app_data_dir = app_paths::app_data_dir();
+    let kokoro_dir = app_data_dir.join("kokoro");
+    fs::create_dir_all(&kokoro_dir).map_err(|e| format!("failed creating kokoro dir: {e}"))?;
 
-fn copy_file_if_changed(from: &Path, to: &Path) -> Result<(), String> {
-    if let Some(parent) = to.parent() {
-        fs::create_dir_all(parent).map_err(|e| format!("failed creating directory: {e}"))?;
-    }
-    if to.exists() {
-        let src = fs::read(from).map_err(|e| format!("failed reading source file: {e}"))?;
-        let dst = fs::read(to).map_err(|e| format!("failed reading destination file: {e}"))?;
-        if src == dst {
-            return Ok(());
-        }
-    }
-    fs::copy(from, to)
-        .map_err(|e| format!("failed copying {} -> {}: {e}", from.display(), to.display()))?;
-    Ok(())
-}
-
-fn copy_tree_if_needed(from: &Path, to: &Path) -> Result<(), String> {
-    if !from.exists() {
-        return Ok(());
-    }
-    if from.is_file() {
-        return copy_file_if_changed(from, to);
-    }
-    fs::create_dir_all(to).map_err(|e| format!("failed creating destination dir: {e}"))?;
-    let entries = fs::read_dir(from).map_err(|e| format!("failed reading source dir: {e}"))?;
-    for entry in entries.flatten() {
-        let src_path = entry.path();
-        let dst_path = to.join(entry.file_name());
-        if src_path.is_dir() {
-            copy_tree_if_needed(&src_path, &dst_path)?;
-        } else if src_path.is_file() {
-            copy_file_if_changed(&src_path, &dst_path)?;
-        }
-    }
-    Ok(())
+    let settings = load_settings(&app_data_dir);
+    Ok(resolve_paths_for_settings(
+        app_data_dir,
+        kokoro_dir,
+        &settings,
+    ))
 }
 
 fn first_existing_file(candidates: &[PathBuf]) -> Option<PathBuf> {
@@ -918,27 +859,12 @@ fn active_engine_paths(settings: &PersistedTtsSettings) -> PersistedEnginePaths 
     if let Some(paths) = settings.engine_settings.get(&engine_key) {
         return paths.clone();
     }
-    if matches!(engine, TtsEngine::Kokoro) {
-        return PersistedEnginePaths {
-            model_path: settings.model_path.clone(),
-            secondary_path: settings.secondary_path.clone(),
-            voices_path: settings.voices_path.clone(),
-            tokens_path: settings.tokens_path.clone(),
-            data_dir: settings.data_dir.clone(),
-        };
-    }
     PersistedEnginePaths::default()
 }
 
 fn set_active_engine_paths(settings: &mut PersistedTtsSettings, paths: PersistedEnginePaths) {
     let engine_key = resolve_engine(settings).as_key().to_string();
-    settings.engine_settings.insert(engine_key, paths.clone());
-    // Mirror legacy fields for backwards compatibility.
-    settings.model_path = paths.model_path;
-    settings.secondary_path = paths.secondary_path;
-    settings.voices_path = paths.voices_path;
-    settings.tokens_path = paths.tokens_path;
-    settings.data_dir = paths.data_dir;
+    settings.engine_settings.insert(engine_key, paths);
 }
 
 fn resolve_selected_voice(voices: &[String], requested: &str) -> String {
@@ -1091,26 +1017,6 @@ fn wav_from_f32_samples(samples: &[f32], sample_rate: u32) -> Vec<u8> {
     out.extend_from_slice(&data_len.to_le_bytes());
     out.extend_from_slice(&pcm);
     out
-}
-
-fn ensure_assets(app: &AppHandle) -> Result<KokoroPaths, String> {
-    let app_data_dir = app
-        .path()
-        .app_data_dir()
-        .map_err(|e| format!("failed resolving app data dir: {e}"))?;
-    let kokoro_dir = app_data_dir.join("kokoro");
-    fs::create_dir_all(&kokoro_dir).map_err(|e| format!("failed creating kokoro dir: {e}"))?;
-
-    if let Some(source_voice_dir) = resolve_resource_path(app, &["resources/voice", "voice"]) {
-        copy_tree_if_needed(&source_voice_dir, &kokoro_dir)?;
-    }
-
-    let settings = load_settings(&app_data_dir);
-    Ok(resolve_paths_for_settings(
-        app_data_dir,
-        kokoro_dir,
-        &settings,
-    ))
 }
 
 fn build_signature(
@@ -1489,7 +1395,6 @@ pub fn settings_set(
 ) -> Result<TtsSettingsSetResponse, String> {
     let paths = ensure_assets(app)?;
     let mut settings = load_settings(&paths.app_data_dir);
-    migrate_legacy_engine_paths(&mut settings);
     let prev_engine = settings.engine.clone();
     let prev_paths = active_engine_paths(&settings);
 
@@ -1555,13 +1460,20 @@ pub fn settings_set(
     }
     set_active_engine_paths(&mut settings, engine_paths.clone());
 
-    // Validate explicit or preconfigured bundle when a model is present.
+    let requested_path_update = request.model_path.is_some()
+        || request.secondary_path.is_some()
+        || request.voices_path.is_some()
+        || request.tokens_path.is_some()
+        || request.data_dir.is_some();
+
+    // Validate explicit path edits, but do not block engine-only switches on
+    // stale or partial assets from that engine. Status will report readiness.
     let preview_paths = resolve_paths_for_settings(
         paths.app_data_dir.clone(),
         paths.kokoro_dir.clone(),
         &settings,
     );
-    if preview_paths.model_path.is_some() {
+    if requested_path_update && preview_paths.model_path.is_some() {
         let _ = build_signature(&preview_paths, &settings)?;
     }
 
@@ -1605,7 +1517,7 @@ pub async fn self_test(
     let speak_request = TtsSpeakRequest {
         correlation_id: request.correlation_id.clone(),
         text: format!(
-            "Sherpa ONNX {} runtime self test from Arxell Lite.",
+            "Sherpa ONNX {} runtime self test from Arxell.",
             engine.as_key()
         ),
         voice: None,
@@ -1667,7 +1579,6 @@ pub async fn speak(
     let speed = normalize_speed(request.speed.unwrap_or(settings.speed));
 
     settings.voice = selected_voice.clone();
-    settings.engine = engine.as_key().to_string();
     settings.speed = speed;
     set_active_engine_paths(
         &mut settings,
@@ -1797,8 +1708,11 @@ pub async fn download_model(
         .filter(|v| !v.is_empty())
         .unwrap_or(DEFAULT_SHERPA_KOKORO_INT8_URL)
         .to_string();
-    let archive_path = paths.kokoro_dir.join("model-download.tar.bz2");
-    let extract_dir = paths.kokoro_dir.clone();
+    let tts_engine_dir = paths.app_data_dir.join("tts").join("kokoro");
+    fs::create_dir_all(&tts_engine_dir)
+        .map_err(|e| format!("failed creating tts engine dir: {e}"))?;
+    let archive_path = tts_engine_dir.join("model-download.tar.bz2");
+    let extract_dir = tts_engine_dir.clone();
     let app_for_download = app.clone();
     let correlation_id = request.correlation_id.clone();
 

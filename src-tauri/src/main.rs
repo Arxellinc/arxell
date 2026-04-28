@@ -6,6 +6,8 @@ use arxell_lite::contracts::ChatSendRequest;
 #[cfg(feature = "tauri-runtime")]
 use arxell_lite::app::AppContext;
 #[cfg(feature = "tauri-runtime")]
+use arxell_lite::app_paths;
+#[cfg(feature = "tauri-runtime")]
 use arxell_lite::contracts::{
     ApiConnectionCreateRequest, ApiConnectionCreateResponse, ApiConnectionDeleteRequest,
     ApiConnectionDeleteResponse, ApiConnectionProbeRequest, ApiConnectionProbeResponse,
@@ -253,6 +255,7 @@ fn main() {
             cmd_workspace_tool_create_app_plugin,
             cmd_workspace_tools_export,
             cmd_workspace_tools_import,
+            write_text_file,
             cmd_user_projects_roots,
             cmd_user_project_ensure,
             cmd_api_connections_list,
@@ -1008,6 +1011,17 @@ async fn cmd_api_connections_export(
 
 #[cfg(feature = "tauri-runtime")]
 #[tauri::command]
+async fn write_text_file(path: String, contents: String) -> Result<(), String> {
+    let path = PathBuf::from(path);
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| format!("failed creating parent directories: {e}"))?;
+    }
+    std::fs::write(path, contents.as_bytes()).map_err(|e| format!("failed writing file: {e}"))
+}
+
+#[cfg(feature = "tauri-runtime")]
+#[tauri::command]
 async fn cmd_api_connections_import(
     state: State<'_, TauriBridgeState>,
     request: ApiConnectionsImportRequest,
@@ -1232,10 +1246,7 @@ async fn cmd_llama_runtime_status(
     state: State<'_, TauriBridgeState>,
     request: LlamaRuntimeStatusRequest,
 ) -> Result<LlamaRuntimeStatusResponse, String> {
-    let app_data = app
-        .path()
-        .app_data_dir()
-        .map_err(|e| format!("failed to resolve app data dir: {e}"))?;
+    let app_data = app_paths::app_data_dir();
     let mut status = state
         .runtime
         .status(request.correlation_id.as_str(), app_data.as_path());
@@ -1253,10 +1264,7 @@ async fn cmd_llama_runtime_install_engine(
     state: State<'_, TauriBridgeState>,
     request: LlamaRuntimeInstallRequest,
 ) -> Result<LlamaRuntimeInstallResponse, String> {
-    let app_data = app
-        .path()
-        .app_data_dir()
-        .map_err(|e| format!("failed to resolve app data dir: {e}"))?;
+    let app_data = app_paths::app_data_dir();
     let bundled = resolve_bundled_engine_binary(&app, request.engine_id.as_str());
     let runtime = std::sync::Arc::clone(&state.runtime);
     let correlation_id = request.correlation_id.clone();
@@ -1281,10 +1289,7 @@ async fn cmd_llama_runtime_start(
     state: State<'_, TauriBridgeState>,
     request: LlamaRuntimeStartRequest,
 ) -> Result<LlamaRuntimeStartResponse, String> {
-    let app_data = app
-        .path()
-        .app_data_dir()
-        .map_err(|e| format!("failed to resolve app data dir: {e}"))?;
+    let app_data = app_paths::app_data_dir();
     state.runtime.start(&request, app_data.as_path())
 }
 
@@ -1304,10 +1309,7 @@ async fn cmd_model_manager_list_installed(
     state: State<'_, TauriBridgeState>,
     request: ModelManagerListInstalledRequest,
 ) -> Result<ModelManagerListInstalledResponse, String> {
-    let app_data = app
-        .path()
-        .app_data_dir()
-        .map_err(|e| format!("failed to resolve app data dir: {e}"))?;
+    let app_data = app_paths::app_data_dir();
     let service = std::sync::Arc::clone(&state.model_manager);
     let correlation_id = request.correlation_id.clone();
     let app_data_owned = app_data.clone();
@@ -1350,10 +1352,7 @@ async fn cmd_model_manager_download_hf(
     state: State<'_, TauriBridgeState>,
     request: ModelManagerDownloadHfRequest,
 ) -> Result<ModelManagerDownloadHfResponse, String> {
-    let app_data = app
-        .path()
-        .app_data_dir()
-        .map_err(|e| format!("failed to resolve app data dir: {e}"))?;
+    let app_data = app_paths::app_data_dir();
     let service = std::sync::Arc::clone(&state.model_manager);
     let correlation_id = request.correlation_id.clone();
     let repo_id = request.repo_id.clone();
@@ -1382,10 +1381,7 @@ async fn cmd_model_manager_delete_installed(
     state: State<'_, TauriBridgeState>,
     request: ModelManagerDeleteInstalledRequest,
 ) -> Result<ModelManagerDeleteInstalledResponse, String> {
-    let app_data = app
-        .path()
-        .app_data_dir()
-        .map_err(|e| format!("failed to resolve app data dir: {e}"))?;
+    let app_data = app_paths::app_data_dir();
     let service = std::sync::Arc::clone(&state.model_manager);
     let correlation_id = request.correlation_id.clone();
     let model_id = request.model_id.clone();
@@ -1434,10 +1430,7 @@ async fn cmd_model_manager_refresh_unsloth_catalog(
     state: State<'_, TauriBridgeState>,
     request: ModelManagerRefreshUnslothCatalogRequest,
 ) -> Result<ModelManagerRefreshUnslothCatalogResponse, String> {
-    let app_data = app
-        .path()
-        .app_data_dir()
-        .map_err(|e| format!("failed to resolve app data dir: {e}"))?;
+    let app_data = app_paths::app_data_dir();
     let service = std::sync::Arc::clone(&state.model_manager);
     let correlation_id = request.correlation_id.clone();
     let app_data_owned = app_data.clone();
@@ -1729,10 +1722,7 @@ struct PersistedWindowState {
 
 #[cfg(feature = "tauri-runtime")]
 fn window_state_path(handle: &tauri::AppHandle) -> PathBuf {
-    let base = handle
-        .path()
-        .app_data_dir()
-        .unwrap_or_else(|_| std::env::temp_dir().join("arxell-lite"));
+    let base = app_paths::app_data_dir();
     base.join("window-state.json")
 }
 

@@ -174,18 +174,14 @@ function renderAppearanceTab(state: PrimaryPanelRenderState): string {
 function renderAnimationTab(state: PrimaryPanelRenderState): string {
   return `
     <div class="avatar-panel-controls">
-      <div class="avatar-mesh-table avatar-morph-table">
-        <div class="avatar-mesh-header">
-          <span class="avatar-mesh-label">Morph Target</span>
-          <span class="avatar-mesh-cell">Value</span>
-        </div>
+      <div class="avatar-slider-group">
+        <div class="avatar-slider-group-title">Morph Targets</div>
         ${state.avatar.morphs.map((m) => `
-          <div class="avatar-mesh-row" data-avatar-morph="${escapeHtml(m.name)}">
-            <span class="avatar-mesh-label">${escapeHtml(m.name)}</span>
-            <span class="avatar-mesh-cell">
-              <input type="number" class="avatar-morph-value" min="0" max="1" step="0.05" value="${m.value}" />
-            </span>
-          </div>
+          <label class="avatar-slider-row" data-avatar-morph="${escapeHtml(m.name)}">
+            <span class="avatar-slider-name">${escapeHtml(m.name)}</span>
+            <input type="range" class="avatar-slider-range" min="0" max="1" step="0.01" value="${m.value}" />
+            <span class="avatar-slider-val">${m.value > 0 ? m.value.toFixed(2) : "0"}</span>
+          </label>
         `).join("")}
       </div>
       <div class="avatar-mesh-table avatar-bone-table">
@@ -209,6 +205,19 @@ function renderAnimationTab(state: PrimaryPanelRenderState): string {
             </span>
           </div>
         `).join("")}
+      </div>
+      <div class="avatar-slider-group">
+        <div class="avatar-slider-group-title">Lip-Sync</div>
+        <label class="avatar-slider-row">
+          <span class="avatar-slider-name">Shape strength</span>
+          <input type="range" class="avatar-slider-range avatar-lipsync-strength" min="0" max="1" step="0.01" value="${state.avatarLipSyncStrength ?? 0.7}" />
+          <span class="avatar-slider-val">${(state.avatarLipSyncStrength ?? 0.7).toFixed(2)}</span>
+        </label>
+        <label class="avatar-slider-row">
+          <span class="avatar-slider-name">Jaw blend</span>
+          <input type="range" class="avatar-slider-range avatar-lipsync-jaw-blend" min="0" max="1" step="0.01" value="${state.avatarLipSyncJawBlend ?? 0.4}" />
+          <span class="avatar-slider-val">${(state.avatarLipSyncJawBlend ?? 0.4).toFixed(2)}</span>
+        </label>
       </div>
     </div>
   `;
@@ -266,8 +275,12 @@ export function bindAvatarPanel(bindings: PrimaryPanelBindings): void {
   });
   document.querySelectorAll<HTMLElement>("[data-avatar-morph]").forEach((row) => {
     const name = row.dataset.avatarMorph ?? "";
-    const input = row.querySelector<HTMLInputElement>(".avatar-morph-value");
-    if (input) input.oninput = () => { void bindings.onAvatarMorphChange(name, parseFloat(input.value) || 0); };
+    const input = row.querySelector<HTMLInputElement>(".avatar-slider-range");
+    const valSpan = row.querySelector<HTMLElement>(".avatar-slider-val");
+    if (input) input.oninput = () => {
+      if (valSpan) valSpan.textContent = parseFloat(input.value).toFixed(2);
+      void bindings.onAvatarMorphChange(name, parseFloat(input.value) || 0);
+    };
   });
   document.querySelectorAll<HTMLElement>("[data-avatar-bone]").forEach((row) => {
     const key = row.dataset.avatarBone ?? "";
@@ -278,4 +291,16 @@ export function bindAvatarPanel(bindings: PrimaryPanelBindings): void {
     if (yInput) yInput.oninput = () => { void bindings.onAvatarBoneChange(key, "y", parseFloat(yInput.value) || 0); };
     if (zInput) zInput.oninput = () => { void bindings.onAvatarBoneChange(key, "z", parseFloat(zInput.value) || 0); };
   });
+  const lipSyncStrengthInput = document.querySelector<HTMLInputElement>(".avatar-lipsync-strength");
+  const lipSyncJawBlendInput = document.querySelector<HTMLInputElement>(".avatar-lipsync-jaw-blend");
+  const lipSyncStrengthVal = lipSyncStrengthInput?.closest<HTMLElement>(".avatar-slider-row")?.querySelector(".avatar-slider-val");
+  const lipSyncJawBlendVal = lipSyncJawBlendInput?.closest<HTMLElement>(".avatar-slider-row")?.querySelector(".avatar-slider-val");
+  if (lipSyncStrengthInput) lipSyncStrengthInput.oninput = () => {
+    if (lipSyncStrengthVal) lipSyncStrengthVal.textContent = parseFloat(lipSyncStrengthInput.value).toFixed(2);
+    bindings.onAvatarLipSyncChange(parseFloat(lipSyncStrengthInput.value) || 0, undefined);
+  };
+  if (lipSyncJawBlendInput) lipSyncJawBlendInput.oninput = () => {
+    if (lipSyncJawBlendVal) lipSyncJawBlendVal.textContent = parseFloat(lipSyncJawBlendInput.value).toFixed(2);
+    bindings.onAvatarLipSyncChange(undefined, parseFloat(lipSyncJawBlendInput.value) || 0);
+  };
 }

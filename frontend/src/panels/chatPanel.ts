@@ -62,6 +62,8 @@ export function renderChatBody(state: PrimaryPanelRenderState, scopeId = ""): st
     state.chat.panelId === "chat-0" && state.avatar.active && state.avatar.placement === "chat"
       ? renderAvatarPreview(state.avatar, { context: "chat" })
       : "";
+  const maximizedAvatarPreviewHtml = state.avatar.maximized ? avatarPreviewHtml : "";
+  const minimizedAvatarPreviewHtml = state.avatar.maximized ? "" : avatarPreviewHtml;
   const capabilitySummary = [
     caps.text ? "text" : null,
     caps.imageUnderstanding ? "image" : null,
@@ -72,8 +74,9 @@ export function renderChatBody(state: PrimaryPanelRenderState, scopeId = ""): st
     .filter((part): part is string => Boolean(part))
     .join(", ");
   return `
+    ${maximizedAvatarPreviewHtml}
     <div class="messages" data-chat-pane-id="${escapeHtml(state.chat.panelId)}">${renderChatMessages(state)}</div>
-    ${avatarPreviewHtml}
+    ${minimizedAvatarPreviewHtml}
     <form class="composer" id="composer${scopeId}">
       <div class="composer-model-meta" id="chatModelMeta${scopeId}">
         <span class="composer-model-caps">${escapeHtml(capabilitySummary || "text")}</span>

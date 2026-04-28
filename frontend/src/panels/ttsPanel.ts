@@ -93,6 +93,41 @@ export function renderTtsBody(state: PrimaryPanelRenderState): string {
     })
     .join("");
 
+  const needsSetup = !tts.modelPath && !modelPathOptions.length;
+  const showSetupModal = needsSetup && tts.ttsSetupModalOpen;
+  const showInlineBanner = needsSetup && !showSetupModal;
+
+  const setupModalHtml = showSetupModal
+    ? `<div class="tts-setup-modal-backdrop">
+        <div class="tts-setup-modal-box">
+          <button type="button" class="tts-setup-modal-close" data-tts-action="close-setup-modal">${iconHtml("x", { size: 16, tone: "dark", label: "Close" })}</button>
+          <div class="tts-setup-modal-title">Install ${engineLabel} Model</div>
+          <div class="tts-setup-modal-desc">${tts.engine === "kokoro"
+            ? "Download a compatible sherpa-onnx Kokoro model bundle to get started."
+            : `A compatible sherpa-onnx ${engineLabel} model bundle is required. Download one from the trusted source and place the files in the bundle path.`}</div>
+          ${tts.engine === "kokoro"
+            ? `<div class="tts-setup-modal-bundles">
+                ${KOKORO_BUNDLE_OPTIONS.map((bundle) => `
+                  <button type="button" class="tts-setup-modal-bundle-btn kokoro-bundle-btn" data-url="${bundle.url}" ${busy ? "disabled" : ""}>
+                    <span class="tts-setup-modal-bundle-name">${bundle.label}</span>
+                    <span class="tts-setup-modal-bundle-size">${bundle.sizeLabel}</span>
+                  </button>
+                `).join("")}
+              </div>`
+            : `<div class="tts-setup-modal-bundles">
+                <a class="tts-setup-modal-bundle-btn tts-setup-modal-source-link" href="${trustedSourceUrl}" target="_blank" rel="noreferrer noopener">
+                  <span class="tts-setup-modal-bundle-name">${downloadActionLabel}</span>
+                  <span class="tts-setup-modal-bundle-size">opens in browser</span>
+                </a>
+              </div>`}
+          <div class="tts-setup-modal-actions">
+            <a class="tts-setup-modal-link" href="${trustedSourceUrl}" target="_blank" rel="noreferrer noopener">View all bundles on GitHub</a>
+            <button type="button" class="tts-setup-modal-cancel-btn" data-tts-action="close-setup-modal">Cancel</button>
+          </div>
+        </div>
+      </div>`
+    : "";
+
   return `
     <div class="primary-pane-body">
       <div class="config-table tts-engine-table">
@@ -125,7 +160,7 @@ export function renderTtsBody(state: PrimaryPanelRenderState): string {
       </div>
 
       ${
-        !tts.modelPath && !modelPathOptions.length
+        showInlineBanner
           ? `<div class="tts-download-banner">
               <div class="tts-download-copy">
                 <strong>Model Setup</strong>
@@ -146,6 +181,8 @@ export function renderTtsBody(state: PrimaryPanelRenderState): string {
             </div>`
           : ""
       }
+
+      ${setupModalHtml}
 
       ${compatHint ? `<div class="tts-compat-hint">${escapeHtml(compatHint)}</div>` : ""}
 

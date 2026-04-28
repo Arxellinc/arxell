@@ -1,5 +1,7 @@
 import * as THREE from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
+import { PHONEME_BLENDS, MORPH_BLEND_KEYS } from "./phonemeBlends";
+import type { PhonemeEvent } from "./phonemeUtils";
 
 interface MeshSettingInput {
   key: string;
@@ -38,7 +40,16 @@ const LIP_MORPHS = [
   "PH_JAW_Fwd",
   "PH_A",
   "PH_O-U",
-  "EM_Mouth_open"
+  "PH_B-P",
+  "PH_D-S",
+  "PH_V-F",
+  "PH_I-E",
+  "PH_CH-SH",
+  "EM_Mouth_open",
+];
+
+const JAW_MORPHS = [
+  "jawOpen", "jaw_open", "Jaw_Open", "mouthOpen",
 ];
 
 const MESH_GROUP_PATTERNS: [string, string[]][] = [
@@ -52,10 +63,33 @@ const MESH_GROUP_PATTERNS: [string, string[]][] = [
 
 let speechAmplitude = 0;
 let speechActive = false;
+let lipSyncStrength = 0.7;
+let lipSyncJawBlend = 0.4;
+
+let phonemeTimeline: PhonemeEvent[] | null = null;
+let phonemeTimelineStartMs = 0;
+let phonemeTimelineIndex = 0;
 
 export function setAvatarSpeechState(input: { active: boolean; amplitude: number }): void {
   speechActive = input.active;
   speechAmplitude = Math.max(0, Math.min(1, input.amplitude));
+}
+
+export function setAvatarPhonemeTimeline(
+  timeline: PhonemeEvent[] | null,
+  startMs?: number,
+): void {
+  phonemeTimeline = timeline;
+  phonemeTimelineStartMs = startMs ?? performance.now();
+  phonemeTimelineIndex = 0;
+}
+
+export function setAvatarLipSyncSettings(input: {
+  strength?: number;
+  jawBlend?: number;
+}): void {
+  if (input.strength !== undefined) lipSyncStrength = input.strength;
+  if (input.jawBlend !== undefined) lipSyncJawBlend = input.jawBlend;
 }
 
 function matchMeshGroup(nodeName: string): string {
@@ -141,6 +175,26 @@ function mountImage(stage: HTMLElement, config: AvatarStageConfig): () => void {
   return () => {
     img.remove();
   };
+}
+
+function smoothstep(t: number): number {
+  return t * t * (3 - 2 * t);
+}
+
+function applyFallbackJaw(
+  jaw: number,
+  morphMeshes: Array<{ mesh: THREE.Mesh; dict: Record<string, number>; values: Record<string, number> }>,
+): void {
+  for (const entry of morphMeshes) {
+    for (const name of LIP_MORPHS) {
+      const idx = entry.dict[name];
+      if (idx === undefined || !entry.mesh.morphTargetInfluences) continue;
+      const current = entry.values[name] ?? 0;
+      const next = THREE.MathUtils.lerp(current, jaw, 0.35);
+      entry.values[name] = next;
+      entry.mesh.morphTargetInfluences[idx] = next;
+    }
+  }
 }
 
 function mountGlb(stage: HTMLElement, config: AvatarStageConfig): () => void {
@@ -316,14 +370,98 @@ function mountGlb(stage: HTMLElement, config: AvatarStageConfig): () => void {
     }
 
     const jaw = speechActive ? Math.min(1, speechAmplitude * 3.2) : 0;
-    for (const entry of morphMeshes) {
-      for (const name of LIP_MORPHS) {
-        const idx = entry.dict[name];
-        if (idx === undefined || !entry.mesh.morphTargetInfluences) continue;
-        const current = entry.values[name] ?? 0;
-        const next = THREE.MathUtils.lerp(current, jaw, speechActive ? 0.35 : 0.18);
-        entry.values[name] = next;
-        entry.mesh.morphTargetInfluences[idx] = next;
+
+    const tl = phonemeTimeline;
+    const hasTimeline = tl && tl.length > 0 && speechActive;
+
+    if (hasTimeline) {
+      const elapsed = performance.now() - phonemeTimelineStartMs;
+
+      while (
+        phonemeTimelineIndex < tl.length - 1 &&
+        tl[phonemeTimelineIndex + 1]!.startMs <= elapsed
+      ) {
+        phonemeTimelineIndex++;
+      }
+
+      const current = tl[phonemeTimelineIndex] ?? tl[0];
+      const next = phonemeTimelineIndex + 1 < tl.length
+        ? tl[phonemeTimelineIndex + 1]
+        : null;
+
+      if (!current) { applyFallbackJaw(jaw, morphMeshes); }
+      else {
+      const currentPhoneme =
+        elapsed >= current.startMs && elapsed < current.endMs
+          ? current.phoneme
+          : "SIL";
+      const isSilence = currentPhoneme === "SIL" || currentPhoneme === "SP";
+
+      let blendT = 0;
+      const anticipationMs = 40;
+      if (next && !isSilence) {
+        const remaining = current.endMs - elapsed;
+        if (remaining > 0 && remaining < anticipationMs) {
+          blendT = smoothstep(1 - remaining / anticipationMs);
+        }
+      }
+
+      const currentBlend = PHONEME_BLENDS[currentPhoneme] ?? {};
+      const nextBlend = next ? (PHONEME_BLENDS[next.phoneme] ?? {}) : {};
+
+      const effectiveAmp = Math.max(jaw * lipSyncJawBlend, isSilence ? 0 : jaw);
+
+      for (const morphName of LIP_MORPHS) {
+        const isPhonemeMorph = MORPH_BLEND_KEYS.includes(morphName as typeof MORPH_BLEND_KEYS[number]);
+
+        if (isPhonemeMorph) {
+          const w1 = currentBlend[morphName] ?? 0;
+          const w2 = nextBlend[morphName] ?? 0;
+          const weight = w1 + (w2 - w1) * blendT;
+
+          for (const entry of morphMeshes) {
+            const idx = entry.dict[morphName];
+            if (idx === undefined || !entry.mesh.morphTargetInfluences) continue;
+            const current = entry.values[morphName] ?? 0;
+
+            if (weight <= 0 || isSilence) {
+              const next2 = THREE.MathUtils.lerp(current, 0, 0.25);
+              entry.values[morphName] = next2;
+              entry.mesh.morphTargetInfluences[idx] = next2;
+            } else {
+              const target = Math.min(1, weight * effectiveAmp * lipSyncStrength * 1.2);
+              const rate = target > current ? 0.45 : 0.25;
+              const next2 = THREE.MathUtils.lerp(current, target, rate);
+              entry.values[morphName] = next2;
+              entry.mesh.morphTargetInfluences[idx] = next2;
+            }
+          }
+        } else {
+          for (const entry of morphMeshes) {
+            const idx = entry.dict[morphName];
+            if (idx === undefined || !entry.mesh.morphTargetInfluences) continue;
+            const current = entry.values[morphName] ?? 0;
+            const isPrimaryOpen = JAW_MORPHS.some((m) => m === morphName);
+            const targetOpen = isPrimaryOpen ? jaw : jaw * 0.6;
+            const next2 = THREE.MathUtils.lerp(
+              current, targetOpen, speechActive ? 0.35 : 0.18,
+            );
+            entry.values[morphName] = next2;
+            entry.mesh.morphTargetInfluences[idx] = next2;
+          }
+        }
+      }
+      }
+    } else {
+      for (const entry of morphMeshes) {
+        for (const name of LIP_MORPHS) {
+          const idx = entry.dict[name];
+          if (idx === undefined || !entry.mesh.morphTargetInfluences) continue;
+          const current = entry.values[name] ?? 0;
+          const next = THREE.MathUtils.lerp(current, jaw, speechActive ? 0.35 : 0.18);
+          entry.values[name] = next;
+          entry.mesh.morphTargetInfluences[idx] = next;
+        }
       }
     }
 

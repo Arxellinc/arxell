@@ -12,6 +12,8 @@
 //! This ensures all AI supervisors share a common interface for future phases.
 
 #[cfg(feature = "tauri-runtime")]
+use crate::app_paths;
+#[cfg(feature = "tauri-runtime")]
 use crate::stt::events::{PipelineErrorPayload, STTStatusPayload};
 use log::{info, warn};
 use std::path::PathBuf;
@@ -372,10 +374,7 @@ fn find_free_port() -> Result<u32, String> {
 
 /// Resolve the path to the whisper.cpp binary.
 fn resolve_whisper_binary(app: &AppHandle) -> Result<PathBuf, String> {
-    let app_data_dir = app
-        .path()
-        .app_data_dir()
-        .map_err(|e| format!("Failed to get app data directory: {}", e))?;
+    let app_data_dir = app_paths::app_data_dir();
     let resource_dir = app
         .path()
         .resource_dir()
@@ -416,7 +415,7 @@ fn resolve_whisper_binary(app: &AppHandle) -> Result<PathBuf, String> {
 /// This avoids ETXTBSY when the resource binary is being updated or scanned.
 fn stage_whisper_binary_for_launch(binary_path: &PathBuf) -> Result<PathBuf, String> {
     let mut dir = std::env::temp_dir();
-    dir.push("arxell-lite");
+    dir.push("arxell");
     dir.push("whisper-server");
     std::fs::create_dir_all(&dir).map_err(|e| {
         format!(
@@ -459,10 +458,7 @@ fn stage_whisper_binary_for_launch(binary_path: &PathBuf) -> Result<PathBuf, Str
 
 /// Resolve the path to the Whisper model file.
 fn resolve_model_path(app: &AppHandle) -> Result<PathBuf, String> {
-    let app_data_dir = app
-        .path()
-        .app_data_dir()
-        .map_err(|e| format!("Failed to get app data directory: {}", e))?;
+    let app_data_dir = app_paths::app_data_dir();
     let resource_dir = app
         .path()
         .resource_dir()

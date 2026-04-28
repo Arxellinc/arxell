@@ -275,6 +275,12 @@ export function attachPrimaryPanelInteractions(
         }
       };
     });
+    const setupModalCloseBtns = document.querySelectorAll<HTMLButtonElement>("[data-tts-action=\"close-setup-modal\"]");
+    setupModalCloseBtns.forEach((btn) => {
+      btn.onclick = () => {
+        bindings.onTtsSetSetupModalOpen(false);
+      };
+    });
     const refreshBtn = document.querySelector<HTMLButtonElement>("#ttsRefreshBtn");
     if (refreshBtn) {
       refreshBtn.onclick = async () => {

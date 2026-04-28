@@ -13,6 +13,8 @@ pub mod events;
 pub mod supervisor;
 
 #[cfg(feature = "tauri-runtime")]
+use crate::app_paths;
+#[cfg(feature = "tauri-runtime")]
 use bzip2::read::BzDecoder;
 #[cfg(feature = "tauri-runtime")]
 use reqwest::blocking::Client;
@@ -156,7 +158,7 @@ fn resolve_sherpa_model(app: &tauri::AppHandle) -> Option<SherpaOfflineModel> {
         None
     }
 
-    let app_data_dir = app.path().app_data_dir().ok()?;
+    let app_data_dir = app_paths::app_data_dir();
     let resource_dir = app.path().resource_dir().ok()?;
     let roots = [
         app_data_dir.join("STT").join("sherpa"),
@@ -222,16 +224,15 @@ fn list_installed_sherpa_model_names(app: &tauri::AppHandle) -> Vec<String> {
 
     let mut names = vec!["auto".to_string()];
     let mut discovered = Vec::new();
-    if let Ok(app_data_dir) = app.path().app_data_dir() {
-        let roots = [
-            app_data_dir.join("STT").join("sherpa"),
-            app_data_dir.join("stt").join("sherpa"),
-            app_data_dir.join("STT").join("models").join("sherpa"),
-            app_data_dir.join("stt").join("models").join("sherpa"),
-        ];
-        for root in roots {
-            collect_model_names_under(&root, &mut discovered);
-        }
+    let app_data_dir = app_paths::app_data_dir();
+    let roots = [
+        app_data_dir.join("STT").join("sherpa"),
+        app_data_dir.join("stt").join("sherpa"),
+        app_data_dir.join("STT").join("models").join("sherpa"),
+        app_data_dir.join("stt").join("models").join("sherpa"),
+    ];
+    for root in roots {
+        collect_model_names_under(&root, &mut discovered);
     }
     discovered.sort();
     discovered.dedup();
@@ -337,7 +338,7 @@ impl Default for STTState {
 
 #[cfg(feature = "tauri-runtime")]
 fn resolve_silero_vad_model_path(app: &tauri::AppHandle) -> Option<PathBuf> {
-    let app_data_dir = app.path().app_data_dir().ok()?;
+    let app_data_dir = app_paths::app_data_dir();
     let resource_dir = app.path().resource_dir().ok()?;
     let candidates = [
         app_data_dir.join("STT").join("vad").join("silero_vad.onnx"),
@@ -516,10 +517,7 @@ pub async fn stt_download_model(
         .ok_or_else(|| format!("Model not found: {}", file_name))?;
 
     // Determine download directory
-    let app_data_dir = app
-        .path()
-        .app_data_dir()
-        .map_err(|e| format!("Failed to get app data dir: {}", e))?;
+    let app_data_dir = app_paths::app_data_dir();
 
     let download_dir = app_data_dir.join("STT").join("sherpa");
 

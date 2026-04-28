@@ -135,6 +135,7 @@ import { resetTtsStateForEngine, type TtsEngine } from "./tts/engineRules";
 import { getAllToolManifests } from "./tools/registry";
 import { renderChatMessages } from "./panels/chatPanel";
 import { renderAvatarPreview } from "./panels/avatarPanel";
+import { buildPhonemeTimeline } from "./avatar/phonemeUtils";
 import { APP_BUILD_VERSION, normalizeVersionLabel } from "./version";
 import {
   closeTerminalSessionAndPickNext,
@@ -289,12 +290,62 @@ function mountAvatarStagesIfNeeded(): void {
   void loadAvatarRuntime().then((mod) => mod.mountAvatarStages());
 }
 
-function disposeAvatarStagesIfLoaded(): void {
-  avatarRuntimeModule?.disposeAvatarStages();
+interface PreservedAvatarPreview {
+  element: HTMLElement;
+  key: string;
+}
+
+function avatarPreviewPreserveKey(element: HTMLElement): string {
+  const stage = element.querySelector<HTMLElement>("[data-avatar-stage]");
+  return JSON.stringify({
+    className: element.className,
+    style: element.getAttribute("style") || "",
+    imageSrc: element.querySelector<HTMLImageElement>(".avatar-preview-image")?.src || "",
+    stage: stage
+      ? {
+          assetKind: stage.dataset.avatarAssetKind || "",
+          assetUrl: stage.dataset.avatarAssetUrl || "",
+          assetName: stage.dataset.avatarAssetName || "",
+          meshSettings: stage.dataset.avatarMeshSettings || "",
+          bgColor: stage.dataset.avatarBgColor || "",
+          bgOpacity: stage.dataset.avatarBgOpacity || "",
+          morphs: stage.dataset.avatarMorphs || "",
+          armBones: stage.dataset.avatarArmBones || ""
+        }
+      : null
+  });
+}
+
+function preserveAvatarPreviewBeforeRender(): PreservedAvatarPreview | null {
+  const element = document.querySelector<HTMLElement>(".avatar-preview");
+  if (!element) return null;
+  return { element, key: avatarPreviewPreserveKey(element) };
+}
+
+function restoreAvatarPreviewAfterRender(preserved: PreservedAvatarPreview | null): void {
+  if (!preserved) return;
+  const next = document.querySelector<HTMLElement>(".avatar-preview");
+  if (!next || avatarPreviewPreserveKey(next) !== preserved.key) return;
+  next.replaceWith(preserved.element);
 }
 
 function updateAvatarSpeechState(active: boolean, amplitude: number): void {
   avatarRuntimeModule?.setAvatarSpeechState({ active, amplitude });
+}
+
+function updateAvatarPhonemeTimeline(
+  text: string | null,
+  durationMs: number,
+): void {
+  if (!text || !avatarRuntimeModule) return;
+  const timeline = buildPhonemeTimeline(text, durationMs);
+  if (timeline.length > 0) {
+    avatarRuntimeModule.setAvatarPhonemeTimeline(timeline);
+  }
+}
+
+function clearAvatarPhonemeTimeline(): void {
+  avatarRuntimeModule?.setAvatarPhonemeTimeline(null);
 }
 
 function filterFlowEvents(_events: AppEvent[], _filter: string, _limit: number): { forInspector: AppEvent[]; forRender: AppEvent[] } {
@@ -402,12 +453,15 @@ const state: {
     borderColor: string;
   };
   avatarActiveTab: "appearance" | "animation";
+  avatarLipSyncStrength: number;
+  avatarLipSyncJawBlend: number;
   devices: DevicesState;
   apiConnections: ApiConnectionRecord[];
   apiFormOpen: boolean;
   apiDraft: ApiConnectionDraft;
   apiEditingId: string | null;
   apiMessage: string | null;
+  apiSaveBusy: boolean;
   apiProbeBusy: boolean;
   apiProbeStatus: "verified" | "warning" | "pending" | null;
   apiProbeMessage: string | null;
@@ -770,6 +824,7 @@ const state: {
     downloadReceivedBytes: number | null;
     downloadTotalBytes: number | null;
     downloadPercent: number | null;
+    ttsSetupModalOpen: boolean;
   };
 } = {
   conversationId: generateChatConversationId(),
@@ -822,12 +877,15 @@ const state: {
     borderColor: "#000000"
   },
   avatarActiveTab: "appearance" as const,
+  avatarLipSyncStrength: 0.7,
+  avatarLipSyncJawBlend: 0.4,
   devices: defaultDevicesState(),
   apiConnections: [],
   apiFormOpen: false,
   apiDraft: defaultApiConnectionDraft(),
   apiEditingId: null,
   apiMessage: null,
+  apiSaveBusy: false,
   apiProbeBusy: false,
   apiProbeStatus: null,
   apiProbeMessage: null,
@@ -994,13 +1052,14 @@ const state: {
     selectedVoice: "af_heart",
     speed: 1,
     lexiconStatus: "",
-    testText: "Hello from Arxell Lite text to speech.",
+    testText: "Hello from Arxell text to speech.",
     lastDurationMs: null,
     lastBytes: null,
     lastSampleRate: null,
     downloadReceivedBytes: null,
     downloadTotalBytes: null,
-    downloadPercent: null
+    downloadPercent: null,
+    ttsSetupModalOpen: false
   }
 };
 state.activeWebTabId = state.webTabs[0]?.id ?? "";
@@ -1415,6 +1474,47 @@ function isEditableElementActive(active: HTMLElement | null): boolean {
   return Boolean(active.closest('[contenteditable="true"]'));
 }
 
+interface PreservedEditableFocus {
+  id: string;
+  selectionStart: number | null;
+  selectionEnd: number | null;
+  value: string | null;
+}
+
+function preserveEditableFocusBeforeRender(): PreservedEditableFocus | null {
+  const active = document.activeElement as HTMLElement | null;
+  if (!isEditableElementActive(active) || !active?.id) return null;
+  if (active instanceof HTMLInputElement || active instanceof HTMLTextAreaElement) {
+    return {
+      id: active.id,
+      selectionStart: active.selectionStart,
+      selectionEnd: active.selectionEnd,
+      value: active.value
+    };
+  }
+  return {
+    id: active.id,
+    selectionStart: null,
+    selectionEnd: null,
+    value: null
+  };
+}
+
+function restoreEditableFocusAfterRender(preserved: PreservedEditableFocus | null): void {
+  if (!preserved) return;
+  const next = document.getElementById(preserved.id) as HTMLElement | null;
+  if (!next || !isEditableElementActive(next)) return;
+  if ((next instanceof HTMLInputElement || next instanceof HTMLTextAreaElement) && preserved.value !== null) {
+    next.value = preserved.value;
+    next.focus({ preventScroll: true });
+    if (preserved.selectionStart !== null && preserved.selectionEnd !== null) {
+      next.setSelectionRange(preserved.selectionStart, preserved.selectionEnd);
+    }
+    return;
+  }
+  next.focus({ preventScroll: true });
+}
+
 const appResourcePolling = createAppResourcePolling({
   getClient: () => clientRef,
   isRuntimeTauri: () => state.runtimeMode === "tauri",
@@ -1547,6 +1647,7 @@ function stopTtsPlaybackLocal(): void {
     ttsActivePlaybackResolve = null;
     resolve();
   }
+  clearAvatarPhonemeTimeline();
   releaseTtsAudioUrl();
   if (chatTtsStreamFinalizeTimerId !== null) {
     window.clearTimeout(chatTtsStreamFinalizeTimerId);
@@ -1847,7 +1948,7 @@ function enqueueSpeakableChunk(
   }
 }
 
-async function playTtsAudio(audioBytes: unknown, correlationId: string | null): Promise<void> {
+async function playTtsAudio(audioBytes: unknown, correlationId: string | null, spokenText?: string | null): Promise<void> {
   const bytes = decodeTtsAudioBytes(audioBytes);
   if (!bytes.length) {
     throw new Error("No audio bytes returned from TTS.");
@@ -1860,6 +1961,10 @@ async function playTtsAudio(audioBytes: unknown, correlationId: string | null): 
       await audioContext.resume();
     }
     const audioBuffer = await audioContext.decodeAudioData(arrayBuffer.slice(0));
+    const durationMs = audioBuffer.duration * 1000;
+    if (spokenText) {
+      updateAvatarPhonemeTimeline(spokenText, durationMs);
+    }
     const source = audioContext.createBufferSource();
     source.buffer = audioBuffer;
     const analyser = audioContext.createAnalyser();
@@ -1877,6 +1982,7 @@ async function playTtsAudio(audioBytes: unknown, correlationId: string | null): 
         if (pollTimer !== null) window.clearTimeout(pollTimer);
         ttsActiveWebAudioStop = null;
         updateAvatarSpeechState(false, 0);
+        clearAvatarPhonemeTimeline();
         void audioContext.close().catch(() => {});
         resolve();
       };
@@ -2106,7 +2212,8 @@ async function runChatTtsQueue(sendMessage: (text: string) => Promise<void>): Pr
     while (state.chatTtsEnabled) {
       const playbackPromise = playTtsAudio(
         currentSynth.response.audioBytes,
-        currentItem.correlationId
+        currentItem.correlationId,
+        currentItem.text,
       );
       let prefetchedResponsePromise: Promise<ChatTtsSynthResult> | null = null;
       const queuedItem = shiftChatTtsQueueText();
@@ -2596,6 +2703,7 @@ function render(): void {
     apiDraft: state.apiDraft,
     apiEditingId: state.apiEditingId,
     apiMessage: state.apiMessage,
+    apiSaveBusy: state.apiSaveBusy,
     apiProbeBusy: state.apiProbeBusy,
     apiProbeStatus: state.apiProbeStatus,
     apiProbeMessage: state.apiProbeMessage,
@@ -2654,7 +2762,9 @@ function render(): void {
     projectsNameDraft: state.projectsNameDraft,
     projectsModalOpen: state.projectsModalOpen,
     avatar: state.avatar,
-    avatarActiveTab: state.avatarActiveTab
+    avatarActiveTab: state.avatarActiveTab,
+    avatarLipSyncStrength: state.avatarLipSyncStrength,
+    avatarLipSyncJawBlend: state.avatarLipSyncJawBlend
   });
 
   const isChatTab = state.sidebarTab === "chat";
@@ -2685,6 +2795,7 @@ function render(): void {
             apiDraft: state.apiDraft,
             apiEditingId: state.apiEditingId,
             apiMessage: state.apiMessage,
+            apiSaveBusy: state.apiSaveBusy,
             apiProbeBusy: state.apiProbeBusy,
             apiProbeStatus: state.apiProbeStatus,
             apiProbeMessage: state.apiProbeMessage,
@@ -2743,7 +2854,9 @@ function render(): void {
             projectsNameDraft: state.projectsNameDraft,
             projectsModalOpen: state.projectsModalOpen,
             avatar: state.avatar,
-    avatarActiveTab: state.avatarActiveTab
+    avatarActiveTab: state.avatarActiveTab,
+    avatarLipSyncStrength: state.avatarLipSyncStrength,
+    avatarLipSyncJawBlend: state.avatarLipSyncJawBlend
           }, scopeId);
           return {
             paneTitleHtml: renderPanelTitleIcon({
@@ -2795,7 +2908,8 @@ function render(): void {
     state.workspaceTab,
     state.avatar.active && state.avatar.placement === "tools"
       ? renderAvatarPreview(state.avatar, { context: "tools" })
-      : ""
+      : "",
+    state.avatar.maximized ? "content" : "pane"
   );
 
   const sidebarRailHtml = renderSidebarRail(
@@ -2815,7 +2929,8 @@ function render(): void {
     workspacePaneHtml
   });
 
-  disposeAvatarStagesIfLoaded();
+  const preservedAvatarPreview = preserveAvatarPreviewBeforeRender();
+  const preservedEditableFocus = preserveEditableFocusBeforeRender();
   app.innerHTML = composeAppFrameHtml({
     chatPanePercent: state.chatPanePercent,
     portraitWorkspacePercent: state.portraitWorkspacePercent,
@@ -2832,6 +2947,8 @@ function render(): void {
     appBodyHtml,
     bottombarHtml: renderGlobalBottombar(currentBottomStatus())
   });
+  restoreAvatarPreviewAfterRender(preservedAvatarPreview);
+  restoreEditableFocusAfterRender(preservedEditableFocus);
 }
 
 function pushConsoleEntry(
@@ -3547,6 +3664,24 @@ async function refreshApiConnections(): Promise<void> {
   refreshChatModelProfile();
 }
 
+async function reverifyApiConnectionInBackground(id: string, renderAndBind: (sendMessage: (text: string, attachments?: ChatAttachment[]) => Promise<void>) => void, sendMessage: (text: string, attachments?: ChatAttachment[]) => Promise<void>): Promise<void> {
+  if (!clientRef) return;
+  try {
+    const verified = await clientRef.reverifyApiConnection({
+      correlationId: nextCorrelationId(),
+      id
+    });
+    state.apiConnections = state.apiConnections.map((record) =>
+      record.id === id ? verified.connection : record
+    );
+    refreshChatModelProfile();
+    state.apiMessage = verified.connection.statusMessage;
+  } catch (error) {
+    state.apiMessage = `Saved API connection, but background verification failed: ${String(error)}`;
+  }
+  renderAndBind(sendMessage);
+}
+
 function downloadTextFile(fileName: string, text: string, mimeType: string): void {
   const blob = new Blob([text], { type: mimeType });
   const url = URL.createObjectURL(blob);
@@ -3557,6 +3692,52 @@ function downloadTextFile(fileName: string, text: string, mimeType: string): voi
   anchor.click();
   document.body.removeChild(anchor);
   URL.revokeObjectURL(url);
+}
+
+function isTauriRuntimeAvailable(): boolean {
+  return state.runtimeMode === "tauri" || Boolean((window as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__);
+}
+
+async function saveTextFile(
+  fileName: string,
+  text: string,
+  mimeType: string,
+  title = "Save File",
+  filters = [{ name: "JSON", extensions: ["json"] }],
+  defaultPath = fileName
+): Promise<string | null> {
+  if (isTauriRuntimeAvailable()) {
+    try {
+      const { invoke } = await import("@tauri-apps/api/core");
+      const selected = await invoke<string | null>("plugin:dialog|save", {
+        options: {
+          title,
+          defaultPath,
+          filters
+        }
+      });
+      if (!selected) return null;
+      await invoke("write_text_file", { path: selected, contents: text });
+      return selected;
+    } catch (error) {
+      throw new Error(`Native save failed: ${String(error)}`);
+    }
+  }
+
+  downloadTextFile(fileName, text, mimeType);
+  return fileName;
+}
+
+async function apiExportDefaultPath(fileName: string): Promise<string> {
+  if (!clientRef) return fileName;
+  try {
+    const roots = await clientRef.getUserProjectsRoots({ correlationId: nextCorrelationId() });
+    const root = roots.contentRoot.trim();
+    if (!root) return fileName;
+    return `${root.replace(/[\\/]+$/, "")}/${fileName}`;
+  } catch {
+    return fileName;
+  }
 }
 
 function pickTextFile(accept: string): Promise<{ name: string; text: string } | null> {
@@ -3651,6 +3832,12 @@ function normalizePortableApiType(raw: string | null | undefined): ApiConnection
   return "llm";
 }
 
+function portableString(item: unknown, camelName: string, snakeName: string): string {
+  const record = item as Record<string, unknown>;
+  const value = record[camelName] ?? record[snakeName] ?? "";
+  return String(value).trim();
+}
+
 function parsePortableSnapshot(payloadJson: string): ApiConnectionsPortableSnapshot {
   const parsed = JSON.parse(payloadJson) as Partial<ApiConnectionsPortableSnapshot> | ApiConnectionPortableRecord[];
   const rawConnections = Array.isArray(parsed)
@@ -3666,24 +3853,26 @@ function parsePortableSnapshot(payloadJson: string): ApiConnectionsPortableSnaps
     connections: rawConnections
       .map((item) => {
         const normalized: ApiConnectionPortableRecord = {
-          apiType: normalizePortableApiType(item.apiType),
-          apiUrl: String(item.apiUrl || "").trim(),
-          apiKey: String(item.apiKey || "").trim()
+          apiType: normalizePortableApiType(portableString(item, "apiType", "api_type")),
+          apiUrl: portableString(item, "apiUrl", "api_url"),
+          apiKey: portableString(item, "apiKey", "api_key")
         };
-        const id = typeof item.id === "string" ? item.id.trim() : "";
-        const name = typeof item.name === "string" ? item.name.trim() : "";
-        const modelName = typeof item.modelName === "string" ? item.modelName.trim() : "";
-        const apiStandardPath =
-          typeof item.apiStandardPath === "string" ? item.apiStandardPath.trim() : "";
+        const id = portableString(item, "id", "id");
+        const name = portableString(item, "name", "name");
+        const modelName = portableString(item, "modelName", "model_name");
+        const apiStandardPath = portableString(item, "apiStandardPath", "api_standard_path");
         if (id) normalized.id = id;
         if (name) normalized.name = name;
         if (modelName) normalized.modelName = modelName;
         if (apiStandardPath) normalized.apiStandardPath = apiStandardPath;
-        if (typeof item.costPerMonthUsd === "number") normalized.costPerMonthUsd = item.costPerMonthUsd;
-        if (typeof item.createdMs === "number") normalized.createdMs = item.createdMs;
+        const rawItem = item as Record<string, unknown>;
+        const costPerMonthUsd = rawItem.costPerMonthUsd ?? rawItem.cost_per_month_usd;
+        const createdMs = rawItem.createdMs ?? rawItem.created_ms;
+        if (typeof costPerMonthUsd === "number") normalized.costPerMonthUsd = costPerMonthUsd;
+        if (typeof createdMs === "number") normalized.createdMs = createdMs;
         return normalized;
       })
-      .filter((item) => Boolean(item.apiUrl) && Boolean(item.apiKey))
+      .filter((item) => Boolean(item.apiUrl))
   };
 }
 
@@ -3722,6 +3911,36 @@ function toApiConnectionsCsv(snapshot: ApiConnectionsPortableSnapshot): string {
     lines.push(row.join(","));
   }
   return `${lines.join("\n")}\n`;
+}
+
+function confirmUnencryptedApiKeysExport(): boolean {
+  return window.confirm(
+    "This export will contain unencrypted API keys. You are responsible for keeping the exported file secure. Continue?"
+  );
+}
+
+function apiConnectionsMissingKeyCount(snapshot: ApiConnectionsPortableSnapshot): number {
+  return snapshot.connections.filter((connection) => !connection.apiKey.trim()).length;
+}
+
+function assertApiConnectionsExportHasKeys(snapshot: ApiConnectionsPortableSnapshot): void {
+  const missing = snapshot.connections.filter((connection) => !connection.apiKey.trim());
+  if (missing.length > 0) {
+    const names = missing
+      .slice(0, 3)
+      .map((connection) => connection.name || connection.apiUrl || connection.id || "unknown API")
+      .join(", ");
+    throw new Error(
+      `${missing.length} API key${missing.length === 1 ? " is" : "s are"} unavailable; re-enter the key for ${names} before exporting.`
+    );
+  }
+}
+
+function apiConnectionsExportMessage(savedPath: string, missingKeyCount: number): string {
+  if (missingKeyCount > 0) {
+    return `Exported API connections to ${savedPath}. ${missingKeyCount} API key${missingKeyCount === 1 ? " was" : "s were"} unavailable and exported blank.`;
+  }
+  return `Exported API connections to ${savedPath}.`;
 }
 
 function parseCsvLine(line: string): string[] {
@@ -4939,16 +5158,29 @@ syncOverlayScrollbars();
     },
     onApiConnectionsExportJson: async () => {
       if (!clientRef) return;
+      if (!confirmUnencryptedApiKeysExport()) {
+        state.apiMessage = "API connections export cancelled.";
+        renderAndBind(sendMessage);
+        return;
+      }
       try {
         const exported = await clientRef.exportApiConnections({
           correlationId: nextCorrelationId()
         });
-        downloadTextFile(
+        const snapshot = parsePortableSnapshot(exported.payloadJson);
+        assertApiConnectionsExportHasKeys(snapshot);
+        const missingKeyCount = apiConnectionsMissingKeyCount(snapshot);
+        const savedPath = await saveTextFile(
           exported.fileName,
           exported.payloadJson,
-          "application/json;charset=utf-8"
+          "application/json;charset=utf-8",
+          "Save API Connections",
+          [{ name: "JSON", extensions: ["json"] }],
+          await apiExportDefaultPath(exported.fileName)
         );
-        state.apiMessage = `Exported API connections to ${exported.fileName}.`;
+        state.apiMessage = savedPath
+          ? apiConnectionsExportMessage(savedPath, missingKeyCount)
+          : "API connections export cancelled.";
       } catch (error) {
         state.apiMessage = `Failed exporting API connections: ${String(error)}`;
       }
@@ -4956,14 +5188,30 @@ syncOverlayScrollbars();
     },
     onApiConnectionsExportCsv: async () => {
       if (!clientRef) return;
+      if (!confirmUnencryptedApiKeysExport()) {
+        state.apiMessage = "API connections export cancelled.";
+        renderAndBind(sendMessage);
+        return;
+      }
       try {
         const exported = await clientRef.exportApiConnections({
           correlationId: nextCorrelationId()
         });
         const snapshot = parsePortableSnapshot(exported.payloadJson);
+        assertApiConnectionsExportHasKeys(snapshot);
+        const missingKeyCount = apiConnectionsMissingKeyCount(snapshot);
         const csv = toApiConnectionsCsv(snapshot);
-        downloadTextFile("arxell-api-connections.csv", csv, "text/csv;charset=utf-8");
-        state.apiMessage = "Exported API connections to arxell-api-connections.csv.";
+        const savedPath = await saveTextFile(
+          "arxell-api-connections.csv",
+          csv,
+          "text/csv;charset=utf-8",
+          "Save API Connections CSV",
+          [{ name: "CSV", extensions: ["csv"] }],
+          await apiExportDefaultPath("arxell-api-connections.csv")
+        );
+        state.apiMessage = savedPath
+          ? apiConnectionsExportMessage(savedPath, missingKeyCount)
+          : "API connections export cancelled.";
       } catch (error) {
         state.apiMessage = `Failed exporting API connections CSV: ${String(error)}`;
       }
@@ -5041,6 +5289,7 @@ syncOverlayScrollbars();
       state.apiFormOpen = open;
       if (!open) {
         state.apiDraft = defaultApiConnectionDraft();
+        state.apiSaveBusy = false;
         state.apiProbeBusy = false;
         state.apiProbeStatus = null;
         state.apiProbeMessage = null;
@@ -5141,6 +5390,7 @@ syncOverlayScrollbars();
     },
     onApiConnectionSave: async () => {
       if (!clientRef) return;
+      if (state.apiSaveBusy) return;
       const apiUrl = state.apiDraft.apiUrl.trim();
       const apiKey = state.apiDraft.apiKey.trim();
       if (!apiUrl) {
@@ -5159,8 +5409,14 @@ syncOverlayScrollbars();
         }
         costPerMonthUsd = Number.parseFloat(parsed.toFixed(2));
       }
+      state.apiSaveBusy = true;
+      state.apiMessage = state.apiEditingId
+        ? "Saving API connection..."
+        : "Saving new API connection...";
+      renderAndBind(sendMessage);
       try {
         if (state.apiEditingId) {
+          const editingId = state.apiEditingId;
           const includeApiKey =
             Boolean(apiKey) &&
             !(apiKey.includes("*") && /\*{2,}/.test(apiKey));
@@ -5177,18 +5433,15 @@ syncOverlayScrollbars();
             ...(state.apiDraft.apiStandardPath.trim() ? { apiStandardPath: state.apiDraft.apiStandardPath.trim() } : {})
           };
           const updated = await clientRef.updateApiConnection(updateRequest);
-          const verified = await clientRef.reverifyApiConnection({
-            correlationId: nextCorrelationId(),
-            id: updated.connection.id
-          });
           state.apiConnections = state.apiConnections.map((record) =>
-            record.id === state.apiEditingId ? verified.connection : record
+            record.id === editingId ? updated.connection : record
           );
           refreshChatModelProfile();
           state.apiFormOpen = false;
           state.apiEditingId = null;
           state.apiDraft = defaultApiConnectionDraft();
-          state.apiMessage = verified.connection.statusMessage;
+          state.apiMessage = "API connection saved. Verifying in background...";
+          void reverifyApiConnectionInBackground(updated.connection.id, renderAndBind, sendMessage);
         } else {
           // Create new connection
           const createRequest = {
@@ -5207,12 +5460,14 @@ syncOverlayScrollbars();
           state.apiFormOpen = false;
           state.apiEditingId = null;
           state.apiDraft = defaultApiConnectionDraft();
-          state.apiMessage = created.connection.statusMessage;
+          state.apiMessage = "API connection saved. Verifying in background...";
+          void reverifyApiConnectionInBackground(created.connection.id, renderAndBind, sendMessage);
         }
       } catch (error) {
         if (shouldOfferPlaintextFallback(error) && window.confirm(plaintextFallbackWarning())) {
           try {
             if (state.apiEditingId) {
+              const editingId = state.apiEditingId;
               const includeApiKey = Boolean(apiKey) && !(apiKey.includes("*") && /\*{2,}/.test(apiKey));
               const updated = await clientRef.updateApiConnection({
                 correlationId: nextCorrelationId(),
@@ -5226,18 +5481,15 @@ syncOverlayScrollbars();
                 ...(state.apiDraft.apiStandardPath.trim() ? { apiStandardPath: state.apiDraft.apiStandardPath.trim() } : {}),
                 allowPlaintextFallback: true
               });
-              const verified = await clientRef.reverifyApiConnection({
-                correlationId: nextCorrelationId(),
-                id: updated.connection.id
-              });
               state.apiConnections = state.apiConnections.map((record) =>
-                record.id === state.apiEditingId ? verified.connection : record
+                record.id === editingId ? updated.connection : record
               );
               refreshChatModelProfile();
               state.apiFormOpen = false;
               state.apiEditingId = null;
               state.apiDraft = defaultApiConnectionDraft();
-              state.apiMessage = `${verified.connection.statusMessage} Plaintext fallback storage is enabled for this session.`;
+              state.apiMessage = "API connection saved using plaintext fallback storage. Verifying in background...";
+              void reverifyApiConnectionInBackground(updated.connection.id, renderAndBind, sendMessage);
             } else {
               const created = await clientRef.createApiConnection({
                 correlationId: nextCorrelationId(),
@@ -5255,7 +5507,8 @@ syncOverlayScrollbars();
               state.apiFormOpen = false;
               state.apiEditingId = null;
               state.apiDraft = defaultApiConnectionDraft();
-              state.apiMessage = `${created.connection.statusMessage} Plaintext fallback storage is enabled for this session.`;
+              state.apiMessage = "API connection saved using plaintext fallback storage. Verifying in background...";
+              void reverifyApiConnectionInBackground(created.connection.id, renderAndBind, sendMessage);
             }
           } catch (retryError) {
             state.apiMessage = `Failed saving API: ${String(retryError)}`;
@@ -5264,6 +5517,7 @@ syncOverlayScrollbars();
           state.apiMessage = `Failed saving API: ${String(error)}`;
         }
       }
+      state.apiSaveBusy = false;
       renderAndBind(sendMessage);
     },
     onApiConnectionReverify: async (id: string) => {
@@ -5769,6 +6023,9 @@ syncOverlayScrollbars();
           engine
         });
         await refreshTtsState();
+        if (!state.tts.modelPath && !state.tts.availableModelPaths.length) {
+          state.tts.ttsSetupModalOpen = true;
+        }
       } catch (error) {
         state.tts.status = "error";
         state.tts.message = `Failed switching engine: ${formatTtsError(error)}`;
@@ -5901,6 +6158,7 @@ syncOverlayScrollbars();
         });
         state.tts.message = response.message;
         await refreshTtsState();
+        if (state.tts.ready) state.tts.ttsSetupModalOpen = false;
       } catch (error) {
         state.tts.status = "error";
         state.tts.message = `Model download failed: ${formatTtsError(error)}`;
@@ -5931,6 +6189,7 @@ syncOverlayScrollbars();
         });
         state.tts.message = response.message;
         await refreshTtsState();
+        if (state.tts.ready) state.tts.ttsSetupModalOpen = false;
       } catch (error) {
         state.tts.status = "error";
         state.tts.message = `Model download failed: ${formatTtsError(error)}`;
@@ -5939,6 +6198,10 @@ syncOverlayScrollbars();
         state.tts.downloadTotalBytes = null;
         state.tts.downloadPercent = null;
       }
+      renderAndBind(sendMessage);
+    },
+    onTtsSetSetupModalOpen: (open: boolean) => {
+      state.tts.ttsSetupModalOpen = open;
       renderAndBind(sendMessage);
     },
     onTtsSpeakTest: async () => {
@@ -5967,7 +6230,7 @@ syncOverlayScrollbars();
         state.tts.lastBytes = response.audioBytes.length;
         state.tts.lastDurationMs = response.durationMs;
         state.tts.lastSampleRate = response.sampleRate;
-        await playTtsAudio(response.audioBytes, null);
+        await playTtsAudio(response.audioBytes, null, text);
       } catch (error) {
         state.tts.status = "error";
         state.tts.message = `Speak failed: ${formatTtsError(error)}`;
@@ -6332,6 +6595,14 @@ syncOverlayScrollbars();
       const bone = state.avatar.armBones.find((b) => b.key === key);
       if (bone) bone[axis] = value;
       renderAndBind(sendMessage);
+    },
+    onAvatarLipSyncChange: (strength: number | undefined, jawBlend: number | undefined) => {
+      if (strength !== undefined) state.avatarLipSyncStrength = strength;
+      if (jawBlend !== undefined) state.avatarLipSyncJawBlend = jawBlend;
+      avatarRuntimeModule?.setAvatarLipSyncSettings({
+        strength: state.avatarLipSyncStrength,
+        jawBlend: state.avatarLipSyncJawBlend,
+      });
     },
     onProjectCreate: async (name: string) => {
       const trimmed = name.trim();
@@ -7204,6 +7475,7 @@ function currentPrimaryPanelRenderState() {
     apiDraft: state.apiDraft,
     apiEditingId: state.apiEditingId,
     apiMessage: state.apiMessage,
+    apiSaveBusy: state.apiSaveBusy,
     apiProbeBusy: state.apiProbeBusy,
     apiProbeStatus: state.apiProbeStatus,
     apiProbeMessage: state.apiProbeMessage,
@@ -7262,7 +7534,9 @@ function currentPrimaryPanelRenderState() {
     projectsNameDraft: state.projectsNameDraft,
     projectsModalOpen: state.projectsModalOpen,
     avatar: state.avatar,
-    avatarActiveTab: state.avatarActiveTab
+    avatarActiveTab: state.avatarActiveTab,
+    avatarLipSyncStrength: state.avatarLipSyncStrength,
+    avatarLipSyncJawBlend: state.avatarLipSyncJawBlend
   };
 }
 
@@ -7445,6 +7719,9 @@ function attachSidebarInteractions(sendMessage: (text: string) => Promise<void>)
       if (nextTab === "tts") {
         try {
           await refreshTtsState();
+          if (!state.tts.modelPath && !state.tts.availableModelPaths.length && !state.tts.ttsSetupModalOpen) {
+            state.tts.ttsSetupModalOpen = true;
+          }
         } catch (error) {
           state.tts.status = "error";
           state.tts.message = `TTS refresh failed: ${String(error)}`;

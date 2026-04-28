@@ -1,6 +1,6 @@
 # macOS Build Setup Guide
 
-This guide walks through setting up the Arxell Lite build environment on macOS for building the Tauri desktop application.
+This guide walks through setting up the Arxell build environment on macOS for building the Tauri desktop application.
 
 ## Prerequisites
 
@@ -94,8 +94,8 @@ npm --version
 cd ~/Projects
 
 # Clone the repository (replace with your actual repo URL)
-git clone <repository-url> arxell-lite
-cd arxell-lite
+git clone <repository-url> arxell
+cd arxell
 
 # Initialize and update submodules
 git submodule update --init --recursive
@@ -160,12 +160,12 @@ cargo tauri build
 
 The built application will be located at:
 ```
-src-tauri/target/release/bundle/dmg/arxell-lite_<version>_aarch64.dmg
+src-tauri/target/release/bundle/dmg/Arxell_<version>_aarch64.dmg
 ```
 
 or for Intel Macs:
 ```
-src-tauri/target/release/bundle/dmg/arxell-lite_<version>_x64.dmg
+src-tauri/target/release/bundle/dmg/Arxell_<version>_x64.dmg
 ```
 
 ## Troubleshooting

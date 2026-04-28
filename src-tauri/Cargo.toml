@@ -1,7 +1,10 @@
 [package]
-name = "arxell-lite"
+name = "arxell"
 version = "0.2.1"
 edition = "2021"
+
+[lib]
+name = "arxell_lite"
 
 [features]
 default = []

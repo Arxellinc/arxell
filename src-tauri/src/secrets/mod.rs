@@ -1,10 +1,11 @@
+use crate::app_paths;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::RwLock;
 
-const SERVICE_NAME: &str = "com.arxell.lite";
+const SERVICE_NAME: &str = app_paths::APP_IDENTIFIER;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct SecretKey {
@@ -190,7 +191,10 @@ impl AppSecretStore {
 impl SecretStore for AppSecretStore {
     fn set_secret(&self, key: &SecretKey, value: &SecretValue) -> Result<(), SecretStoreError> {
         if self.set_os_secret(key, value).is_ok() {
-            return Ok(());
+            if matches!(self.get_os_secret(key), Ok(Some(stored)) if stored.as_str() == value.as_str())
+            {
+                return Ok(());
+            }
         }
         if self.plaintext_fallback_allowed() {
             return self.set_plaintext_secret(key, value);
@@ -201,10 +205,8 @@ impl SecretStore for AppSecretStore {
     fn get_secret(&self, key: &SecretKey) -> Result<Option<SecretValue>, SecretStoreError> {
         match self.get_os_secret(key) {
             Ok(Some(value)) => Ok(Some(value)),
-            Ok(None) if self.plaintext_fallback_allowed() => self.get_plaintext_secret(key),
-            Ok(None) => Ok(None),
-            Err(_) if self.plaintext_fallback_allowed() => self.get_plaintext_secret(key),
-            Err(_) => Ok(None),
+            Ok(None) => self.get_plaintext_secret(key),
+            Err(_) => self.get_plaintext_secret(key),
         }
     }
 

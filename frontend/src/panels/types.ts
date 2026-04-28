@@ -220,6 +220,7 @@ export interface TtsState {
   downloadReceivedBytes: number | null;
   downloadTotalBytes: number | null;
   downloadPercent: number | null;
+  ttsSetupModalOpen: boolean;
 }
 
 export interface ConsoleEntry {
@@ -262,6 +263,7 @@ export interface PrimaryPanelRenderState {
   apiDraft: ApiConnectionDraft;
   apiEditingId: string | null;
   apiMessage: string | null;
+  apiSaveBusy: boolean;
   apiProbeBusy: boolean;
   apiProbeStatus: "verified" | "warning" | "pending" | null;
   apiProbeMessage: string | null;
@@ -349,6 +351,8 @@ export interface PrimaryPanelRenderState {
   projectsModalOpen: boolean;
   avatar: AvatarState;
   avatarActiveTab: "appearance" | "animation";
+  avatarLipSyncStrength: number;
+  avatarLipSyncJawBlend: number;
 }
 
 export interface PrimaryPanelDefinition {
@@ -443,6 +447,7 @@ export interface PrimaryPanelBindings {
   onTtsBrowseSecondaryPath: () => Promise<void>;
   onTtsDownloadModel: () => Promise<void>;
   onTtsDownloadModelWithUrl: (url: string) => Promise<void>;
+  onTtsSetSetupModalOpen: (open: boolean) => void;
   onTtsSpeakTest: () => Promise<void>;
   onTtsStop: () => Promise<void>;
   onTtsSelfTest: () => Promise<void>;
@@ -488,6 +493,7 @@ export interface PrimaryPanelBindings {
   onAvatarSetActiveTab: (tab: "appearance" | "animation") => Promise<void>;
   onAvatarMorphChange: (name: string, value: number) => Promise<void>;
   onAvatarBoneChange: (key: string, axis: "x" | "y" | "z", value: number) => Promise<void>;
+  onAvatarLipSyncChange: (strength: number | undefined, jawBlend: number | undefined) => void;
   onProjectCreate: (name: string) => Promise<void>;
   onProjectSelect: (id: string | null) => void;
   onProjectDelete: (id: string) => Promise<void>;

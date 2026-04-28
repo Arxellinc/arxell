@@ -106,7 +106,7 @@ export function renderApisBody(state: PrimaryPanelRenderState): string {
         </label>
         <div class="api-form-actions">
           <button type="button" class="tool-action-btn" id="apiCancelBtn">Cancel</button>
-          <button type="button" class="tool-action-btn" id="apiSaveBtn">Save + Verify</button>
+          <button type="button" class="tool-action-btn" id="apiSaveBtn" ${state.apiSaveBusy ? "disabled" : ""}>${state.apiSaveBusy ? "Saving..." : "Save"}</button>
         </div>
       </div>
     `
@@ -125,15 +125,15 @@ export function renderApisBody(state: PrimaryPanelRenderState): string {
         ${rows}
       </div>
       ${
-        state.apiMessage
-          ? `<div class="llama-runtime-console"><div class="llama-runtime-line">${escapeHtml(state.apiMessage)}</div></div>`
-          : ""
-      }
-      ${formHtml}
-      ${
         state.apiFormOpen
           ? ""
           : '<div class="api-add-wrap"><button type="button" class="tool-action-btn" id="apiAddBtn">+ add new API</button></div>'
+      }
+      ${formHtml}
+      ${
+        state.apiMessage
+          ? `<div class="llama-runtime-console"><div class="llama-runtime-line">${escapeHtml(state.apiMessage)}</div></div>`
+          : ""
       }
     </div>
   `;
@@ -250,6 +250,9 @@ export function bindApisPanel(bindings: PrimaryPanelBindings): void {
   const saveBtn = document.querySelector<HTMLButtonElement>("#apiSaveBtn");
   if (saveBtn) {
     saveBtn.onclick = async () => {
+      if (saveBtn.disabled) return;
+      saveBtn.disabled = true;
+      saveBtn.textContent = "Saving...";
       await bindings.onApiConnectionSave();
     };
   }
@@ -303,12 +306,14 @@ function typeLabel(apiType: ApiConnectionType): string {
 
 function statusClass(status: ApiConnectionStatus, statusMessage: string): string {
   if (status === "verified") return "is-verified";
+  if (status === "pending") return "is-pending";
   if (isExhaustedLimitWarning(status, statusMessage)) return "is-limit";
   return "is-warning";
 }
 
 function statusIcon(status: ApiConnectionStatus, statusMessage: string): IconName {
   if (status === "verified") return "circle-check-big";
+  if (status === "pending") return "calendar-clock";
   if (isExhaustedLimitWarning(status, statusMessage)) return "octagon-pause";
   return "triangle-alert";
 }

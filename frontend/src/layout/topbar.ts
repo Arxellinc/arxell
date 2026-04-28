@@ -25,7 +25,7 @@ export function renderGlobalTopbar(
   return `
     <header class="global-topbar">
       <div class="topbar-drag-region" data-tauri-drag-region>
-        <div class="runtime-title">${iconHtml(APP_ICON.brand, { size: 16, tone: "dark" })}<span>Arxell Lite ${appVersion}</span></div>
+        <div class="runtime-title">${iconHtml(APP_ICON.brand, { size: 16, tone: "dark" })}<span>Arxell ${appVersion}</span></div>
       </div>
       <div class="topbar-right">
         <button type="button" class="topbar-icon-btn display-mode-btn" id="displayModeToggle" data-title="${displayModeLabel}" title="${displayModeLabel}" aria-label="${displayModeLabel}">

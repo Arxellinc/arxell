@@ -1,3 +1,4 @@
+use crate::app_paths;
 use crate::contracts::{
     EventSeverity, EventStage, LlamaRuntimeEngine, LlamaRuntimeInstallResponse,
     LlamaRuntimePrerequisite, LlamaRuntimeStartRequest, LlamaRuntimeStartResponse,
@@ -1016,7 +1017,7 @@ fn is_runtime_support_file(name: &str) -> bool {
 fn download_engine_binary(engine_id: &str) -> Result<PathBuf, String> {
     let release: GithubRelease = http_client(10)?
         .get("https://api.github.com/repos/ggml-org/llama.cpp/releases/latest")
-        .header("User-Agent", "arxell-lite-runtime-installer")
+        .header("User-Agent", app_paths::APP_USER_AGENT)
         .send()
         .map_err(|e| {
             format!(
@@ -1045,7 +1046,7 @@ fn download_engine_binary(engine_id: &str) -> Result<PathBuf, String> {
     })?;
 
     let download_root = std::env::temp_dir()
-        .join("arxell-lite")
+        .join("arxell")
         .join("llama-runtime-downloads")
         .join(engine_id)
         .join(
@@ -1059,7 +1060,7 @@ fn download_engine_binary(engine_id: &str) -> Result<PathBuf, String> {
     let archive_path = download_root.join(asset.name.as_str());
     let mut response = http_client(90)?
         .get(asset.browser_download_url.as_str())
-        .header("User-Agent", "arxell-lite-runtime-installer")
+        .header("User-Agent", app_paths::APP_USER_AGENT)
         .send()
         .map_err(|e| format!("failed downloading runtime asset {}: {e}", asset.name))?
         .error_for_status()

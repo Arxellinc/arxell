@@ -1,3 +1,4 @@
+use crate::app_paths;
 use crate::contracts::{
     ApiConnectionAgentRecord, ApiConnectionRecord, ApiConnectionStatus, ApiConnectionType,
 };
@@ -109,10 +110,10 @@ impl ApiRegistryService {
             .parent()
             .map(Path::to_path_buf)
             .unwrap_or_else(|| {
-                default_app_data_root().unwrap_or_else(|| std::env::temp_dir().join("arxell-lite"))
+                default_app_data_root().unwrap_or_else(|| std::env::temp_dir().join("arxell"))
             });
         let secret_store = Arc::new(AppSecretStore::new(app_data_root));
-        let snapshot = read_registry_snapshot_with_migration(&registry_path);
+        let snapshot = read_registry_snapshot(&registry_path);
         let mut connections = HashMap::new();
         let mut migrated_any = false;
         for mut record in snapshot.connections {
@@ -186,23 +187,6 @@ impl ApiRegistryService {
         let model_name = normalize_optional(input.model_name.as_deref());
         let cost = normalize_cost(input.cost_per_month_usd)?;
         let api_standard_path = normalize_optional(input.api_standard_path.as_deref());
-        let (status, status_message) = verify_connection(
-            input.api_type.clone(),
-            api_url.as_str(),
-            Some(api_key.as_str()),
-            api_standard_path.as_deref(),
-            model_name.as_deref(),
-        )
-        .await;
-        let available_models = discover_available_models(
-            input.api_type.clone(),
-            api_url.as_str(),
-            api_key.as_str(),
-            api_standard_path.as_deref(),
-        )
-        .await;
-        let resolved_model_name = model_name.or_else(|| available_models.first().cloned());
-
         if input.allow_plaintext_fallback {
             self.secret_store.acknowledge_plaintext_fallback();
         }
@@ -215,14 +199,14 @@ impl ApiRegistryService {
             api_url,
             name,
             api_key: None,
-            model_name: resolved_model_name,
+            model_name,
             cost_per_month_usd: cost,
-            status,
-            status_message,
-            last_checked_ms: Some(now_ms()),
+            status: ApiConnectionStatus::Pending,
+            status_message: "Saved. Verification pending.".to_string(),
+            last_checked_ms: None,
             created_ms: now_ms(),
             api_standard_path,
-            available_models,
+            available_models: Vec::new(),
         };
 
         {
@@ -322,6 +306,9 @@ impl ApiRegistryService {
         if let Some(api_standard_path) = input.api_standard_path {
             existing.api_standard_path = normalize_optional(Some(api_standard_path.as_str()));
         }
+        existing.status = ApiConnectionStatus::Pending;
+        existing.status_message = "Saved. Verification pending.".to_string();
+        existing.last_checked_ms = None;
 
         // Persist the updated record
         {
@@ -348,18 +335,20 @@ impl ApiRegistryService {
         let connections = self.connections.read().expect("api registry lock poisoned");
         let mut portable: Vec<_> = connections
             .values()
-            .map(|record| ApiConnectionPortableRecord {
-                id: Some(record.id.clone()),
-                api_type: record.api_type.clone(),
-                api_url: record.api_url.clone(),
-                name: record.name.clone(),
-                api_key: self.record_api_key(record).unwrap_or_default(),
-                model_name: record.model_name.clone(),
-                cost_per_month_usd: record.cost_per_month_usd,
-                api_standard_path: record.api_standard_path.clone(),
-                created_ms: Some(record.created_ms),
+            .map(|record| {
+                Ok(ApiConnectionPortableRecord {
+                    id: Some(record.id.clone()),
+                    api_type: record.api_type.clone(),
+                    api_url: record.api_url.clone(),
+                    name: record.name.clone(),
+                    api_key: self.record_api_key(record)?,
+                    model_name: record.model_name.clone(),
+                    cost_per_month_usd: record.cost_per_month_usd,
+                    api_standard_path: record.api_standard_path.clone(),
+                    created_ms: Some(record.created_ms),
+                })
             })
-            .collect();
+            .collect::<Result<Vec<_>, String>>()?;
         portable.sort_by(|a, b| {
             b.created_ms
                 .unwrap_or(0)
@@ -664,7 +653,7 @@ fn to_public_record(record: &ApiConnectionSecretRecord) -> ApiConnectionRecord {
         api_url: record.api_url.clone(),
         name: record.name.clone(),
         api_key_masked: if api_key_prefix.is_empty() {
-            "stored securely".to_string()
+            "********".to_string()
         } else {
             mask_api_key(record.api_key.as_deref().unwrap_or_default())
         },
@@ -788,7 +777,7 @@ async fn verify_connection(
         ApiConnectionType::Search => with_auth_headers(
             client
                 .post(&verify_url)
-                .header("User-Agent", "arxell-lite/1.0")
+                .header("User-Agent", app_paths::APP_USER_AGENT)
                 .header("Content-Type", "application/json"),
             api_key,
         )
@@ -818,7 +807,7 @@ async fn verify_connection(
             with_auth_headers(
                 client
                     .post(&verify_url)
-                    .header("User-Agent", "arxell-lite/1.0")
+                    .header("User-Agent", app_paths::APP_USER_AGENT)
                     .header("Accept-Language", "en-US,en")
                     .header("Content-Type", "application/json"),
                 api_key,
@@ -844,17 +833,15 @@ async fn verify_connection(
                     ),
                 )
             } else {
+                let model_list_reachable = if matches!(api_type, ApiConnectionType::Llm) {
+                    probe_openai_models(&client, api_url, api_key, api_standard_path)
+                        .await
+                        .is_some()
+                } else {
+                    false
+                };
                 if status_code == 429 {
-                    let looks_exhausted =
-                        looks_like_exhausted_rate_limit(&headers, body_text.as_str());
-                    let model_list_reachable = if matches!(api_type, ApiConnectionType::Llm) {
-                        probe_openai_models(&client, api_url, api_key, api_standard_path)
-                            .await
-                            .is_some()
-                    } else {
-                        false
-                    };
-                    if looks_exhausted {
+                    if looks_like_exhausted_rate_limit(&headers, body_text.as_str()) {
                         (
                             ApiConnectionStatus::Warning,
                             format!(
@@ -879,6 +866,14 @@ async fn verify_connection(
                             ),
                         )
                     }
+                } else if model_list_reachable {
+                    (
+                        ApiConnectionStatus::Verified,
+                        format!(
+                            "Connection reachable at {}. Chat verify returned HTTP {}, but models/auth probe succeeded.",
+                            verify_url, status_code
+                        ),
+                    )
                 } else {
                     (
                         ApiConnectionStatus::Warning,
@@ -961,7 +956,7 @@ async fn probe_openai_models(
 
     for models_url in candidates {
         let request = with_auth_headers(client.get(models_url.as_str()), api_key)
-            .header("User-Agent", "arxell-lite/1.0")
+            .header("User-Agent", app_paths::APP_USER_AGENT)
             .header("Accept", "application/json");
         let Ok(response) = request.send().await else {
             continue;
@@ -1166,7 +1161,7 @@ fn default_registry_path() -> PathBuf {
             return PathBuf::from(trimmed);
         }
     }
-    let root = default_app_data_root().unwrap_or_else(|| std::env::temp_dir().join("arxell-lite"));
+    let root = default_app_data_root().unwrap_or_else(|| std::env::temp_dir().join("arxell"));
     root.join("api-connections.json")
 }
 
@@ -1219,63 +1214,7 @@ fn parse_portable_import(payload_json: &str) -> Result<Vec<ApiConnectionPortable
 }
 
 fn default_app_data_root() -> Option<PathBuf> {
-    if let Ok(raw) = std::env::var("XDG_DATA_HOME") {
-        let trimmed = raw.trim();
-        if !trimmed.is_empty() {
-            return Some(PathBuf::from(trimmed).join("com.arxell.lite"));
-        }
-    }
-    if let Ok(raw) = std::env::var("APPDATA") {
-        let trimmed = raw.trim();
-        if !trimmed.is_empty() {
-            return Some(PathBuf::from(trimmed).join("com.arxell.lite"));
-        }
-    }
-    if let Ok(raw) = std::env::var("HOME") {
-        let home = PathBuf::from(raw.trim());
-        #[cfg(target_os = "macos")]
-        {
-            return Some(
-                home.join("Library")
-                    .join("Application Support")
-                    .join("com.arxell.lite"),
-            );
-        }
-        #[cfg(not(target_os = "macos"))]
-        {
-            return Some(home.join(".local").join("share").join("com.arxell.lite"));
-        }
-    }
-    None
-}
-
-fn legacy_temp_registry_path() -> PathBuf {
-    std::env::temp_dir()
-        .join("arxell-lite")
-        .join("api-connections.json")
-}
-
-fn read_registry_snapshot_with_migration(path: &Path) -> ApiRegistrySnapshot {
-    let destination = path.to_path_buf();
-    let snapshot = read_registry_snapshot(&destination);
-    if !snapshot.connections.is_empty() || destination.exists() {
-        return snapshot;
-    }
-    let legacy = legacy_temp_registry_path();
-    if legacy == destination {
-        return snapshot;
-    }
-    let legacy_snapshot = read_registry_snapshot(&legacy);
-    if legacy_snapshot.connections.is_empty() {
-        return snapshot;
-    }
-    if let Some(parent) = destination.parent() {
-        let _ = fs::create_dir_all(parent);
-    }
-    if let Ok(payload) = serde_json::to_string_pretty(&legacy_snapshot) {
-        let _ = fs::write(&destination, format!("{payload}\n"));
-    }
-    legacy_snapshot
+    Some(app_paths::app_data_dir())
 }
 
 fn now_ms() -> i64 {

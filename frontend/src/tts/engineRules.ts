@@ -24,14 +24,19 @@ export interface TtsEngineUiConfig {
 
 export const KOKORO_BUNDLE_OPTIONS: readonly KokoroBundleOption[] = [
   {
-    label: "v1.1 Multi-Lang (~109 MB)",
+    label: "v1.1 Multi-Lang int8",
     url: "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/kokoro-int8-multi-lang-v1_1.tar.bz2",
-    sizeLabel: "109 MB"
+    sizeLabel: "~109 MB"
   },
   {
-    label: "v0.19 English (~128 MB)",
+    label: "v1.1 Multi-Lang fp32",
+    url: "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/kokoro-multi-lang-v1_1.tar.bz2",
+    sizeLabel: "~310 MB"
+  },
+  {
+    label: "v0.19 English int8",
     url: "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/kokoro-int8-en-v0_19.tar.bz2",
-    sizeLabel: "128 MB"
+    sizeLabel: "~128 MB"
   }
 ] as const;
 

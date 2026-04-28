@@ -1,6 +1,7 @@
 pub mod agent_tools;
 pub mod api_registry;
 pub mod app;
+pub mod app_paths;
 pub mod contracts;
 pub mod ipc;
 pub mod memory;

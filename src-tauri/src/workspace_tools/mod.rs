@@ -1,3 +1,4 @@
+use crate::app_paths;
 use crate::contracts::WorkspaceToolRecord;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -745,47 +746,7 @@ fn default_plugins_root() -> PathBuf {
 }
 
 fn default_app_state_root() -> PathBuf {
-    #[cfg(target_os = "windows")]
-    {
-        if let Ok(appdata) = std::env::var("APPDATA") {
-            let trimmed = appdata.trim();
-            if !trimmed.is_empty() {
-                return PathBuf::from(trimmed).join("arxell-lite");
-            }
-        }
-    }
-
-    #[cfg(target_os = "macos")]
-    {
-        if let Ok(home) = std::env::var("HOME") {
-            let trimmed = home.trim();
-            if !trimmed.is_empty() {
-                return PathBuf::from(trimmed)
-                    .join("Library")
-                    .join("Application Support")
-                    .join("arxell-lite");
-            }
-        }
-    }
-
-    if let Ok(xdg_state_home) = std::env::var("XDG_STATE_HOME") {
-        let trimmed = xdg_state_home.trim();
-        if !trimmed.is_empty() {
-            return PathBuf::from(trimmed).join("arxell-lite");
-        }
-    }
-
-    if let Ok(home) = std::env::var("HOME") {
-        let trimmed = home.trim();
-        if !trimmed.is_empty() {
-            return PathBuf::from(trimmed)
-                .join(".local")
-                .join("state")
-                .join("arxell-lite");
-        }
-    }
-
-    std::env::temp_dir().join("arxell-lite")
+    app_paths::app_data_dir()
 }
 
 fn read_registry_snapshot(path: &PathBuf) -> ToolRegistrySnapshot {

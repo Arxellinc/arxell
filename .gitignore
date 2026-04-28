@@ -33,6 +33,8 @@ pnpm-debug.log*
 .env.*
 !.env.example
 !.env.local.example
+src-tauri/arxell-api-connections.csv
+src-tauri/arxell-api-connections.json
 
 # OS/editor artifacts
 .DS_Store
