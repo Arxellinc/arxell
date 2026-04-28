@@ -1,4 +1,5 @@
 import { NOTEPAD_DATA_ATTR } from "../ui/constants";
+import type { NotepadToolStateSlice } from "./state";
 import {
   computeNotepadFindStats,
   copyText,
@@ -15,22 +16,7 @@ import {
   type NotepadDataAttrs
 } from "./shared";
 
-interface NotepadSlice {
-  notepadOpenTabs: string[];
-  notepadActiveTabId: string | null;
-  notepadPathByTabId: Record<string, string | null>;
-  notepadTitleByTabId: Record<string, string>;
-  notepadContentByTabId: Record<string, string>;
-  notepadSavedContentByTabId: Record<string, string>;
-  notepadDirtyByTabId: Record<string, boolean>;
-  notepadReadOnlyByTabId: Record<string, boolean>;
-  notepadFindOpen: boolean;
-  notepadFindQuery: string;
-  notepadReplaceQuery: string;
-  notepadFindCaseSensitive: boolean;
-  notepadLineWrap: boolean;
-  notepadError: string | null;
-}
+type NotepadSlice = NotepadToolStateSlice;
 
 interface NotepadDeps {
   ensureNotepadReady: () => Promise<void>;

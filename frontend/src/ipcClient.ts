@@ -3,8 +3,6 @@ import type {
   ApiConnectionCreateResponse,
   ApiConnectionDeleteRequest,
   ApiConnectionDeleteResponse,
-  ApiConnectionGetSecretRequest,
-  ApiConnectionGetSecretResponse,
   ApiConnectionProbeRequest,
   ApiConnectionProbeResponse,
   ApiConnectionRecord,
@@ -218,9 +216,6 @@ export interface ChatIpcClient {
     request: ApiConnectionReverifyRequest
   ): Promise<ApiConnectionReverifyResponse>;
   deleteApiConnection(request: ApiConnectionDeleteRequest): Promise<ApiConnectionDeleteResponse>;
-  getApiConnectionSecret(
-    request: ApiConnectionGetSecretRequest
-  ): Promise<ApiConnectionGetSecretResponse>;
   getLlamaRuntimeStatus(request: LlamaRuntimeStatusRequest): Promise<LlamaRuntimeStatusResponse>;
   installLlamaRuntimeEngine(
     request: LlamaRuntimeInstallRequest
@@ -559,14 +554,6 @@ class TauriChatIpcClient implements ChatIpcClient {
 
   deleteApiConnection(request: ApiConnectionDeleteRequest): Promise<ApiConnectionDeleteResponse> {
     return this.invokeFn<ApiConnectionDeleteResponse>("cmd_api_connection_delete", { request });
-  }
-
-  getApiConnectionSecret(
-    request: ApiConnectionGetSecretRequest
-  ): Promise<ApiConnectionGetSecretResponse> {
-    return this.invokeFn<ApiConnectionGetSecretResponse>("cmd_api_connection_get_secret", {
-      request
-    });
   }
 
   getLlamaRuntimeStatus(
@@ -1745,20 +1732,6 @@ export class MockChatIpcClient implements ChatIpcClient {
       correlationId: request.correlationId,
       id: request.id,
       deleted
-    };
-  }
-
-  async getApiConnectionSecret(
-    request: ApiConnectionGetSecretRequest
-  ): Promise<ApiConnectionGetSecretResponse> {
-    const secret = this.apiConnectionSecrets.get(request.id);
-    if (!secret) {
-      throw new Error(`API connection secret not found: ${request.id}`);
-    }
-    return {
-      correlationId: request.correlationId,
-      id: request.id,
-      apiKey: secret
     };
   }
 

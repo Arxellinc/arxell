@@ -11,6 +11,7 @@ import {
 import { renderChartToolActions, renderChartToolBody } from "../chart";
 import { renderTasksToolActions, renderTasksToolBody } from "../tasks";
 import type { TaskFolder, TaskSortDirection, TaskSortKey, TaskRecord } from "../tasks/state";
+import type { ProjectRecord } from "../../projectsStore";
 import { renderWebToolActions, renderWebToolBody } from "../webSearch";
 import type { WebSearchHistoryItem, WebTabState } from "../webSearch/state";
 import { renderOpenCodeToolActions, renderOpenCodeToolBody, renderOpenCodeInstallModal, renderOpenCodeSpawnModal } from "../opencode";
@@ -89,6 +90,7 @@ export interface WorkspaceToolViewInput {
   tasksSortDirection: TaskSortDirection;
   tasksDetailsCollapsed: boolean;
   tasksJsonDraft: string;
+  projectsById: Record<string, ProjectRecord>;
   flowRuns: Array<{ runId: string }>;
   flowActiveRunId: string | null;
   flowMode: "plan" | "build";
@@ -362,7 +364,8 @@ export function buildWorkspaceToolViews(input: WorkspaceToolViewInput): Record<s
         sortKey: input.tasksSortKey,
         sortDirection: input.tasksSortDirection,
         detailsCollapsed: input.tasksDetailsCollapsed,
-        jsonDraft: input.tasksJsonDraft
+        jsonDraft: input.tasksJsonDraft,
+        projectsById: input.projectsById
       }),
       bodyHtml: renderTasksToolBody({
         tasksById: input.tasksById,
@@ -371,7 +374,8 @@ export function buildWorkspaceToolViews(input: WorkspaceToolViewInput): Record<s
         sortKey: input.tasksSortKey,
         sortDirection: input.tasksSortDirection,
         detailsCollapsed: input.tasksDetailsCollapsed,
-        jsonDraft: input.tasksJsonDraft
+        jsonDraft: input.tasksJsonDraft,
+        projectsById: input.projectsById
       })
     },
     memory: {
@@ -413,7 +417,7 @@ export function buildWorkspaceToolViews(input: WorkspaceToolViewInput): Record<s
     },
     looper: {
       actionsHtml: renderLooperToolActions(input.looperState),
-      bodyHtml: renderLooperToolBody(input.looperState)
+      bodyHtml: renderLooperToolBody(input.looperState, input.projectsById)
     },
     notepad: {
       actionsHtml: renderNotepadToolActions({

@@ -295,7 +295,11 @@ impl SheetsService {
                 cells,
                 used_range,
             };
-            let mut data = sheets_jsonl::sheet_state_to_jsonl(&sheet_state, &sheet_state.name, &workbook.styles);
+            let mut data = sheets_jsonl::sheet_state_to_jsonl(
+                &sheet_state,
+                &sheet_state.name,
+                &workbook.styles,
+            );
             data.header.ai_model_id = Some(workbook.ai_model_id.clone());
             let content = sheets_jsonl::serialize_jsonl(&data)?;
             if let Some(parent) = target.parent() {
@@ -1000,9 +1004,10 @@ impl SheetsService {
         let workbook = guard.as_mut().ok_or_else(|| {
             sheets_error(SheetsErrorCode::MissingOpenWorkbook, "no sheet is open")
         })?;
-        let entry = workbook.undo_stack.pop().ok_or_else(|| {
-            sheets_error(SheetsErrorCode::InvalidRange, "nothing to undo")
-        })?;
+        let entry = workbook
+            .undo_stack
+            .pop()
+            .ok_or_else(|| sheets_error(SheetsErrorCode::InvalidRange, "nothing to undo"))?;
         workbook.redo_stack.push(history_entry(workbook));
         restore_history_entry(workbook, entry);
         workbook.revision += 1;
@@ -1015,9 +1020,10 @@ impl SheetsService {
         let workbook = guard.as_mut().ok_or_else(|| {
             sheets_error(SheetsErrorCode::MissingOpenWorkbook, "no sheet is open")
         })?;
-        let entry = workbook.redo_stack.pop().ok_or_else(|| {
-            sheets_error(SheetsErrorCode::InvalidRange, "nothing to redo")
-        })?;
+        let entry = workbook
+            .redo_stack
+            .pop()
+            .ok_or_else(|| sheets_error(SheetsErrorCode::InvalidRange, "nothing to redo"))?;
         workbook.undo_stack.push(history_entry(workbook));
         restore_history_entry(workbook, entry);
         workbook.revision += 1;
@@ -1057,10 +1063,13 @@ impl SheetsService {
                 for row in start_row..=end_row {
                     for col in start_col..=end_col {
                         let coord = CellCoord { row, col };
-                        let Some(cell) = sheet.cells.get_mut(&coord) else { continue; };
-                        let next_style_id = merge_cell_style(&mut workbook.styles, cell.style_id, |style| {
-                            style.f = pattern.map(ToOwned::to_owned);
-                        });
+                        let Some(cell) = sheet.cells.get_mut(&coord) else {
+                            continue;
+                        };
+                        let next_style_id =
+                            merge_cell_style(&mut workbook.styles, cell.style_id, |style| {
+                                style.f = pattern.map(ToOwned::to_owned);
+                            });
                         if cell.style_id != next_style_id {
                             cell.style_id = next_style_id;
                             changed.insert(coord);
@@ -1072,7 +1081,11 @@ impl SheetsService {
         )?;
         let workbook_ref = guard.as_ref().expect("workbook present after mutation");
         Ok(WriteRangeResult {
-            revision: if dirty { workbook_ref.revision } else { before_revision },
+            revision: if dirty {
+                workbook_ref.revision
+            } else {
+                before_revision
+            },
             updated_range: Some(requested_range),
             dirty: workbook_ref.dirty,
         })
@@ -1109,30 +1122,35 @@ impl SheetsService {
                 let has_unmarked = (start_row..=end_row).any(|row| {
                     (start_col..=end_col).any(|col| {
                         let coord = CellCoord { row, col };
-                        sheet.cells.get(&coord).map(|cell| {
-                            !cell_has_mark(cell, &workbook.styles, mark)
-                        }).unwrap_or(false)
+                        sheet
+                            .cells
+                            .get(&coord)
+                            .map(|cell| !cell_has_mark(cell, &workbook.styles, mark))
+                            .unwrap_or(false)
                     })
                 });
                 let mut changed = BTreeSet::new();
                 for row in start_row..=end_row {
                     for col in start_col..=end_col {
                         let coord = CellCoord { row, col };
-                        let Some(cell) = sheet.cells.get_mut(&coord) else { continue; };
-                        let next_style_id = merge_cell_style(&mut workbook.styles, cell.style_id, |style| {
-                            let marks = style.m.get_or_insert_with(Vec::new);
-                            if has_unmarked {
-                                if !marks.iter().any(|entry| entry == mark) {
-                                    marks.push(mark.to_string());
-                                    marks.sort();
+                        let Some(cell) = sheet.cells.get_mut(&coord) else {
+                            continue;
+                        };
+                        let next_style_id =
+                            merge_cell_style(&mut workbook.styles, cell.style_id, |style| {
+                                let marks = style.m.get_or_insert_with(Vec::new);
+                                if has_unmarked {
+                                    if !marks.iter().any(|entry| entry == mark) {
+                                        marks.push(mark.to_string());
+                                        marks.sort();
+                                    }
+                                } else {
+                                    marks.retain(|entry| entry != mark);
+                                    if marks.is_empty() {
+                                        style.m = None;
+                                    }
                                 }
-                            } else {
-                                marks.retain(|entry| entry != mark);
-                                if marks.is_empty() {
-                                    style.m = None;
-                                }
-                            }
-                        });
+                            });
                         if cell.style_id != next_style_id {
                             cell.style_id = next_style_id;
                             changed.insert(coord);
@@ -1144,7 +1162,11 @@ impl SheetsService {
         )?;
         let workbook_ref = guard.as_ref().expect("workbook present after mutation");
         Ok(WriteRangeResult {
-            revision: if dirty { workbook_ref.revision } else { before_revision },
+            revision: if dirty {
+                workbook_ref.revision
+            } else {
+                before_revision
+            },
             updated_range: Some(requested_range),
             dirty: workbook_ref.dirty,
         })
@@ -1478,7 +1500,9 @@ fn cell_has_mark(cell: &CellState, styles: &[sheets_jsonl::CellStyle], mark: &st
 
 fn restore_history_entry(workbook: &mut WorkbookState, entry: WorkbookHistoryEntry) {
     workbook.sheets = entry.sheets;
-    workbook.active_sheet = entry.active_sheet.min(workbook.sheets.len().saturating_sub(1));
+    workbook.active_sheet = entry
+        .active_sheet
+        .min(workbook.sheets.len().saturating_sub(1));
     workbook.styles = entry.styles;
 }
 

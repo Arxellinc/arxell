@@ -224,6 +224,10 @@ export function handleLooperInput(
     state.projectNameDraft = (target as HTMLInputElement).value;
     return { handled: true, rerender: false };
   }
+  if (actionValue === "splash-project-select") {
+    state.projectIdDraft = (target as HTMLSelectElement).value;
+    return { handled: true, rerender: false };
+  }
   if (actionValue === "splash-project-type") {
     state.projectTypeDraft = (target as HTMLSelectElement).value;
     return { handled: true, rerender: true };

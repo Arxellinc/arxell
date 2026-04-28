@@ -1,6 +1,6 @@
 import { FILES_DATA_ATTR, FILES_UI_ID } from "../ui/constants";
 import { handleToolSidebarResize } from "../ui/sidebarResize";
-import type { FilesListDirectoryEntry } from "../../contracts";
+import type { FilesToolStateSlice } from "./state";
 import {
   closeFilesContextMenu,
   openFilesContextMenu,
@@ -45,45 +45,7 @@ const FILES_COLUMN_MIN_WIDTHS: FilesColumnWidths = {
   modified: 108
 };
 
-interface FilesSlice {
-  filesRootPath: string | null;
-  filesScopeRootPath?: string | null;
-  filesRootSelectorOpen?: boolean;
-  filesSelectedPath: string | null;
-  filesSelectedEntryPath?: string | null;
-  filesExpandedByPath: Record<string, boolean>;
-  filesEntriesByPath: Record<string, FilesListDirectoryEntry[]>;
-  filesLoadingByPath: Record<string, boolean>;
-  filesOpenTabs: string[];
-  filesActiveTabPath: string | null;
-  filesContentByPath: Record<string, string>;
-  filesSavedContentByPath: Record<string, string>;
-  filesDirtyByPath: Record<string, boolean>;
-  filesReadOnlyByPath: Record<string, boolean>;
-  filesLoadingFileByPath: Record<string, boolean>;
-  filesSavingFileByPath: Record<string, boolean>;
-  filesSizeByPath: Record<string, number>;
-  filesError: string | null;
-  filesColumnWidths?: Partial<FilesColumnWidths>;
-  filesSidebarWidth?: number;
-  filesSidebarCollapsed?: boolean;
-  filesFindOpen?: boolean;
-  filesFindQuery?: string;
-  filesReplaceQuery?: string;
-  filesFindCaseSensitive?: boolean;
-  filesLineWrap?: boolean;
-  filesSelectedPaths?: string[];
-  filesContextMenuOpen?: boolean;
-  filesContextMenuTargetPath?: string | null;
-  filesContextMenuTargetIsDir?: boolean;
-  filesContextMenuPointerInside?: boolean;
-  filesConflictModalOpen?: boolean;
-  filesConflictName?: string;
-  filesSelectionAnchorPath?: string | null;
-  filesSelectionDragActive?: boolean;
-  filesSelectionJustDragged?: boolean;
-  filesSelectionGesture?: "single" | "toggle" | "range" | null;
-}
+type FilesSlice = FilesToolStateSlice;
 
 interface FilesDeps {
   listFilesDirectory: (path?: string) => Promise<void>;
@@ -715,6 +677,14 @@ export async function handleFilesKeyDown(
       return true;
     }
     if (key === "v") {
+      const inEditor = Boolean(
+        (event.target as HTMLElement | null)?.closest(
+          `[${FILES_DATA_ATTR.action}="editor-input"][${FILES_DATA_ATTR.path}]`
+        )
+      );
+      if (inEditor) {
+        return false;
+      }
       event.preventDefault();
       const toDir = slice.filesSelectedPath || slice.filesRootPath || "";
       if (toDir) {
@@ -723,6 +693,14 @@ export async function handleFilesKeyDown(
       return true;
     }
     if (key === "c") {
+      const inEditor = Boolean(
+        (event.target as HTMLElement | null)?.closest(
+          `[${FILES_DATA_ATTR.action}="editor-input"][${FILES_DATA_ATTR.path}]`
+        )
+      );
+      if (inEditor) {
+        return false;
+      }
       const active = slice.filesSelectedEntryPath;
       if (active) {
         event.preventDefault();
@@ -731,6 +709,14 @@ export async function handleFilesKeyDown(
       }
     }
     if (key === "x") {
+      const inEditor = Boolean(
+        (event.target as HTMLElement | null)?.closest(
+          `[${FILES_DATA_ATTR.action}="editor-input"][${FILES_DATA_ATTR.path}]`
+        )
+      );
+      if (inEditor) {
+        return false;
+      }
       const active = slice.filesSelectedEntryPath;
       if (active) {
         event.preventDefault();

@@ -58,7 +58,10 @@ Local model lifecycle: list installed GGUF models, search HuggingFace, download,
 Local inference runtime management: engine discovery, installation, start/stop with configurable parameters (context size, GPU layers, sampling).
 
 ### API Registry Service (`src-tauri/src/api_registry.rs`)
-API connection CRUD: create, probe, verify, update, delete, import/export. Stores encrypted API keys and tracks connection status.
+API connection CRUD: create, probe, verify, update, delete, import/export. Stores connection metadata in app data and stores raw API keys through the secret storage abstraction.
+
+### Secret Storage (`src-tauri/src/secrets/`)
+API keys use OS-backed credential storage via the `keyring` crate by default. If OS credential storage is unavailable, writes fail unless the user explicitly acknowledges plaintext fallback; fallback secrets are stored separately from the normal API registry metadata file and warnings avoid including raw key values.
 
 ### Web Search Service (`src-tauri/src/app/web_search_service.rs`)
 Web search execution. Routes queries to configured search API connections.

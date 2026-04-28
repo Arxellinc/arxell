@@ -271,7 +271,6 @@ function attachCanvasEvents(
           ? headerSelection.startRow
           : null;
       setSheetsSelection(state, headerSelection);
-      runtimeDeps?.rerender();
       markDirty();
       return;
     }
@@ -281,7 +280,6 @@ function attachCanvasEvents(
       e.preventDefault();
       const [col, row] = hit;
       setSheetsSelection(state, { startRow: row, startCol: col, endRow: row, endCol: col });
-      runtimeDeps?.rerender();
       insertEditorText(`${columnLabel(col)}${row + 1}`, state, markDirty);
       markDirty();
       return;
@@ -300,7 +298,6 @@ function attachCanvasEvents(
     if (!hit) return;
     const [col, row] = hit;
     setSheetsSelection(state, { startRow: row, startCol: col, endRow: row, endCol: col });
-    runtimeDeps?.rerender();
     markDirty();
   });
 
@@ -343,7 +340,6 @@ function attachCanvasEvents(
           endRow: Math.max(0, state.rowCount - 1),
           endCol: Math.max(headerDragAnchor, endCol)
         });
-        runtimeDeps?.rerender();
         markDirty();
       }
       return;
@@ -358,7 +354,6 @@ function attachCanvasEvents(
           endRow: Math.max(headerDragAnchor, endRow),
           endCol: Math.max(0, state.columnCount - 1)
         });
-        runtimeDeps?.rerender();
         markDirty();
       }
       return;
@@ -387,7 +382,6 @@ function attachCanvasEvents(
           endRow: row,
           endCol: col
         };
-        runtimeDeps?.rerender();
         markDirty();
       }
     }
@@ -490,7 +484,6 @@ function attachCanvasEvents(
     if (!hit) return;
     const [col, row] = hit;
     setSheetsSelection(state, { startRow: row, startCol: col, endRow: row, endCol: col });
-    runtimeDeps?.rerender();
     const rect = cvs.getBoundingClientRect();
     startCellEdit(row, col, {
       state,

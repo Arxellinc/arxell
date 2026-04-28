@@ -8,49 +8,45 @@ use arxell_lite::app::AppContext;
 #[cfg(feature = "tauri-runtime")]
 use arxell_lite::contracts::{
     ApiConnectionCreateRequest, ApiConnectionCreateResponse, ApiConnectionDeleteRequest,
-    ApiConnectionDeleteResponse, ApiConnectionGetSecretRequest, ApiConnectionGetSecretResponse,
-    ApiConnectionProbeRequest, ApiConnectionProbeResponse, ApiConnectionReverifyRequest,
-    ApiConnectionReverifyResponse,
-    ApiConnectionUpdateRequest, ApiConnectionUpdateResponse, ApiConnectionsExportRequest,
-    ApiConnectionsExportResponse, ApiConnectionsImportRequest, ApiConnectionsImportResponse,
-    ApiConnectionsListRequest, ApiConnectionsListResponse, AppResourceUsageRequest,
-    AppResourceUsageResponse, AppVersionResponse, ChatCancelRequest, ChatCancelResponse,
-    ChatDeleteConversationRequest, ChatDeleteConversationResponse, ChatGetMessagesRequest,
-    ChatGetMessagesResponse, ChatInspectContextRequest, ChatInspectContextResponse,
-    ChatListConversationsRequest, ChatListConversationsResponse, ChatSendRequest,
-    ChatSendResponse, CustomToolCapabilityInvokeRequest,
-    CustomToolCapabilityInvokeResponse, DevicesProbeMicrophoneRequest,
-    DevicesProbeMicrophoneResponse, EventSeverity, EventStage, FilesListDirectoryRequest,
-    FilesListDirectoryResponse,
-    LlamaRuntimeInstallRequest, LlamaRuntimeInstallResponse, LlamaRuntimeStartRequest,
-    LlamaRuntimeStartResponse, LlamaRuntimeStatusRequest, LlamaRuntimeStatusResponse,
-    LlamaRuntimeStopRequest, LlamaRuntimeStopResponse, ModelManagerDeleteInstalledRequest,
-    ModelManagerDeleteInstalledResponse, ModelManagerDownloadHfRequest,
-    ModelManagerDownloadHfResponse, ModelManagerListCatalogCsvRequest,
-    ModelManagerListCatalogCsvResponse, ModelManagerListInstalledRequest,
-    ModelManagerListInstalledResponse, ModelManagerSearchHfRequest, ModelManagerSearchHfResponse,
-    ModelManagerRefreshUnslothCatalogRequest, ModelManagerRefreshUnslothCatalogResponse,
-    CustomItemDeleteRequest, CustomItemDeleteResponse, CustomItemUpsertRequest,
-    CustomItemUpsertResponse, LooperPreviewRequest, LooperPreviewResponse, MemoryDeleteRequest,
+    ApiConnectionDeleteResponse, ApiConnectionProbeRequest, ApiConnectionProbeResponse,
+    ApiConnectionReverifyRequest, ApiConnectionReverifyResponse, ApiConnectionUpdateRequest,
+    ApiConnectionUpdateResponse, ApiConnectionsExportRequest, ApiConnectionsExportResponse,
+    ApiConnectionsImportRequest, ApiConnectionsImportResponse, ApiConnectionsListRequest,
+    ApiConnectionsListResponse, AppResourceUsageRequest, AppResourceUsageResponse,
+    AppVersionResponse, ChatCancelRequest, ChatCancelResponse, ChatDeleteConversationRequest,
+    ChatDeleteConversationResponse, ChatGetMessagesRequest, ChatGetMessagesResponse,
+    ChatInspectContextRequest, ChatInspectContextResponse, ChatListConversationsRequest,
+    ChatListConversationsResponse, ChatSendRequest, ChatSendResponse, CustomItemDeleteRequest,
+    CustomItemDeleteResponse, CustomItemUpsertRequest, CustomItemUpsertResponse,
+    CustomToolCapabilityInvokeRequest, CustomToolCapabilityInvokeResponse,
+    DevicesProbeMicrophoneRequest, DevicesProbeMicrophoneResponse, EventSeverity, EventStage,
+    FilesListDirectoryRequest, FilesListDirectoryResponse, LlamaRuntimeInstallRequest,
+    LlamaRuntimeInstallResponse, LlamaRuntimeStartRequest, LlamaRuntimeStartResponse,
+    LlamaRuntimeStatusRequest, LlamaRuntimeStatusResponse, LlamaRuntimeStopRequest,
+    LlamaRuntimeStopResponse, LooperPreviewRequest, LooperPreviewResponse, MemoryDeleteRequest,
     MemoryDeleteResponse, MemoryUpsertRequest, MemoryUpsertResponse,
-    PluginCapabilityInvokeRequest, PluginCapabilityInvokeResponse, ReferenceFileSetRequest,
-    ReferenceFileSetResponse, SkillCreateRequest, SkillCreateResponse, Subsystem,
-    SystemPromptSetRequest, SystemPromptSetResponse,
-    TerminalCloseSessionRequest, TerminalCloseSessionResponse, TerminalInputRequest,
-    TerminalInputResponse, TerminalOpenSessionRequest, TerminalOpenSessionResponse,
-    TerminalResizeRequest, TerminalResizeResponse, ToolInvokeRequest, ToolInvokeResponse,
-    TtsDownloadModelRequest, TtsDownloadModelResponse, TtsListVoicesRequest, TtsListVoicesResponse,
-    TtsSelfTestRequest, TtsSelfTestResponse, TtsSettingsGetRequest, TtsSettingsGetResponse,
-    TtsSettingsSetRequest, TtsSettingsSetResponse, TtsSpeakRequest, TtsSpeakResponse,
-    TtsStatusRequest, TtsStatusResponse, TtsStopRequest, TtsStopResponse,
+    ModelManagerDeleteInstalledRequest, ModelManagerDeleteInstalledResponse,
+    ModelManagerDownloadHfRequest, ModelManagerDownloadHfResponse,
+    ModelManagerListCatalogCsvRequest, ModelManagerListCatalogCsvResponse,
+    ModelManagerListInstalledRequest, ModelManagerListInstalledResponse,
+    ModelManagerRefreshUnslothCatalogRequest, ModelManagerRefreshUnslothCatalogResponse,
+    ModelManagerSearchHfRequest, ModelManagerSearchHfResponse, PluginCapabilityInvokeRequest,
+    PluginCapabilityInvokeResponse, ReferenceFileSetRequest, ReferenceFileSetResponse,
+    SkillCreateRequest, SkillCreateResponse, Subsystem, SystemPromptSetRequest,
+    SystemPromptSetResponse, TerminalCloseSessionRequest, TerminalCloseSessionResponse,
+    TerminalInputRequest, TerminalInputResponse, TerminalOpenSessionRequest,
+    TerminalOpenSessionResponse, TerminalResizeRequest, TerminalResizeResponse, ToolInvokeRequest,
+    ToolInvokeResponse, TtsDownloadModelRequest, TtsDownloadModelResponse, TtsListVoicesRequest,
+    TtsListVoicesResponse, TtsSelfTestRequest, TtsSelfTestResponse, TtsSettingsGetRequest,
+    TtsSettingsGetResponse, TtsSettingsSetRequest, TtsSettingsSetResponse, TtsSpeakRequest,
+    TtsSpeakResponse, TtsStatusRequest, TtsStatusResponse, TtsStopRequest, TtsStopResponse,
     UserProjectEnsureRequest, UserProjectEnsureResponse, UserProjectsRootsRequest,
-    UserProjectsRootsResponse,
-    VoiceGetRuntimeDiagnosticsRequest, VoiceGetVadSettingsRequest, VoiceGetVadSettingsResponse,
-    VoiceListVadMethodsRequest, VoiceListVadMethodsResponse, VoiceRequestHandoffRequest,
-    VoiceRuntimeSnapshotResponse, VoiceSetDuplexModeRequest, VoiceSetShadowMethodRequest,
-    VoiceSetVadMethodRequest, VoiceStartSessionRequest, VoiceStartShadowEvalRequest,
-    VoiceStopSessionRequest, VoiceStopShadowEvalRequest, VoiceUpdateVadConfigRequest,
-    VoiceUpdateVadConfigResponse, WebSearchRequest, WebSearchResponse,
+    UserProjectsRootsResponse, VoiceGetRuntimeDiagnosticsRequest, VoiceGetVadSettingsRequest,
+    VoiceGetVadSettingsResponse, VoiceListVadMethodsRequest, VoiceListVadMethodsResponse,
+    VoiceRequestHandoffRequest, VoiceRuntimeSnapshotResponse, VoiceSetDuplexModeRequest,
+    VoiceSetShadowMethodRequest, VoiceSetVadMethodRequest, VoiceStartSessionRequest,
+    VoiceStartShadowEvalRequest, VoiceStopSessionRequest, VoiceStopShadowEvalRequest,
+    VoiceUpdateVadConfigRequest, VoiceUpdateVadConfigResponse, WebSearchRequest, WebSearchResponse,
     WorkspaceToolCreateAppPluginRequest, WorkspaceToolCreateAppPluginResponse,
     WorkspaceToolForgetRequest, WorkspaceToolForgetResponse, WorkspaceToolSetEnabledRequest,
     WorkspaceToolSetEnabledResponse, WorkspaceToolSetIconRequest, WorkspaceToolSetIconResponse,
@@ -267,7 +263,6 @@ fn main() {
             cmd_api_connection_update,
             cmd_api_connection_reverify,
             cmd_api_connection_delete,
-            cmd_api_connection_get_secret,
             cmd_web_search,
             cmd_devices_probe_microphone,
             cmd_app_version,
@@ -799,14 +794,19 @@ async fn cmd_looper_open_preview_window(
     let label = format!("looper-preview-{}", request.loop_id);
     if let Some(window) = app.get_webview_window(&label) {
         window
-            .navigate(url.parse().map_err(|e| format!("invalid preview URL: {e}"))?)
+            .navigate(
+                url.parse()
+                    .map_err(|e| format!("invalid preview URL: {e}"))?,
+            )
             .map_err(|e| format!("failed to navigate preview window: {e}"))?;
         let _ = window.show();
         let _ = window.set_focus();
         return Ok(preview);
     }
 
-    let parsed = url.parse().map_err(|e| format!("invalid preview URL: {e}"))?;
+    let parsed = url
+        .parse()
+        .map_err(|e| format!("invalid preview URL: {e}"))?;
     let window = WebviewWindowBuilder::new(&app, &label, WebviewUrl::External(parsed))
         .title("Looper Preview")
         .inner_size(1280.0, 900.0)
@@ -954,7 +954,9 @@ async fn cmd_user_projects_roots(
     Ok(UserProjectsRootsResponse {
         correlation_id: request.correlation_id,
         content_root: arxell_lite::app::user_projects_service::path_to_string(&roots.content_root),
-        projects_root: arxell_lite::app::user_projects_service::path_to_string(&roots.projects_root),
+        projects_root: arxell_lite::app::user_projects_service::path_to_string(
+            &roots.projects_root,
+        ),
         tools_root: arxell_lite::app::user_projects_service::path_to_string(&roots.tools_root),
     })
 }
@@ -1010,9 +1012,10 @@ async fn cmd_api_connections_import(
     state: State<'_, TauriBridgeState>,
     request: ApiConnectionsImportRequest,
 ) -> Result<ApiConnectionsImportResponse, String> {
-    let connections = state
-        .api_registry
-        .import_portable_snapshot_json(request.payload_json.as_str())?;
+    let connections = state.api_registry.import_portable_snapshot_json(
+        request.payload_json.as_str(),
+        request.allow_plaintext_fallback,
+    )?;
     Ok(ApiConnectionsImportResponse {
         correlation_id: request.correlation_id,
         connections,
@@ -1035,6 +1038,7 @@ async fn cmd_api_connection_create(
             model_name: request.model_name,
             cost_per_month_usd: request.cost_per_month_usd,
             api_standard_path: request.api_standard_path,
+            allow_plaintext_fallback: request.allow_plaintext_fallback,
         })
         .await?;
     Ok(ApiConnectionCreateResponse {
@@ -1099,6 +1103,7 @@ async fn cmd_api_connection_update(
             model_name: request.model_name,
             cost_per_month_usd: request.cost_per_month_usd,
             api_standard_path: request.api_standard_path,
+            allow_plaintext_fallback: request.allow_plaintext_fallback,
         },
     )?;
     Ok(ApiConnectionUpdateResponse {
@@ -1118,20 +1123,6 @@ async fn cmd_api_connection_delete(
         correlation_id: request.correlation_id,
         id: request.id,
         deleted,
-    })
-}
-
-#[cfg(feature = "tauri-runtime")]
-#[tauri::command]
-async fn cmd_api_connection_get_secret(
-    state: State<'_, TauriBridgeState>,
-    request: ApiConnectionGetSecretRequest,
-) -> Result<ApiConnectionGetSecretResponse, String> {
-    let api_key = state.api_registry.get_secret_api_key(request.id.as_str())?;
-    Ok(ApiConnectionGetSecretResponse {
-        correlation_id: request.correlation_id,
-        id: request.id,
-        api_key,
     })
 }
 
@@ -1451,10 +1442,7 @@ async fn cmd_model_manager_refresh_unsloth_catalog(
     let correlation_id = request.correlation_id.clone();
     let app_data_owned = app_data.clone();
     let (rows, new_count) = tokio::task::spawn_blocking(move || {
-        service.refresh_unsloth_ud_catalog(
-            correlation_id.as_str(),
-            app_data_owned.as_path(),
-        )
+        service.refresh_unsloth_ud_catalog(correlation_id.as_str(), app_data_owned.as_path())
     })
     .await
     .map_err(|e| format!("model manager refresh unsloth catalog task failed: {e}"))??;

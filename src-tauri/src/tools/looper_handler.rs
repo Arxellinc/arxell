@@ -33,12 +33,14 @@ use crate::app::web_search_service::{
 };
 use crate::contracts::{
     ApiConnectionType, EventSeverity, EventStage, LooperAdvanceRequest, LooperAdvanceResponse,
-    LooperCheckOpenCodeRequest, LooperCheckOpenCodeResponse,     LooperCloseAllRequest, LooperCloseAllResponse, LooperCloseRequest,
-    LooperCloseResponse, LooperImportRequest, LooperImportResponse, LooperListRequest, LooperListResponse, LooperLoopRecord, LooperLoopStatus,
-    LooperLoopType, LooperPauseRequest, LooperPauseResponse, LooperPhaseState, LooperPhaseStatus,
-    LooperPreviewRequest, LooperPreviewResponse, LooperPreviewStateRecord, LooperQuestion,
-    LooperStartRequest, LooperStartResponse, LooperStatusRequest, LooperStatusResponse,
-    LooperStopRequest, LooperStopResponse, LooperSubStepStatus, Subsystem, TerminalCloseSessionRequest, TerminalInputRequest, TerminalOpenSessionRequest,
+    LooperCheckOpenCodeRequest, LooperCheckOpenCodeResponse, LooperCloseAllRequest,
+    LooperCloseAllResponse, LooperCloseRequest, LooperCloseResponse, LooperImportRequest,
+    LooperImportResponse, LooperListRequest, LooperListResponse, LooperLoopRecord,
+    LooperLoopStatus, LooperLoopType, LooperPauseRequest, LooperPauseResponse, LooperPhaseState,
+    LooperPhaseStatus, LooperPreviewRequest, LooperPreviewResponse, LooperPreviewStateRecord,
+    LooperQuestion, LooperStartRequest, LooperStartResponse, LooperStatusRequest,
+    LooperStatusResponse, LooperStopRequest, LooperStopResponse, LooperSubStepStatus, Subsystem,
+    TerminalCloseSessionRequest, TerminalInputRequest, TerminalOpenSessionRequest,
 };
 use crate::observability::EventHub;
 use crate::workspace_tools::WorkspaceToolsService;
@@ -918,7 +920,10 @@ impl LooperHandler {
 
         if advance_from_planner_review {
             if let Err(e) = self.do_advance(&loop_id, "executor", &correlation_id).await {
-                eprintln!("looper: failed to advance to executor after planner review: {}", e);
+                eprintln!(
+                    "looper: failed to advance to executor after planner review: {}",
+                    e
+                );
             }
         } else if let Err(e) = self.start_phase(&loop_id, "planner", &correlation_id).await {
             eprintln!("looper: failed to restart planner after questions: {}", e);
@@ -971,7 +976,11 @@ impl LooperHandler {
             cols: Some(120),
             rows: Some(24),
             shell: Some("/bin/sh".to_string()),
-            cwd: if cwd.trim().is_empty() { None } else { Some(cwd) },
+            cwd: if cwd.trim().is_empty() {
+                None
+            } else {
+                Some(cwd)
+            },
             model: None,
         };
         let response = self.terminal.open_session(open_req)?;
@@ -1150,10 +1159,7 @@ impl LooperHandler {
         })
     }
 
-    pub fn import(
-        &self,
-        req: LooperImportRequest,
-    ) -> Result<LooperImportResponse, String> {
+    pub fn import(&self, req: LooperImportRequest) -> Result<LooperImportResponse, String> {
         let mut loops = self.loops.write().map_err(|e| e.to_string())?;
         loops.clear();
         for record in req.loops {
@@ -1221,7 +1227,11 @@ impl LooperHandler {
                     .into_iter()
                     .find(|r| r.id == conn_id && matches!(r.api_type, ApiConnectionType::Llm))
                 {
-                    return Some(conn.model_name.unwrap_or_else(|| rest.splitn(3, ':').nth(2).unwrap_or(id).to_string()));
+                    return Some(
+                        conn.model_name.unwrap_or_else(|| {
+                            rest.splitn(3, ':').nth(2).unwrap_or(id).to_string()
+                        }),
+                    );
                 }
             }
             return Some(rest.splitn(3, ':').nth(2).unwrap_or(id).to_string());
@@ -1245,7 +1255,9 @@ impl LooperHandler {
             (loopy.cwd.clone(), loopy.phase_models.get(phase).cloned())
         };
 
-        let model = raw_model.as_deref().and_then(|m| self.resolve_model_name(m));
+        let model = raw_model
+            .as_deref()
+            .and_then(|m| self.resolve_model_name(m));
 
         let cwd = if cwd_raw.is_empty() || cwd_raw == "." {
             None
@@ -1313,7 +1325,16 @@ impl LooperHandler {
             self.create_phase_session(loop_id, phase).await?;
         }
 
-        let (session_id, prompt, raw_model, loop_type, cwd, project_name, project_type, project_description) = {
+        let (
+            session_id,
+            prompt,
+            raw_model,
+            loop_type,
+            cwd,
+            project_name,
+            project_type,
+            project_description,
+        ) = {
             let loops = self.loops.read().map_err(|e| e.to_string())?;
             let loopy = loops
                 .get(loop_id)
@@ -1339,7 +1360,9 @@ impl LooperHandler {
             )
         };
 
-        let resolved_model = raw_model.as_deref().and_then(|m| self.resolve_model_name(m));
+        let resolved_model = raw_model
+            .as_deref()
+            .and_then(|m| self.resolve_model_name(m));
 
         let mut prompt = prompt;
         if phase == "planner" {
@@ -1543,35 +1566,35 @@ impl LooperHandler {
             if !review_before_execute {
                 // Autonomous mode skips the planner review gate and proceeds directly.
             } else {
-            let (planner_plan, pending_questions) = read_planner_review_files(&cwd);
-            {
-                let mut loops = self.loops.write().expect("loops lock poisoned");
-                if let Some(loopy) = loops.get_mut(&loop_id) {
-                    loopy.status = LooperLoopStatus::Blocked;
-                    loopy.active_phase = Some("planner".to_string());
-                    loopy.planner_plan = planner_plan.clone();
-                    loopy.pending_questions = pending_questions.clone();
-                    if let Some(phase_state) = loopy.phases.get_mut("planner") {
-                        phase_state.status = LooperPhaseStatus::Blocked;
+                let (planner_plan, pending_questions) = read_planner_review_files(&cwd);
+                {
+                    let mut loops = self.loops.write().expect("loops lock poisoned");
+                    if let Some(loopy) = loops.get_mut(&loop_id) {
+                        loopy.status = LooperLoopStatus::Blocked;
+                        loopy.active_phase = Some("planner".to_string());
+                        loopy.planner_plan = planner_plan.clone();
+                        loopy.pending_questions = pending_questions.clone();
+                        if let Some(phase_state) = loopy.phases.get_mut("planner") {
+                            phase_state.status = LooperPhaseStatus::Blocked;
+                        }
                     }
                 }
-            }
 
-            self.emit_event(
-                &format!("looper-auto-{}", loop_id),
-                "looper.planner.review_ready",
-                EventStage::Complete,
-                EventSeverity::Info,
-                json!({
-                    "loopId": loop_id,
-                    "iteration": iteration,
-                    "phase": "planner",
-                    "questionsCount": pending_questions.len(),
-                    "hasPlan": !planner_plan.trim().is_empty(),
-                }),
-            );
-            self.save_to_disk();
-            return;
+                self.emit_event(
+                    &format!("looper-auto-{}", loop_id),
+                    "looper.planner.review_ready",
+                    EventStage::Complete,
+                    EventSeverity::Info,
+                    json!({
+                        "loopId": loop_id,
+                        "iteration": iteration,
+                        "phase": "planner",
+                        "questionsCount": pending_questions.len(),
+                        "hasPlan": !planner_plan.trim().is_empty(),
+                    }),
+                );
+                self.save_to_disk();
+                return;
             }
         }
 
@@ -1650,7 +1673,9 @@ impl LooperHandler {
                     } else {
                         preview.status = "failed".to_string();
                         if preview.last_error.is_none() {
-                            preview.last_error = Some("Preview process exited before a URL was detected.".to_string());
+                            preview.last_error = Some(
+                                "Preview process exited before a URL was detected.".to_string(),
+                            );
                         }
                     }
                     handled = true;
@@ -1862,7 +1887,12 @@ impl LooperHandler {
             return None;
         }
 
-        let queries = build_planner_research_queries(loop_type, project_name, project_type, project_description);
+        let queries = build_planner_research_queries(
+            loop_type,
+            project_name,
+            project_type,
+            project_description,
+        );
         if queries.is_empty() {
             return None;
         }
@@ -1901,10 +1931,7 @@ impl LooperHandler {
             return None;
         }
 
-        let content = format!(
-            "# Looper Web Research\n\n{}\n",
-            sections.join("\n\n")
-        );
+        let content = format!("# Looper Web Research\n\n{}\n", sections.join("\n\n"));
         let research_path = Path::new(cwd).join("looper_web_research.md");
         if fs::write(&research_path, content).is_err() {
             return None;
@@ -2066,7 +2093,11 @@ fn preview_to_record(preview: &PreviewState) -> LooperPreviewStateRecord {
     }
 }
 
-fn preview_response(correlation_id: String, loop_id: String, preview: &PreviewState) -> LooperPreviewResponse {
+fn preview_response(
+    correlation_id: String,
+    loop_id: String,
+    preview: &PreviewState,
+) -> LooperPreviewResponse {
     LooperPreviewResponse {
         correlation_id,
         loop_id,
@@ -2082,7 +2113,8 @@ fn read_planner_review_files(cwd: &str) -> (String, Vec<LooperQuestion>) {
     if cwd.trim().is_empty() {
         return (String::new(), Vec::new());
     }
-    let plan = fs::read_to_string(Path::new(cwd).join("implementation_plan.md")).unwrap_or_default();
+    let plan =
+        fs::read_to_string(Path::new(cwd).join("implementation_plan.md")).unwrap_or_default();
     let questions = fs::read_to_string(Path::new(cwd).join("questions.md"))
         .map(|content| parse_looper_questions(&content))
         .unwrap_or_default();
@@ -2112,7 +2144,11 @@ fn build_planner_research_queries(
 
     let description = project_description.trim();
     if !description.is_empty() {
-        let compact = description.split_whitespace().take(24).collect::<Vec<_>>().join(" ");
+        let compact = description
+            .split_whitespace()
+            .take(24)
+            .collect::<Vec<_>>()
+            .join(" ");
         if !compact.is_empty() {
             queries.push(compact);
         }
@@ -2124,9 +2160,16 @@ fn build_planner_research_queries(
 
 fn format_web_research_section(query: &str, result: &WebSearchResult) -> String {
     let mut lines = vec![format!("## Query: {}", query)];
-    let items = if result.items.is_empty() { &result.organic } else { &result.items };
+    let items = if result.items.is_empty() {
+        &result.organic
+    } else {
+        &result.items
+    };
     for item in items.iter().take(5) {
-        let title = item.get("title").and_then(|value| value.as_str()).unwrap_or("Untitled");
+        let title = item
+            .get("title")
+            .and_then(|value| value.as_str())
+            .unwrap_or("Untitled");
         let link = item
             .get("link")
             .or_else(|| item.get("url"))
@@ -2161,7 +2204,8 @@ fn infer_preview_command(cwd: &str) -> String {
 
 fn detect_preview_url(chunk: &str) -> Option<String> {
     for token in chunk.split_whitespace() {
-        let trimmed = token.trim_matches(|ch: char| matches!(ch, '\'' | '"' | '(' | ')' | '[' | ']' | ','));
+        let trimmed =
+            token.trim_matches(|ch: char| matches!(ch, '\'' | '"' | '(' | ')' | '[' | ']' | ','));
         if trimmed.starts_with("http://") || trimmed.starts_with("https://") {
             return Some(trimmed.trim_end_matches('/').to_string());
         }

@@ -138,6 +138,7 @@
   color: var(--ink);
   z-index: 10;
   outline: none;
+  pointer-events: auto;
 }
 
 .sheets-context-menu {

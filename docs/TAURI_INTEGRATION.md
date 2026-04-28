@@ -71,7 +71,6 @@ All commands are registered via `tauri::generate_handler!` in `src-tauri/src/mai
 - `cmd_api_connection_update`
 - `cmd_api_connection_reverify`
 - `cmd_api_connection_delete`
-- `cmd_api_connection_get_secret`
 
 ### Search & Files
 - `cmd_web_search`

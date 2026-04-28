@@ -1,5 +1,7 @@
 import type { ApiConnectionRecord, FilesListDirectoryEntry } from "../../contracts";
 import type { ChatIpcClient } from "../../ipcClient";
+import type { FilesToolStateSlice } from "../files/state";
+import type { NotepadToolStateSlice } from "../notepad/state";
 import {
   activateFilesTab,
   closeFilesTab,
@@ -66,43 +68,6 @@ import {
 } from "../sheets/actions";
 import type { SheetsToolState } from "../sheets/state";
 
-interface FilesRuntimeSlice {
-  filesRootPath: string | null;
-  filesSelectedPath: string | null;
-  filesSelectedEntryPath: string | null;
-  filesExpandedByPath: Record<string, boolean>;
-  filesEntriesByPath: Record<string, FilesListDirectoryEntry[]>;
-  filesLoadingByPath: Record<string, boolean>;
-  filesOpenTabs: string[];
-  filesActiveTabPath: string | null;
-  filesContentByPath: Record<string, string>;
-  filesSavedContentByPath: Record<string, string>;
-  filesDirtyByPath: Record<string, boolean>;
-  filesLoadingFileByPath: Record<string, boolean>;
-  filesSavingFileByPath: Record<string, boolean>;
-  filesReadOnlyByPath: Record<string, boolean>;
-  filesSizeByPath: Record<string, number>;
-  filesSidebarCollapsed: boolean;
-  filesError: string | null;
-  filesLineWrap: boolean;
-}
-
-interface NotepadRuntimeSlice {
-  notepadOpenTabs: string[];
-  notepadActiveTabId: string | null;
-  notepadPathByTabId: Record<string, string | null>;
-  notepadTitleByTabId: Record<string, string>;
-  notepadContentByTabId: Record<string, string>;
-  notepadSavedContentByTabId: Record<string, string>;
-  notepadDirtyByTabId: Record<string, boolean>;
-  notepadLoadingByTabId: Record<string, boolean>;
-  notepadSavingByTabId: Record<string, boolean>;
-  notepadReadOnlyByTabId: Record<string, boolean>;
-  notepadSizeByTabId: Record<string, number>;
-  notepadNextUntitledIndex: number;
-  notepadError: string | null;
-}
-
 interface DocsRuntimeSlice {
   docsRootPath: string | null;
   docsSelectedPath: string | null;
@@ -114,12 +79,14 @@ interface DocsRuntimeSlice {
 }
 
 export interface WorkspaceToolsRuntimeState
-  extends FilesRuntimeSlice,
-    NotepadRuntimeSlice,
+  extends FilesToolStateSlice,
+    NotepadToolStateSlice,
     DocsRuntimeSlice,
     Omit<WebSearchSlice, "apiConnections"> {
   apiConnections: ApiConnectionRecord[];
   sheetsState: SheetsToolState;
+  projectsById: Record<string, import("../../projectsStore").ProjectRecord>;
+  projectsSelectedId: string | null;
 }
 
 export interface WorkspaceToolsRuntimeDeps {
@@ -232,7 +199,13 @@ export function createWorkspaceToolsRuntime(
     get client() {
       return deps.getClient();
     },
-    nextCorrelationId: deps.nextCorrelationId
+    nextCorrelationId: deps.nextCorrelationId,
+    get projectsById() {
+      return state.projectsById;
+    },
+    get projectsSelectedId() {
+      return state.projectsSelectedId;
+    }
   };
 
   return {

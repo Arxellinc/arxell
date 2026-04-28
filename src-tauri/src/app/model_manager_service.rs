@@ -482,7 +482,8 @@ impl ModelManagerService {
 
         if !live_rows.is_empty() {
             if let Ok(json_str) = serde_json::to_string(&live_rows) {
-                let _ = File::create(&cache_file).and_then(|mut f| f.write_all(json_str.as_bytes()));
+                let _ =
+                    File::create(&cache_file).and_then(|mut f| f.write_all(json_str.as_bytes()));
             }
         }
 
@@ -702,9 +703,7 @@ fn fetch_repo_ud_rows(
         .json()
         .map_err(|e| format!("repo detail parse failed for {repo_id}: {e}"))?;
 
-    let siblings = detail
-        .siblings
-        .unwrap_or_default();
+    let siblings = detail.siblings.unwrap_or_default();
 
     let ud_files: Vec<&HfSibling> = siblings
         .iter()
@@ -733,9 +732,8 @@ fn fetch_repo_ud_rows(
         let file_name = sibling.rfilename.clone();
         let quant = extract_quant_from_filename(&file_name);
         let size_mb = sibling.size.map(|b| b / (1024 * 1024));
-        let download_url = format!(
-            "https://huggingface.co/{repo_id}/resolve/main/{file_name}?download=true"
-        );
+        let download_url =
+            format!("https://huggingface.co/{repo_id}/resolve/main/{file_name}?download=true");
         rows.push(ModelManagerCatalogCsvRow {
             repo_id: repo_id.to_string(),
             model_name: model_name.clone(),

@@ -1,6 +1,7 @@
 import { iconHtml } from "../../icons";
 import { LOOPER_DATA_ATTR, LOOPER_UI_ID } from "../ui/constants";
 import { renderToolToolbar } from "../ui/toolbar";
+import type { ProjectRecord } from "../../projectsStore";
 import type {
   LooperLoopRun,
   LooperPhase,
@@ -152,7 +153,7 @@ export function renderLooperToolActions(state: LooperToolState): string {
   return toolbar;
 }
 
-export function renderLooperToolBody(state: LooperToolState): string {
+export function renderLooperToolBody(state: LooperToolState, projectsById: Record<string, ProjectRecord>): string {
   if (!state.loops.length) {
     const targetDirectory = getLooperTargetDirectory(state);
     return `<div class="looper-workspace">
@@ -165,6 +166,15 @@ export function renderLooperToolBody(state: LooperToolState): string {
             <span>App/Project/Tool Name:</span>
             <input type="text" id="${LOOPER_UI_ID.splashProjectName}" value="${esc(state.projectNameDraft)}" ${LOOPER_DATA_ATTR.action}="splash-project-name" placeholder="my-project" />
             <span class="looper-splash-path-preview">${esc(targetDirectory || "Target directory will appear here.")}</span>
+          </label>
+          <label class="looper-splash-field">
+            <span>Link to Project</span>
+            <select ${LOOPER_DATA_ATTR.action}="splash-project-select">
+              <option value="" ${!state.projectIdDraft ? "selected" : ""}>No project</option>
+              ${Object.values(projectsById).map((p) =>
+                `<option value="${p.id}" ${state.projectIdDraft === p.id ? "selected" : ""}>${esc(p.name)} (${p.id})</option>`
+              ).join("")}
+            </select>
           </label>
           <label class="looper-splash-field">
             <span>Project Type</span>

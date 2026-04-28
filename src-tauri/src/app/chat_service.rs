@@ -5,8 +5,8 @@ use crate::agent_tools::web_search::WebSearchTool;
 use crate::api_registry::ApiRegistryService;
 use crate::app::web_search_service::WebSearchService;
 use crate::contracts::{
-    ApiConnectionType, ChatAttachment, ChatCancelResponse, ChatDeleteConversationResponse,
-    ChatContextBreakdownItem, ChatGetMessagesRequest, ChatGetMessagesResponse,
+    ApiConnectionType, ChatAttachment, ChatCancelResponse, ChatContextBreakdownItem,
+    ChatDeleteConversationResponse, ChatGetMessagesRequest, ChatGetMessagesResponse,
     ChatInspectContextRequest, ChatInspectContextResponse, ChatListConversationsRequest,
     ChatListConversationsResponse, ChatSendRequest, ChatSendResponse, ChatStreamChunkPayload,
     ChatStreamCompletePayload, ChatStreamReasoningChunkPayload, ChatStreamStartPayload,
@@ -262,14 +262,14 @@ impl ChatService {
             }
             ChatRouteMode::Auto => {
                 match self
-                        .request_agent_response(
-                            &req.conversation_id,
-                            &req.correlation_id,
-                            &req.user_message,
-                            req.always_load_tool_keys.as_deref(),
-                            req.attachments.as_deref(),
-                            thinking_enabled,
-                            req.model_id.as_deref(),
+                    .request_agent_response(
+                        &req.conversation_id,
+                        &req.correlation_id,
+                        &req.user_message,
+                        req.always_load_tool_keys.as_deref(),
+                        req.attachments.as_deref(),
+                        thinking_enabled,
+                        req.model_id.as_deref(),
                         req.model_name.as_deref(),
                         req.max_tokens,
                     )
@@ -944,7 +944,12 @@ impl ChatService {
         history: &[ConversationMessageRecord],
         always_load_tool_keys: Option<&[String]>,
     ) -> Vec<Box<dyn AgentTool>> {
-        let selected = select_agent_tool_names(user_message, history, &available_tools, always_load_tool_keys);
+        let selected = select_agent_tool_names(
+            user_message,
+            history,
+            &available_tools,
+            always_load_tool_keys,
+        );
         if selected.is_empty() {
             return Vec::new();
         }
@@ -1755,7 +1760,8 @@ impl ChatService {
             })
             .collect::<Vec<_>>();
         let memory_items = self.collect_memory_items();
-        let skills_items = self.collect_skills_items(history.as_slice(), req.always_load_skill_keys.as_deref());
+        let skills_items =
+            self.collect_skills_items(history.as_slice(), req.always_load_skill_keys.as_deref());
         let tools_items = self.collect_tools_items(
             req.correlation_id.as_str(),
             history.as_slice(),
@@ -1763,14 +1769,12 @@ impl ChatService {
         );
         let items = match route_mode {
             ChatRouteMode::Legacy => self.inspect_legacy_context(&history),
-            ChatRouteMode::Agent | ChatRouteMode::Auto => {
-                self.inspect_agent_context(
-                    req.correlation_id.as_str(),
-                    &history,
-                    all_conversations.as_slice(),
-                    req.always_load_tool_keys.as_deref(),
-                )
-            }
+            ChatRouteMode::Agent | ChatRouteMode::Auto => self.inspect_agent_context(
+                req.correlation_id.as_str(),
+                &history,
+                all_conversations.as_slice(),
+                req.always_load_tool_keys.as_deref(),
+            ),
         };
         let total_token_estimate = items
             .iter()
@@ -1838,7 +1842,8 @@ impl ChatService {
         req: CustomItemUpsertRequest,
     ) -> Result<CustomItemUpsertResponse, String> {
         let namespace = custom_item_namespace(req.section.as_str())?;
-        self.memory.upsert(namespace, req.key.as_str(), req.value.as_str());
+        self.memory
+            .upsert(namespace, req.key.as_str(), req.value.as_str());
         Ok(CustomItemUpsertResponse {
             section: req.section,
             key: req.key,
@@ -1872,7 +1877,8 @@ impl ChatService {
             return Err("skill name is required".to_string());
         }
         let skill_dir = root.join(slug);
-        std::fs::create_dir_all(&skill_dir).map_err(|err| format!("failed creating skill dir: {err}"))?;
+        std::fs::create_dir_all(&skill_dir)
+            .map_err(|err| format!("failed creating skill dir: {err}"))?;
         let skill_path = skill_dir.join("SKILL.md");
         if skill_path.exists() {
             return Err(format!("skill already exists: {}", skill_path.display()));
@@ -1883,7 +1889,8 @@ impl ChatService {
             req.description.trim(),
             req.content.trim()
         );
-        std::fs::write(&skill_path, content).map_err(|err| format!("failed writing skill file: {err}"))?;
+        std::fs::write(&skill_path, content)
+            .map_err(|err| format!("failed writing skill file: {err}"))?;
         Ok(SkillCreateResponse {
             name: req.name,
             file_path: skill_path.display().to_string(),
@@ -1988,8 +1995,10 @@ impl ChatService {
             history,
             always_load_tool_keys,
         );
-        let enabled_tool_names: Vec<String> = tools.iter().map(|tool| tool.name().to_string()).collect();
-        let available_tool_defs = tool_definitions(&self.resolve_enabled_agent_tools(correlation_id));
+        let enabled_tool_names: Vec<String> =
+            tools.iter().map(|tool| tool.name().to_string()).collect();
+        let available_tool_defs =
+            tool_definitions(&self.resolve_enabled_agent_tools(correlation_id));
         let context = arx_rs::context::Context::load(cwd.clone());
         let app_config = arx_rs::Config::load().unwrap_or_default();
 
@@ -2095,14 +2104,24 @@ impl ChatService {
         }
         extend_history_items(
             &mut items,
-            history.iter().rev().take(24).collect::<Vec<_>>().into_iter().rev(),
+            history
+                .iter()
+                .rev()
+                .take(24)
+                .collect::<Vec<_>>()
+                .into_iter()
+                .rev(),
             "default",
         );
         items
     }
 
-    fn inspect_legacy_context(&self, history: &[ConversationMessageRecord]) -> Vec<ChatContextBreakdownItem> {
-        let model = std::env::var("FOUNDATION_LLM_MODEL").unwrap_or_else(|_| "local-model".to_string());
+    fn inspect_legacy_context(
+        &self,
+        history: &[ConversationMessageRecord],
+    ) -> Vec<ChatContextBreakdownItem> {
+        let model =
+            std::env::var("FOUNDATION_LLM_MODEL").unwrap_or_else(|_| "local-model".to_string());
         let model_family = infer_model_family(model.as_str());
         let strategy = self.resolve_thinking_strategy(model_family.as_str());
         let mut items = Vec::new();
@@ -2135,7 +2154,13 @@ impl ChatService {
         }
         extend_history_items(
             &mut items,
-            history.iter().rev().take(24).collect::<Vec<_>>().into_iter().rev(),
+            history
+                .iter()
+                .rev()
+                .take(24)
+                .collect::<Vec<_>>()
+                .into_iter()
+                .rev(),
             "default",
         );
         items
@@ -2225,8 +2250,16 @@ impl ChatService {
                 "skill-detail",
                 skill.name.clone(),
                 Some(skill.file_path.clone()),
-                if selected.contains(skill.name.as_str()) { "default" } else { "dynamic" },
-                if always_load_skill_keys.unwrap_or(&[]).iter().any(|item| item == &skill.name) {
+                if selected.contains(skill.name.as_str()) {
+                    "default"
+                } else {
+                    "dynamic"
+                },
+                if always_load_skill_keys
+                    .unwrap_or(&[])
+                    .iter()
+                    .any(|item| item == &skill.name)
+                {
                     "always"
                 } else if selected.contains(skill.name.as_str()) {
                     "keyword_match"
@@ -2321,7 +2354,11 @@ impl ChatService {
                 tool_def.name.clone(),
                 None,
                 detail_load_method,
-                if always_load_tool_keys.unwrap_or(&[]).iter().any(|item| item == &tool_def.name) {
+                if always_load_tool_keys
+                    .unwrap_or(&[])
+                    .iter()
+                    .any(|item| item == &tool_def.name)
+                {
                     "always"
                 } else if selected.contains(tool_def.name.as_str()) {
                     "keyword_match"
@@ -2333,7 +2370,6 @@ impl ChatService {
         }
         items
     }
-
 }
 
 fn estimate_token_count(text: &str) -> i64 {
@@ -2428,26 +2464,101 @@ fn select_agent_tool_names(
         text.push_str(&recent_user_text.join("\n").to_ascii_lowercase());
     }
 
-    if matches_any(&text, &["bash", "shell", "command", "terminal", "git", "npm", "cargo", "docker", "run ", "build", "install"]) {
+    if matches_any(
+        &text,
+        &[
+            "bash", "shell", "command", "terminal", "git", "npm", "cargo", "docker", "run ",
+            "build", "install",
+        ],
+    ) {
         selected.insert("bash".to_string());
     }
-    if matches_any(&text, &["file", "files", "folder", "directory", "path", "code", "source", "repo", "project", "read", "edit", "write", "search", "grep", "find", "rename", "move"]) {
-        selected.extend([
-            "read", "edit", "write", "ls", "mkdir", "move", "grep", "find"
-        ].iter().map(|item| item.to_string()));
+    if matches_any(
+        &text,
+        &[
+            "file",
+            "files",
+            "folder",
+            "directory",
+            "path",
+            "code",
+            "source",
+            "repo",
+            "project",
+            "read",
+            "edit",
+            "write",
+            "search",
+            "grep",
+            "find",
+            "rename",
+            "move",
+        ],
+    ) {
+        selected.extend(
+            [
+                "read", "edit", "write", "ls", "mkdir", "move", "grep", "find",
+            ]
+            .iter()
+            .map(|item| item.to_string()),
+        );
     }
-    if matches_any(&text, &["document", "notepad", "draft", "spec", "markdown", "write-up", "notes"]) {
-        selected.extend([
-            "notepad_read", "notepad_write", "notepad_edit_lines"
-        ].iter().map(|item| item.to_string()));
+    if matches_any(
+        &text,
+        &[
+            "document", "notepad", "draft", "spec", "markdown", "write-up", "notes",
+        ],
+    ) {
+        selected.extend(
+            ["notepad_read", "notepad_write", "notepad_edit_lines"]
+                .iter()
+                .map(|item| item.to_string()),
+        );
     }
-    if matches_any(&text, &["web", "search", "google", "url", "http", "https", "docs", "documentation", "research", "latest"]) {
+    if matches_any(
+        &text,
+        &[
+            "web",
+            "search",
+            "google",
+            "url",
+            "http",
+            "https",
+            "docs",
+            "documentation",
+            "research",
+            "latest",
+        ],
+    ) {
         selected.insert("web_search".to_string());
     }
-    if matches_any(&text, &["diagram", "chart", "flowchart", "mermaid", "architecture", "sequence diagram", "graph"]) {
+    if matches_any(
+        &text,
+        &[
+            "diagram",
+            "chart",
+            "flowchart",
+            "mermaid",
+            "architecture",
+            "sequence diagram",
+            "graph",
+        ],
+    ) {
         selected.insert("chart_set".to_string());
     }
-    if matches_any(&text, &["sheet", "spreadsheet", "cell", "row", "column", "csv", "table", "formula"]) {
+    if matches_any(
+        &text,
+        &[
+            "sheet",
+            "spreadsheet",
+            "cell",
+            "row",
+            "column",
+            "csv",
+            "table",
+            "formula",
+        ],
+    ) {
         selected.insert("sheets".to_string());
     }
 
@@ -2467,7 +2578,10 @@ fn select_skill_names(
         .map(|item| item.trim().to_string())
         .filter(|item| !item.is_empty())
         .collect();
-    let skill_names: HashSet<&str> = available_skills.iter().map(|skill| skill.name.as_str()).collect();
+    let skill_names: HashSet<&str> = available_skills
+        .iter()
+        .map(|skill| skill.name.as_str())
+        .collect();
     let recent_user_text = history
         .iter()
         .rev()
@@ -2493,7 +2607,10 @@ fn select_skill_names(
             .map(|item| item.trim().to_ascii_lowercase())
             .filter(|item| item.len() >= 5)
             .collect::<Vec<_>>();
-        if keywords.iter().any(|keyword| text.contains(keyword.as_str())) {
+        if keywords
+            .iter()
+            .any(|keyword| text.contains(keyword.as_str()))
+        {
             selected.insert(skill.name.clone());
         }
     }
@@ -2530,7 +2647,10 @@ fn format_history_index(conversations: &[ConversationSummaryRecord]) -> String {
             let date = format_timestamp_yy_mm_dd_hh_mm(item.updated_at_ms);
             let title = truncate_for_error(item.title.as_str());
             let preview = truncate_for_error(item.last_message_preview.as_str());
-            format!("- {date} | {title} | {} msgs | {preview}", item.message_count)
+            format!(
+                "- {date} | {title} | {} msgs | {preview}",
+                item.message_count
+            )
         })
         .collect::<Vec<_>>()
         .join("\n");

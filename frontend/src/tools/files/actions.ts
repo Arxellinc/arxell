@@ -1,54 +1,14 @@
 import type { ChatIpcClient } from "../../ipcClient";
 import type { FilesListDirectoryEntry } from "../../contracts";
+import type {
+  FilesDeleteUndoDirSnapshot,
+  FilesDeleteUndoEntry,
+  FilesDeleteUndoFileSnapshot,
+  FilesDeleteUndoSnapshot,
+  FilesToolStateSlice
+} from "./state";
 
-interface FilesSlice {
-  filesRootPath: string | null;
-  filesSelectedPath: string | null;
-  filesSelectedEntryPath?: string | null;
-  filesExpandedByPath: Record<string, boolean>;
-  filesEntriesByPath: Record<string, FilesListDirectoryEntry[]>;
-  filesLoadingByPath: Record<string, boolean>;
-  filesOpenTabs: string[];
-  filesActiveTabPath: string | null;
-  filesContentByPath: Record<string, string>;
-  filesSavedContentByPath: Record<string, string>;
-  filesDirtyByPath: Record<string, boolean>;
-  filesLoadingFileByPath: Record<string, boolean>;
-  filesSavingFileByPath: Record<string, boolean>;
-  filesReadOnlyByPath: Record<string, boolean>;
-  filesSizeByPath: Record<string, number>;
-  filesError: string | null;
-  filesSelectedPaths?: string[];
-  filesContextMenuOpen?: boolean;
-  filesContextMenuX?: number;
-  filesContextMenuY?: number;
-  filesContextMenuTargetPath?: string | null;
-  filesContextMenuTargetIsDir?: boolean;
-  filesContextMenuPointerInside?: boolean;
-  filesClipboardMode?: "copy" | "cut" | null;
-  filesClipboardPaths?: string[];
-  filesDeleteUndoStack?: FilesDeleteUndoEntry[];
-  filesConflictModalOpen?: boolean;
-  filesConflictName?: string;
-}
-
-interface FilesDeleteUndoDirSnapshot {
-  kind: "dir";
-  path: string;
-}
-
-interface FilesDeleteUndoFileSnapshot {
-  kind: "file";
-  path: string;
-  content: string;
-}
-
-type FilesDeleteUndoSnapshot = FilesDeleteUndoDirSnapshot | FilesDeleteUndoFileSnapshot;
-
-interface FilesDeleteUndoEntry {
-  deletedAtMs: number;
-  snapshots: FilesDeleteUndoSnapshot[];
-}
+type FilesSlice = FilesToolStateSlice;
 
 export type FilesConflictChoice = "replace" | "copy" | "cancel";
 export interface FilesConflictResolution {

@@ -1,11 +1,12 @@
 use crate::contracts::{
     ApiConnectionAgentRecord, ApiConnectionRecord, ApiConnectionStatus, ApiConnectionType,
 };
+use crate::secrets::{redacted_error, AppSecretStore, SecretKey, SecretStore, SecretValue};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::RwLock;
+use std::sync::{Arc, RwLock};
 use tokio::time::Duration;
 use uuid::Uuid;
 
@@ -21,6 +22,7 @@ pub struct NewApiConnectionInput {
     pub model_name: Option<String>,
     pub cost_per_month_usd: Option<f64>,
     pub api_standard_path: Option<String>,
+    pub allow_plaintext_fallback: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -32,6 +34,7 @@ pub struct UpdateApiConnectionInput {
     pub model_name: Option<String>,
     pub cost_per_month_usd: Option<f64>,
     pub api_standard_path: Option<String>,
+    pub allow_plaintext_fallback: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -41,7 +44,8 @@ struct ApiConnectionSecretRecord {
     api_type: ApiConnectionType,
     api_url: String,
     name: Option<String>,
-    api_key: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    api_key: Option<String>,
     model_name: Option<String>,
     cost_per_month_usd: Option<f64>,
     status: ApiConnectionStatus,
@@ -84,6 +88,7 @@ pub struct ApiConnectionsPortableSnapshot {
 pub struct ApiRegistryService {
     connections: RwLock<HashMap<String, ApiConnectionSecretRecord>>,
     registry_path: PathBuf,
+    secret_store: Arc<AppSecretStore>,
 }
 
 #[derive(Debug, Clone)]
@@ -100,22 +105,62 @@ pub struct ApiEndpointProbeResult {
 impl ApiRegistryService {
     pub fn new() -> Self {
         let registry_path = default_registry_path();
+        let app_data_root = registry_path
+            .parent()
+            .map(Path::to_path_buf)
+            .unwrap_or_else(|| {
+                default_app_data_root().unwrap_or_else(|| std::env::temp_dir().join("arxell-lite"))
+            });
+        let secret_store = Arc::new(AppSecretStore::new(app_data_root));
         let snapshot = read_registry_snapshot_with_migration(&registry_path);
         let mut connections = HashMap::new();
+        let mut migrated_any = false;
         for mut record in snapshot.connections {
-            if appears_masked_api_key(record.api_key.as_str()) {
+            if let Some(api_key) = record.api_key.as_deref() {
+                if !api_key.trim().is_empty()
+                    && !appears_masked_api_key(api_key)
+                    && secret_store
+                        .set_secret(
+                            &SecretKey::api_connection(record.id.as_str()),
+                            &SecretValue::new(api_key.to_string()),
+                        )
+                        .is_ok()
+                {
+                    record.api_key = None;
+                    migrated_any = true;
+                }
+            }
+            if record
+                .api_key
+                .as_deref()
+                .map(appears_masked_api_key)
+                .unwrap_or(false)
+            {
                 record.status = ApiConnectionStatus::Warning;
                 record.status_message =
                     "Stored API key appears masked. Re-enter the full API key and verify again."
                         .to_string();
                 record.last_checked_ms = Some(now_ms());
+            } else if record.api_key.is_some() && !secret_store.is_available() {
+                record.status = ApiConnectionStatus::Warning;
+                record.status_message = "Secure credential storage is unavailable. Existing plaintext key was not migrated; save this connection after acknowledging plaintext fallback or enable an OS keychain.".to_string();
+                record.last_checked_ms = Some(now_ms());
             }
             connections.insert(record.id.clone(), record);
         }
-        Self {
+        let service = Self {
             connections: RwLock::new(connections),
             registry_path,
+            secret_store,
+        };
+        if migrated_any {
+            let connections = service
+                .connections
+                .read()
+                .expect("api registry lock poisoned");
+            let _ = service.persist_snapshot(&connections);
         }
+        service
     }
 
     pub fn list(&self) -> Vec<ApiConnectionRecord> {
@@ -158,12 +203,18 @@ impl ApiRegistryService {
         .await;
         let resolved_model_name = model_name.or_else(|| available_models.first().cloned());
 
+        if input.allow_plaintext_fallback {
+            self.secret_store.acknowledge_plaintext_fallback();
+        }
+        let id = format!("api-{}", Uuid::new_v4());
+        self.store_api_key(id.as_str(), api_key.as_str())?;
+
         let record = ApiConnectionSecretRecord {
-            id: format!("api-{}", Uuid::new_v4()),
+            id,
             api_type: input.api_type,
             api_url,
             name,
-            api_key,
+            api_key: None,
             model_name: resolved_model_name,
             cost_per_month_usd: cost,
             status,
@@ -195,10 +246,11 @@ impl ApiRegistryService {
                 .ok_or_else(|| format!("api connection not found: {id}"))?
         };
 
+        let api_key = self.record_api_key(&existing)?;
         let (status, status_message) = verify_connection(
             existing.api_type.clone(),
             existing.api_url.as_str(),
-            Some(existing.api_key.as_str()),
+            Some(api_key.as_str()),
             existing.api_standard_path.as_deref(),
             existing.model_name.as_deref(),
         )
@@ -206,7 +258,7 @@ impl ApiRegistryService {
         let available_models = discover_available_models(
             existing.api_type.clone(),
             existing.api_url.as_str(),
-            existing.api_key.as_str(),
+            api_key.as_str(),
             existing.api_standard_path.as_deref(),
         )
         .await;
@@ -252,7 +304,11 @@ impl ApiRegistryService {
         if let Some(api_key) = input.api_key {
             let normalized = normalize_api_key(api_key.as_str());
             validate_api_key(normalized.as_str())?;
-            existing.api_key = normalized;
+            if input.allow_plaintext_fallback {
+                self.secret_store.acknowledge_plaintext_fallback();
+            }
+            self.store_api_key(existing.id.as_str(), normalized.as_str())?;
+            existing.api_key = None;
         }
         if let Some(model_name) = input.model_name {
             existing.model_name = normalize_optional(Some(model_name.as_str()));
@@ -285,7 +341,7 @@ impl ApiRegistryService {
         let record = connections
             .get(id)
             .ok_or_else(|| format!("api connection not found: {id}"))?;
-        Ok(record.api_key.clone())
+        self.record_api_key(record)
     }
 
     pub fn export_portable_snapshot_json(&self) -> Result<String, String> {
@@ -297,7 +353,7 @@ impl ApiRegistryService {
                 api_type: record.api_type.clone(),
                 api_url: record.api_url.clone(),
                 name: record.name.clone(),
-                api_key: record.api_key.clone(),
+                api_key: self.record_api_key(record).unwrap_or_default(),
                 model_name: record.model_name.clone(),
                 cost_per_month_usd: record.cost_per_month_usd,
                 api_standard_path: record.api_standard_path.clone(),
@@ -323,7 +379,11 @@ impl ApiRegistryService {
     pub fn import_portable_snapshot_json(
         &self,
         payload_json: &str,
+        allow_plaintext_fallback: bool,
     ) -> Result<Vec<ApiConnectionRecord>, String> {
+        if allow_plaintext_fallback {
+            self.secret_store.acknowledge_plaintext_fallback();
+        }
         let imported = parse_portable_import(payload_json)?;
         if imported.is_empty() {
             return Ok(self.list());
@@ -357,12 +417,14 @@ impl ApiRegistryService {
                 .map(|record| record.available_models.clone())
                 .unwrap_or_default();
 
+            self.store_api_key(id.as_str(), api_key.as_str())?;
+
             let record = ApiConnectionSecretRecord {
                 id: id.clone(),
                 api_type: item.api_type,
                 api_url,
                 name: normalize_optional(item.name.as_deref()),
-                api_key,
+                api_key: None,
                 model_name: normalize_optional(item.model_name.as_deref()),
                 cost_per_month_usd: normalize_cost(item.cost_per_month_usd)?,
                 status,
@@ -390,6 +452,9 @@ impl ApiRegistryService {
             .write()
             .expect("api registry lock poisoned");
         let deleted = connections.remove(id).is_some();
+        let _ = self
+            .secret_store
+            .delete_secret(&SecretKey::api_connection(id));
         self.persist_snapshot(&connections)?;
         Ok(deleted)
     }
@@ -399,15 +464,18 @@ impl ApiRegistryService {
         let mut records: Vec<_> = connections
             .values()
             .filter(|record| record.status == ApiConnectionStatus::Verified)
-            .map(|record| ApiConnectionAgentRecord {
-                id: record.id.clone(),
-                api_type: record.api_type.clone(),
-                api_url: record.api_url.clone(),
-                name: record.name.clone(),
-                api_key: record.api_key.clone(),
-                model_name: record.model_name.clone(),
-                cost_per_month_usd: record.cost_per_month_usd,
-                api_standard_path: record.api_standard_path.clone(),
+            .filter_map(|record| {
+                let api_key = self.record_api_key(record).ok()?;
+                Some(ApiConnectionAgentRecord {
+                    id: record.id.clone(),
+                    api_type: record.api_type.clone(),
+                    api_url: record.api_url.clone(),
+                    name: record.name.clone(),
+                    api_key,
+                    model_name: record.model_name.clone(),
+                    cost_per_month_usd: record.cost_per_month_usd,
+                    api_standard_path: record.api_standard_path.clone(),
+                })
             })
             .collect();
         records.sort_by(|a, b| a.name.cmp(&b.name).then_with(|| a.id.cmp(&b.id)));
@@ -429,19 +497,39 @@ impl ApiRegistryService {
                 .cmp(&a.created_ms)
                 .then_with(|| a.id.cmp(&b.id))
         });
-        candidates
-            .into_iter()
-            .next()
-            .map(|record| ApiConnectionAgentRecord {
+        candidates.into_iter().next().and_then(|record| {
+            let api_key = self.record_api_key(&record).ok()?;
+            Some(ApiConnectionAgentRecord {
                 id: record.id,
                 api_type: record.api_type,
                 api_url: record.api_url,
                 name: record.name,
-                api_key: record.api_key,
+                api_key,
                 model_name: record.model_name,
                 cost_per_month_usd: record.cost_per_month_usd,
                 api_standard_path: record.api_standard_path,
             })
+        })
+    }
+
+    fn store_api_key(&self, id: &str, api_key: &str) -> Result<(), String> {
+        self.secret_store
+            .set_secret(
+                &SecretKey::api_connection(id),
+                &SecretValue::new(api_key.to_string()),
+            )
+            .map_err(redacted_error)
+    }
+
+    fn record_api_key(&self, record: &ApiConnectionSecretRecord) -> Result<String, String> {
+        if let Some(api_key) = record.api_key.as_deref() {
+            return Ok(api_key.to_string());
+        }
+        self.secret_store
+            .get_secret(&SecretKey::api_connection(record.id.as_str()))
+            .map_err(redacted_error)?
+            .map(SecretValue::expose)
+            .ok_or_else(|| "API key is not available in credential storage".to_string())
     }
 
     fn persist_snapshot(
@@ -565,13 +653,21 @@ impl Default for ApiRegistryService {
 }
 
 fn to_public_record(record: &ApiConnectionSecretRecord) -> ApiConnectionRecord {
-    let api_key_prefix = api_key_prefix(record.api_key.as_str());
+    let api_key_prefix = record
+        .api_key
+        .as_deref()
+        .map(api_key_prefix)
+        .unwrap_or_default();
     ApiConnectionRecord {
         id: record.id.clone(),
         api_type: record.api_type.clone(),
         api_url: record.api_url.clone(),
         name: record.name.clone(),
-        api_key_masked: mask_api_key(record.api_key.as_str()),
+        api_key_masked: if api_key_prefix.is_empty() {
+            "stored securely".to_string()
+        } else {
+            mask_api_key(record.api_key.as_deref().unwrap_or_default())
+        },
         api_key_prefix,
         model_name: record.model_name.clone(),
         cost_per_month_usd: record.cost_per_month_usd,
@@ -1110,7 +1206,7 @@ fn parse_portable_import(payload_json: &str) -> Result<Vec<ApiConnectionPortable
                 api_type: record.api_type,
                 api_url: record.api_url,
                 name: record.name,
-                api_key: record.api_key,
+                api_key: record.api_key.unwrap_or_default(),
                 model_name: record.model_name,
                 cost_per_month_usd: record.cost_per_month_usd,
                 api_standard_path: record.api_standard_path,

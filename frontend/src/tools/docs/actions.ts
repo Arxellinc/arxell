@@ -1,5 +1,5 @@
 import type { ChatIpcClient } from "../../ipcClient";
-import type { FilesListDirectoryEntry } from "../../contracts";
+import type { DocsToolState } from "./state";
 import {
   activateFilesTab,
   closeFilesTab,
@@ -14,32 +14,6 @@ import {
   toggleFilesNode,
   updateFilesBuffer
 } from "../files/actions";
-
-export interface DocsToolState {
-  docsRootPath: string | null;
-  docsSelectedPath: string | null;
-  docsSelectedEntryPath: string | null;
-  docsExpandedByPath: Record<string, boolean>;
-  docsEntriesByPath: Record<string, FilesListDirectoryEntry[]>;
-  docsLoadingByPath: Record<string, boolean>;
-  docsOpenTabs: string[];
-  docsActiveTabPath: string | null;
-  docsContentByPath: Record<string, string>;
-  docsSavedContentByPath: Record<string, string>;
-  docsDirtyByPath: Record<string, boolean>;
-  docsLoadingFileByPath: Record<string, boolean>;
-  docsSavingFileByPath: Record<string, boolean>;
-  docsReadOnlyByPath: Record<string, boolean>;
-  docsSizeByPath: Record<string, number>;
-  docsSidebarWidth: number;
-  docsSidebarCollapsed: boolean;
-  docsFindOpen: boolean;
-  docsFindQuery: string;
-  docsReplaceQuery: string;
-  docsFindCaseSensitive: boolean;
-  docsLineWrap: boolean;
-  docsError: string | null;
-}
 
 interface DocsDeps {
   client: ChatIpcClient | null;

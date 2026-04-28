@@ -28,6 +28,7 @@ export interface LooperLoopRun {
   reviewResult: "ship" | "revise" | null;
   reviewBeforeExecute: boolean;
   plannerPlan: string;
+  projectId: string;
   pendingQuestions: Array<{
     id: string;
     title: string;
@@ -76,6 +77,7 @@ export interface LooperToolState {
   projectTypeDraft: string;
   projectIconDraft: string;
   projectDescriptionDraft: string;
+  projectIdDraft: string;
   reviewBeforeExecuteDraft: boolean;
   phaseModels: Record<string, string>;
   availableModels: Array<{ id: string; label: string }>;
@@ -207,6 +209,7 @@ export function createLoopRun(index: number, cwd: string, setup?: LooperProjectS
     reviewResult: null,
     reviewBeforeExecute: true,
     plannerPlan: "",
+    projectId: "",
     pendingQuestions: [],
     reviewAnswers: {},
     preview: {
@@ -240,6 +243,7 @@ export function getInitialLooperState(): LooperToolState {
     projectTypeDraft: "app-tool",
     projectIconDraft: "refresh-cw",
     projectDescriptionDraft: "",
+    projectIdDraft: "",
     reviewBeforeExecuteDraft: true,
     phaseModels: {},
     availableModels: [],

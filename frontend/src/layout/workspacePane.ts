@@ -24,7 +24,8 @@ export function renderWorkspacePane(
     }
   >,
   workspaceTools: WorkspaceToolRecord[],
-  activeTab: WorkspaceTab
+  activeTab: WorkspaceTab,
+  overlayHtml = ""
 ): string {
   const workspaceToolsById = Object.fromEntries(
     workspaceTools.map((tool) => [tool.toolId === "web" ? "webSearch" : tool.toolId, tool])
@@ -59,6 +60,7 @@ export function renderWorkspacePane(
         ${contentActionsHtml ? `<div class="workspace-panel-actions">${contentActionsHtml}</div>` : ""}
         ${contentBodyHtml}
       </div>
+      ${overlayHtml}
     </section>
   `;
 }

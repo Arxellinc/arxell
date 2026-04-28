@@ -6,6 +6,7 @@ pub mod ipc;
 pub mod memory;
 pub mod observability;
 pub mod persistence;
+pub mod secrets;
 pub mod services;
 pub mod stt;
 pub mod tools;

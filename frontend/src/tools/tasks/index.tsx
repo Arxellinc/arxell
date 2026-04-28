@@ -2,6 +2,7 @@ import { renderToolToolbar } from "../ui/toolbar";
 import { TASKS_DATA_ATTR } from "../ui/constants";
 import type { TaskFolder, TaskRecord, TaskSortDirection, TaskSortKey } from "./state";
 import { getSelectedTask, getTasksForFolder } from "./actions";
+import type { ProjectRecord } from "../../projectsStore";
 import "./styles.css";
 
 export interface TasksToolViewState {
@@ -12,6 +13,7 @@ export interface TasksToolViewState {
   sortDirection: TaskSortDirection;
   detailsCollapsed: boolean;
   jsonDraft?: string;
+  projectsById: Record<string, ProjectRecord>;
 }
 
 export function renderTasksToolActions(view: TasksToolViewState): string {
@@ -119,14 +121,14 @@ export function renderTasksToolBody(view: TasksToolViewState): string {
         ${renderSortHeader("done", "Done", view)}
         ${renderSortHeader("starred", "Star", view)}
         ${renderSortHeader("type", "Type", view)}
-        ${renderSortHeader("projectId", "Project ID", view)}
+        ${renderSortHeader("projectId", "Project", view)}
         ${renderSortHeader("name", "Task", view)}
         ${renderSortHeader("createdAt", "Created", view)}
       </div>
       <div class="tasks-list-rows">
         ${
           tasks.length
-            ? tasks.map((task) => renderTaskRow(task, view.selectedId === task.id)).join("")
+            ? tasks.map((task) => renderTaskRow(task, view.selectedId === task.id, view.projectsById)).join("")
             : `<div class="tasks-empty">${
                 view.folder === "archive"
                   ? "No archived tasks."
@@ -154,7 +156,7 @@ export function renderTasksToolBody(view: TasksToolViewState): string {
         detailsCollapsed
           ? `<div class="tasks-details-empty">Details collapsed.</div>`
           : selected
-            ? renderTaskDetails(selected, view.jsonDraft)
+            ? renderTaskDetails(selected, view.projectsById, view.jsonDraft)
             : `<div class="tasks-details-empty">Select a task to view details.</div>`
       }
     </section>
@@ -177,7 +179,7 @@ function renderSortHeader(key: TaskSortKey, label: string, view: TasksToolViewSt
   return `<button type="button" class="tasks-col-head ${key === "createdAt" ? "tasks-col-head-created " : ""}${active ? "is-active" : ""}" ${TASKS_DATA_ATTR.action}="sort-column" ${TASKS_DATA_ATTR.sort}="${key}">${label}<span class="tasks-col-head-arrow">${arrow}</span></button>`;
 }
 
-function renderTaskRow(task: TaskRecord, selected: boolean): string {
+function renderTaskRow(task: TaskRecord, selected: boolean, projectsById: Record<string, ProjectRecord>): string {
   return `<div class="tasks-row ${selected ? "is-selected" : ""}" role="button" tabindex="0" ${TASKS_DATA_ATTR.action}="select-task" ${TASKS_DATA_ATTR.taskId}="${escapeAttr(task.id)}">
     <span class="tasks-cell tasks-cell-check">
       <button type="button" class="tasks-check-btn ${task.archived ? "is-checked" : ""}" ${TASKS_DATA_ATTR.action}="toggle-task-done" ${TASKS_DATA_ATTR.taskId}="${escapeAttr(task.id)}" title="Toggle done">
@@ -186,13 +188,13 @@ function renderTaskRow(task: TaskRecord, selected: boolean): string {
     </span>
     <span class="tasks-cell tasks-cell-star"><button type="button" class="tasks-star-btn ${task.starred ? "is-starred" : ""}" ${TASKS_DATA_ATTR.action}="toggle-task-star" ${TASKS_DATA_ATTR.taskId}="${escapeAttr(task.id)}">${task.starred ? "★" : "☆"}</button></span>
     <span class="tasks-cell">${escapeHtml(task.type || "code")}</span>
-    <span class="tasks-cell tasks-mono">${escapeHtml(task.projectId || "—")}</span>
+    <span class="tasks-cell tasks-mono">${task.projectId ? escapeHtml(projectsById[task.projectId]?.name ?? task.projectId) : "—"}</span>
     <span class="tasks-cell tasks-task-name">${escapeHtml(task.name)}</span>
     <span class="tasks-cell tasks-cell-created tasks-mono">${escapeHtml(formatDate(task.createdAtMs))}</span>
   </div>`;
 }
 
-function renderTaskDetails(task: TaskRecord, jsonDraft?: string): string {
+function renderTaskDetails(task: TaskRecord, projectsById: Record<string, ProjectRecord>, jsonDraft?: string): string {
   const taskJson = typeof jsonDraft === "string" ? jsonDraft : JSON.stringify(task, null, 2);
   return `<div class="tasks-details">
     <div class="tasks-details-top">
@@ -229,8 +231,13 @@ function renderTaskDetails(task: TaskRecord, jsonDraft?: string): string {
         : `<div class="tasks-current-pill">Current model: <span class="tasks-mono">${escapeHtml(task.agentOwner)}</span></div>`
     }
     <label class="tasks-field-grid">
-      <span>Project ID</span>
-      <input type="text" value="${escapeAttr(task.projectId)}" ${TASKS_DATA_ATTR.field}="projectId" />
+      <span>Project</span>
+      <select ${TASKS_DATA_ATTR.field}="projectId" class="tasks-field-select">
+        <option value="" ${!task.projectId ? "selected" : ""}>No project</option>
+        ${Object.values(projectsById).map((p) =>
+          `<option value="${escapeAttr(p.id)}" ${task.projectId === p.id ? "selected" : ""}>${escapeHtml(p.name)} (${p.id})</option>`
+        ).join("")}
+      </select>
     </label>
     <label class="tasks-field">
       <span>Description</span>

@@ -12,6 +12,7 @@ import type {
 } from "../../contracts.js";
 import type { ChatIpcClient } from "../../ipcClient.js";
 import { ensureUserProject, getUserProjectRoots } from "../../projects.js";
+import type { ProjectRecord } from "../../projectsStore.js";
 import type { TerminalManager } from "../terminal/index.js";
 import { normalizeLooperLoopRecord } from "./runtime.js";
 import type { LooperPhase, LooperToolState } from "./state.js";
@@ -23,6 +24,7 @@ export interface LooperActionsDeps {
   nextCorrelationId: () => string;
   renderAndBind: () => void;
   defaultCwd?: string;
+  projectsById: Record<string, ProjectRecord>;
 }
 
 function syncDraftConfigIntoLiveState(state: LooperToolState, deps: LooperActionsDeps): void {
@@ -151,8 +153,13 @@ export async function createLoop(
 ): Promise<string | null> {
   if (state.busy) return null;
   const projectName = state.projectNameDraft.trim();
+  let resolvedProjectId = state.projectIdDraft.trim();
   if (projectName) {
-    if (state.projectTypeDraft === "app-tool") {
+    const existingProject = resolvedProjectId ? deps.projectsById[resolvedProjectId] : null;
+    if (existingProject) {
+      state.configCwdDraft = existingProject.rootPath;
+      state.cwd = existingProject.rootPath;
+    } else if (state.projectTypeDraft === "app-tool") {
       const toolId = sanitizeLooperToolId(projectName) || "project";
       const toolsRoot = state.directoryPreviewRoots?.toolsRoot;
       if (toolsRoot) {
@@ -164,6 +171,12 @@ export async function createLoop(
       state.configCwdDraft = project.rootPath;
       state.cwd = project.rootPath;
     }
+  } else if (resolvedProjectId) {
+    const existingProject = deps.projectsById[resolvedProjectId];
+    if (existingProject) {
+      state.configCwdDraft = existingProject.rootPath;
+      state.cwd = existingProject.rootPath;
+    }
   }
   syncDraftConfigIntoLiveState(state, deps);
   const loopIndex = state.nextLoopIndex;
@@ -173,6 +186,7 @@ export async function createLoop(
     projectIcon: state.projectIconDraft,
     projectDescription: state.projectDescriptionDraft
   });
+  loop.projectId = resolvedProjectId;
   loop.launchConfig = {
     cwd: state.cwd || deps.defaultCwd || ".",
     taskPath: state.taskPath,

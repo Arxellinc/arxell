@@ -39,6 +39,7 @@ import proportions from "./proportions.svg?raw";
 import settings from "./settings.svg?raw";
 import slidersHorizontal from "./sliders-horizontal.svg?raw";
 import squareCheckBig from "./square-check-big.svg?raw";
+import squareUserRound from "./square-user-round.svg?raw";
 import squareTerminal from "./square-terminal.svg?raw";
 import sun from "./sun.svg?raw";
 import trash2 from "./trash-2.svg?raw";
@@ -56,6 +57,7 @@ import save from "./save.svg?raw";
 import saveAll from "./save-all.svg?raw";
 import fileOutput from "./file-output.svg?raw";
 import folderOpen from "./folder-open.svg?raw";
+import fullscreen from "./fullscreen.svg?raw";
 import copy from "./copy.svg?raw";
 import copyPlus from "./copy-plus.svg?raw";
 import filePlus from "./file-plus.svg?raw";
@@ -141,6 +143,7 @@ const ICON_SVGS = {
   settings,
   "sliders-horizontal": slidersHorizontal,
   "square-check-big": squareCheckBig,
+  "square-user-round": squareUserRound,
   "square-terminal": squareTerminal,
   sun,
   search,
@@ -148,6 +151,7 @@ const ICON_SVGS = {
   "save-all": saveAll,
   "file-output": fileOutput,
   "folder-open": folderOpen,
+  fullscreen,
   copy,
   "copy-plus": copyPlus,
   "file-plus": filePlus,

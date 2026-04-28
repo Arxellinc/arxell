@@ -30,8 +30,7 @@ export function loadPersistedTasksById(): Record<string, TaskRecord> {
         : generateEntityId("T", usedTaskIds, Object.keys(result));
       usedTaskIds.add(id);
       const projectId = normalizePersistedProjectId(
-        typeof row.projectId === "string" ? row.projectId : "",
-        Object.values(result).map((task) => task.projectId)
+        typeof row.projectId === "string" ? row.projectId : ""
       );
       result[id] = {
         id,
@@ -296,20 +295,17 @@ function generateEntityId(prefix: "T" | "P", used: Set<string>, extraUsed?: stri
   return `${prefix}${Date.now().toString(36).slice(-6).padEnd(6, "0").slice(0, 6)}`;
 }
 
-function normalizePersistedProjectId(value: string, usedProjects: string[]): string {
+function normalizePersistedProjectId(value: string): string {
   const trimmed = value.trim();
   if (!trimmed) return "";
-  if (isValidEntityId(trimmed, "P")) return trimmed;
-  return generateEntityId("P", new Set(usedProjects.filter((id) => isValidEntityId(id, "P"))));
+  if (/^p[A-Za-z0-9]{6}$/.test(trimmed)) return trimmed;
+  return "";
 }
 
 function normalizeEditableProjectId(value: string): string {
   const trimmed = value.trim();
   if (!trimmed) return "";
-  const normalized = trimmed.replace(/[^A-Za-z0-9]/g, "");
-  if (!normalized) return "";
-  const withPrefix = normalized.startsWith("P") ? normalized : `P${normalized}`;
-  return withPrefix.slice(0, 7);
+  return trimmed;
 }
 
 function normalizeTaskType(value: string): string {

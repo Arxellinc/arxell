@@ -45,8 +45,12 @@ import type {
   ChatToolEventRow,
   DevicesState,
   SidebarTab,
-  UiMessage
+  UiMessage,
+  AvatarMeshSetting
 } from "./panels/types";
+import { defaultAvatarMeshes } from "./panels/types";
+import type { AvatarMorphSetting, AvatarBoneSetting } from "./panels/types";
+import { AVATAR_MORPHS, AVATAR_ARM_BONES } from "./panels/types";
 import type { DisplayMode, LayoutOrientation, WorkspaceTab } from "./layout";
 import { escapeHtml } from "./panels/utils";
 import { renderHighlightedCode } from "./tools/notepad/shared";
@@ -84,6 +88,7 @@ import {
   persistWebSearchHistory
 } from "./tools/webSearch/runtime";
 import type { WebSearchHistoryItem, WebTabState } from "./tools/webSearch/state";
+import type { FilesDeleteUndoEntry } from "./tools/files/state";
 import { getInitialOpenCodeState } from "./tools/opencode/state";
 import type { OpenCodeToolState } from "./tools/opencode/state";
 import { checkOpenCodeInstalled, spawnAgent } from "./tools/opencode/actions";
@@ -111,11 +116,25 @@ import {
 import { getInitialSheetsState } from "./tools/sheets/state";
 import type { SheetsToolState } from "./tools/sheets/state";
 import { mountSheetsRuntime, unmountSheetsRuntime } from "./tools/sheets/canvas/mount";
-import { loadPersistedTasksById } from "./tools/tasks/actions";
+import { persistTasksById } from "./tools/tasks/actions";
 import type { TaskFolder, TaskSortDirection, TaskSortKey, TaskRecord } from "./tools/tasks/state";
+import {
+  loadPersistedProjectsById,
+  createProject,
+  deleteProject,
+  updateProjectField,
+  persistProjectsById,
+  loadChatProjectMap,
+  setChatProjectId,
+  getChatProjectId,
+  persistChatProjectMap,
+  type ProjectRecord
+} from "./projectsStore";
+import { ensureUserProject } from "./projects";
 import { resetTtsStateForEngine, type TtsEngine } from "./tts/engineRules";
 import { getAllToolManifests } from "./tools/registry";
 import { renderChatMessages } from "./panels/chatPanel";
+import { renderAvatarPreview } from "./panels/avatarPanel";
 import { APP_BUILD_VERSION, normalizeVersionLabel } from "./version";
 import {
   closeTerminalSessionAndPickNext,
@@ -169,7 +188,27 @@ import {
 } from "./app/persistence";
 import { createAppResourcePolling } from "./app/polling";
 import { runCoreBootstrapSteps } from "./app/bootstrap";
-import { defaultApiConnectionDraft, defaultDevicesState } from "./app/state";
+import {
+  createInitialDocsState,
+  createInitialFilesState,
+  createInitialFlowState,
+  createInitialMemoryState,
+  createInitialNotepadState,
+  createInitialSkillsFileState,
+  createInitialTasksState,
+  defaultApiConnectionDraft,
+  defaultDevicesState,
+  selectDocsToolState,
+  selectFilesToolState,
+  selectFlowToolState,
+  selectMemoryToolState,
+  selectNotepadToolState,
+  selectSkillsToolState,
+  selectTasksToolState,
+  type FlowPhaseTranscriptEntry,
+  type FlowRerunValidationResult,
+  type FlowRunView
+} from "./app/state";
 import {
   buildBottomStatus,
   buildConversationMarkdown,
@@ -227,10 +266,36 @@ const initialWorkspaceTab = initialWorkspaceTabCandidate === "flow-tool"
   : "events";
 type ConsoleView = "all" | "errors-warnings" | "security-events";
 type DisplayModePreference = DisplayMode | "system" | "terminal";
-type FlowRunView = { runId: string; status?: string; phaseSessionByName?: Record<string, string> };
-type FlowPhaseTranscriptEntry = unknown;
-type FlowRerunValidationResult = unknown;
 const FLOW_TERMINAL_PHASES: string[] = [];
+type AvatarRuntimeModule = typeof import("./avatar/wireframeRuntime");
+let avatarRuntimePromise: Promise<AvatarRuntimeModule> | null = null;
+let avatarMeshTextureTargetKey = "";
+let avatarRuntimeModule: AvatarRuntimeModule | null = null;
+
+function loadAvatarRuntime(): Promise<AvatarRuntimeModule> {
+  if (avatarRuntimeModule) return Promise.resolve(avatarRuntimeModule);
+  avatarRuntimePromise ??= import("./avatar/wireframeRuntime").then((mod) => {
+    avatarRuntimeModule = mod;
+    return mod;
+  });
+  return avatarRuntimePromise;
+}
+
+function mountAvatarStagesIfNeeded(): void {
+  if (!state.avatar.active || state.avatar.assetKind !== "glb") {
+    avatarRuntimeModule?.disposeAvatarStages();
+    return;
+  }
+  void loadAvatarRuntime().then((mod) => mod.mountAvatarStages());
+}
+
+function disposeAvatarStagesIfLoaded(): void {
+  avatarRuntimeModule?.disposeAvatarStages();
+}
+
+function updateAvatarSpeechState(active: boolean, amplitude: number): void {
+  avatarRuntimeModule?.setAvatarSpeechState({ active, amplitude });
+}
 
 function filterFlowEvents(_events: AppEvent[], _filter: string, _limit: number): { forInspector: AppEvent[]; forRender: AppEvent[] } {
   return { forInspector: [], forRender: [] };
@@ -321,6 +386,22 @@ const state: {
   chatSplitMode: "none" | "vertical" | "horizontal";
   chatSplitPercent: number;
   chatPanels: ChatPanelState[];
+  avatar: {
+    active: boolean;
+    placement: "chat" | "tools";
+    maximized: boolean;
+    assetKind: "image" | "glb";
+    assetName: string | null;
+    assetUrl: string;
+    meshes: AvatarMeshSetting[];
+    morphs: AvatarMorphSetting[];
+    armBones: AvatarBoneSetting[];
+    bgColor: string;
+    bgOpacity: number;
+    borderSize: number;
+    borderColor: string;
+  };
+  avatarActiveTab: "appearance" | "animation";
   devices: DevicesState;
   apiConnections: ApiConnectionRecord[];
   apiFormOpen: boolean;
@@ -406,7 +487,7 @@ const state: {
   filesContextMenuTargetIsDir: boolean;
   filesClipboardMode: "copy" | "cut" | null;
   filesClipboardPaths: string[];
-  filesDeleteUndoStack: Array<{ deletedAtMs: number; snapshots: Array<Record<string, unknown>> }>;
+  filesDeleteUndoStack: FilesDeleteUndoEntry[];
   filesConflictModalOpen: boolean;
   filesConflictName: string;
   filesSelectionAnchorPath: string | null;
@@ -480,7 +561,7 @@ const state: {
   skillsLineWrap: boolean;
   skillsError: string | null;
   memoryContextItems: ChatContextBreakdownItem[];
-  memoryChatHistory: ConversationSummaryRecord[];
+  memoryChatHistory: Array<ConversationSummaryRecord & { fullBody: string; charCount: number; wordCount: number; tokenEstimate: number }>;
   memoryPersistentItems: ChatContextBreakdownItem[];
   memorySkillsItems: ChatContextBreakdownItem[];
   memoryToolsItems: ChatContextBreakdownItem[];
@@ -512,6 +593,11 @@ const state: {
   tasksSortDirection: TaskSortDirection;
   tasksDetailsCollapsed: boolean;
   tasksJsonDraft: string;
+  projectsById: Record<string, ProjectRecord>;
+  projectsSelectedId: string | null;
+  projectsNameDraft: string;
+  projectsModalOpen: boolean;
+  chatProjectMap: Record<string, string>;
   flowRuns: FlowRunView[];
   flowActiveRunId: string | null;
   flowMode: "plan" | "build";
@@ -713,6 +799,29 @@ const state: {
   chatSplitMode: "none",
   chatSplitPercent: 50,
   chatPanels: [],
+  avatar: {
+    active: false,
+    placement: "chat",
+    maximized: false,
+    assetKind: "glb",
+    assetName: "wireframe.glb",
+    assetUrl: "/avatar/wireframe.glb",
+    meshes: defaultAvatarMeshes(),
+    morphs: AVATAR_MORPHS.map((n) => ({ name: n, value: 0 })),
+    armBones: AVATAR_ARM_BONES.map((b) => {
+      const defaults: Record<string, { x: number; y: number; z: number }> = {
+        lUpperArm: { x: 10, y: 38, z: -3 },
+        rUpperArm: { x: -3, y: -40, z: 2 },
+      };
+      const d = defaults[b.key] ?? { x: 0, y: 0, z: 0 };
+      return { key: b.key, label: b.label, x: d.x, y: d.y, z: d.z };
+    }),
+    bgColor: "#000000",
+    bgOpacity: 50,
+    borderSize: 0,
+    borderColor: "#000000"
+  },
+  avatarActiveTab: "appearance" as const,
   devices: defaultDevicesState(),
   apiConnections: [],
   apiFormOpen: false,
@@ -755,192 +864,29 @@ const state: {
   webSetupApiKey: "",
   webSetupMessage: null,
   webSetupBusy: false,
-  filesRootPath: null,
-  filesScopeRootPath: null,
-  filesRootSelectorOpen: false,
-  filesSelectedPath: null,
-  filesSelectedEntryPath: null,
-  filesOpenTabs: [],
-  filesActiveTabPath: null,
-  filesContentByPath: {},
-  filesSavedContentByPath: {},
-  filesDirtyByPath: {},
-  filesLoadingFileByPath: {},
-  filesSavingFileByPath: {},
-  filesReadOnlyByPath: {},
-  filesSizeByPath: {},
-  filesExpandedByPath: {},
-  filesEntriesByPath: {},
-  filesLoadingByPath: {},
-  filesColumnWidths: {
-    name: 260,
-    type: 120,
-    size: 96,
-    modified: 132
-  },
-  filesSidebarWidth: 320,
-  filesSidebarCollapsed: false,
-  filesFindOpen: false,
-  filesFindQuery: "",
-  filesReplaceQuery: "",
-  filesFindCaseSensitive: false,
-  filesLineWrap: false,
-  filesSelectedPaths: [],
-  filesContextMenuOpen: false,
-  filesContextMenuX: 16,
-  filesContextMenuY: 16,
-  filesContextMenuTargetPath: null,
-  filesContextMenuTargetIsDir: false,
-  filesClipboardMode: null,
-  filesClipboardPaths: [],
-  filesDeleteUndoStack: [],
-  filesConflictModalOpen: false,
-  filesConflictName: "",
-  filesSelectionAnchorPath: null,
-  filesSelectionDragActive: false,
-  filesSelectionJustDragged: false,
-  filesSelectionGesture: null,
-  filesError: null,
-  notepadOpenTabs: [],
-  notepadActiveTabId: null,
-  notepadPathByTabId: {},
-  notepadTitleByTabId: {},
-  notepadContentByTabId: {},
-  notepadSavedContentByTabId: {},
-  notepadDirtyByTabId: {},
-  notepadLoadingByTabId: {},
-  notepadSavingByTabId: {},
-  notepadReadOnlyByTabId: {},
-  notepadSizeByTabId: {},
-  notepadNextUntitledIndex: 1,
-  notepadFindOpen: false,
-  notepadFindQuery: "",
-  notepadReplaceQuery: "",
-  notepadFindCaseSensitive: false,
-  notepadLineWrap: false,
-  notepadError: null,
+  ...createInitialFilesState(),
+  ...createInitialNotepadState(),
   sheetsState: getInitialSheetsState(),
-  docsRootPath: null,
-  docsSelectedPath: null,
-  docsSelectedEntryPath: null,
-  docsExpandedByPath: {},
-  docsEntriesByPath: {},
-  docsLoadingByPath: {},
-  docsOpenTabs: [],
-  docsActiveTabPath: null,
-  docsContentByPath: {},
-  docsSavedContentByPath: {},
-  docsDirtyByPath: {},
-  docsLoadingFileByPath: {},
-  docsSavingFileByPath: {},
-  docsReadOnlyByPath: {},
-  docsSizeByPath: {},
-  docsSidebarWidth: 280,
-  docsSidebarCollapsed: false,
-  docsFindOpen: false,
-  docsFindQuery: "",
-  docsReplaceQuery: "",
-  docsFindCaseSensitive: false,
-  docsLineWrap: false,
-  docsError: null,
-  skillsRootPath: null,
-  skillsSelectedPath: null,
-  skillsSelectedEntryPath: null,
-  skillsExpandedByPath: {},
-  skillsEntriesByPath: {},
-  skillsLoadingByPath: {},
-  skillsOpenTabs: [],
-  skillsActiveTabPath: null,
-  skillsContentByPath: {},
-  skillsSavedContentByPath: {},
-  skillsDirtyByPath: {},
-  skillsLoadingFileByPath: {},
-  skillsSavingFileByPath: {},
-  skillsReadOnlyByPath: {},
-  skillsSizeByPath: {},
-  skillsSidebarWidth: 280,
-  skillsSidebarCollapsed: false,
-  skillsFindOpen: false,
-  skillsFindQuery: "",
-  skillsReplaceQuery: "",
-  skillsFindCaseSensitive: false,
-  skillsLineWrap: false,
-  skillsError: null,
-  memoryContextItems: [],
-  memoryChatHistory: [],
-  memoryPersistentItems: [],
-  memorySkillsItems: [],
-  memoryToolsItems: [],
-  memoryAlwaysLoadToolKeys: loadPersistedMemoryAlwaysLoadTools(),
-  memoryAlwaysLoadSkillKeys: loadPersistedMemoryAlwaysLoadSkills(),
-  memoryModalOpen: false,
-  memoryModalMode: "edit",
-  memoryModalSection: null,
-  memoryModalTitle: "",
-  memoryModalValue: "",
-  memoryModalEditable: false,
-  memoryModalTarget: null,
-  memoryModalNamespace: null,
-  memoryModalKey: null,
-  memoryModalSourcePath: null,
-  memoryModalConversationId: null,
-  memoryModalDraftKey: "",
-  memoryModalDraftCategory: "directive",
-  memoryModalDraftDescription: "",
-  memoryActiveTab: "context",
-  memoryRouteMode: "auto",
-  memoryTotalTokenEstimate: 0,
-  memoryLoading: false,
-  memoryError: null,
-  tasksById: loadPersistedTasksById(),
-  tasksSelectedId: null,
-  tasksFolder: "inbox",
-  tasksSortKey: "createdAt",
-  tasksSortDirection: "desc",
-  tasksDetailsCollapsed: false,
-  tasksJsonDraft: "",
-  flowRuns: [],
-  flowActiveRunId: null,
-  flowMode: "plan",
-  flowMaxIterations: 1,
-  flowDryRun: true,
-  flowAutoPush: false,
-  flowPromptPlanPath: "PROMPT_plan.md",
-  flowPromptBuildPath: "PROMPT_build.md",
-  flowPlanPath: "IMPLEMENTATION_PLAN.md",
-  flowSpecsGlob: "specs/*.md",
-  flowImplementCommand: "",
-  flowBackpressureCommands: "",
-  flowEventFilter: "",
-  flowFilteredEvents: [],
-  flowValidationResults: [],
-  flowMessage: null,
-  flowBusy: false,
-  flowAdvancedOpen: loadPersistedFlowAdvancedOpen(),
-  flowBottomPanel: loadPersistedFlowBottomPanel(),
-  flowWorkspaceSplit: loadPersistedFlowSplit(),
-  flowActiveTerminalPhase: loadPersistedFlowActivePhase(),
-  flowPhaseSessionByName: loadPersistedFlowPhaseSessionMap(),
-  flowAutoFocusPhaseTerminal: loadPersistedFlowAutoFollow(),
-  flowPhaseTranscriptsByRun: {},
-  flowProjectSetupOpen: false,
-  flowProjectSetupDismissed: false,
-  flowProjectNameDraft: "",
-  flowProjectTypeDraft: "app-tool",
-  flowProjectIconDraft: "wrench",
-  flowProjectDescriptionDraft: "",
-  flowPhaseModels: {},
-  flowAvailableModels: [],
-  flowPaused: false,
-  flowUseAgent: false,
-  flowModelUnavailableOpen: false,
-  flowModelUnavailablePhase: "",
-  flowModelUnavailableModel: "",
-  flowModelUnavailableFallbackModel: "",
-  flowModelUnavailableReason: "",
-  flowModelUnavailableAttempt: 0,
-  flowModelUnavailableMaxAttempts: 0,
-  flowModelUnavailableStatus: "",
+  ...createInitialDocsState(),
+  ...createInitialSkillsFileState(),
+  ...createInitialMemoryState({
+    alwaysLoadToolKeys: loadPersistedMemoryAlwaysLoadTools(),
+    alwaysLoadSkillKeys: loadPersistedMemoryAlwaysLoadSkills()
+  }),
+  ...createInitialTasksState(),
+  projectsById: loadPersistedProjectsById(),
+  projectsSelectedId: null,
+  projectsNameDraft: "",
+  projectsModalOpen: false,
+  chatProjectMap: loadChatProjectMap(),
+  ...createInitialFlowState({
+    advancedOpen: loadPersistedFlowAdvancedOpen(),
+    bottomPanel: loadPersistedFlowBottomPanel(),
+    workspaceSplit: loadPersistedFlowSplit(),
+    activeTerminalPhase: loadPersistedFlowActivePhase(),
+    phaseSessionByName: loadPersistedFlowPhaseSessionMap(),
+    autoFocusPhaseTerminal: loadPersistedFlowAutoFollow()
+  }),
   displayMode: "dark",
   displayModePreference: "dark",
   appVersion: FALLBACK_APP_VERSION,
@@ -1358,6 +1304,7 @@ let flowSplitDragActive = false;
 let ttsActiveAudio: HTMLAudioElement | null = null;
 let ttsActiveAudioUrl: string | null = null;
 let ttsActivePlaybackResolve: (() => void) | null = null;
+let ttsActiveWebAudioStop: (() => void) | null = null;
 let chatTtsStreamAudioContext: AudioContext | null = null;
 let chatTtsStreamNextStartAtSec = 0;
 let chatTtsStreamFinalizeTimerId: number | null = null;
@@ -1412,6 +1359,14 @@ function isAnyAppResourceVisible(): boolean {
 
 function nextCorrelationId(): string {
   return `corr-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+}
+
+function shouldOfferPlaintextFallback(error: unknown): boolean {
+  return String(error).toLowerCase().includes("plaintext fallback");
+}
+
+function plaintextFallbackWarning(): string {
+  return "Secure OS credential storage is unavailable. Store this API key in a clearly named plaintext fallback file instead? This protects normal config files, but the key can be read by anyone with access to your app data directory.";
 }
 
 let appResourceRenderSendMessageRef: ((text: string) => Promise<void>) | null = null;
@@ -1573,6 +1528,11 @@ function notifyChatTtsQueueAvailable(): void {
 }
 
 function stopTtsPlaybackLocal(): void {
+  if (ttsActiveWebAudioStop) {
+    const stop = ttsActiveWebAudioStop;
+    ttsActiveWebAudioStop = null;
+    stop();
+  }
   if (ttsActiveAudio) {
     try {
       ttsActiveAudio.pause();
@@ -1604,6 +1564,7 @@ function stopTtsPlaybackLocal(): void {
   chatTtsStreamSeenByRequest.clear();
   chatTtsRequestToChatCorrelation.clear();
   state.chatTtsPlaying = false;
+  updateAvatarSpeechState(false, 0);
   chatTtsSpeakingSinceMs = 0;
   if (voicePipelineState === "agent_speaking") {
     setVoicePipelineState("idle");
@@ -1892,6 +1853,66 @@ async function playTtsAudio(audioBytes: unknown, correlationId: string | null): 
     throw new Error("No audio bytes returned from TTS.");
   }
   stopTtsPlaybackLocal();
+  const arrayBuffer = new Uint8Array(bytes).buffer.slice(0) as ArrayBuffer;
+  try {
+    const audioContext = new AudioContext();
+    if (audioContext.state === "suspended") {
+      await audioContext.resume();
+    }
+    const audioBuffer = await audioContext.decodeAudioData(arrayBuffer.slice(0));
+    const source = audioContext.createBufferSource();
+    source.buffer = audioBuffer;
+    const analyser = audioContext.createAnalyser();
+    analyser.fftSize = 256;
+    analyser.smoothingTimeConstant = 0.7;
+    source.connect(analyser);
+    analyser.connect(audioContext.destination);
+    const pcm = new Float32Array(analyser.fftSize);
+    let pollTimer: number | null = null;
+    let settled = false;
+    await new Promise<void>((resolve) => {
+      const cleanup = () => {
+        if (settled) return;
+        settled = true;
+        if (pollTimer !== null) window.clearTimeout(pollTimer);
+        ttsActiveWebAudioStop = null;
+        updateAvatarSpeechState(false, 0);
+        void audioContext.close().catch(() => {});
+        resolve();
+      };
+      const poll = () => {
+        if (settled) return;
+        analyser.getFloatTimeDomainData(pcm);
+        let rms = 0;
+        for (const sample of pcm) rms += sample * sample;
+        rms = Math.sqrt(rms / pcm.length);
+        updateAvatarSpeechState(true, Math.min(1, rms * 10));
+        pollTimer = window.setTimeout(poll, 67);
+      };
+      ttsActiveWebAudioStop = () => {
+        try {
+          source.stop();
+        } catch {
+          // Already stopped.
+        }
+        cleanup();
+      };
+      source.onended = cleanup;
+      source.start();
+      poll();
+      if (correlationId) {
+        const firstTokenMs = state.chatFirstAssistantChunkMsByCorrelation[correlationId];
+        if (firstTokenMs && !chatTtsLatencyCapturedByCorrelation.has(correlationId)) {
+          state.chatTtsLatencyMs = Math.max(0, Date.now() - firstTokenMs);
+          chatTtsLatencyCapturedByCorrelation.add(correlationId);
+        }
+      }
+    });
+    return;
+  } catch (error) {
+    updateAvatarSpeechState(false, 0);
+    pushConsoleEntry("debug", "browser", `WebAudio TTS playback fallback: ${String(error)}`);
+  }
   const blobBytes = new Uint8Array(bytes);
   const blob = new Blob([blobBytes], { type: "audio/wav" });
   const url = URL.createObjectURL(blob);
@@ -1912,6 +1933,7 @@ async function playTtsAudio(audioBytes: unknown, correlationId: string | null): 
     };
     audio.onended = () => {
       cleanup();
+      updateAvatarSpeechState(false, 0);
       resolve();
     };
     audio.onerror = () => {
@@ -2529,221 +2551,15 @@ function render(): void {
     webSetupApiKey: state.webSetupApiKey,
     webSetupMessage: state.webSetupMessage,
     webSetupBusy: state.webSetupBusy,
-    filesRootPath: state.filesRootPath,
-    filesScopeRootPath: state.filesScopeRootPath,
-    filesRootSelectorOpen: state.filesRootSelectorOpen,
-    filesSelectedPath: state.filesSelectedPath,
-    filesSelectedEntryPath: state.filesSelectedEntryPath,
-    filesOpenTabs: state.filesOpenTabs,
-    filesActiveTabPath: state.filesActiveTabPath,
-    filesContentByPath: state.filesContentByPath,
-    filesDirtyByPath: state.filesDirtyByPath,
-    filesLoadingFileByPath: state.filesLoadingFileByPath,
-    filesSavingFileByPath: state.filesSavingFileByPath,
-    filesReadOnlyByPath: state.filesReadOnlyByPath,
-    filesSizeByPath: state.filesSizeByPath,
-    filesExpandedByPath: state.filesExpandedByPath,
-    filesEntriesByPath: state.filesEntriesByPath,
-    filesLoadingByPath: state.filesLoadingByPath,
-    filesColumnWidths: state.filesColumnWidths,
-    filesSidebarWidth: state.filesSidebarWidth,
-    filesSidebarCollapsed: state.filesSidebarCollapsed,
-    filesFindOpen: state.filesFindOpen,
-    filesFindQuery: state.filesFindQuery,
-    filesReplaceQuery: state.filesReplaceQuery,
-    filesFindCaseSensitive: state.filesFindCaseSensitive,
-    filesLineWrap: state.filesLineWrap,
-    filesSelectedPaths: state.filesSelectedPaths,
-    filesContextMenuOpen: state.filesContextMenuOpen,
-    filesContextMenuX: state.filesContextMenuX,
-    filesContextMenuY: state.filesContextMenuY,
-    filesContextMenuTargetPath: state.filesContextMenuTargetPath,
-    filesContextMenuTargetIsDir: state.filesContextMenuTargetIsDir,
-    filesClipboardMode: state.filesClipboardMode,
-    filesClipboardPaths: state.filesClipboardPaths,
-    filesUndoDeleteAvailable: state.filesDeleteUndoStack.length > 0,
-    filesConflictModalOpen: state.filesConflictModalOpen,
-    filesConflictName: state.filesConflictName,
-    filesSelectionAnchorPath: state.filesSelectionAnchorPath,
-    filesSelectionDragActive: state.filesSelectionDragActive,
-    filesSelectionJustDragged: state.filesSelectionJustDragged,
-    filesSelectionGesture: state.filesSelectionGesture,
-    filesError: state.filesError,
-    notepadOpenTabs: state.notepadOpenTabs,
-    notepadActiveTabId: state.notepadActiveTabId,
-    notepadPathByTabId: state.notepadPathByTabId,
-    notepadTitleByTabId: state.notepadTitleByTabId,
-    notepadContentByTabId: state.notepadContentByTabId,
-    notepadDirtyByTabId: state.notepadDirtyByTabId,
-    notepadLoadingByTabId: state.notepadLoadingByTabId,
-    notepadSavingByTabId: state.notepadSavingByTabId,
-    notepadReadOnlyByTabId: state.notepadReadOnlyByTabId,
-    notepadSizeByTabId: state.notepadSizeByTabId,
-    notepadFindOpen: state.notepadFindOpen,
-    notepadFindQuery: state.notepadFindQuery,
-    notepadReplaceQuery: state.notepadReplaceQuery,
-    notepadFindCaseSensitive: state.notepadFindCaseSensitive,
-    notepadLineWrap: state.notepadLineWrap,
-    notepadError: state.notepadError,
+    ...selectFilesToolState(state),
+    ...selectNotepadToolState(state),
     sheetsState: state.sheetsState,
-    docsRootPath: state.docsRootPath,
-    docsSelectedPath: state.docsSelectedPath,
-    docsSelectedEntryPath: state.docsSelectedEntryPath,
-    docsExpandedByPath: state.docsExpandedByPath,
-    docsEntriesByPath: state.docsEntriesByPath,
-    docsLoadingByPath: state.docsLoadingByPath,
-    docsOpenTabs: state.docsOpenTabs,
-    docsActiveTabPath: state.docsActiveTabPath,
-    docsContentByPath: state.docsContentByPath,
-    docsSavedContentByPath: state.docsSavedContentByPath,
-    docsDirtyByPath: state.docsDirtyByPath,
-    docsLoadingFileByPath: state.docsLoadingFileByPath,
-    docsSavingFileByPath: state.docsSavingFileByPath,
-    docsReadOnlyByPath: state.docsReadOnlyByPath,
-    docsSizeByPath: state.docsSizeByPath,
-    docsSidebarWidth: state.docsSidebarWidth,
-    docsSidebarCollapsed: state.docsSidebarCollapsed,
-    docsFindOpen: state.docsFindOpen,
-    docsFindQuery: state.docsFindQuery,
-    docsReplaceQuery: state.docsReplaceQuery,
-    docsFindCaseSensitive: state.docsFindCaseSensitive,
-    docsLineWrap: state.docsLineWrap,
-    docsError: state.docsError,
-    skillsRootPath: state.skillsRootPath,
-    skillsSelectedPath: state.skillsSelectedPath,
-    skillsSelectedEntryPath: state.skillsSelectedEntryPath,
-    skillsExpandedByPath: state.skillsExpandedByPath,
-    skillsEntriesByPath: state.skillsEntriesByPath,
-    skillsLoadingByPath: state.skillsLoadingByPath,
-    skillsOpenTabs: state.skillsOpenTabs,
-    skillsActiveTabPath: state.skillsActiveTabPath,
-    skillsContentByPath: state.skillsContentByPath,
-    skillsSavedContentByPath: state.skillsSavedContentByPath,
-    skillsDirtyByPath: state.skillsDirtyByPath,
-    skillsLoadingFileByPath: state.skillsLoadingFileByPath,
-    skillsSavingFileByPath: state.skillsSavingFileByPath,
-    skillsReadOnlyByPath: state.skillsReadOnlyByPath,
-    skillsSizeByPath: state.skillsSizeByPath,
-    skillsSidebarWidth: state.skillsSidebarWidth,
-    skillsSidebarCollapsed: state.skillsSidebarCollapsed,
-    skillsFindOpen: state.skillsFindOpen,
-    skillsFindQuery: state.skillsFindQuery,
-    skillsReplaceQuery: state.skillsReplaceQuery,
-    skillsFindCaseSensitive: state.skillsFindCaseSensitive,
-    skillsLineWrap: state.skillsLineWrap,
-    skillsError: state.skillsError,
-    memoryContextItems: state.memoryContextItems.map((item) => ({
-      key: item.key,
-      value: item.value,
-      category: item.category,
-      loadMethod: item.loadMethod,
-      loadReason: item.loadReason,
-      tokenEstimate: item.tokenEstimate,
-      charCount: item.charCount,
-      wordCount: item.wordCount
-    })),
-    memoryChatHistory: state.memoryChatHistory,
-    memoryPersistentItems: state.memoryPersistentItems.map((item) => ({
-      key: item.key,
-      value: item.value,
-      type:
-        item.category === "fact" || item.category === "personality" || item.category === "directive"
-          ? item.category
-          : "other",
-      loadMethod: item.loadMethod,
-      loadReason: item.loadReason,
-      tokenEstimate: item.tokenEstimate,
-      charCount: item.charCount,
-      wordCount: item.wordCount
-    })),
-    memorySkillsItems: state.memorySkillsItems.map((item) => ({
-      key: item.key,
-      value: item.value,
-      category: item.category,
-      loadMethod: item.loadMethod,
-      loadReason: item.loadReason,
-      tokenEstimate: item.tokenEstimate,
-      charCount: item.charCount,
-      wordCount: item.wordCount
-    })),
-    memoryToolsItems: state.memoryToolsItems.map((item) => ({
-      key: item.key,
-      value: item.value,
-      category: item.category,
-      loadMethod: item.loadMethod,
-      loadReason: item.loadReason,
-      tokenEstimate: item.tokenEstimate,
-      charCount: item.charCount,
-      wordCount: item.wordCount
-    })),
-    memoryAlwaysLoadToolKeys: state.memoryAlwaysLoadToolKeys,
-    memoryAlwaysLoadSkillKeys: state.memoryAlwaysLoadSkillKeys,
-    memoryModalOpen: state.memoryModalOpen,
-    memoryModalMode: state.memoryModalMode,
-    memoryModalSection: state.memoryModalSection,
-    memoryModalTitle: state.memoryModalTitle,
-    memoryModalValue: state.memoryModalValue,
-    memoryModalEditable: state.memoryModalEditable,
-    memoryModalTarget: state.memoryModalTarget,
-    memoryModalNamespace: state.memoryModalNamespace,
-    memoryModalKey: state.memoryModalKey,
-    memoryModalSourcePath: state.memoryModalSourcePath,
-    memoryModalConversationId: state.memoryModalConversationId,
-    memoryModalDraftKey: state.memoryModalDraftKey,
-    memoryModalDraftCategory: state.memoryModalDraftCategory,
-    memoryModalDraftDescription: state.memoryModalDraftDescription,
-    memoryActiveTab: state.memoryActiveTab,
-    memoryRouteMode: state.memoryRouteMode,
-    memoryTotalTokenEstimate: state.memoryTotalTokenEstimate,
-    memoryLoading: state.memoryLoading,
-    memoryError: state.memoryError,
-    tasksById: state.tasksById,
-    tasksSelectedId: state.tasksSelectedId,
-    tasksFolder: state.tasksFolder,
-    tasksSortKey: state.tasksSortKey,
-    tasksSortDirection: state.tasksSortDirection,
-    tasksDetailsCollapsed: state.tasksDetailsCollapsed,
-    tasksJsonDraft: state.tasksJsonDraft,
-    flowRuns: state.flowRuns,
-    flowActiveRunId: state.flowActiveRunId,
-    flowMode: state.flowMode,
-    flowMaxIterations: state.flowMaxIterations,
-    flowDryRun: state.flowDryRun,
-    flowAutoPush: state.flowAutoPush,
-    flowPromptPlanPath: state.flowPromptPlanPath,
-    flowPromptBuildPath: state.flowPromptBuildPath,
-    flowPlanPath: state.flowPlanPath,
-    flowSpecsGlob: state.flowSpecsGlob,
-    flowImplementCommand: state.flowImplementCommand,
-    flowBackpressureCommands: state.flowBackpressureCommands,
-    flowEventFilter: state.flowEventFilter,
-    flowValidationResults: state.flowValidationResults,
-    flowBusy: state.flowBusy,
-    flowMessage: state.flowMessage,
-    flowAdvancedOpen: state.flowAdvancedOpen,
-    flowBottomPanel: state.flowBottomPanel,
-    flowWorkspaceSplit: state.flowWorkspaceSplit,
-    flowActiveTerminalPhase: state.flowActiveTerminalPhase,
-    flowPhaseSessionByName: state.flowPhaseSessionByName,
-    flowAutoFocusPhaseTerminal: state.flowAutoFocusPhaseTerminal,
-    flowPhaseTranscriptsByRun: state.flowPhaseTranscriptsByRun,
-    flowProjectSetupOpen: state.flowProjectSetupOpen,
-    flowProjectNameDraft: state.flowProjectNameDraft,
-    flowProjectTypeDraft: state.flowProjectTypeDraft,
-    flowProjectIconDraft: state.flowProjectIconDraft,
-    flowProjectDescriptionDraft: state.flowProjectDescriptionDraft,
-    flowPhaseModels: state.flowPhaseModels,
-    flowAvailableModels: state.flowAvailableModels,
-    flowPaused: state.flowPaused,
-    flowUseAgent: state.flowUseAgent,
-    flowModelUnavailableOpen: state.flowModelUnavailableOpen,
-    flowModelUnavailablePhase: state.flowModelUnavailablePhase,
-    flowModelUnavailableModel: state.flowModelUnavailableModel,
-    flowModelUnavailableFallbackModel: state.flowModelUnavailableFallbackModel,
-    flowModelUnavailableReason: state.flowModelUnavailableReason,
-    flowModelUnavailableAttempt: state.flowModelUnavailableAttempt,
-    flowModelUnavailableMaxAttempts: state.flowModelUnavailableMaxAttempts,
-    flowModelUnavailableStatus: state.flowModelUnavailableStatus,
+    ...selectDocsToolState(state),
+    ...selectSkillsToolState(state),
+    ...selectMemoryToolState(state),
+    ...selectTasksToolState(state),
+    projectsById: state.projectsById,
+    ...selectFlowToolState(state),
     flowTerminalPhases: [...FLOW_TERMINAL_PHASES],
     terminalSessions: terminalManager.listSessions("terminal").map((session) => ({
       sessionId: session.sessionId,
@@ -2832,7 +2648,13 @@ function render(): void {
     vadShadowSummary: state.vadShadowSummary,
     vadMessage: state.vadMessage,
     tts: state.tts,
-    consoleEntries: state.consoleEntries
+    consoleEntries: state.consoleEntries,
+    projectsById: state.projectsById,
+    projectsSelectedId: state.projectsSelectedId,
+    projectsNameDraft: state.projectsNameDraft,
+    projectsModalOpen: state.projectsModalOpen,
+    avatar: state.avatar,
+    avatarActiveTab: state.avatarActiveTab
   });
 
   const isChatTab = state.sidebarTab === "chat";
@@ -2915,7 +2737,13 @@ function render(): void {
             vadShadowSummary: state.vadShadowSummary,
             vadMessage: state.vadMessage,
             tts: state.tts,
-            consoleEntries: state.consoleEntries
+            consoleEntries: state.consoleEntries,
+            projectsById: state.projectsById,
+            projectsSelectedId: state.projectsSelectedId,
+            projectsNameDraft: state.projectsNameDraft,
+            projectsModalOpen: state.projectsModalOpen,
+            avatar: state.avatar,
+    avatarActiveTab: state.avatarActiveTab
           }, scopeId);
           return {
             paneTitleHtml: renderPanelTitleIcon({
@@ -2964,7 +2792,10 @@ function render(): void {
     toolsActionsHtml,
     toolViews,
     state.workspaceTools,
-    state.workspaceTab
+    state.workspaceTab,
+    state.avatar.active && state.avatar.placement === "tools"
+      ? renderAvatarPreview(state.avatar, { context: "tools" })
+      : ""
   );
 
   const sidebarRailHtml = renderSidebarRail(
@@ -2974,7 +2805,8 @@ function render(): void {
     state.chatTtsEnabled,
     state.apiConnections.some(
       (connection) => connection.apiType === "llm" && connection.status === "verified"
-    )
+    ),
+    state.avatar.active
   );
   const appBodyHtml = composeAppBodyHtml({
     layoutOrientation: state.layoutOrientation,
@@ -2983,6 +2815,7 @@ function render(): void {
     workspacePaneHtml
   });
 
+  disposeAvatarStagesIfLoaded();
   app.innerHTML = composeAppFrameHtml({
     chatPanePercent: state.chatPanePercent,
     portraitWorkspacePercent: state.portraitWorkspacePercent,
@@ -3462,7 +3295,30 @@ async function loadMemoryContext(): Promise<void> {
       alwaysLoadSkillKeys: state.memoryAlwaysLoadSkillKeys
     });
     state.memoryContextItems = response.items.map(mapMemoryContextItem);
-    state.memoryChatHistory = response.conversations;
+    const conversations = response.conversations.slice(0, 10);
+    const historyBodies = await Promise.all(
+      conversations.map(async (conv) => {
+        try {
+          const msgResponse = await clientRef!.getMessages({
+            conversationId: conv.conversationId,
+            correlationId: nextCorrelationId()
+          });
+          const body = msgResponse.messages.map((m) => m.content).join("\n");
+          return { conversationId: conv.conversationId, body };
+        } catch {
+          const fallback = conv.lastMessagePreview || "";
+          return { conversationId: conv.conversationId, body: fallback };
+        }
+      })
+    );
+    const bodyMap = new Map(historyBodies.map((b) => [b.conversationId, b.body]));
+    state.memoryChatHistory = conversations.map((conv) => {
+      const fullBody = bodyMap.get(conv.conversationId) || conv.lastMessagePreview || "";
+      const chars = fullBody.length;
+      const words = fullBody.split(/\s+/).filter(Boolean).length;
+      const tokenEstimate = Math.round(((chars * 0.25) + (words * 1.3)) * 0.5);
+      return { ...conv, fullBody, charCount: chars, wordCount: words, tokenEstimate };
+    });
     state.memoryPersistentItems = response.memoryItems.map(mapMemoryContextItem);
     state.memorySkillsItems = response.skillsItems.map(mapMemoryContextItem);
     state.memoryToolsItems = response.toolsItems.map(mapMemoryContextItem);
@@ -3583,7 +3439,7 @@ function openMemoryModal(section: "context" | "history" | "memory" | "skills" | 
     state.memoryModalMode = "edit";
     state.memoryModalSection = section;
     state.memoryModalTitle = title;
-    state.memoryModalValue = item.lastMessagePreview || "";
+    state.memoryModalValue = item.fullBody || item.lastMessagePreview || "";
     state.memoryModalEditable = isCustomHistory;
     state.memoryModalTarget = isCustomHistory ? "custom-item" : null;
     state.memoryModalNamespace = isCustomHistory ? "history" : null;
@@ -5029,6 +4885,9 @@ syncOverlayScrollbars();
     onCreateConversation: async () => {
       const id = generateChatConversationId();
       state.conversationId = id;
+      if (state.projectsSelectedId) {
+        setChatProjectId(state.chatProjectMap, id, state.projectsSelectedId);
+      }
       resetCurrentConversationUiState();
       state.sidebarTab = "chat";
       await refreshConversations();
@@ -5115,15 +4974,31 @@ syncOverlayScrollbars();
       const selected = await pickTextFile("application/json,.json");
       if (!selected) return;
       try {
-        const imported = await clientRef.importApiConnections({
+        const request = {
           correlationId: nextCorrelationId(),
           payloadJson: selected.text
-        });
+        };
+        const imported = await clientRef.importApiConnections(request);
         state.apiConnections = imported.connections;
         refreshChatModelProfile();
         state.apiMessage = `Imported API connections from ${selected.name}.`;
       } catch (error) {
-        state.apiMessage = `Failed importing API connections JSON: ${String(error)}`;
+        if (shouldOfferPlaintextFallback(error) && window.confirm(plaintextFallbackWarning())) {
+          try {
+            const imported = await clientRef.importApiConnections({
+              correlationId: nextCorrelationId(),
+              payloadJson: selected.text,
+              allowPlaintextFallback: true
+            });
+            state.apiConnections = imported.connections;
+            refreshChatModelProfile();
+            state.apiMessage = `Imported API connections from ${selected.name} using plaintext fallback storage.`;
+          } catch (retryError) {
+            state.apiMessage = `Failed importing API connections JSON: ${String(retryError)}`;
+          }
+        } else {
+          state.apiMessage = `Failed importing API connections JSON: ${String(error)}`;
+        }
       }
       renderAndBind(sendMessage);
     },
@@ -5131,9 +5006,10 @@ syncOverlayScrollbars();
       if (!clientRef) return;
       const selected = await pickTextFile("text/csv,.csv,text/plain,.txt");
       if (!selected) return;
+      let payloadJson = "";
       try {
         const snapshot = fromApiConnectionsCsv(selected.text);
-        const payloadJson = `${JSON.stringify(snapshot, null, 2)}\n`;
+        payloadJson = `${JSON.stringify(snapshot, null, 2)}\n`;
         const imported = await clientRef.importApiConnections({
           correlationId: nextCorrelationId(),
           payloadJson
@@ -5142,7 +5018,22 @@ syncOverlayScrollbars();
         refreshChatModelProfile();
         state.apiMessage = `Imported API connections from ${selected.name}.`;
       } catch (error) {
-        state.apiMessage = `Failed importing API connections CSV: ${String(error)}`;
+        if (shouldOfferPlaintextFallback(error) && window.confirm(plaintextFallbackWarning())) {
+          try {
+            const imported = await clientRef.importApiConnections({
+              correlationId: nextCorrelationId(),
+              payloadJson,
+              allowPlaintextFallback: true
+            });
+            state.apiConnections = imported.connections;
+            refreshChatModelProfile();
+            state.apiMessage = `Imported API connections from ${selected.name} using plaintext fallback storage.`;
+          } catch (retryError) {
+            state.apiMessage = `Failed importing API connections CSV: ${String(retryError)}`;
+          }
+        } else {
+          state.apiMessage = `Failed importing API connections CSV: ${String(error)}`;
+        }
       }
       renderAndBind(sendMessage);
     },
@@ -5173,22 +5064,12 @@ syncOverlayScrollbars();
       if (!clientRef) return;
       const connection = state.apiConnections.find((record) => record.id === id);
       if (!connection) return;
-      let fullApiKey = "";
-      try {
-        const secret = await clientRef.getApiConnectionSecret({
-          correlationId: nextCorrelationId(),
-          id
-        });
-        fullApiKey = secret.apiKey;
-      } catch (error) {
-        state.apiMessage = `Failed loading API key for edit: ${String(error)}`;
-      }
       state.apiEditingId = id;
       state.apiDraft = {
         apiType: connection.apiType,
         apiUrl: connection.apiUrl,
         name: connection.name ?? "",
-        apiKey: fullApiKey,
+        apiKey: "",
         modelName: connection.modelName ?? "",
         costPerMonthUsd: typeof connection.costPerMonthUsd === "number"
           ? String(connection.costPerMonthUsd)
@@ -5284,7 +5165,7 @@ syncOverlayScrollbars();
             Boolean(apiKey) &&
             !(apiKey.includes("*") && /\*{2,}/.test(apiKey));
           // Update existing connection
-          const updated = await clientRef.updateApiConnection({
+            const updateRequest = {
             correlationId: nextCorrelationId(),
             id: state.apiEditingId,
             apiType: state.apiDraft.apiType,
@@ -5294,7 +5175,8 @@ syncOverlayScrollbars();
             ...(state.apiDraft.modelName.trim() ? { modelName: state.apiDraft.modelName.trim() } : {}),
             ...(typeof costPerMonthUsd === "number" ? { costPerMonthUsd } : {}),
             ...(state.apiDraft.apiStandardPath.trim() ? { apiStandardPath: state.apiDraft.apiStandardPath.trim() } : {})
-          });
+          };
+          const updated = await clientRef.updateApiConnection(updateRequest);
           const verified = await clientRef.reverifyApiConnection({
             correlationId: nextCorrelationId(),
             id: updated.connection.id
@@ -5309,7 +5191,7 @@ syncOverlayScrollbars();
           state.apiMessage = verified.connection.statusMessage;
         } else {
           // Create new connection
-          const created = await clientRef.createApiConnection({
+          const createRequest = {
             correlationId: nextCorrelationId(),
             apiType: state.apiDraft.apiType,
             apiUrl,
@@ -5318,7 +5200,8 @@ syncOverlayScrollbars();
             ...(state.apiDraft.modelName.trim() ? { modelName: state.apiDraft.modelName.trim() } : {}),
             ...(typeof costPerMonthUsd === "number" ? { costPerMonthUsd } : {}),
             ...(state.apiDraft.apiStandardPath.trim() ? { apiStandardPath: state.apiDraft.apiStandardPath.trim() } : {})
-          });
+          };
+          const created = await clientRef.createApiConnection(createRequest);
           state.apiConnections = [created.connection, ...state.apiConnections];
           refreshChatModelProfile();
           state.apiFormOpen = false;
@@ -5327,7 +5210,59 @@ syncOverlayScrollbars();
           state.apiMessage = created.connection.statusMessage;
         }
       } catch (error) {
-        state.apiMessage = `Failed saving API: ${String(error)}`;
+        if (shouldOfferPlaintextFallback(error) && window.confirm(plaintextFallbackWarning())) {
+          try {
+            if (state.apiEditingId) {
+              const includeApiKey = Boolean(apiKey) && !(apiKey.includes("*") && /\*{2,}/.test(apiKey));
+              const updated = await clientRef.updateApiConnection({
+                correlationId: nextCorrelationId(),
+                id: state.apiEditingId,
+                apiType: state.apiDraft.apiType,
+                apiUrl,
+                ...(state.apiDraft.name.trim() ? { name: state.apiDraft.name.trim() } : {}),
+                ...(includeApiKey ? { apiKey } : {}),
+                ...(state.apiDraft.modelName.trim() ? { modelName: state.apiDraft.modelName.trim() } : {}),
+                ...(typeof costPerMonthUsd === "number" ? { costPerMonthUsd } : {}),
+                ...(state.apiDraft.apiStandardPath.trim() ? { apiStandardPath: state.apiDraft.apiStandardPath.trim() } : {}),
+                allowPlaintextFallback: true
+              });
+              const verified = await clientRef.reverifyApiConnection({
+                correlationId: nextCorrelationId(),
+                id: updated.connection.id
+              });
+              state.apiConnections = state.apiConnections.map((record) =>
+                record.id === state.apiEditingId ? verified.connection : record
+              );
+              refreshChatModelProfile();
+              state.apiFormOpen = false;
+              state.apiEditingId = null;
+              state.apiDraft = defaultApiConnectionDraft();
+              state.apiMessage = `${verified.connection.statusMessage} Plaintext fallback storage is enabled for this session.`;
+            } else {
+              const created = await clientRef.createApiConnection({
+                correlationId: nextCorrelationId(),
+                apiType: state.apiDraft.apiType,
+                apiUrl,
+                apiKey,
+                ...(state.apiDraft.name.trim() ? { name: state.apiDraft.name.trim() } : {}),
+                ...(state.apiDraft.modelName.trim() ? { modelName: state.apiDraft.modelName.trim() } : {}),
+                ...(typeof costPerMonthUsd === "number" ? { costPerMonthUsd } : {}),
+                ...(state.apiDraft.apiStandardPath.trim() ? { apiStandardPath: state.apiDraft.apiStandardPath.trim() } : {}),
+                allowPlaintextFallback: true
+              });
+              state.apiConnections = [created.connection, ...state.apiConnections];
+              refreshChatModelProfile();
+              state.apiFormOpen = false;
+              state.apiEditingId = null;
+              state.apiDraft = defaultApiConnectionDraft();
+              state.apiMessage = `${created.connection.statusMessage} Plaintext fallback storage is enabled for this session.`;
+            }
+          } catch (retryError) {
+            state.apiMessage = `Failed saving API: ${String(retryError)}`;
+          }
+        } else {
+          state.apiMessage = `Failed saving API: ${String(error)}`;
+        }
       }
       renderAndBind(sendMessage);
     },
@@ -6332,8 +6267,128 @@ syncOverlayScrollbars();
       state.showBottomTtsLatency = value;
       persistBottomItem(BOTTOM_BAR_PREF_KEYS.showBottomTtsLatency, value);
       renderAndBind(sendMessage);
+    },
+    onToggleAvatar: async () => {
+      state.avatar.active = !state.avatar.active;
+      renderAndBind(sendMessage);
+    },
+    onSetAvatarPlacement: async (placement: "chat" | "tools") => {
+      state.avatar.active = true;
+      state.avatar.placement = placement;
+      renderAndBind(sendMessage);
+    },
+    onToggleAvatarMaximized: async () => {
+      state.avatar.maximized = !state.avatar.maximized;
+      renderAndBind(sendMessage);
+    },
+    onAvatarUploadImage: async () => {
+      const input = document.querySelector<HTMLInputElement>("#avatarImageInput");
+      input?.click();
+    },
+    onAvatarUseWireframe: async () => {
+      if (state.avatar.assetUrl.startsWith("blob:")) {
+        URL.revokeObjectURL(state.avatar.assetUrl);
+      }
+      state.avatar.assetKind = "glb";
+      state.avatar.assetName = "wireframe.glb";
+      state.avatar.assetUrl = "/avatar/wireframe.glb";
+      state.avatar.active = true;
+      renderAndBind(sendMessage);
+    },
+    onAvatarMeshUpdate: async (key: string, updates: Partial<AvatarMeshSetting>) => {
+      const ms = state.avatar.meshes.find((m) => m.key === key);
+      if (!ms) return;
+      if ("textureUrl" in updates && ms.textureUrl && ms.textureUrl.startsWith("blob:")) {
+        URL.revokeObjectURL(ms.textureUrl);
+      }
+      Object.assign(ms, updates);
+      renderAndBind(sendMessage);
+    },
+    onAvatarMeshTextureUpload: (key: string) => {
+      avatarMeshTextureTargetKey = key;
+      const input = document.querySelector<HTMLInputElement>("#avatarMeshTextureInput");
+      input?.click();
+    },
+    onAvatarBorderChange: async (size: number, color: string) => {
+      state.avatar.borderSize = size;
+      state.avatar.borderColor = color;
+      renderAndBind(sendMessage);
+    },
+    onAvatarBgChange: async (color: string, opacity: number) => {
+      state.avatar.bgColor = color;
+      state.avatar.bgOpacity = opacity;
+      renderAndBind(sendMessage);
+    },
+    onAvatarSetActiveTab: async (tab: "appearance" | "animation") => {
+      state.avatarActiveTab = tab;
+      renderAndBind(sendMessage);
+    },
+    onAvatarMorphChange: async (name: string, value: number) => {
+      const ms = state.avatar.morphs.find((m) => m.name === name);
+      if (ms) ms.value = value;
+      renderAndBind(sendMessage);
+    },
+    onAvatarBoneChange: async (key: string, axis: "x" | "y" | "z", value: number) => {
+      const bone = state.avatar.armBones.find((b) => b.key === key);
+      if (bone) bone[axis] = value;
+      renderAndBind(sendMessage);
+    },
+    onProjectCreate: async (name: string) => {
+      const trimmed = name.trim();
+      if (!trimmed) return;
+      state.projectsNameDraft = trimmed;
+      const client = clientRef;
+      if (client) {
+        try {
+          const info = await ensureUserProject(client, nextCorrelationId(), trimmed);
+          createProject(state, info.rootPath);
+        } catch {
+          createProject(state, "");
+        }
+      } else {
+        createProject(state, "");
+      }
+      renderAndBind(sendMessage);
+    },
+    onProjectSelect: (id: string | null) => {
+      state.projectsSelectedId = id;
+      renderAndBind(sendMessage);
+    },
+    onProjectDelete: async (id: string) => {
+      const projectId = id || state.projectsSelectedId;
+      if (!projectId) return;
+      state.projectsSelectedId = projectId;
+      deleteProject(state);
+      for (const task of Object.values(state.tasksById)) {
+        if (task.projectId === projectId) {
+          task.projectId = "";
+        }
+      }
+      persistTasksById(state);
+      for (const convId of Object.keys(state.chatProjectMap)) {
+        if (state.chatProjectMap[convId] === projectId) {
+          delete state.chatProjectMap[convId];
+        }
+      }
+      persistChatProjectMap(state.chatProjectMap);
+      renderAndBind(sendMessage);
+    },
+    onProjectUpdateField: (id: string, field: "name" | "rootPath", value: string) => {
+      state.projectsSelectedId = id;
+      updateProjectField(state, field, value);
+      renderAndBind(sendMessage);
+    },
+    onProjectSetModalOpen: (open: boolean) => {
+      state.projectsModalOpen = open;
+      if (!open) state.projectsNameDraft = "";
+      renderAndBind(sendMessage);
+    },
+    onProjectSetNameDraft: (name: string) => {
+      state.projectsNameDraft = name;
     }
   });
+  bindAvatarPreviewInteractions(sendMessage);
+  mountAvatarStagesIfNeeded();
 }
 
 function mountActiveSheetsRuntime(sendMessage: (text: string) => Promise<void>): void {
@@ -7201,7 +7256,13 @@ function currentPrimaryPanelRenderState() {
     vadShadowSummary: state.vadShadowSummary,
     vadMessage: state.vadMessage,
     tts: state.tts,
-    consoleEntries: state.consoleEntries
+    consoleEntries: state.consoleEntries,
+    projectsById: state.projectsById,
+    projectsSelectedId: state.projectsSelectedId,
+    projectsNameDraft: state.projectsNameDraft,
+    projectsModalOpen: state.projectsModalOpen,
+    avatar: state.avatar,
+    avatarActiveTab: state.avatarActiveTab
   };
 }
 
@@ -7392,6 +7453,60 @@ function attachSidebarInteractions(sendMessage: (text: string) => Promise<void>)
       renderAndBind(sendMessage);
     };
   });
+}
+
+function bindAvatarPreviewInteractions(sendMessage: (text: string) => Promise<void>): void {
+  const imageInput = document.querySelector<HTMLInputElement>("#avatarImageInput");
+  if (imageInput) {
+    imageInput.onchange = () => {
+      const file = imageInput.files?.[0] ?? null;
+      imageInput.value = "";
+      if (!file || !file.type.startsWith("image/")) return;
+      if (state.avatar.assetUrl.startsWith("blob:")) {
+        URL.revokeObjectURL(state.avatar.assetUrl);
+      }
+      state.avatar.assetKind = "image";
+      state.avatar.assetName = file.name;
+      state.avatar.assetUrl = URL.createObjectURL(file);
+      state.avatar.active = true;
+      renderAndBind(sendMessage);
+    };
+  }
+  const avatarButtons = document.querySelectorAll<HTMLButtonElement>("[data-avatar-action]");
+  avatarButtons.forEach((button) => {
+    button.onclick = () => {
+      const action = button.dataset.avatarAction;
+      if (action === "view-chat") {
+        state.avatar.active = true;
+        state.avatar.placement = "chat";
+        state.sidebarTab = "chat";
+      } else if (action === "view-tools") {
+        state.avatar.active = true;
+        state.avatar.placement = "tools";
+      } else if (action === "close") {
+        state.avatar.active = false;
+      } else if (action === "toggle-size") {
+        state.avatar.maximized = !state.avatar.maximized;
+      }
+      renderAndBind(sendMessage);
+    };
+  });
+  const meshTextureInput = document.querySelector<HTMLInputElement>("#avatarMeshTextureInput");
+  if (meshTextureInput) {
+    meshTextureInput.onchange = () => {
+      const file = meshTextureInput.files?.[0] ?? null;
+      meshTextureInput.value = "";
+      if (!file || !file.type.startsWith("image/") || !avatarMeshTextureTargetKey) return;
+      const key = avatarMeshTextureTargetKey;
+      avatarMeshTextureTargetKey = "";
+      const ms = state.avatar.meshes.find((m) => m.key === key);
+      if (!ms) return;
+      if (ms.textureUrl && ms.textureUrl.startsWith("blob:")) URL.revokeObjectURL(ms.textureUrl);
+      ms.textureUrl = URL.createObjectURL(file);
+      ms.textureName = file.name;
+      renderAndBind(sendMessage);
+    };
+  }
 }
 
 function attachWorkspaceInteractions(sendMessage: (text: string) => Promise<void>): void {
@@ -7708,7 +7823,8 @@ function attachWorkspaceInteractions(sendMessage: (text: string) => Promise<void
           terminalManager,
           client: clientRef!,
           nextCorrelationId,
-          renderAndBind: () => renderAndBind(sendMessage)
+          renderAndBind: () => renderAndBind(sendMessage),
+          projectsById: state.projectsById
         }
       }
     };
@@ -7749,7 +7865,8 @@ ensureLooperInit: async () => {
     terminalManager,
     client: clientRef!,
     nextCorrelationId,
-    renderAndBind: () => renderAndBind(sendMessage)
+    renderAndBind: () => renderAndBind(sendMessage),
+    projectsById: state.projectsById
   };
   await ensureLooperInit(state.looperState, looperDeps);
 }
@@ -8167,6 +8284,9 @@ if (workspaceTab === "sheets-tool") {
       if (action === "modal-draft-description") {
         state.memoryModalDraftDescription = input.value;
       }
+      if (input.getAttribute?.("data-chart-field") === "source") {
+        void renderChartCanvasIfNeeded(sendMessage);
+      }
     });
     workspacePane.addEventListener("change", (event: Event) => {
       const input = event.target as HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement;
@@ -8553,7 +8673,8 @@ async function bootstrap(): Promise<void> {
           terminalManager,
           client: clientRef!,
           nextCorrelationId,
-          renderAndBind: () => renderAndBind(sendMessage)
+          renderAndBind: () => renderAndBind(sendMessage),
+          projectsById: state.projectsById
         };
         await ensureLooperInit(state.looperState, looperDeps);
       }

@@ -3,12 +3,11 @@ use crate::contracts::{
     ChatCancelRequest, ChatCancelResponse, ChatDeleteConversationRequest,
     ChatDeleteConversationResponse, ChatGetMessagesRequest, ChatGetMessagesResponse,
     ChatInspectContextRequest, ChatInspectContextResponse, ChatListConversationsRequest,
-    ChatListConversationsResponse, ChatSendRequest, ChatSendResponse, EventSeverity, EventStage,
-    CustomItemDeleteRequest, CustomItemDeleteResponse, CustomItemUpsertRequest,
-    CustomItemUpsertResponse, MemoryDeleteRequest, MemoryDeleteResponse, MemoryUpsertRequest,
+    ChatListConversationsResponse, ChatSendRequest, ChatSendResponse, CustomItemDeleteRequest,
+    CustomItemDeleteResponse, CustomItemUpsertRequest, CustomItemUpsertResponse, EventSeverity,
+    EventStage, MemoryDeleteRequest, MemoryDeleteResponse, MemoryUpsertRequest,
     MemoryUpsertResponse, ReferenceFileSetRequest, ReferenceFileSetResponse, SkillCreateRequest,
-    SkillCreateResponse, Subsystem,
-    SystemPromptSetRequest, SystemPromptSetResponse,
+    SkillCreateResponse, Subsystem, SystemPromptSetRequest, SystemPromptSetResponse,
 };
 use crate::observability::EventHub;
 use serde_json::json;

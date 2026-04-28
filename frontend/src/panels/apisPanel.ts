@@ -84,7 +84,7 @@ export function renderApisBody(state: PrimaryPanelRenderState): string {
           </label>
           <label class="api-form-field api-form-wide">
             <span>API Key</span>
-            <input id="apiKeyInput" class="llama-input" value="${escapeHtml(state.apiDraft.apiKey)}" placeholder="${state.apiDraft.apiKey ? "Replace with full API key..." : "sk-..."}" />
+            <input id="apiKeyInput" class="llama-input" value="${escapeHtml(state.apiDraft.apiKey)}" placeholder="${state.apiDraft.apiKey ? "New API key entered" : "Leave blank to keep existing key"}" />
           </label>
           <label class="api-form-field api-form-half">
             <span>Model Name</span>
@@ -340,7 +340,7 @@ function buildVerificationCommand(draft: PrimaryPanelRenderState["apiDraft"]): s
   if (!endpoint) {
     return "Enter API URL to generate verification command.";
   }
-  const apiKey = draft.apiKey.trim() || "YOUR_API_KEY";
+  const apiKey = "YOUR_API_KEY";
   const payload =
     draft.apiType === "search"
       ? JSON.stringify({ q: "test", num: 1 })

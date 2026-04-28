@@ -8,7 +8,8 @@ export function renderSidebarRail(
   llamaRuntimeOnline: boolean,
   sttRunning: boolean,
   ttsActive: boolean,
-  hasVerifiedModelApi: boolean
+  hasVerifiedModelApi: boolean,
+  avatarActive: boolean
 ): string {
   const panelButtons = SIDEBAR_PRIMARY_PANELS.map((panel) => {
         const isActive = tab === panel.tab ? "is-active" : "";
@@ -16,7 +17,8 @@ export function renderSidebarRail(
       (panel.statusSignal === "stt" && sttRunning) ||
       (panel.statusSignal === "llama" && llamaRuntimeOnline) ||
       (panel.statusSignal === "tts" && ttsActive) ||
-      (panel.statusSignal === "apis" && hasVerifiedModelApi);
+      (panel.statusSignal === "apis" && hasVerifiedModelApi) ||
+      (panel.statusSignal === "avatar" && avatarActive);
     return `<button type="button" class="sidebar-icon-btn ${isActive}" data-sidebar-tab="${panel.tab}" data-title="${panel.title}" title="${panel.title}" aria-label="${panel.title}">
           ${iconHtml(panel.icon, {
             size: 24,

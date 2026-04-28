@@ -59,14 +59,23 @@ impl UserProjectsService {
         }
         self.ensure_roots()?;
         let project_slug = slugify_project_name(trimmed);
-        let root_path = self.projects_root.join(filesystem_project_dir_name(trimmed));
+        let root_path = self
+            .projects_root
+            .join(filesystem_project_dir_name(trimmed));
         let tasks_path = root_path.join("tasks");
         let sheets_path = root_path.join("sheets");
         let looper_path = root_path.join("looper");
         let files_path = root_path.join("files");
-        for path in [&root_path, &tasks_path, &sheets_path, &looper_path, &files_path] {
-            std::fs::create_dir_all(path)
-                .map_err(|e| format!("failed creating project directory {}: {e}", path.display()))?;
+        for path in [
+            &root_path,
+            &tasks_path,
+            &sheets_path,
+            &looper_path,
+            &files_path,
+        ] {
+            std::fs::create_dir_all(path).map_err(|e| {
+                format!("failed creating project directory {}: {e}", path.display())
+            })?;
         }
         Ok(UserProjectPaths {
             project_name: trimmed.to_string(),

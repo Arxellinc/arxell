@@ -1,5 +1,6 @@
 import { APP_ICON } from "../icons/map";
 import { bindApisPanel, renderApisActions, renderApisBody } from "./apisPanel";
+import { bindAvatarPanel, renderAvatarActions, renderAvatarBody } from "./avatarPanel";
 import { bindChatPanel, renderChatActions, renderChatBody } from "./chatPanel";
 import { renderDevicesActions, renderDevicesBody } from "./devicesPanel";
 import { bindHistoryPanel, renderHistoryActions, renderHistoryBody } from "./historyPanel";
@@ -18,7 +19,7 @@ import type {
   SidebarTab
 } from "./types";
 import { renderTtsActions, renderTtsBody } from "./ttsPanel";
-import { renderWorkspaceActions, renderWorkspaceBody } from "./workspacePanel";
+import { renderWorkspaceActions, renderWorkspaceBody, bindProjectsPanel } from "./workspacePanel";
 
 export function getPanelDefinition(
   tab: SidebarTab,
@@ -45,7 +46,7 @@ export function getPanelDefinition(
 
   if (tab === "workspace") {
     return {
-      title: "Workspace",
+      title: "Projects",
       icon: APP_ICON.sidebar.workspace,
       renderBody: () => renderWorkspaceBody(state),
       renderActions: renderWorkspaceActions
@@ -115,6 +116,15 @@ export function getPanelDefinition(
     };
   }
 
+  if (tab === "avatar") {
+    return {
+      title: "AI Avatar",
+      icon: APP_ICON.sidebar.avatar,
+      renderBody: () => renderAvatarBody(state),
+      renderActions: () => renderAvatarActions(state)
+    };
+  }
+
   if (tab === "settings") {
     return {
       title: "Settings",
@@ -125,7 +135,7 @@ export function getPanelDefinition(
   }
 
   return {
-    title: "Workspace",
+    title: "Projects",
     icon: APP_ICON.sidebar.workspace,
     renderBody: () => renderWorkspaceBody(state),
     renderActions: renderWorkspaceActions
@@ -180,6 +190,12 @@ export function attachPrimaryPanelInteractions(
         await bindings.onToggleVoiceMode();
       };
     }
+    const chatAvatarBtn = document.querySelector<HTMLButtonElement>("#chatAvatarBtn");
+    if (chatAvatarBtn) {
+      chatAvatarBtn.onclick = async () => {
+        await bindings.onToggleAvatar();
+      };
+    }
     const chatSpeakBtn = document.querySelector<HTMLButtonElement>("#chatSpeakBtn");
     if (chatSpeakBtn) {
       chatSpeakBtn.onclick = async () => {
@@ -196,6 +212,11 @@ export function attachPrimaryPanelInteractions(
       bindings.onExportConversation,
       bindings.onDeleteConversation
     );
+    return;
+  }
+
+  if (tab === "avatar") {
+    bindAvatarPanel(bindings);
     return;
   }
 
@@ -218,6 +239,11 @@ export function attachPrimaryPanelInteractions(
         await bindings.onRequestSpeakerAccess();
       };
     }
+    return;
+  }
+
+  if (tab === "workspace") {
+    bindProjectsPanel(bindings, state);
     return;
   }
 

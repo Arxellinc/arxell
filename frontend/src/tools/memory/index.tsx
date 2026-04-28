@@ -29,6 +29,10 @@ export interface MemoryChatHistoryItem {
   messageCount: number;
   lastMessagePreview: string;
   updatedAtMs: number;
+  fullBody: string;
+  charCount: number;
+  wordCount: number;
+  tokenEstimate: number;
 }
 
 export interface MemoryPersistentItem {
@@ -492,6 +496,7 @@ export function renderMemoryToolBody(state: MemoryToolState): string {
                 ${escapeHtml(title.length > 80 ? title.slice(0, 80) + "..." : title)}
               </div>
               <div class="memory-col memory-col-messages">${escapeHtml(String(chat.messageCount))} msgs</div>
+              <div class="memory-col memory-col-tokens">${escapeHtml(formatCompactNumber(chat.tokenEstimate))}</div>
               <div class="memory-col memory-col-actions">
                 ${canOpen ? `<button type="button" class="tool-action-btn memory-open-btn" data-memory-open-id="${escapeHtml(chat.conversationId)}" title="Open chat">Open</button>` : ""}
               </div>
@@ -587,6 +592,7 @@ export function renderMemoryToolBody(state: MemoryToolState): string {
             <span>Date</span>
             <span>Title</span>
             <span>Messages</span>
+            <span>Token</span>
             <span class="memory-header-actions">Actions</span>
           </div>
           ${chatHistoryRows}

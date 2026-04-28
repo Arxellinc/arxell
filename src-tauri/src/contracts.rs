@@ -782,6 +782,8 @@ pub struct ApiConnectionsExportResponse {
 pub struct ApiConnectionsImportRequest {
     pub correlation_id: String,
     pub payload_json: String,
+    #[serde(default)]
+    pub allow_plaintext_fallback: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -834,6 +836,8 @@ pub struct ApiConnectionCreateRequest {
     pub model_name: Option<String>,
     pub cost_per_month_usd: Option<f64>,
     pub api_standard_path: Option<String>,
+    #[serde(default)]
+    pub allow_plaintext_fallback: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -892,6 +896,8 @@ pub struct ApiConnectionUpdateRequest {
     pub model_name: Option<String>,
     pub cost_per_month_usd: Option<f64>,
     pub api_standard_path: Option<String>,
+    #[serde(default)]
+    pub allow_plaintext_fallback: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

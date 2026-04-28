@@ -83,7 +83,7 @@
 }
 
 .memory-header-chat {
-  grid-template-columns: minmax(90px, 0.9fr) minmax(180px, 1.8fr) minmax(70px, 0.7fr) auto;
+  grid-template-columns: 120px minmax(180px, 1.8fr) minmax(70px, 0.7fr) minmax(60px, 0.5fr) auto;
 }
 
 .memory-header-persistent {
@@ -121,7 +121,7 @@
 }
 
 .memory-row-chat {
-  grid-template-columns: minmax(90px, 0.9fr) minmax(180px, 1.8fr) minmax(70px, 0.7fr) auto;
+  grid-template-columns: 120px minmax(180px, 1.8fr) minmax(70px, 0.7fr) minmax(60px, 0.5fr) auto;
 }
 
 .memory-row-persistent {

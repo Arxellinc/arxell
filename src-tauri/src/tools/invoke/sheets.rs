@@ -92,11 +92,10 @@ fn invoke_undo(state: &TauriBridgeState, payload: Value) -> ToolInvokeFuture {
     let sheets = state.sheets.clone();
     Box::pin(async move {
         let _: InspectSheetPayload = decode_payload(payload)?;
-        let result = tokio::task::spawn_blocking(move || {
-            sheets.undo().map_err(SheetsService::error_string)
-        })
-        .await
-        .map_err(|error| format!("sheets undo task failed: {error}"))??;
+        let result =
+            tokio::task::spawn_blocking(move || sheets.undo().map_err(SheetsService::error_string))
+                .await
+                .map_err(|error| format!("sheets undo task failed: {error}"))??;
         serde_json::to_value(result)
             .map_err(|error| format!("failed serializing sheets undo response: {error}"))
     })
@@ -106,11 +105,10 @@ fn invoke_redo(state: &TauriBridgeState, payload: Value) -> ToolInvokeFuture {
     let sheets = state.sheets.clone();
     Box::pin(async move {
         let _: InspectSheetPayload = decode_payload(payload)?;
-        let result = tokio::task::spawn_blocking(move || {
-            sheets.redo().map_err(SheetsService::error_string)
-        })
-        .await
-        .map_err(|error| format!("sheets redo task failed: {error}"))??;
+        let result =
+            tokio::task::spawn_blocking(move || sheets.redo().map_err(SheetsService::error_string))
+                .await
+                .map_err(|error| format!("sheets redo task failed: {error}"))??;
         serde_json::to_value(result)
             .map_err(|error| format!("failed serializing sheets redo response: {error}"))
     })
@@ -127,10 +125,8 @@ fn invoke_set_cell(state: &TauriBridgeState, payload: Value) -> ToolInvokeFuture
         })
         .await
         .map_err(|error| format!("sheets set_cell task failed: {error}"))??;
-        serde_json::to_value(
-            result,
-        )
-        .map_err(|error| format!("failed serializing sheets set_cell response: {error}"))
+        serde_json::to_value(result)
+            .map_err(|error| format!("failed serializing sheets set_cell response: {error}"))
     })
 }
 
@@ -145,10 +141,8 @@ fn invoke_set_ai_model(state: &TauriBridgeState, payload: Value) -> ToolInvokeFu
         })
         .await
         .map_err(|error| format!("sheets set_ai_model task failed: {error}"))??;
-        serde_json::to_value(
-            result,
-        )
-        .map_err(|error| format!("failed serializing sheets set_ai_model response: {error}"))
+        serde_json::to_value(result)
+            .map_err(|error| format!("failed serializing sheets set_ai_model response: {error}"))
     })
 }
 
@@ -163,10 +157,8 @@ fn invoke_write_range(state: &TauriBridgeState, payload: Value) -> ToolInvokeFut
         })
         .await
         .map_err(|error| format!("sheets write_range task failed: {error}"))??;
-        serde_json::to_value(
-            result,
-        )
-        .map_err(|error| format!("failed serializing sheets write_range response: {error}"))
+        serde_json::to_value(result)
+            .map_err(|error| format!("failed serializing sheets write_range response: {error}"))
     })
 }
 
@@ -191,8 +183,9 @@ fn invoke_copy_paste_range(state: &TauriBridgeState, payload: Value) -> ToolInvo
         })
         .await
         .map_err(|error| format!("sheets copy_paste_range task failed: {error}"))??;
-        serde_json::to_value(result)
-            .map_err(|error| format!("failed serializing sheets copy_paste_range response: {error}"))
+        serde_json::to_value(result).map_err(|error| {
+            format!("failed serializing sheets copy_paste_range response: {error}")
+        })
     })
 }
 
@@ -207,10 +200,8 @@ fn invoke_insert_rows(state: &TauriBridgeState, payload: Value) -> ToolInvokeFut
         })
         .await
         .map_err(|error| format!("sheets insert_rows task failed: {error}"))??;
-        serde_json::to_value(
-            result,
-        )
-        .map_err(|error| format!("failed serializing sheets insert_rows response: {error}"))
+        serde_json::to_value(result)
+            .map_err(|error| format!("failed serializing sheets insert_rows response: {error}"))
     })
 }
 
@@ -225,10 +216,8 @@ fn invoke_delete_rows(state: &TauriBridgeState, payload: Value) -> ToolInvokeFut
         })
         .await
         .map_err(|error| format!("sheets delete_rows task failed: {error}"))??;
-        serde_json::to_value(
-            result,
-        )
-        .map_err(|error| format!("failed serializing sheets delete_rows response: {error}"))
+        serde_json::to_value(result)
+            .map_err(|error| format!("failed serializing sheets delete_rows response: {error}"))
     })
 }
 
@@ -243,10 +232,8 @@ fn invoke_insert_columns(state: &TauriBridgeState, payload: Value) -> ToolInvoke
         })
         .await
         .map_err(|error| format!("sheets insert_columns task failed: {error}"))??;
-        serde_json::to_value(
-            result,
-        )
-        .map_err(|error| format!("failed serializing sheets insert_columns response: {error}"))
+        serde_json::to_value(result)
+            .map_err(|error| format!("failed serializing sheets insert_columns response: {error}"))
     })
 }
 
@@ -309,10 +296,8 @@ fn invoke_delete_columns(state: &TauriBridgeState, payload: Value) -> ToolInvoke
         })
         .await
         .map_err(|error| format!("sheets delete_columns task failed: {error}"))??;
-        serde_json::to_value(
-            result,
-        )
-        .map_err(|error| format!("failed serializing sheets delete_columns response: {error}"))
+        serde_json::to_value(result)
+            .map_err(|error| format!("failed serializing sheets delete_columns response: {error}"))
     })
 }
 

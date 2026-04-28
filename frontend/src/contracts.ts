@@ -535,6 +535,7 @@ export interface ApiConnectionsExportResponse {
 export interface ApiConnectionsImportRequest {
   correlationId: string;
   payloadJson: string;
+  allowPlaintextFallback?: boolean;
 }
 
 export interface ApiConnectionsImportResponse {
@@ -575,6 +576,7 @@ export interface ApiConnectionCreateRequest {
   modelName?: string;
   costPerMonthUsd?: number;
   apiStandardPath?: string;
+  allowPlaintextFallback?: boolean;
 }
 
 export interface ApiConnectionCreateResponse {
@@ -611,6 +613,7 @@ export interface ApiConnectionUpdateRequest {
   modelName?: string;
   costPerMonthUsd?: number;
   apiStandardPath?: string;
+  allowPlaintextFallback?: boolean;
 }
 
 export interface ApiConnectionUpdateResponse {

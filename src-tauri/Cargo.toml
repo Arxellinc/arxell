@@ -1,6 +1,6 @@
 [package]
 name = "arxell-lite"
-version = "0.1.9"
+version = "0.2.1"
 edition = "2021"
 
 [features]
@@ -35,6 +35,7 @@ arx_rs = { path = "../agent" }
 sysinfo = "0.37"
 git2 = { version = "0.20", features = ["vendored-libgit2"] }
 ironcalc = "0.7.1"
+keyring = "3"
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }

@@ -323,7 +323,8 @@ fn display_value_with_format(value: &ComputedValue, format: Option<&str>) -> Str
     match value {
         ComputedValue::Number(number) => {
             if let Some(pattern) = format {
-                if let Ok(rendered) = crate::services::sheets_formula::format_text_value(*number, pattern)
+                if let Ok(rendered) =
+                    crate::services::sheets_formula::format_text_value(*number, pattern)
                 {
                     return rendered;
                 }

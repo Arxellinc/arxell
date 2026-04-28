@@ -49,6 +49,7 @@ export function handleChartInput(target: HTMLElement, slice: ChartRuntimeSlice):
     return { handled: false, rerender: false };
   }
   slice.chartSource = target.value;
+  slice.chartRenderSource = target.value;
   return { handled: true, rerender: false };
 }
 

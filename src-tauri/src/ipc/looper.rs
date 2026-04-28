@@ -322,10 +322,7 @@ impl LooperCommandHandler {
         result
     }
 
-    pub fn import(
-        &self,
-        req: LooperImportRequest,
-    ) -> Result<LooperImportResponse, String> {
+    pub fn import(&self, req: LooperImportRequest) -> Result<LooperImportResponse, String> {
         self.hub.emit(self.hub.make_event(
             &req.correlation_id,
             Subsystem::Ipc,

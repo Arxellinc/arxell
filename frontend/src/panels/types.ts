@@ -15,6 +15,7 @@ import type {
 } from "../contracts";
 import type { ChatModelCapabilities } from "../modelCapabilities";
 import type { IconName } from "../icons";
+import type { ProjectRecord } from "../projectsStore";
 
 export type SidebarTab =
   | "chat"
@@ -27,6 +28,7 @@ export type SidebarTab =
   | "vad"
   | "llama_cpp"
   | "model_manager"
+  | "avatar"
   | "settings";
 
 export interface DevicesState {
@@ -76,6 +78,87 @@ export interface ChatPanelState {
   chatTtsEnabled: boolean;
   chatTtsPlaying: boolean;
   activeChatCorrelationId: string | null;
+}
+
+export interface AvatarMeshSetting {
+  key: string;
+  visible: boolean;
+  color: string;
+  opacity: number;
+  textureUrl: string;
+  textureName: string;
+}
+
+export interface AvatarMorphSetting {
+  name: string;
+  value: number;
+}
+
+export interface AvatarBoneSetting {
+  key: string;
+  label: string;
+  x: number;
+  y: number;
+  z: number;
+}
+
+export const AVATAR_MORPHS = [
+  "Bra", "Pantys", "EYE_R_Up", "EYE_R_Dw", "EYE_R_Rt", "EYE_R_Lt",
+  "EYE_L_Up", "EYE_L_Dw", "EYE_L_Lt", "EYE_L_Rt", "EYE_close_R", "EYE_close_L",
+  "EM_Brows_up", "EM_Brows_frown", "EM_Mouth_open", "EM_scream",
+  "PH_JAW_Fwd", "PH_JAW_Lft", "PH_JAW_Rgt", "EM_Eyes_shut", "EM_Fright",
+  "EM_Mouth_kiss", "EM_Mouth_Blow", "EM_Mouth_smile", "EM_Mouth_smilewide",
+  "EM_Mouth_disgust", "EM_Mouth_R_Up", "EM_Mouth_L_Up",
+  "PH_A", "PH_O-U", "PH_B-P", "PH_D-S", "PH_V-F", "PH_I-E", "PH_CH-SH",
+  "Toes", "Tongue_open", "Tongue_scream", "Tongue_out2"
+] as const;
+
+export const AVATAR_ARM_BONES = [
+  { key: "lClavicle", label: "L Clavicle" },
+  { key: "rClavicle", label: "R Clavicle" },
+  { key: "lUpperArm", label: "L Upper Arm" },
+  { key: "rUpperArm", label: "R Upper Arm" },
+  { key: "lForearm", label: "L Forearm" },
+  { key: "rForearm", label: "R Forearm" },
+  { key: "lHand", label: "L Hand" },
+  { key: "rHand", label: "R Hand" },
+] as const;
+
+export const AVATAR_MESH_GROUPS = [
+  { key: "wireframe", label: "Wireframe" },
+  { key: "body", label: "Body" },
+  { key: "eyes", label: "Eyes" },
+  { key: "eyebrows", label: "Eyebrows" },
+  { key: "hair", label: "Hair" },
+  { key: "jaw", label: "Jaw" },
+  { key: "tongue", label: "Tongue" },
+] as const;
+
+export function defaultAvatarMeshes(): AvatarMeshSetting[] {
+  return AVATAR_MESH_GROUPS.map((g) => ({
+    key: g.key,
+    visible: g.key !== "eyebrows" && g.key !== "hair",
+    color: g.key === "wireframe" ? "#00ccff" : g.key === "body" ? "#102527" : g.key === "eyes" ? "#1a88aa" : "#16E9F5",
+    opacity: 1,
+    textureUrl: "",
+    textureName: "",
+  }));
+}
+
+export interface AvatarState {
+  active: boolean;
+  placement: "chat" | "tools";
+  maximized: boolean;
+  assetKind: "image" | "glb";
+  assetName: string | null;
+  assetUrl: string;
+  meshes: AvatarMeshSetting[];
+  morphs: AvatarMorphSetting[];
+  armBones: AvatarBoneSetting[];
+  bgColor: string;
+  bgOpacity: number;
+  borderSize: number;
+  borderColor: string;
 }
 
 export interface SttState {
@@ -260,6 +343,12 @@ export interface PrimaryPanelRenderState {
   vadMessage: string | null;
   tts: TtsState;
   consoleEntries: ConsoleEntry[];
+  projectsById: Record<string, ProjectRecord>;
+  projectsSelectedId: string | null;
+  projectsNameDraft: string;
+  projectsModalOpen: boolean;
+  avatar: AvatarState;
+  avatarActiveTab: "appearance" | "animation";
 }
 
 export interface PrimaryPanelDefinition {
@@ -387,4 +476,22 @@ export interface PrimaryPanelBindings {
   onSetShowBottomContext: (value: boolean) => Promise<void>;
   onSetShowBottomSpeed: (value: boolean) => Promise<void>;
   onSetShowBottomTtsLatency: (value: boolean) => Promise<void>;
+  onToggleAvatar: () => Promise<void>;
+  onSetAvatarPlacement: (placement: "chat" | "tools") => Promise<void>;
+  onToggleAvatarMaximized: () => Promise<void>;
+  onAvatarUploadImage: () => Promise<void>;
+  onAvatarUseWireframe: () => Promise<void>;
+  onAvatarMeshUpdate: (key: string, updates: Partial<AvatarMeshSetting>) => Promise<void>;
+  onAvatarMeshTextureUpload: (key: string) => void;
+  onAvatarBorderChange: (size: number, color: string) => Promise<void>;
+  onAvatarBgChange: (color: string, opacity: number) => Promise<void>;
+  onAvatarSetActiveTab: (tab: "appearance" | "animation") => Promise<void>;
+  onAvatarMorphChange: (name: string, value: number) => Promise<void>;
+  onAvatarBoneChange: (key: string, axis: "x" | "y" | "z", value: number) => Promise<void>;
+  onProjectCreate: (name: string) => Promise<void>;
+  onProjectSelect: (id: string | null) => void;
+  onProjectDelete: (id: string) => Promise<void>;
+  onProjectUpdateField: (id: string, field: "name" | "rootPath", value: string) => void;
+  onProjectSetModalOpen: (open: boolean) => void;
+  onProjectSetNameDraft: (name: string) => void;
 }

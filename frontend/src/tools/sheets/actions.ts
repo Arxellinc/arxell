@@ -1,5 +1,6 @@
 import type { ChatIpcClient } from "../../ipcClient.js";
-import { ensureUserProject, getActiveProjectName, getUserProjectRoots } from "../../projects.js";
+import { ensureUserProject, getUserProjectRoots } from "../../projects.js";
+import type { ProjectRecord } from "../../projectsStore.js";
 import {
   applySheetsSnapshotMeta,
   clearSheetsWorkbook,
@@ -18,6 +19,8 @@ import {
 interface SheetsDeps {
   client: ChatIpcClient | null;
   nextCorrelationId: () => string;
+  projectsById: Record<string, ProjectRecord>;
+  projectsSelectedId: string | null;
 }
 
 interface ToolInvokeResponse<T> {
@@ -549,10 +552,11 @@ async function pickSaveSheetPath(defaultPath: string, sourceKind: string, deps: 
 async function getDefaultSheetsPath(deps: SheetsDeps, fileName: string): Promise<string> {
   const normalizedFileName = basename(fileName || "sheet.csv") || "sheet.csv";
   if (!deps.client) return normalizedFileName;
-  const activeProjectName = getActiveProjectName();
-  if (activeProjectName) {
-    const project = await ensureUserProject(deps.client, deps.nextCorrelationId(), activeProjectName);
-    return joinPath(project.sheetsPath, normalizedFileName);
+  const selectedProjectId = deps.projectsSelectedId;
+  if (selectedProjectId && deps.projectsById[selectedProjectId]) {
+    const project = deps.projectsById[selectedProjectId];
+    const info = await ensureUserProject(deps.client, deps.nextCorrelationId(), project.name);
+    return joinPath(info.sheetsPath, normalizedFileName);
   }
   const roots = await getUserProjectRoots(deps.client, deps.nextCorrelationId());
   return joinPath(roots.projectsRoot, normalizedFileName);

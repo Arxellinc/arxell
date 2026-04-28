@@ -88,6 +88,7 @@ export function normalizeLooperLoopRecord(record: LooperLoopRecord): LooperLoopR
     reviewResult,
     reviewBeforeExecute: record.reviewBeforeExecute,
     plannerPlan: record.plannerPlan,
+    projectId: "",
     pendingQuestions: record.pendingQuestions,
     reviewAnswers: {},
     preview: {
@@ -146,6 +147,7 @@ function createEventPlaceholderLoop(loopId: string, iteration: number, timestamp
     reviewResult: null,
     reviewBeforeExecute: true,
     plannerPlan: "",
+    projectId: "",
     pendingQuestions: [],
     reviewAnswers: {},
     preview: {

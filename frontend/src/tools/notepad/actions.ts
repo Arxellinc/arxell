@@ -1,20 +1,7 @@
 import type { ChatIpcClient } from "../../ipcClient";
+import type { NotepadToolStateSlice } from "./state";
 
-interface NotepadSlice {
-  notepadOpenTabs: string[];
-  notepadActiveTabId: string | null;
-  notepadPathByTabId: Record<string, string | null>;
-  notepadTitleByTabId: Record<string, string>;
-  notepadContentByTabId: Record<string, string>;
-  notepadSavedContentByTabId: Record<string, string>;
-  notepadDirtyByTabId: Record<string, boolean>;
-  notepadLoadingByTabId: Record<string, boolean>;
-  notepadSavingByTabId: Record<string, boolean>;
-  notepadReadOnlyByTabId: Record<string, boolean>;
-  notepadSizeByTabId: Record<string, number>;
-  notepadNextUntitledIndex: number;
-  notepadError: string | null;
-}
+type NotepadSlice = NotepadToolStateSlice;
 
 interface NotepadDeps {
   client: ChatIpcClient | null;

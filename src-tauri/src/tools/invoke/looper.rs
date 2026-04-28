@@ -38,8 +38,16 @@ pub fn register(registry: &mut InvokeRegistry) {
         &["submit-questions", "submitQuestions"],
         invoke_submit_questions,
     );
-    registry.register("looper", &["start-preview", "startPreview"], invoke_start_preview);
-    registry.register("looper", &["stop-preview", "stopPreview"], invoke_stop_preview);
+    registry.register(
+        "looper",
+        &["start-preview", "startPreview"],
+        invoke_start_preview,
+    );
+    registry.register(
+        "looper",
+        &["stop-preview", "stopPreview"],
+        invoke_stop_preview,
+    );
 }
 
 fn invoke_start(state: &TauriBridgeState, payload: Value) -> ToolInvokeFuture {

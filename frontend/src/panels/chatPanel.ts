@@ -4,6 +4,7 @@ import type { ChatAttachment } from "../contracts";
 import type { PrimaryPanelRenderState } from "./types";
 import type { ChatModelCapabilities } from "../modelCapabilities";
 import { escapeHtml } from "./utils";
+import { renderAvatarPreview } from "./avatarPanel";
 
 interface ParsedAttachmentMessage {
   displayText: string;
@@ -44,6 +45,7 @@ export function renderChatActions(state: PrimaryPanelRenderState, scopeId = ""):
       <button type="button" class="topbar-icon-btn" id="chatNewBtn${scopeId}" aria-label="New chat" data-title="New Chat" title="New Chat">${iconHtml(APP_ICON.action.chatNew, { size: 16, tone: "dark" })}</button>
       <button type="button" class="topbar-icon-btn" id="chatClearBtn${scopeId}" aria-label="Clear chat" data-title="Clear Chat" title="Clear Chat">${iconHtml(APP_ICON.action.chatClear, { size: 16, tone: "dark" })}</button>
       ${showVoiceControls ? `<button type="button" class="topbar-icon-btn chat-speech-btn ${voiceModeActive ? "is-active" : ""}" id="chatSpeechBtn${scopeId}" aria-label="${voiceModeActive ? "Disable voice mode" : "Enable voice mode"}" data-title="${voiceModeActive ? "Voice Mode On" : "Voice Mode Off"}" title="${voiceModeActive ? "Disable voice mode (STT + TTS)" : "Enable voice mode (STT + TTS)"}">${iconHtml("speech", { size: 16, tone: "dark" })}</button>` : ""}
+      ${showVoiceControls ? `<button type="button" class="topbar-icon-btn chat-avatar-btn ${state.avatar.active ? "is-active" : ""}" id="chatAvatarBtn${scopeId}" aria-label="${state.avatar.active ? "Hide AI avatar" : "Show AI avatar"}" data-title="AI Avatar" title="${state.avatar.active ? "Hide AI avatar" : "Show AI avatar"}">${iconHtml(APP_ICON.sidebar.avatar, { size: 16, tone: "dark" })}</button>` : ""}
     </div>
   `;
 }
@@ -56,6 +58,10 @@ export function renderChatBody(state: PrimaryPanelRenderState, scopeId = ""): st
   const caps = state.chat.chatActiveModelCapabilities;
   const canStopActiveOutput = state.chat.chatStreaming || state.chat.chatTtsPlaying;
   const showVoiceControls = state.chat.panelId === "chat-0";
+  const avatarPreviewHtml =
+    state.chat.panelId === "chat-0" && state.avatar.active && state.avatar.placement === "chat"
+      ? renderAvatarPreview(state.avatar, { context: "chat" })
+      : "";
   const capabilitySummary = [
     caps.text ? "text" : null,
     caps.imageUnderstanding ? "image" : null,
@@ -67,6 +73,7 @@ export function renderChatBody(state: PrimaryPanelRenderState, scopeId = ""): st
     .join(", ");
   return `
     <div class="messages" data-chat-pane-id="${escapeHtml(state.chat.panelId)}">${renderChatMessages(state)}</div>
+    ${avatarPreviewHtml}
     <form class="composer" id="composer${scopeId}">
       <div class="composer-model-meta" id="chatModelMeta${scopeId}">
         <span class="composer-model-caps">${escapeHtml(capabilitySummary || "text")}</span>
