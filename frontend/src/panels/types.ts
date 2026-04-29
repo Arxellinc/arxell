@@ -138,7 +138,7 @@ export function defaultAvatarMeshes(): AvatarMeshSetting[] {
   return AVATAR_MESH_GROUPS.map((g) => ({
     key: g.key,
     visible: g.key !== "eyebrows" && g.key !== "hair",
-    color: g.key === "wireframe" ? "#00ccff" : g.key === "body" ? "#102527" : g.key === "eyes" ? "#1a88aa" : "#16E9F5",
+    color: g.key === "wireframe" ? "#00ccff" : g.key === "body" || g.key === "eyes" || g.key === "jaw" || g.key === "tongue" ? "#102527" : "#16E9F5",
     opacity: 1,
     textureUrl: "",
     textureName: "",
@@ -353,6 +353,12 @@ export interface PrimaryPanelRenderState {
   avatarActiveTab: "appearance" | "animation";
   avatarLipSyncStrength: number;
   avatarLipSyncJawBlend: number;
+  avatarLipSyncJawAmp: number;
+  avatarLipSyncPhonemeBoost: number;
+  avatarLipSyncJawMorphScale: number;
+  avatarLipSyncOpenRate: number;
+  avatarLipSyncCloseRate: number;
+  avatarLipSyncFallbackRate: number;
 }
 
 export interface PrimaryPanelDefinition {
@@ -493,7 +499,7 @@ export interface PrimaryPanelBindings {
   onAvatarSetActiveTab: (tab: "appearance" | "animation") => Promise<void>;
   onAvatarMorphChange: (name: string, value: number) => Promise<void>;
   onAvatarBoneChange: (key: string, axis: "x" | "y" | "z", value: number) => Promise<void>;
-  onAvatarLipSyncChange: (strength: number | undefined, jawBlend: number | undefined) => void;
+  onAvatarLipSyncChange: (key: string, value: number) => void;
   onProjectCreate: (name: string) => Promise<void>;
   onProjectSelect: (id: string | null) => void;
   onProjectDelete: (id: string) => Promise<void>;

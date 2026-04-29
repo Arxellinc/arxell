@@ -379,10 +379,6 @@ export function attachPrimaryPanelInteractions(
       requestMicBtn.onclick = async () => {
         await bindings.onRequestMicrophoneAccess();
         await bindings.onDevicesRefresh();
-        const renderAndBind = (window as any).__renderAndBind;
-        if (renderAndBind) {
-          renderAndBind();
-        }
       };
     }
     const backendSelect = document.querySelector<HTMLSelectElement>("#sttBackendSelect");

@@ -140,6 +140,10 @@ export function renderApisBody(state: PrimaryPanelRenderState): string {
 }
 
 export function bindApisPanel(bindings: PrimaryPanelBindings): void {
+  if (apiUrlProbeTimer !== null) {
+    window.clearTimeout(apiUrlProbeTimer);
+    apiUrlProbeTimer = null;
+  }
   const refreshBtn = document.querySelector<HTMLButtonElement>("#apiConnectionsRefreshBtn");
   if (refreshBtn) {
     refreshBtn.onclick = async () => {

@@ -175,6 +175,7 @@ function getTypeIcon(type: string): "cpu" | "wrench" | "circle-check-big" | "bot
       return "triangle-alert";
     case "history-user":
     case "history-assistant":
+    case "history-conversation":
       return "database-zap";
     case "skill-index":
     case "skill-detail":
@@ -209,6 +210,8 @@ function getTypeLabel(type: string): string {
       return "User Msg";
     case "history-assistant":
       return "Assistant Msg";
+    case "history-conversation":
+      return "Conversation";
     case "skill-index":
       return "Skill Index";
     case "skill-detail":

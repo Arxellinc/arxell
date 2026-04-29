@@ -84,31 +84,28 @@ function renderMeshRow(ms: AvatarMeshSetting): string {
 }
 
 export function renderAvatarBody(state: PrimaryPanelRenderState): string {
-  const placementLabel = state.avatar.placement === "tools" ? "Tools panel" : "Chat window";
-  const statusLabel = state.avatar.active ? `Active in ${placementLabel}` : "Inactive";
   const tab = state.avatarActiveTab;
   const appearanceContent = tab === "appearance" ? renderAppearanceTab(state) : "";
   const animationContent = tab === "animation" ? renderAnimationTab(state) : "";
   return `
     <section class="primary-pane-body avatar-panel">
-      <div class="avatar-panel-header">
-        <div class="avatar-panel-title">AI Avatar <span class="avatar-panel-status">${escapeHtml(statusLabel)}</span></div>
-        <div class="avatar-panel-header-actions">
-          <button type="button" class="tool-action-btn" id="avatarPanelToggleBtn">${state.avatar.active ? "Disable" : "Enable"}</button>
-          <button type="button" class="tool-action-btn" id="avatarToggleBtn">${state.avatar.active ? "Hide Preview" : "Show Preview"}</button>
-        </div>
-      </div>
       ${appearanceContent}
       ${animationContent}
-      <div class="avatar-panel-preview-wrap">
-        ${state.avatar.active && state.avatar.placement !== "tools" ? renderAvatarPreview(state.avatar, { context: "tools" }) : state.avatar.active && state.avatar.placement === "tools" ? '<div class="avatar-panel-empty">Preview is in the tools panel.</div>' : '<div class="avatar-panel-empty">Preview is available when enabled.</div>'}
-      </div>
     </section>
   `;
 }
 
 function renderAppearanceTab(state: PrimaryPanelRenderState): string {
+  const placementLabel = state.avatar.placement === "tools" ? "Tools panel" : "Chat window";
+  const statusLabel = state.avatar.active ? `Active in ${placementLabel}` : "Inactive";
   return `
+    <div class="avatar-panel-header">
+      <div class="avatar-panel-title">AI Avatar <span class="avatar-panel-status">${escapeHtml(statusLabel)}</span></div>
+      <div class="avatar-panel-header-actions">
+        <button type="button" class="tool-action-btn" id="avatarPanelToggleBtn">${state.avatar.active ? "Disable" : "Enable"}</button>
+        <button type="button" class="tool-action-btn" id="avatarToggleBtn">${state.avatar.active ? "Hide Preview" : "Show Preview"}</button>
+      </div>
+    </div>
     <div class="avatar-panel-controls">
       <label class="field">
         <span>Source</span>
@@ -168,6 +165,9 @@ function renderAppearanceTab(state: PrimaryPanelRenderState): string {
       </div>
       <input type="file" id="avatarMeshTextureInput" accept="image/*" hidden />
     </div>
+    <div class="avatar-panel-preview-wrap">
+      ${state.avatar.active && state.avatar.placement !== "tools" ? renderAvatarPreview(state.avatar, { context: "tools" }) : state.avatar.active && state.avatar.placement === "tools" ? '<div class="avatar-panel-empty">Preview is in the tools panel.</div>' : '<div class="avatar-panel-empty">Preview is available when enabled.</div>'}
+    </div>
   `;
 }
 
@@ -207,7 +207,7 @@ function renderAnimationTab(state: PrimaryPanelRenderState): string {
         `).join("")}
       </div>
       <div class="avatar-slider-group">
-        <div class="avatar-slider-group-title">Lip-Sync</div>
+        <div class="avatar-slider-group-title">Lip-Sync <span class="avatar-panel-status">(active during speech)</span></div>
         <label class="avatar-slider-row">
           <span class="avatar-slider-name">Shape strength</span>
           <input type="range" class="avatar-slider-range avatar-lipsync-strength" min="0" max="1" step="0.01" value="${state.avatarLipSyncStrength ?? 0.7}" />
@@ -217,6 +217,36 @@ function renderAnimationTab(state: PrimaryPanelRenderState): string {
           <span class="avatar-slider-name">Jaw blend</span>
           <input type="range" class="avatar-slider-range avatar-lipsync-jaw-blend" min="0" max="1" step="0.01" value="${state.avatarLipSyncJawBlend ?? 0.4}" />
           <span class="avatar-slider-val">${(state.avatarLipSyncJawBlend ?? 0.4).toFixed(2)}</span>
+        </label>
+        <label class="avatar-slider-row">
+          <span class="avatar-slider-name">Jaw amplification</span>
+          <input type="range" class="avatar-slider-range avatar-lipsync-jaw-amp" min="0" max="8" step="0.1" value="${state.avatarLipSyncJawAmp ?? 3.2}" />
+          <span class="avatar-slider-val">${(state.avatarLipSyncJawAmp ?? 3.2).toFixed(1)}</span>
+        </label>
+        <label class="avatar-slider-row">
+          <span class="avatar-slider-name">Phoneme boost</span>
+          <input type="range" class="avatar-slider-range avatar-lipsync-phoneme-boost" min="0" max="3" step="0.05" value="${state.avatarLipSyncPhonemeBoost ?? 1.2}" />
+          <span class="avatar-slider-val">${(state.avatarLipSyncPhonemeBoost ?? 1.2).toFixed(2)}</span>
+        </label>
+        <label class="avatar-slider-row">
+          <span class="avatar-slider-name">Secondary jaw scale</span>
+          <input type="range" class="avatar-slider-range avatar-lipsync-jaw-morph-scale" min="0" max="1" step="0.01" value="${state.avatarLipSyncJawMorphScale ?? 0.6}" />
+          <span class="avatar-slider-val">${(state.avatarLipSyncJawMorphScale ?? 0.6).toFixed(2)}</span>
+        </label>
+        <label class="avatar-slider-row">
+          <span class="avatar-slider-name">Open speed</span>
+          <input type="range" class="avatar-slider-range avatar-lipsync-open-rate" min="0.01" max="1" step="0.01" value="${state.avatarLipSyncOpenRate ?? 0.45}" />
+          <span class="avatar-slider-val">${(state.avatarLipSyncOpenRate ?? 0.45).toFixed(2)}</span>
+        </label>
+        <label class="avatar-slider-row">
+          <span class="avatar-slider-name">Close speed</span>
+          <input type="range" class="avatar-slider-range avatar-lipsync-close-rate" min="0.01" max="1" step="0.01" value="${state.avatarLipSyncCloseRate ?? 0.25}" />
+          <span class="avatar-slider-val">${(state.avatarLipSyncCloseRate ?? 0.25).toFixed(2)}</span>
+        </label>
+        <label class="avatar-slider-row">
+          <span class="avatar-slider-name">Fallback rate</span>
+          <input type="range" class="avatar-slider-range avatar-lipsync-fallback-rate" min="0.01" max="1" step="0.01" value="${state.avatarLipSyncFallbackRate ?? 0.35}" />
+          <span class="avatar-slider-val">${(state.avatarLipSyncFallbackRate ?? 0.35).toFixed(2)}</span>
         </label>
       </div>
     </div>
@@ -254,15 +284,15 @@ export function bindAvatarPanel(bindings: PrimaryPanelBindings): void {
     const uploadBtn = row.querySelector<HTMLButtonElement>(".avatar-mesh-texture-btn");
     const clearBtn = row.querySelector<HTMLButtonElement>(".avatar-mesh-texture-clear");
     if (checkbox) checkbox.onchange = () => { void bindings.onAvatarMeshUpdate(key, { visible: checkbox.checked }); };
-    if (colorInput) colorInput.oninput = () => { void bindings.onAvatarMeshUpdate(key, { color: colorInput.value }); };
-    if (opacityInput) opacityInput.oninput = () => { void bindings.onAvatarMeshUpdate(key, { opacity: Math.max(0, Math.min(100, parseInt(opacityInput.value, 10) || 0)) / 100 }); };
+    if (colorInput) colorInput.onchange = () => { void bindings.onAvatarMeshUpdate(key, { color: colorInput.value }); };
+    if (opacityInput) opacityInput.onchange = () => { void bindings.onAvatarMeshUpdate(key, { opacity: Math.max(0, Math.min(100, parseInt(opacityInput.value, 10) || 0)) / 100 }); };
     if (uploadBtn) uploadBtn.onclick = () => { bindings.onAvatarMeshTextureUpload(key); };
     if (clearBtn) clearBtn.onclick = () => { void bindings.onAvatarMeshUpdate(key, { textureUrl: "", textureName: "" }); };
   });
   const borderSizeInput = document.querySelector<HTMLInputElement>("#avatarBorderSize");
   const borderColorInput = document.querySelector<HTMLInputElement>("#avatarBorderColor");
-  if (borderSizeInput) borderSizeInput.oninput = () => { void bindings.onAvatarBorderChange(parseInt(borderSizeInput.value, 10) || 0, borderColorInput?.value ?? "#000000"); };
-  if (borderColorInput) borderColorInput.oninput = () => { void bindings.onAvatarBorderChange(parseInt(borderSizeInput?.value ?? "0", 10) || 0, borderColorInput.value); };
+  if (borderSizeInput) borderSizeInput.onchange = () => { void bindings.onAvatarBorderChange(parseInt(borderSizeInput.value, 10) || 0, borderColorInput?.value ?? "#000000"); };
+  if (borderColorInput) borderColorInput.onchange = () => { void bindings.onAvatarBorderChange(parseInt(borderSizeInput?.value ?? "0", 10) || 0, borderColorInput.value); };
   const bgColorInput = document.querySelector<HTMLInputElement>("#avatarBgColor");
   const bgOpacityInput = document.querySelector<HTMLInputElement>(".avatar-bg-opacity");
   if (bgColorInput) bgColorInput.oninput = () => { void bindings.onAvatarBgChange(bgColorInput.value, parseInt(bgOpacityInput?.value ?? "50", 10) || 0); };
@@ -291,16 +321,22 @@ export function bindAvatarPanel(bindings: PrimaryPanelBindings): void {
     if (yInput) yInput.oninput = () => { void bindings.onAvatarBoneChange(key, "y", parseFloat(yInput.value) || 0); };
     if (zInput) zInput.oninput = () => { void bindings.onAvatarBoneChange(key, "z", parseFloat(zInput.value) || 0); };
   });
-  const lipSyncStrengthInput = document.querySelector<HTMLInputElement>(".avatar-lipsync-strength");
-  const lipSyncJawBlendInput = document.querySelector<HTMLInputElement>(".avatar-lipsync-jaw-blend");
-  const lipSyncStrengthVal = lipSyncStrengthInput?.closest<HTMLElement>(".avatar-slider-row")?.querySelector(".avatar-slider-val");
-  const lipSyncJawBlendVal = lipSyncJawBlendInput?.closest<HTMLElement>(".avatar-slider-row")?.querySelector(".avatar-slider-val");
-  if (lipSyncStrengthInput) lipSyncStrengthInput.oninput = () => {
-    if (lipSyncStrengthVal) lipSyncStrengthVal.textContent = parseFloat(lipSyncStrengthInput.value).toFixed(2);
-    bindings.onAvatarLipSyncChange(parseFloat(lipSyncStrengthInput.value) || 0, undefined);
-  };
-  if (lipSyncJawBlendInput) lipSyncJawBlendInput.oninput = () => {
-    if (lipSyncJawBlendVal) lipSyncJawBlendVal.textContent = parseFloat(lipSyncJawBlendInput.value).toFixed(2);
-    bindings.onAvatarLipSyncChange(undefined, parseFloat(lipSyncJawBlendInput.value) || 0);
-  };
+  const lipSyncSliders: Array<{ cls: string; key: string; decimals: number }> = [
+    { cls: ".avatar-lipsync-strength", key: "strength", decimals: 2 },
+    { cls: ".avatar-lipsync-jaw-blend", key: "jawBlend", decimals: 2 },
+    { cls: ".avatar-lipsync-jaw-amp", key: "jawAmp", decimals: 1 },
+    { cls: ".avatar-lipsync-phoneme-boost", key: "phonemeBoost", decimals: 2 },
+    { cls: ".avatar-lipsync-jaw-morph-scale", key: "jawMorphScale", decimals: 2 },
+    { cls: ".avatar-lipsync-open-rate", key: "openRate", decimals: 2 },
+    { cls: ".avatar-lipsync-close-rate", key: "closeRate", decimals: 2 },
+    { cls: ".avatar-lipsync-fallback-rate", key: "fallbackRate", decimals: 2 },
+  ];
+  for (const { cls, key, decimals } of lipSyncSliders) {
+    const input = document.querySelector<HTMLInputElement>(cls);
+    const valSpan = input?.closest<HTMLElement>(".avatar-slider-row")?.querySelector(".avatar-slider-val");
+    if (input) input.oninput = () => {
+      if (valSpan) valSpan.textContent = parseFloat(input.value).toFixed(decimals);
+      bindings.onAvatarLipSyncChange(key, parseFloat(input.value) || 0);
+    };
+  }
 }

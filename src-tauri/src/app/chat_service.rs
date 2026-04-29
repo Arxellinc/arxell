@@ -2416,26 +2416,32 @@ fn extend_history_items<'a>(
     history: impl IntoIterator<Item = &'a ConversationMessageRecord>,
     load_method: &str,
 ) {
-    for (index, message) in history.into_iter().enumerate() {
-        let category = match message.role {
-            MessageRole::User => "history-user",
-            MessageRole::Assistant => "history-assistant",
-        };
-        let role = match message.role {
-            MessageRole::User => "User",
-            MessageRole::Assistant => "Assistant",
-        };
-        push_context_item(
-            items,
-            "history",
-            category,
-            format!("{role} message {}", index + 1),
-            None,
-            load_method,
-            "runtime",
-            message.content.clone(),
-        );
+    let messages: Vec<&'a ConversationMessageRecord> = history.into_iter().collect();
+    let count = messages.len();
+    if count == 0 {
+        return;
     }
+    let combined = messages
+        .iter()
+        .map(|msg| {
+            let role = match msg.role {
+                MessageRole::User => "User",
+                MessageRole::Assistant => "Assistant",
+            };
+            format!("{role}: {}", msg.content.trim())
+        })
+        .collect::<Vec<_>>()
+        .join("\n\n");
+    push_context_item(
+        items,
+        "history",
+        "history-conversation",
+        format!("Conversation ({count} message{})", if count == 1 { "" } else { "s" }),
+        None,
+        load_method,
+        "runtime",
+        combined,
+    );
 }
 
 fn select_agent_tool_names(

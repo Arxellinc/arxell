@@ -514,6 +514,12 @@ const state: {
   avatarActiveTab: "appearance" | "animation";
   avatarLipSyncStrength: number;
   avatarLipSyncJawBlend: number;
+  avatarLipSyncJawAmp: number;
+  avatarLipSyncPhonemeBoost: number;
+  avatarLipSyncJawMorphScale: number;
+  avatarLipSyncOpenRate: number;
+  avatarLipSyncCloseRate: number;
+  avatarLipSyncFallbackRate: number;
   devices: DevicesState;
   apiConnections: ApiConnectionRecord[];
   apiFormOpen: boolean;
@@ -829,6 +835,7 @@ const state: {
     isSpeaking: boolean;
     lastTranscript: string | null;
     microphonePermission: "not_enabled" | "enabled" | "no_device";
+    serverWarmed: boolean;
     vadBaseThreshold: number;
     vadStartFrames: number;
     vadEndFrames: number;
@@ -943,8 +950,14 @@ const state: {
     borderColor: "#000000"
   },
   avatarActiveTab: "appearance" as const,
-  avatarLipSyncStrength: 0.7,
-  avatarLipSyncJawBlend: 0.4,
+  avatarLipSyncStrength: 0.5,
+  avatarLipSyncJawBlend: 0.15,
+  avatarLipSyncJawAmp: 0.9,
+  avatarLipSyncPhonemeBoost: 1.5,
+  avatarLipSyncJawMorphScale: 0.3,
+  avatarLipSyncOpenRate: 0.8,
+  avatarLipSyncCloseRate: 0.55,
+  avatarLipSyncFallbackRate: 0.4,
   devices: defaultDevicesState(),
   apiConnections: [],
   apiFormOpen: false,
@@ -1077,6 +1090,7 @@ const state: {
     isSpeaking: false,
     lastTranscript: null,
     microphonePermission: "not_enabled",
+    serverWarmed: false,
     vadBaseThreshold: 0.0012,
     vadStartFrames: 2,
     vadEndFrames: 8,
@@ -1837,13 +1851,21 @@ function decodeTtsAudioBytes(audioBytes: unknown): Uint8Array {
 
 function postprocessSpeakableText(raw: string): string {
   if (!raw) return "";
-  const withLinkLabels = raw.replace(/\[([^\]]+)\]\([^)]+\)/g, "$1");
-  const withoutUrls = withLinkLabels.replace(/\bhttps?:\/\/\S+/gi, " ");
-  const withoutToolMarkers = withoutUrls.replace(/\[(tool|command|stdout|stderr|result)[^\]]*\]/gi, " ");
-  const withoutEmojiShortcodes = withoutToolMarkers.replace(/:[a-z0-9_+\-]+:/gi, " ");
-  const withoutEmojiGlyphs = withoutEmojiShortcodes
-    .replace(/[\p{Extended_Pictographic}\p{Emoji_Presentation}\uFE0F]/gu, " ");
-  return withoutEmojiGlyphs.replace(/\s+/g, " ").trim();
+  let out = raw;
+  out = out.replace(/(?<!\w)#{1,6}\s+/g, " ");
+  out = out.replace(/\*\*\*(.+?)\*\*\*/g, "$1");
+  out = out.replace(/___(.+?)___/g, "$1");
+  out = out.replace(/\*\*(.+?)\*\*/g, "$1");
+  out = out.replace(/__(.+?)__/g, "$1");
+  out = out.replace(/\*(.+?)\*/g, "$1");
+  out = out.replace(/_(.+?)_/g, "$1");
+  out = out.replace(/~~(.+?)~~/g, "$1");
+  out = out.replace(/(?<=\s|^)\[(.+?)\]\([^)]+\)/g, "$1");
+  out = out.replace(/\bhttps?:\/\/\S+/gi, " ");
+  out = out.replace(/\[(tool|command|stdout|stderr|result)[^\]]*\]/gi, " ");
+  out = out.replace(/:[a-z0-9_+\-]+:/gi, " ");
+  out = out.replace(/[\p{Extended_Pictographic}\p{Emoji_Presentation}\uFE0F]/gu, " ");
+  return out.replace(/\s+/g, " ").trim();
 }
 
 function resetChatTtsStreamParser(correlationId: string | null): void {
@@ -2944,7 +2966,13 @@ function render(): void {
     avatar: state.avatar,
     avatarActiveTab: state.avatarActiveTab,
     avatarLipSyncStrength: state.avatarLipSyncStrength,
-    avatarLipSyncJawBlend: state.avatarLipSyncJawBlend
+    avatarLipSyncJawBlend: state.avatarLipSyncJawBlend,
+    avatarLipSyncJawAmp: state.avatarLipSyncJawAmp,
+    avatarLipSyncPhonemeBoost: state.avatarLipSyncPhonemeBoost,
+    avatarLipSyncJawMorphScale: state.avatarLipSyncJawMorphScale,
+    avatarLipSyncOpenRate: state.avatarLipSyncOpenRate,
+    avatarLipSyncCloseRate: state.avatarLipSyncCloseRate,
+    avatarLipSyncFallbackRate: state.avatarLipSyncFallbackRate
   });
 
   const isChatTab = state.sidebarTab === "chat";
@@ -3036,7 +3064,13 @@ function render(): void {
             avatar: state.avatar,
     avatarActiveTab: state.avatarActiveTab,
     avatarLipSyncStrength: state.avatarLipSyncStrength,
-    avatarLipSyncJawBlend: state.avatarLipSyncJawBlend
+    avatarLipSyncJawBlend: state.avatarLipSyncJawBlend,
+    avatarLipSyncJawAmp: state.avatarLipSyncJawAmp,
+    avatarLipSyncPhonemeBoost: state.avatarLipSyncPhonemeBoost,
+    avatarLipSyncJawMorphScale: state.avatarLipSyncJawMorphScale,
+    avatarLipSyncOpenRate: state.avatarLipSyncOpenRate,
+    avatarLipSyncCloseRate: state.avatarLipSyncCloseRate,
+    avatarLipSyncFallbackRate: state.avatarLipSyncFallbackRate
           }, scopeId);
           return {
             paneTitleHtml: renderPanelTitleIcon({
@@ -4888,26 +4922,6 @@ async function autoStartLlamaRuntimeIfConfigured(): Promise<void> {
 }
 
 function renderAndBind(sendMessage: (text: string) => Promise<void>): void {
-  const selection = window.getSelection?.() ?? null;
-  const hasWorkspaceTextSelection =
-    Boolean(selection) &&
-    !selection!.isCollapsed &&
-    Boolean(selection!.toString().trim()) &&
-    Boolean(
-      selection!.anchorNode &&
-        selection!.focusNode &&
-        document.querySelector(".workspace-pane")?.contains(selection!.anchorNode) &&
-        document.querySelector(".workspace-pane")?.contains(selection!.focusNode)
-    );
-  if (hasWorkspaceTextSelection) {
-    if (deferredWorkspaceSelectionRenderTimerId === null) {
-      deferredWorkspaceSelectionRenderTimerId = window.setTimeout(() => {
-        deferredWorkspaceSelectionRenderTimerId = null;
-        renderAndBind(sendMessage);
-      }, 220);
-    }
-    return;
-  }
   if (deferredWorkspaceSelectionRenderTimerId !== null) {
     window.clearTimeout(deferredWorkspaceSelectionRenderTimerId);
     deferredWorkspaceSelectionRenderTimerId = null;
@@ -4969,11 +4983,14 @@ function renderAndBind(sendMessage: (text: string) => Promise<void>): void {
         }
         // Start STT only after permission is confirmed
         state.stt.status = "starting";
-        state.stt.message = state.stt.backend === "sherpa_onnx" ? "Starting sherpa-onnx..." : "Starting whisper server...";
+        state.stt.message = state.stt.backend === "sherpa_onnx" ? "Starting sherpa-onnx..." : state.stt.serverWarmed ? "Connecting to whisper server..." : "Starting whisper server...";
         state.stt.isListening = false;
         renderAndBind(sendMessage);
         await invoke("stt_set_backend", { backend: state.stt.backend });
-        await invoke("start_stt");
+        if (!state.stt.serverWarmed) {
+          await invoke("start_stt");
+        }
+        state.stt.serverWarmed = false;
         state.stt.status = "running";
         state.stt.message = state.stt.backend === "sherpa_onnx" ? "Sherpa backend ready" : "Server started";
         await setupSttTranscriptListener(sendMessage);
@@ -4990,6 +5007,7 @@ function renderAndBind(sendMessage: (text: string) => Promise<void>): void {
         state.stt.status = "idle";
         state.stt.message = null;
         state.stt.isListening = false;
+        state.stt.serverWarmed = false;
       }
       renderAndBind(sendMessage);
     } catch (error) {
@@ -5174,6 +5192,8 @@ syncOverlayScrollbars();
         cp.chatAttachedFileContent = null;
       },
       async () => {
+        stopTtsPlaybackLocal();
+        resetChatTtsQueue();
         const targetCorrelationId = cp.activeChatCorrelationId;
         cp.chatStreaming = false;
         cp.activeChatCorrelationId = null;
@@ -6922,7 +6942,7 @@ syncOverlayScrollbars();
     onAvatarBgChange: async (color: string, opacity: number) => {
       state.avatar.bgColor = color;
       state.avatar.bgOpacity = opacity;
-      renderAndBind(sendMessage);
+      avatarRuntimeModule?.setLiveBg(color, opacity);
     },
     onAvatarSetActiveTab: async (tab: "appearance" | "animation") => {
       state.avatarActiveTab = tab;
@@ -6931,20 +6951,25 @@ syncOverlayScrollbars();
     onAvatarMorphChange: async (name: string, value: number) => {
       const ms = state.avatar.morphs.find((m) => m.name === name);
       if (ms) ms.value = value;
-      renderAndBind(sendMessage);
+      avatarRuntimeModule?.setLiveMorph(name, value);
     },
     onAvatarBoneChange: async (key: string, axis: "x" | "y" | "z", value: number) => {
       const bone = state.avatar.armBones.find((b) => b.key === key);
       if (bone) bone[axis] = value;
-      renderAndBind(sendMessage);
+      avatarRuntimeModule?.setLiveArmBone(key, axis, value);
     },
-    onAvatarLipSyncChange: (strength: number | undefined, jawBlend: number | undefined) => {
-      if (strength !== undefined) state.avatarLipSyncStrength = strength;
-      if (jawBlend !== undefined) state.avatarLipSyncJawBlend = jawBlend;
-      avatarRuntimeModule?.setAvatarLipSyncSettings({
-        strength: state.avatarLipSyncStrength,
-        jawBlend: state.avatarLipSyncJawBlend,
-      });
+    onAvatarLipSyncChange: (key: string, value: number) => {
+      switch (key) {
+        case "strength": state.avatarLipSyncStrength = value; break;
+        case "jawBlend": state.avatarLipSyncJawBlend = value; break;
+        case "jawAmp": state.avatarLipSyncJawAmp = value; break;
+        case "phonemeBoost": state.avatarLipSyncPhonemeBoost = value; break;
+        case "jawMorphScale": state.avatarLipSyncJawMorphScale = value; break;
+        case "openRate": state.avatarLipSyncOpenRate = value; break;
+        case "closeRate": state.avatarLipSyncCloseRate = value; break;
+        case "fallbackRate": state.avatarLipSyncFallbackRate = value; break;
+      }
+      avatarRuntimeModule?.setAvatarLipSyncSettings({ [key]: value });
     },
     onProjectCreate: async (name: string) => {
       const trimmed = name.trim();
@@ -7243,6 +7268,7 @@ let sttTranscriptUnlisten: (() => void) | null = null;
 let sttPartialUnlisten: (() => void) | null = null;
 let sttPipelineErrorUnlisten: (() => void) | null = null;
 let sttVadUnlisten: (() => void) | null = null;
+let sttStatusUnlisten: (() => void) | null = null;
 let sttTranscriptionQueue: Promise<void> = Promise.resolve();
 let sttPartialTranscriptionQueue: Promise<void> = Promise.resolve();
 let sttIngestQueue: Promise<void> = Promise.resolve();
@@ -7878,7 +7904,13 @@ function currentPrimaryPanelRenderState() {
     avatar: state.avatar,
     avatarActiveTab: state.avatarActiveTab,
     avatarLipSyncStrength: state.avatarLipSyncStrength,
-    avatarLipSyncJawBlend: state.avatarLipSyncJawBlend
+    avatarLipSyncJawBlend: state.avatarLipSyncJawBlend,
+    avatarLipSyncJawAmp: state.avatarLipSyncJawAmp,
+    avatarLipSyncPhonemeBoost: state.avatarLipSyncPhonemeBoost,
+    avatarLipSyncJawMorphScale: state.avatarLipSyncJawMorphScale,
+    avatarLipSyncOpenRate: state.avatarLipSyncOpenRate,
+    avatarLipSyncCloseRate: state.avatarLipSyncCloseRate,
+    avatarLipSyncFallbackRate: state.avatarLipSyncFallbackRate
   };
 }
 
@@ -8992,6 +9024,17 @@ async function ensureTerminalSession(): Promise<void> {
   );
 }
 
+function prewarmWhisper(): void {
+  import("@tauri-apps/api/core").then(({ invoke }) => {
+    invoke("stt_set_backend", { backend: state.stt.backend }).catch(() => {});
+    invoke("start_stt")
+      .then(() => {
+        state.stt.serverWarmed = true;
+      })
+      .catch(() => {});
+  }).catch(() => {});
+}
+
 async function bootstrap(): Promise<void> {
   installConsoleCapture();
   let sendMessage: (text: string, attachments?: ChatAttachment[]) => Promise<void> = async () => {
@@ -9046,11 +9089,15 @@ async function bootstrap(): Promise<void> {
     state,
     sttPipelineErrorUnlisten,
     sttVadUnlisten,
+    sttStatusUnlisten,
     setSttPipelineErrorUnlisten: (value) => {
       sttPipelineErrorUnlisten = value;
     },
     setSttVadUnlisten: (value) => {
       sttVadUnlisten = value;
+    },
+    setSttStatusUnlisten: (value) => {
+      sttStatusUnlisten = value;
     },
     nextCorrelationId,
     pushConsoleEntry,
@@ -9060,6 +9107,10 @@ async function bootstrap(): Promise<void> {
       updateChatVoiceInputIcons();
     }
   });
+
+  if (runtimeMode === "tauri") {
+    prewarmWhisper();
+  }
 
   const scheduleFlowRunsRefresh = createFlowRunsRefreshScheduler({
     refresh: refreshFlowRuns,

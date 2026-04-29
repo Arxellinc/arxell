@@ -29,6 +29,7 @@ interface Runtime {
 
 const runtimes = new WeakMap<HTMLElement, Runtime>();
 const mountedStages = new Set<HTMLElement>();
+const liveStages = new Map<HTMLElement, { config: AvatarStageConfig; renderer: THREE.WebGLRenderer | null }>();
 
 const LIP_MORPHS = [
   "jawOpen",
@@ -63,8 +64,14 @@ const MESH_GROUP_PATTERNS: [string, string[]][] = [
 
 let speechAmplitude = 0;
 let speechActive = false;
-let lipSyncStrength = 0.7;
-let lipSyncJawBlend = 0.4;
+let lipSyncStrength = 0.5;
+let lipSyncJawBlend = 0.15;
+let lipSyncJawAmp = 0.9;
+let lipSyncPhonemeBoost = 1.5;
+let lipSyncJawMorphScale = 0.3;
+let lipSyncOpenRate = 0.8;
+let lipSyncCloseRate = 0.55;
+let lipSyncFallbackRate = 0.4;
 
 let phonemeTimeline: PhonemeEvent[] | null = null;
 let phonemeTimelineStartMs = 0;
@@ -87,9 +94,21 @@ export function setAvatarPhonemeTimeline(
 export function setAvatarLipSyncSettings(input: {
   strength?: number;
   jawBlend?: number;
+  jawAmp?: number;
+  phonemeBoost?: number;
+  jawMorphScale?: number;
+  openRate?: number;
+  closeRate?: number;
+  fallbackRate?: number;
 }): void {
   if (input.strength !== undefined) lipSyncStrength = input.strength;
   if (input.jawBlend !== undefined) lipSyncJawBlend = input.jawBlend;
+  if (input.jawAmp !== undefined) lipSyncJawAmp = input.jawAmp;
+  if (input.phonemeBoost !== undefined) lipSyncPhonemeBoost = input.phonemeBoost;
+  if (input.jawMorphScale !== undefined) lipSyncJawMorphScale = input.jawMorphScale;
+  if (input.openRate !== undefined) lipSyncOpenRate = input.openRate;
+  if (input.closeRate !== undefined) lipSyncCloseRate = input.closeRate;
+  if (input.fallbackRate !== undefined) lipSyncFallbackRate = input.fallbackRate;
 }
 
 function matchMeshGroup(nodeName: string): string {
@@ -130,7 +149,38 @@ export function disposeAvatarStages(): void {
     runtimes.get(stage)?.dispose();
     runtimes.delete(stage);
     mountedStages.delete(stage);
+    liveStages.delete(stage);
   });
+}
+
+export function setLiveMorph(name: string, value: number): void {
+  for (const { config } of liveStages.values()) {
+    const entry = config.morphs.find((m) => m.name === name);
+    if (entry) {
+      entry.value = value;
+    } else {
+      config.morphs.push({ name, value });
+    }
+  }
+}
+
+export function setLiveArmBone(key: string, axis: "x" | "y" | "z", value: number): void {
+  for (const { config } of liveStages.values()) {
+    const entry = config.armBones.find((b) => b.key === key);
+    if (entry) {
+      entry[axis] = value;
+    }
+  }
+}
+
+export function setLiveBg(color: string, opacity: number): void {
+  for (const { config, renderer } of liveStages.values()) {
+    config.bgColor = color;
+    config.bgOpacity = opacity / 100;
+    if (renderer) {
+      renderer.setClearColor(new THREE.Color(color), opacity / 100);
+    }
+  }
 }
 
 function readStageConfig(stage: HTMLElement): AvatarStageConfig | null {
@@ -203,6 +253,7 @@ function mountGlb(stage: HTMLElement, config: AvatarStageConfig): () => void {
   const scene = new THREE.Scene();
   const camera = new THREE.PerspectiveCamera(40, 1, 0.01, 100);
   const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, powerPreference: "low-power" });
+  liveStages.set(stage, { config, renderer });
   renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
   renderer.setClearColor(new THREE.Color(config.bgColor), config.bgOpacity);
   stage.appendChild(renderer.domElement);
@@ -369,7 +420,7 @@ function mountGlb(stage: HTMLElement, config: AvatarStageConfig): () => void {
       }
     }
 
-    const jaw = speechActive ? Math.min(1, speechAmplitude * 3.2) : 0;
+    const jaw = speechActive ? Math.min(1, speechAmplitude * lipSyncJawAmp) : 0;
 
     const tl = phonemeTimeline;
     const hasTimeline = tl && tl.length > 0 && speechActive;
@@ -425,12 +476,12 @@ function mountGlb(stage: HTMLElement, config: AvatarStageConfig): () => void {
             const current = entry.values[morphName] ?? 0;
 
             if (weight <= 0 || isSilence) {
-              const next2 = THREE.MathUtils.lerp(current, 0, 0.25);
+              const next2 = THREE.MathUtils.lerp(current, 0, lipSyncCloseRate);
               entry.values[morphName] = next2;
               entry.mesh.morphTargetInfluences[idx] = next2;
             } else {
-              const target = Math.min(1, weight * effectiveAmp * lipSyncStrength * 1.2);
-              const rate = target > current ? 0.45 : 0.25;
+              const target = Math.min(1, weight * effectiveAmp * lipSyncStrength * lipSyncPhonemeBoost);
+              const rate = target > current ? lipSyncOpenRate : lipSyncCloseRate;
               const next2 = THREE.MathUtils.lerp(current, target, rate);
               entry.values[morphName] = next2;
               entry.mesh.morphTargetInfluences[idx] = next2;
@@ -442,9 +493,9 @@ function mountGlb(stage: HTMLElement, config: AvatarStageConfig): () => void {
             if (idx === undefined || !entry.mesh.morphTargetInfluences) continue;
             const current = entry.values[morphName] ?? 0;
             const isPrimaryOpen = JAW_MORPHS.some((m) => m === morphName);
-            const targetOpen = isPrimaryOpen ? jaw : jaw * 0.6;
+            const targetOpen = isPrimaryOpen ? jaw : jaw * lipSyncJawMorphScale;
             const next2 = THREE.MathUtils.lerp(
-              current, targetOpen, speechActive ? 0.35 : 0.18,
+              current, targetOpen, speechActive ? lipSyncFallbackRate : 0.18,
             );
             entry.values[morphName] = next2;
             entry.mesh.morphTargetInfluences[idx] = next2;
@@ -458,7 +509,7 @@ function mountGlb(stage: HTMLElement, config: AvatarStageConfig): () => void {
           const idx = entry.dict[name];
           if (idx === undefined || !entry.mesh.morphTargetInfluences) continue;
           const current = entry.values[name] ?? 0;
-          const next = THREE.MathUtils.lerp(current, jaw, speechActive ? 0.35 : 0.18);
+          const next = THREE.MathUtils.lerp(current, jaw, speechActive ? lipSyncFallbackRate : 0.18);
           entry.values[name] = next;
           entry.mesh.morphTargetInfluences[idx] = next;
         }
@@ -493,6 +544,7 @@ function mountGlb(stage: HTMLElement, config: AvatarStageConfig): () => void {
 
   return () => {
     disposed = true;
+    liveStages.delete(stage);
     cancelAnimationFrame(frame);
     observer.disconnect();
     for (const t of createdTextures) t.dispose();

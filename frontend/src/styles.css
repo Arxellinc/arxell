@@ -57,6 +57,7 @@ body,
 #app {
   height: 100%;
   overflow: hidden;
+  writing-mode: horizontal-tb;
 }
 
 body {
@@ -172,6 +173,7 @@ body {
   width: 100%;
   display: grid;
   grid-template-rows: var(--global-bar-h) 1fr var(--bottom-bar-h);
+  contain: layout style;
 }
 
 .app-body {
@@ -179,6 +181,7 @@ body {
   display: grid;
   grid-template-columns: var(--sidebar-w) 1fr;
   overflow: hidden;
+  contain: layout style;
 }
 
 .app-body.app-body-portrait {
@@ -933,6 +936,7 @@ body {
   height: 100%;
   display: grid;
   grid-template-rows: 1fr;
+  contain: layout style;
 }
 
 .global-topbar {
@@ -1379,6 +1383,7 @@ body {
   grid-template-rows: var(--pane-bar-h) var(--tool-toolbar-h) 1fr auto;
   position: relative;
   overflow: hidden;
+  contain: layout style;
 }
 
 .chat-pane:has(> .avatar-preview.is-chat.is-maximized) {
@@ -1405,11 +1410,14 @@ body {
   color: var(--ink);
   display: block;
   width: 100%;
+  writing-mode: horizontal-tb;
 }
 
 .message-text {
   white-space: pre-wrap;
   word-break: break-word;
+  writing-mode: horizontal-tb;
+  min-width: 0;
 }
 
 .message.user {

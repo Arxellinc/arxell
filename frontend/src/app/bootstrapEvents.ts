@@ -1,11 +1,17 @@
 import type { AppEvent } from "../contracts";
 
+interface SttStatusPayload {
+  status: string;
+  message: string | null;
+}
+
 interface TauriSttListenerState {
   events: AppEvent[];
   stt: {
     status: string;
     message: string | null;
     isSpeaking: boolean;
+    serverWarmed: boolean;
   };
 }
 
@@ -14,8 +20,10 @@ export async function installTauriSttListeners(deps: {
   state: TauriSttListenerState;
   sttPipelineErrorUnlisten: (() => void) | null;
   sttVadUnlisten: (() => void) | null;
+  sttStatusUnlisten: (() => void) | null;
   setSttPipelineErrorUnlisten: (value: (() => void) | null) => void;
   setSttVadUnlisten: (value: (() => void) | null) => void;
+  setSttStatusUnlisten: (value: (() => void) | null) => void;
   nextCorrelationId: () => string;
   pushConsoleEntry: (
     level: "log" | "info" | "warn" | "error" | "debug",
@@ -58,6 +66,20 @@ export async function installTauriSttListeners(deps: {
       deps.rerender();
     });
     deps.setSttPipelineErrorUnlisten(unlisten);
+  }
+
+  if (deps.runtimeMode === "tauri" && !deps.sttStatusUnlisten) {
+    const { listen } = await import("@tauri-apps/api/event");
+    const unlisten = await listen<SttStatusPayload>("stt://status", (event) => {
+      const s = event.payload.status;
+      if (s === "running") {
+        deps.state.stt.serverWarmed = true;
+      } else if (s === "stopped" || s === "error") {
+        deps.state.stt.serverWarmed = false;
+      }
+      deps.pushConsoleEntry("debug", "app", `STT server status: ${s}${event.payload.message ? " – " + event.payload.message : ""}`);
+    });
+    deps.setSttStatusUnlisten(unlisten);
   }
 
   if (deps.runtimeMode === "tauri" && !deps.sttVadUnlisten) {
