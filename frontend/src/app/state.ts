@@ -270,7 +270,7 @@ export function createInitialMemoryState(options: {
     memoryModalSourcePath: null,
     memoryModalConversationId: null,
     memoryModalDraftKey: "",
-    memoryModalDraftCategory: "directive",
+    memoryModalDraftCategory: "fact",
     memoryModalDraftDescription: "",
     memoryActiveTab: "context",
     memoryRouteMode: "auto",
@@ -283,6 +283,7 @@ export function createInitialMemoryState(options: {
 export function createInitialTasksState(): TasksRuntimeSlice {
   return {
     tasksById: loadPersistedTasksById(),
+    tasksRunsByTaskId: {},
     tasksSelectedId: null,
     tasksFolder: "inbox",
     tasksSortKey: "createdAt",
@@ -543,6 +544,7 @@ export function selectSkillsToolState(state: SkillsToolViewState): SkillsToolVie
 export function selectTasksToolState(state: TasksRuntimeSlice): TasksRuntimeSlice {
   return {
     tasksById: state.tasksById,
+    tasksRunsByTaskId: state.tasksRunsByTaskId,
     tasksSelectedId: state.tasksSelectedId,
     tasksFolder: state.tasksFolder,
     tasksSortKey: state.tasksSortKey,

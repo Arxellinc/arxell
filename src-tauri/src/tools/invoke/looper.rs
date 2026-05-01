@@ -50,7 +50,7 @@ pub fn register(registry: &mut InvokeRegistry) {
     );
 }
 
-fn invoke_start(state: &TauriBridgeState, payload: Value) -> ToolInvokeFuture {
+fn invoke_start(state: &TauriBridgeState, payload: Value) -> ToolInvokeFuture<'_> {
     let handler = state.looper_handler.clone();
     Box::pin(async move {
         let req: LooperStartRequest = decode_payload(payload)?;
@@ -60,7 +60,7 @@ fn invoke_start(state: &TauriBridgeState, payload: Value) -> ToolInvokeFuture {
     })
 }
 
-fn invoke_stop(state: &TauriBridgeState, payload: Value) -> ToolInvokeFuture {
+fn invoke_stop(state: &TauriBridgeState, payload: Value) -> ToolInvokeFuture<'_> {
     let handler = state.looper_handler.clone();
     Box::pin(async move {
         let req: LooperStopRequest = decode_payload(payload)?;
@@ -70,7 +70,7 @@ fn invoke_stop(state: &TauriBridgeState, payload: Value) -> ToolInvokeFuture {
     })
 }
 
-fn invoke_pause(state: &TauriBridgeState, payload: Value) -> ToolInvokeFuture {
+fn invoke_pause(state: &TauriBridgeState, payload: Value) -> ToolInvokeFuture<'_> {
     let handler = state.looper_handler.clone();
     Box::pin(async move {
         let req: LooperPauseRequest = decode_payload(payload)?;
@@ -80,7 +80,7 @@ fn invoke_pause(state: &TauriBridgeState, payload: Value) -> ToolInvokeFuture {
     })
 }
 
-fn invoke_advance(state: &TauriBridgeState, payload: Value) -> ToolInvokeFuture {
+fn invoke_advance(state: &TauriBridgeState, payload: Value) -> ToolInvokeFuture<'_> {
     let handler = state.looper_handler.clone();
     Box::pin(async move {
         let req: LooperAdvanceRequest = decode_payload(payload)?;
@@ -90,7 +90,7 @@ fn invoke_advance(state: &TauriBridgeState, payload: Value) -> ToolInvokeFuture 
     })
 }
 
-fn invoke_status(state: &TauriBridgeState, payload: Value) -> ToolInvokeFuture {
+fn invoke_status(state: &TauriBridgeState, payload: Value) -> ToolInvokeFuture<'_> {
     let handler = state.looper_handler.clone();
     Box::pin(async move {
         let req: LooperStatusRequest = decode_payload(payload)?;
@@ -100,7 +100,7 @@ fn invoke_status(state: &TauriBridgeState, payload: Value) -> ToolInvokeFuture {
     })
 }
 
-fn invoke_list(state: &TauriBridgeState, payload: Value) -> ToolInvokeFuture {
+fn invoke_list(state: &TauriBridgeState, payload: Value) -> ToolInvokeFuture<'_> {
     let handler = state.looper_handler.clone();
     Box::pin(async move {
         let req: LooperListRequest = decode_payload(payload)?;
@@ -110,7 +110,7 @@ fn invoke_list(state: &TauriBridgeState, payload: Value) -> ToolInvokeFuture {
     })
 }
 
-fn invoke_close(state: &TauriBridgeState, payload: Value) -> ToolInvokeFuture {
+fn invoke_close(state: &TauriBridgeState, payload: Value) -> ToolInvokeFuture<'_> {
     let handler = state.looper_handler.clone();
     Box::pin(async move {
         let req: LooperCloseRequest = decode_payload(payload)?;
@@ -120,7 +120,7 @@ fn invoke_close(state: &TauriBridgeState, payload: Value) -> ToolInvokeFuture {
     })
 }
 
-fn invoke_check_opencode(state: &TauriBridgeState, payload: Value) -> ToolInvokeFuture {
+fn invoke_check_opencode(state: &TauriBridgeState, payload: Value) -> ToolInvokeFuture<'_> {
     let handler = state.looper_handler.clone();
     Box::pin(async move {
         let req: LooperCheckOpenCodeRequest = decode_payload(payload)?;
@@ -130,7 +130,7 @@ fn invoke_check_opencode(state: &TauriBridgeState, payload: Value) -> ToolInvoke
     })
 }
 
-fn invoke_submit_questions(state: &TauriBridgeState, payload: Value) -> ToolInvokeFuture {
+fn invoke_submit_questions(state: &TauriBridgeState, payload: Value) -> ToolInvokeFuture<'_> {
     let handler = state.looper_handler.clone();
     Box::pin(async move {
         let req: LooperSubmitQuestionsRequest = decode_payload(payload)?;
@@ -140,7 +140,7 @@ fn invoke_submit_questions(state: &TauriBridgeState, payload: Value) -> ToolInvo
     })
 }
 
-fn invoke_start_preview(state: &TauriBridgeState, payload: Value) -> ToolInvokeFuture {
+fn invoke_start_preview(state: &TauriBridgeState, payload: Value) -> ToolInvokeFuture<'_> {
     let handler = state.looper_handler.clone();
     Box::pin(async move {
         let req: LooperPreviewRequest = decode_payload(payload)?;
@@ -150,7 +150,7 @@ fn invoke_start_preview(state: &TauriBridgeState, payload: Value) -> ToolInvokeF
     })
 }
 
-fn invoke_stop_preview(state: &TauriBridgeState, payload: Value) -> ToolInvokeFuture {
+fn invoke_stop_preview(state: &TauriBridgeState, payload: Value) -> ToolInvokeFuture<'_> {
     let handler = state.looper_handler.clone();
     Box::pin(async move {
         let req: LooperPreviewRequest = decode_payload(payload)?;
@@ -160,7 +160,7 @@ fn invoke_stop_preview(state: &TauriBridgeState, payload: Value) -> ToolInvokeFu
     })
 }
 
-fn invoke_close_all(state: &TauriBridgeState, payload: Value) -> ToolInvokeFuture {
+fn invoke_close_all(state: &TauriBridgeState, payload: Value) -> ToolInvokeFuture<'_> {
     let handler = state.looper_handler.clone();
     Box::pin(async move {
         let req: LooperCloseAllRequest = decode_payload(payload)?;
@@ -170,7 +170,7 @@ fn invoke_close_all(state: &TauriBridgeState, payload: Value) -> ToolInvokeFutur
     })
 }
 
-fn invoke_import(state: &TauriBridgeState, payload: Value) -> ToolInvokeFuture {
+fn invoke_import(state: &TauriBridgeState, payload: Value) -> ToolInvokeFuture<'_> {
     let handler = state.looper_handler.clone();
     Box::pin(async move {
         let req: LooperImportRequest = decode_payload(payload)?;

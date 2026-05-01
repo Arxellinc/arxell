@@ -5,6 +5,7 @@ use crate::app::files_service::FilesService;
 use crate::app::model_manager_service::ModelManagerService;
 use crate::app::permission_service::PermissionService;
 use crate::app::runtime_service::LlamaRuntimeService;
+use crate::app::tasks_service::TaskAutomationService;
 use crate::app::user_projects_service::UserProjectsService;
 use crate::app::voice_runtime_service::VoiceRuntimeService;
 use crate::app::web_search_service::WebSearchService;
@@ -33,6 +34,7 @@ pub struct TauriBridgeState {
     pub permissions: Arc<PermissionService>,
     pub model_manager: Arc<ModelManagerService>,
     pub files: Arc<FilesService>,
+    pub tasks: Arc<TaskAutomationService>,
     pub sheets: Arc<SheetsService>,
     pub voice: Arc<VoiceRuntimeService>,
 }

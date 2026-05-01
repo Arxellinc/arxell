@@ -1,6 +1,6 @@
 import { renderToolToolbar } from "../ui/toolbar";
 import { TASKS_DATA_ATTR } from "../ui/constants";
-import type { TaskFolder, TaskRecord, TaskSortDirection, TaskSortKey } from "./state";
+import type { TaskFolder, TaskRecord, TaskRunRecord, TaskSortDirection, TaskSortKey } from "./state";
 import { getSelectedTask, getTasksForFolder } from "./actions";
 import type { ProjectRecord } from "../../projectsStore";
 import "./styles.css";
@@ -14,6 +14,7 @@ export interface TasksToolViewState {
   detailsCollapsed: boolean;
   jsonDraft?: string;
   projectsById: Record<string, ProjectRecord>;
+  runsByTaskId?: Record<string, TaskRunRecord[]>;
 }
 
 export function renderTasksToolActions(view: TasksToolViewState): string {
@@ -95,6 +96,7 @@ export function renderTasksToolBody(view: TasksToolViewState): string {
   const tasks = getTasksForFolder(
     {
       tasksById: view.tasksById,
+      tasksRunsByTaskId: view.runsByTaskId || {},
       tasksSelectedId: view.selectedId,
       tasksFolder: view.folder,
       tasksSortKey: view.sortKey,
@@ -106,6 +108,7 @@ export function renderTasksToolBody(view: TasksToolViewState): string {
   );
   const selected = getSelectedTask({
     tasksById: view.tasksById,
+    tasksRunsByTaskId: view.runsByTaskId || {},
     tasksSelectedId: view.selectedId,
     tasksFolder: view.folder,
     tasksSortKey: view.sortKey,
@@ -156,7 +159,7 @@ export function renderTasksToolBody(view: TasksToolViewState): string {
         detailsCollapsed
           ? `<div class="tasks-details-empty">Details collapsed.</div>`
           : selected
-            ? renderTaskDetails(selected, view.projectsById, view.jsonDraft)
+            ? renderTaskDetails(selected, view.projectsById, view.jsonDraft, view.runsByTaskId?.[selected.id] || [])
             : `<div class="tasks-details-empty">Select a task to view details.</div>`
       }
     </section>
@@ -189,12 +192,12 @@ function renderTaskRow(task: TaskRecord, selected: boolean, projectsById: Record
     <span class="tasks-cell tasks-cell-star"><button type="button" class="tasks-star-btn ${task.starred ? "is-starred" : ""}" ${TASKS_DATA_ATTR.action}="toggle-task-star" ${TASKS_DATA_ATTR.taskId}="${escapeAttr(task.id)}">${task.starred ? "★" : "☆"}</button></span>
     <span class="tasks-cell">${escapeHtml(task.type || "code")}</span>
     <span class="tasks-cell tasks-mono">${task.projectId ? escapeHtml(projectsById[task.projectId]?.name ?? task.projectId) : "—"}</span>
-    <span class="tasks-cell tasks-task-name">${escapeHtml(task.name)}</span>
+    <span class="tasks-cell tasks-task-name">${escapeHtml(task.name)} <span class="tasks-current-pill">${escapeHtml(task.state)}</span></span>
     <span class="tasks-cell tasks-cell-created tasks-mono">${escapeHtml(formatDate(task.createdAtMs))}</span>
   </div>`;
 }
 
-function renderTaskDetails(task: TaskRecord, projectsById: Record<string, ProjectRecord>, jsonDraft?: string): string {
+function renderTaskDetails(task: TaskRecord, projectsById: Record<string, ProjectRecord>, jsonDraft: string | undefined, runs: TaskRunRecord[]): string {
   const taskJson = typeof jsonDraft === "string" ? jsonDraft : JSON.stringify(task, null, 2);
   return `<div class="tasks-details">
     <div class="tasks-details-top">
@@ -231,6 +234,27 @@ function renderTaskDetails(task: TaskRecord, projectsById: Record<string, Projec
         : `<div class="tasks-current-pill">Current model: <span class="tasks-mono">${escapeHtml(task.agentOwner)}</span></div>`
     }
     <label class="tasks-field-grid">
+      <span>State</span>
+      <select ${TASKS_DATA_ATTR.field}="state" class="tasks-field-select">
+        <option value="draft" ${task.state === "draft" ? "selected" : ""}>Draft</option>
+        <option value="approved" ${task.state === "approved" ? "selected" : ""}>Approved</option>
+        <option value="complete" ${task.state === "complete" ? "selected" : ""}>Complete</option>
+        <option value="rejected" ${task.state === "rejected" ? "selected" : ""}>Rejected</option>
+      </select>
+    </label>
+    <label class="tasks-field-grid">
+      <span>Risk</span>
+      <select ${TASKS_DATA_ATTR.field}="riskLevel" class="tasks-field-select">
+        <option value="low" ${task.riskLevel === "low" ? "selected" : ""}>Low</option>
+        <option value="medium" ${task.riskLevel === "medium" ? "selected" : ""}>Medium</option>
+        <option value="high" ${task.riskLevel === "high" ? "selected" : ""}>High</option>
+      </select>
+    </label>
+    <label class="tasks-field">
+      <span>Estimated Cost (USD)</span>
+      <input type="number" min="0" step="0.0001" value="${escapeAttr(task.estimatedCostUsd.toFixed(4))}" ${TASKS_DATA_ATTR.field}="estimatedCostUsd" />
+    </label>
+    <label class="tasks-field-grid">
       <span>Project</span>
       <select ${TASKS_DATA_ATTR.field}="projectId" class="tasks-field-select">
         <option value="" ${!task.projectId ? "selected" : ""}>No project</option>
@@ -245,11 +269,29 @@ function renderTaskDetails(task: TaskRecord, projectsById: Record<string, Projec
     </label>
     <div class="tasks-field-actions">
       <button type="button" class="tasks-pane-btn" ${TASKS_DATA_ATTR.action}="save-selected">Save</button>
+      <button type="button" class="tasks-pane-btn" ${TASKS_DATA_ATTR.action}="approve-task" ${task.state === "approved" ? "disabled" : ""}>Approve</button>
+      <button type="button" class="tasks-pane-btn" ${TASKS_DATA_ATTR.action}="reject-task" ${task.state === "rejected" ? "disabled" : ""}>Reject</button>
     </div>
     <div class="tasks-details-meta-block">
       <div>Created: ${escapeHtml(formatDate(task.createdAtMs))}</div>
       <div>Updated: ${escapeHtml(formatDate(task.updatedAtMs))}</div>
       <div>ID: <span class="tasks-mono">${escapeHtml(task.id)}</span></div>
+    </div>
+    <div class="tasks-details-meta-block">
+      <div><strong>Run History</strong></div>
+      ${
+        runs.length
+          ? runs
+              .slice(0, 5)
+              .map(
+                (run) =>
+                  `<div>${escapeHtml(formatDate(run.createdAtMs))} - ${escapeHtml(run.status)} (${escapeHtml(
+                    run.policyDecision || "allow"
+                  )})${run.error ? ` - ${escapeHtml(run.error)}` : ""}</div>`
+              )
+              .join("")
+          : `<div>No runs yet.</div>`
+      }
     </div>
     <div class="tasks-json-block">
       <div class="tasks-json-head">

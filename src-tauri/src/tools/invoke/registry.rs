@@ -7,8 +7,8 @@ use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
 
-pub type ToolInvokeFuture = Pin<Box<dyn Future<Output = Result<Value, String>> + Send + 'static>>;
-pub type ToolInvokeHandler = fn(&TauriBridgeState, Value) -> ToolInvokeFuture;
+pub type ToolInvokeFuture<'a> = Pin<Box<dyn Future<Output = Result<Value, String>> + Send + 'a>>;
+pub type ToolInvokeHandler = for<'a> fn(&'a TauriBridgeState, Value) -> ToolInvokeFuture<'a>;
 
 pub struct InvokeRegistry {
     handlers: HashMap<(String, String), ToolInvokeHandler>,
@@ -48,7 +48,7 @@ mod tests {
     use serde::Deserialize;
     use serde_json::json;
 
-    fn ok_handler(_state: &TauriBridgeState, _payload: Value) -> ToolInvokeFuture {
+    fn ok_handler(_state: &TauriBridgeState, _payload: Value) -> ToolInvokeFuture<'_> {
         Box::pin(async { Ok(json!({"ok": true})) })
     }
 

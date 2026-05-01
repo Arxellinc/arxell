@@ -4,6 +4,7 @@ pub mod files;
 pub mod looper;
 pub mod registry;
 pub mod sheets;
+pub mod tasks;
 pub mod web_search;
 
 use registry::InvokeRegistry;
@@ -13,6 +14,7 @@ pub fn build_registry() -> InvokeRegistry {
     files::register(&mut registry);
     looper::register(&mut registry);
     sheets::register(&mut registry);
+    tasks::register(&mut registry);
     web_search::register(&mut registry);
     registry
 }

@@ -27,7 +27,7 @@ pub fn register(registry: &mut InvokeRegistry) {
     registry.register("sheets", &["toggle_cell_mark"], invoke_toggle_cell_mark);
 }
 
-fn invoke_new_sheet(state: &TauriBridgeState, payload: Value) -> ToolInvokeFuture {
+fn invoke_new_sheet(state: &TauriBridgeState, payload: Value) -> ToolInvokeFuture<'_> {
     let sheets = state.sheets.clone();
     Box::pin(async move {
         let _: InspectSheetPayload = decode_payload(payload)?;
@@ -36,7 +36,7 @@ fn invoke_new_sheet(state: &TauriBridgeState, payload: Value) -> ToolInvokeFutur
     })
 }
 
-fn invoke_open_sheet(state: &TauriBridgeState, payload: Value) -> ToolInvokeFuture {
+fn invoke_open_sheet(state: &TauriBridgeState, payload: Value) -> ToolInvokeFuture<'_> {
     let sheets = state.sheets.clone();
     Box::pin(async move {
         let req: OpenSheetPayload = decode_payload(payload)?;
@@ -49,7 +49,7 @@ fn invoke_open_sheet(state: &TauriBridgeState, payload: Value) -> ToolInvokeFutu
     })
 }
 
-fn invoke_save_sheet(state: &TauriBridgeState, payload: Value) -> ToolInvokeFuture {
+fn invoke_save_sheet(state: &TauriBridgeState, payload: Value) -> ToolInvokeFuture<'_> {
     let sheets = state.sheets.clone();
     Box::pin(async move {
         let req: SaveSheetPayload = decode_payload(payload)?;
@@ -62,7 +62,7 @@ fn invoke_save_sheet(state: &TauriBridgeState, payload: Value) -> ToolInvokeFutu
     })
 }
 
-fn invoke_inspect_sheet(state: &TauriBridgeState, payload: Value) -> ToolInvokeFuture {
+fn invoke_inspect_sheet(state: &TauriBridgeState, payload: Value) -> ToolInvokeFuture<'_> {
     let sheets = state.sheets.clone();
     Box::pin(async move {
         let _: InspectSheetPayload = decode_payload(payload)?;
@@ -75,7 +75,7 @@ fn invoke_inspect_sheet(state: &TauriBridgeState, payload: Value) -> ToolInvokeF
     })
 }
 
-fn invoke_read_range(state: &TauriBridgeState, payload: Value) -> ToolInvokeFuture {
+fn invoke_read_range(state: &TauriBridgeState, payload: Value) -> ToolInvokeFuture<'_> {
     let sheets = state.sheets.clone();
     Box::pin(async move {
         let req: ReadRangePayload = decode_payload(payload)?;
@@ -88,7 +88,7 @@ fn invoke_read_range(state: &TauriBridgeState, payload: Value) -> ToolInvokeFutu
     })
 }
 
-fn invoke_undo(state: &TauriBridgeState, payload: Value) -> ToolInvokeFuture {
+fn invoke_undo(state: &TauriBridgeState, payload: Value) -> ToolInvokeFuture<'_> {
     let sheets = state.sheets.clone();
     Box::pin(async move {
         let _: InspectSheetPayload = decode_payload(payload)?;
@@ -101,7 +101,7 @@ fn invoke_undo(state: &TauriBridgeState, payload: Value) -> ToolInvokeFuture {
     })
 }
 
-fn invoke_redo(state: &TauriBridgeState, payload: Value) -> ToolInvokeFuture {
+fn invoke_redo(state: &TauriBridgeState, payload: Value) -> ToolInvokeFuture<'_> {
     let sheets = state.sheets.clone();
     Box::pin(async move {
         let _: InspectSheetPayload = decode_payload(payload)?;
@@ -114,7 +114,7 @@ fn invoke_redo(state: &TauriBridgeState, payload: Value) -> ToolInvokeFuture {
     })
 }
 
-fn invoke_set_cell(state: &TauriBridgeState, payload: Value) -> ToolInvokeFuture {
+fn invoke_set_cell(state: &TauriBridgeState, payload: Value) -> ToolInvokeFuture<'_> {
     let sheets = state.sheets.clone();
     Box::pin(async move {
         let req: SetCellPayload = decode_payload(payload)?;
@@ -130,7 +130,7 @@ fn invoke_set_cell(state: &TauriBridgeState, payload: Value) -> ToolInvokeFuture
     })
 }
 
-fn invoke_set_ai_model(state: &TauriBridgeState, payload: Value) -> ToolInvokeFuture {
+fn invoke_set_ai_model(state: &TauriBridgeState, payload: Value) -> ToolInvokeFuture<'_> {
     let sheets = state.sheets.clone();
     Box::pin(async move {
         let req: SetAiModelPayload = decode_payload(payload)?;
@@ -146,7 +146,7 @@ fn invoke_set_ai_model(state: &TauriBridgeState, payload: Value) -> ToolInvokeFu
     })
 }
 
-fn invoke_write_range(state: &TauriBridgeState, payload: Value) -> ToolInvokeFuture {
+fn invoke_write_range(state: &TauriBridgeState, payload: Value) -> ToolInvokeFuture<'_> {
     let sheets = state.sheets.clone();
     Box::pin(async move {
         let req: WriteRangePayload = decode_payload(payload)?;
@@ -162,7 +162,7 @@ fn invoke_write_range(state: &TauriBridgeState, payload: Value) -> ToolInvokeFut
     })
 }
 
-fn invoke_copy_paste_range(state: &TauriBridgeState, payload: Value) -> ToolInvokeFuture {
+fn invoke_copy_paste_range(state: &TauriBridgeState, payload: Value) -> ToolInvokeFuture<'_> {
     let sheets = state.sheets.clone();
     Box::pin(async move {
         let req: CopyPasteRangePayload = decode_payload(payload)?;
@@ -189,7 +189,7 @@ fn invoke_copy_paste_range(state: &TauriBridgeState, payload: Value) -> ToolInvo
     })
 }
 
-fn invoke_insert_rows(state: &TauriBridgeState, payload: Value) -> ToolInvokeFuture {
+fn invoke_insert_rows(state: &TauriBridgeState, payload: Value) -> ToolInvokeFuture<'_> {
     let sheets = state.sheets.clone();
     Box::pin(async move {
         let req: ResizePayload = decode_payload(payload)?;
@@ -205,7 +205,7 @@ fn invoke_insert_rows(state: &TauriBridgeState, payload: Value) -> ToolInvokeFut
     })
 }
 
-fn invoke_delete_rows(state: &TauriBridgeState, payload: Value) -> ToolInvokeFuture {
+fn invoke_delete_rows(state: &TauriBridgeState, payload: Value) -> ToolInvokeFuture<'_> {
     let sheets = state.sheets.clone();
     Box::pin(async move {
         let req: ResizePayload = decode_payload(payload)?;
@@ -221,7 +221,7 @@ fn invoke_delete_rows(state: &TauriBridgeState, payload: Value) -> ToolInvokeFut
     })
 }
 
-fn invoke_insert_columns(state: &TauriBridgeState, payload: Value) -> ToolInvokeFuture {
+fn invoke_insert_columns(state: &TauriBridgeState, payload: Value) -> ToolInvokeFuture<'_> {
     let sheets = state.sheets.clone();
     Box::pin(async move {
         let req: ResizePayload = decode_payload(payload)?;
@@ -237,7 +237,7 @@ fn invoke_insert_columns(state: &TauriBridgeState, payload: Value) -> ToolInvoke
     })
 }
 
-fn invoke_apply_cell_format(state: &TauriBridgeState, payload: Value) -> ToolInvokeFuture {
+fn invoke_apply_cell_format(state: &TauriBridgeState, payload: Value) -> ToolInvokeFuture<'_> {
     let sheets = state.sheets.clone();
     Box::pin(async move {
         let req: FormatRangePayload = decode_payload(payload)?;
@@ -261,7 +261,7 @@ fn invoke_apply_cell_format(state: &TauriBridgeState, payload: Value) -> ToolInv
     })
 }
 
-fn invoke_toggle_cell_mark(state: &TauriBridgeState, payload: Value) -> ToolInvokeFuture {
+fn invoke_toggle_cell_mark(state: &TauriBridgeState, payload: Value) -> ToolInvokeFuture<'_> {
     let sheets = state.sheets.clone();
     Box::pin(async move {
         let req: ToggleCellMarkPayload = decode_payload(payload)?;
@@ -285,7 +285,7 @@ fn invoke_toggle_cell_mark(state: &TauriBridgeState, payload: Value) -> ToolInvo
     })
 }
 
-fn invoke_delete_columns(state: &TauriBridgeState, payload: Value) -> ToolInvokeFuture {
+fn invoke_delete_columns(state: &TauriBridgeState, payload: Value) -> ToolInvokeFuture<'_> {
     let sheets = state.sheets.clone();
     Box::pin(async move {
         let req: ResizePayload = decode_payload(payload)?;

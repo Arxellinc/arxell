@@ -27,6 +27,7 @@ use arxell_lite::contracts::{
     LlamaRuntimeStatusRequest, LlamaRuntimeStatusResponse, LlamaRuntimeStopRequest,
     LlamaRuntimeStopResponse, LooperPreviewRequest, LooperPreviewResponse, MemoryDeleteRequest,
     MemoryDeleteResponse, MemoryUpsertRequest, MemoryUpsertResponse,
+    ModelManagerCancelDownloadRequest, ModelManagerCancelDownloadResponse,
     ModelManagerDeleteInstalledRequest, ModelManagerDeleteInstalledResponse,
     ModelManagerDownloadHfRequest, ModelManagerDownloadHfResponse,
     ModelManagerListCatalogCsvRequest, ModelManagerListCatalogCsvResponse,
@@ -41,7 +42,8 @@ use arxell_lite::contracts::{
     ToolInvokeResponse, TtsDownloadModelRequest, TtsDownloadModelResponse, TtsListVoicesRequest,
     TtsListVoicesResponse, TtsSelfTestRequest, TtsSelfTestResponse, TtsSettingsGetRequest,
     TtsSettingsGetResponse, TtsSettingsSetRequest, TtsSettingsSetResponse, TtsSpeakRequest,
-    TtsSpeakResponse, TtsStatusRequest, TtsStatusResponse, TtsStopRequest, TtsStopResponse,
+    TtsSpeakResponse, TtsSpeakStreamResponse, TtsStatusRequest, TtsStatusResponse, TtsStopRequest,
+    TtsStopResponse,
     UserProjectEnsureRequest, UserProjectEnsureResponse, UserProjectsRootsRequest,
     UserProjectsRootsResponse, VoiceGetRuntimeDiagnosticsRequest, VoiceGetVadSettingsRequest,
     VoiceGetVadSettingsResponse, VoiceListVadMethodsRequest, VoiceListVadMethodsResponse,
@@ -172,6 +174,7 @@ fn main() {
         permissions: std::sync::Arc::clone(&app_context.permissions),
         model_manager: std::sync::Arc::clone(&app_context.model_manager),
         files: std::sync::Arc::clone(&app_context.files),
+        tasks: std::sync::Arc::clone(&app_context.tasks),
         sheets: std::sync::Arc::clone(&app_context.sheets),
         voice: std::sync::Arc::clone(&app_context.voice),
     };
@@ -277,6 +280,7 @@ fn main() {
             cmd_model_manager_list_installed,
             cmd_model_manager_search_hf,
             cmd_model_manager_download_hf,
+            cmd_model_manager_cancel_download,
             cmd_model_manager_delete_installed,
             cmd_model_manager_list_catalog_csv,
             cmd_model_manager_refresh_unsloth_catalog,
@@ -301,6 +305,7 @@ fn main() {
             cmd_tts_status,
             cmd_tts_list_voices,
             cmd_tts_speak,
+            cmd_tts_speak_stream,
             cmd_tts_stop,
             cmd_tts_self_test,
             cmd_tts_settings_get,
@@ -421,6 +426,16 @@ async fn cmd_tts_speak(
     request: TtsSpeakRequest,
 ) -> Result<TtsSpeakResponse, String> {
     arxell_lite::tts::speak(&app, request, &tts_state).await
+}
+
+#[cfg(feature = "tauri-runtime")]
+#[tauri::command]
+async fn cmd_tts_speak_stream(
+    app: tauri::AppHandle,
+    tts_state: tauri::State<'_, TTSState>,
+    request: TtsSpeakRequest,
+) -> Result<TtsSpeakStreamResponse, String> {
+    arxell_lite::tts::speak_stream(&app, request, &tts_state).await
 }
 
 #[cfg(feature = "tauri-runtime")]
@@ -1371,6 +1386,21 @@ async fn cmd_model_manager_download_hf(
     Ok(ModelManagerDownloadHfResponse {
         correlation_id: request.correlation_id,
         model,
+    })
+}
+
+#[cfg(feature = "tauri-runtime")]
+#[tauri::command]
+async fn cmd_model_manager_cancel_download(
+    state: State<'_, TauriBridgeState>,
+    request: ModelManagerCancelDownloadRequest,
+) -> Result<ModelManagerCancelDownloadResponse, String> {
+    let service = std::sync::Arc::clone(&state.model_manager);
+    let cancelled = service.cancel_download(request.target_correlation_id.as_str());
+    Ok(ModelManagerCancelDownloadResponse {
+        correlation_id: request.correlation_id,
+        target_correlation_id: request.target_correlation_id,
+        cancelled,
     })
 }
 

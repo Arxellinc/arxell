@@ -38,7 +38,7 @@ export interface MemoryChatHistoryItem {
 export interface MemoryPersistentItem {
   key: string;
   value: string;
-  type: "fact" | "personality" | "directive" | "other";
+  type: "fact" | "user" | "personality" | "directive" | "other";
   loadMethod: string;
   loadReason: string;
   tokenEstimate: number;
@@ -169,6 +169,8 @@ function getTypeIcon(type: string): "cpu" | "wrench" | "circle-check-big" | "bot
       return "wrench";
     case "fact":
       return "circle-check-big";
+    case "user":
+      return "bot";
     case "personality":
       return "bot";
     case "directive":
@@ -202,6 +204,8 @@ function getTypeLabel(type: string): string {
       return "Tool";
     case "fact":
       return "Fact";
+    case "user":
+      return "User";
     case "personality":
       return "Personality";
     case "directive":
@@ -268,6 +272,7 @@ function renderAddNewButton(section: MemoryTabId): string {
 function renderMemoryModalFields(state: MemoryToolState): string {
   if (state.modalMode !== "create" || !state.modalSection) return "";
   const keyLabel = state.modalSection === "history" ? "Title" : state.modalSection === "skills" ? "Name" : "Key";
+  const keyPlaceholder = state.modalSection === "memory" ? "Favorite coffee order" : "";
   const descriptionField = state.modalSection === "skills"
     ? `<label class="field">
         <span>Description</span>
@@ -279,6 +284,7 @@ function renderMemoryModalFields(state: MemoryToolState): string {
         <span>Type</span>
         <select class="field-select" data-memory-action="modal-draft-category">
           <option value="fact" ${state.modalDraftCategory === "fact" ? "selected" : ""}>Fact</option>
+          <option value="user" ${state.modalDraftCategory === "user" ? "selected" : ""}>User</option>
           <option value="personality" ${state.modalDraftCategory === "personality" ? "selected" : ""}>Personality</option>
           <option value="directive" ${state.modalDraftCategory === "directive" ? "selected" : ""}>Directive</option>
           <option value="other" ${state.modalDraftCategory === "other" ? "selected" : ""}>Other</option>
@@ -288,7 +294,7 @@ function renderMemoryModalFields(state: MemoryToolState): string {
   return `<div class="memory-modal-fields">
     <label class="field">
       <span>${keyLabel}</span>
-      <input class="field-input-soft" type="text" data-memory-action="modal-draft-key" value="${escapeHtml(state.modalDraftKey)}" />
+      <input class="field-input-soft" type="text" data-memory-action="modal-draft-key" value="${escapeHtml(state.modalDraftKey)}" placeholder="${escapeHtml(keyPlaceholder)}" />
     </label>
     ${descriptionField}
     ${categoryField}
@@ -333,9 +339,9 @@ function renderToolsRows(items: MemoryContextItem[], alwaysLoadToolKeys: string[
   return items.length
     ? items
         .map((item) => {
-          const toolName = item.key.replace(/^Tool (?:index|schema):\s*/, "");
-          const checked = alwaysLoad.has(toolName);
-          const canToggle = item.category === "tool-index" || item.category === "tool-detail";
+          const toolName = item.category === "tool-index" ? "Tool Index" : item.key;
+          const checked = item.category === "tool-index" ? true : alwaysLoad.has(toolName);
+          const canToggle = item.category === "tool-detail";
           const editable = isMemoryRowEditable("tools", item.category, item.key);
           return `
             <div class="memory-row memory-row-tools" data-memory-action="open-row" data-memory-section="tools" data-memory-index="${items.indexOf(item)}" role="button" tabindex="0">

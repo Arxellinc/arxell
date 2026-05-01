@@ -39,6 +39,8 @@ use tokio::sync::Mutex;
 static SILERO_VAD_DISCOVERY_LOGGED: AtomicBool = AtomicBool::new(false);
 #[cfg(feature = "tauri-runtime")]
 static STREAM_STATE: OnceLock<Mutex<StreamState>> = OnceLock::new();
+#[cfg(feature = "tauri-runtime")]
+static CACHED_VAD_MODEL_PATH: OnceLock<Option<PathBuf>> = OnceLock::new();
 
 #[cfg(feature = "tauri-runtime")]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -391,7 +393,17 @@ fn sherpa_silero_has_speech(samples: &[f32], model_path: &Path) -> Result<bool, 
     Ok(has_speech)
 }
 
-/// Start the STT service (whisper.cpp server)
+#[cfg(feature = "tauri-runtime")]
+fn sherpa_silero_has_speech_cached(
+    app: &tauri::AppHandle,
+    samples: &[f32],
+) -> Result<bool, String> {
+    let model_path = CACHED_VAD_MODEL_PATH.get_or_init(|| resolve_silero_vad_model_path(app));
+    let Some(model_path) = model_path else {
+        return Ok(false);
+    };
+    sherpa_silero_has_speech(samples, model_path)
+}
 #[cfg(feature = "tauri-runtime")]
 #[tauri::command]
 pub async fn start_stt(
@@ -600,16 +612,16 @@ pub async fn transcribe_chunk(
 
     // Optional backend speech gate via sherpa-onnx Silero VAD.
     // If a silero_vad.onnx model is present, skip non-speech chunks before Whisper.
-    let vad_model_opt = resolve_silero_vad_model_path(&app);
+    let vad_model_opt = CACHED_VAD_MODEL_PATH.get_or_init(|| resolve_silero_vad_model_path(&app));
     if !SILERO_VAD_DISCOVERY_LOGGED.swap(true, Ordering::SeqCst) {
-        if let Some(vad_model) = &vad_model_opt {
+        if let Some(vad_model) = vad_model_opt {
             info!("Silero VAD active: {}", vad_model.display());
         } else {
             info!("Silero VAD inactive: no silero_vad.onnx found, using Whisper-only path");
         }
     }
-    if let Some(vad_model) = vad_model_opt {
-        match sherpa_silero_has_speech(&pcm_samples, &vad_model) {
+    if let Some(_vad_model) = vad_model_opt {
+        match sherpa_silero_has_speech_cached(&app, &pcm_samples) {
             Ok(false) => {
                 info!(
                     "Silero VAD rejected non-speech chunk: {} samples, utterance_id: {}",
@@ -722,10 +734,10 @@ pub async fn stt_stream_ingest(
     let rms = (pcm_samples.iter().map(|v| v * v).sum::<f32>() / pcm_samples.len() as f32).sqrt();
 
     let mut s = stream_state().lock().await;
-    let chunk_has_speech = if let Some(vad_model) = resolve_silero_vad_model_path(&app) {
-        sherpa_silero_has_speech(&pcm_samples, &vad_model).unwrap_or_else(|_| rms > 0.0012)
-    } else {
-        rms > 0.0012
+    let chunk_has_speech = match CACHED_VAD_MODEL_PATH.get_or_init(|| resolve_silero_vad_model_path(&app)) {
+        Some(_) => sherpa_silero_has_speech_cached(&app, &pcm_samples)
+            .unwrap_or_else(|_| rms > 0.0012),
+        None => rms > 0.0012,
     };
 
     if !s.speaking {

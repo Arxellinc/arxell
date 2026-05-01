@@ -154,6 +154,20 @@ export function createSendMessageHandler(
       deps.chatTtsSawStreamDeltaByCorrelation.delete(response.correlationId);
       await deps.refreshConversations();
     } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      const existing = deps.state.messages.find(
+        (m) => m.role === "assistant" && m.correlationId === correlationId
+      );
+      const errorText = `Failed to generate response: ${message}`;
+      if (existing) {
+        existing.text = errorText;
+      } else {
+        deps.state.messages.push({
+          role: "assistant",
+          text: errorText,
+          correlationId
+        });
+      }
       deps.state.events.push({
         timestampMs: Date.now(),
         correlationId,
@@ -161,8 +175,12 @@ export function createSendMessageHandler(
         action: "chat.send",
         stage: "error",
         severity: "error",
-        payload: { message: String(error) }
+        payload: { message }
       });
+      if (deps.state.chatTtsEnabled) {
+        deps.enqueueImmediateTtsChunk(errorText, correlationId);
+        void deps.runChatTtsQueue(sendMessage);
+      }
     } finally {
       if (deps.state.activeChatCorrelationId === correlationId) {
         deps.state.activeChatCorrelationId = null;

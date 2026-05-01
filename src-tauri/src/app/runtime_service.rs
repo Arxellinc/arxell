@@ -36,7 +36,7 @@ struct GithubAsset {
 struct ActiveRuntime {
     engine_id: String,
     port: u16,
-    _model_path: String,
+    model_path: String,
     child: Child,
 }
 
@@ -66,7 +66,7 @@ impl LlamaRuntimeService {
     pub fn status(&self, correlation_id: &str, app_data_dir: &Path) -> LlamaRuntimeStatusResponse {
         self.reconcile_process_state(correlation_id);
         let engines = detect_engines(app_data_dir);
-        let (state, active_engine_id, endpoint, pid) = {
+        let (state, active_engine_id, active_model_path, endpoint, pid) = {
             let state = match self.state.try_lock() {
                 Ok(guard) => guard,
                 Err(_) => {
@@ -75,6 +75,7 @@ impl LlamaRuntimeService {
                         correlation_id: correlation_id.to_string(),
                         state: "idle".to_string(),
                         active_engine_id: None,
+                        active_model_path: None,
                         endpoint: None,
                         pid: None,
                         engines,
@@ -85,11 +86,12 @@ impl LlamaRuntimeService {
                 (
                     "healthy".to_string(),
                     Some(active.engine_id.clone()),
+                    Some(active.model_path.clone()),
                     Some(format!("http://127.0.0.1:{}/v1", active.port)),
                     Some(active.child.id()),
                 )
             } else {
-                (state.status.clone(), None, None, None)
+                (state.status.clone(), None, None, None, None)
             }
         };
         self.emit(
@@ -97,12 +99,13 @@ impl LlamaRuntimeService {
             "llama.runtime.status",
             EventStage::Complete,
             EventSeverity::Info,
-            json!({ "state": state, "activeEngineId": active_engine_id, "pid": pid }),
+            json!({ "state": state, "activeEngineId": active_engine_id, "activeModelPath": active_model_path, "pid": pid }),
         );
         LlamaRuntimeStatusResponse {
             correlation_id: correlation_id.to_string(),
             state,
             active_engine_id,
+            active_model_path,
             endpoint,
             pid,
             engines,
@@ -503,7 +506,7 @@ impl LlamaRuntimeService {
                 state.active = Some(ActiveRuntime {
                     engine_id: request.engine_id.clone(),
                     port,
-                    _model_path: request.model_path.clone(),
+                    model_path: request.model_path.clone(),
                     child,
                 });
             }
@@ -517,6 +520,7 @@ impl LlamaRuntimeService {
             EventSeverity::Info,
             json!({
                 "engineId": request.engine_id,
+                "modelPath": request.model_path,
                 "pid": pid,
                 "endpoint": endpoint,
                 "chatTemplateKwargsNoThinking": disable_thinking_for_qwen

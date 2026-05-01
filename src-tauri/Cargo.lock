@@ -143,6 +143,7 @@ version = "0.2.1"
 dependencies = [
  "arx_rs",
  "async-trait",
+ "base64 0.22.1",
  "bzip2",
  "cpal",
  "csv",

@@ -4,6 +4,7 @@ pub mod model_manager_service;
 pub mod permission_service;
 pub mod runtime_service;
 pub mod terminal_service;
+pub mod tasks_service;
 pub mod user_projects_service;
 pub mod voice_handoff_service;
 pub mod voice_runtime_service;
@@ -30,6 +31,7 @@ pub struct AppContext {
     pub permissions: Arc<permission_service::PermissionService>,
     pub model_manager: Arc<model_manager_service::ModelManagerService>,
     pub files: Arc<files_service::FilesService>,
+    pub tasks: Arc<tasks_service::TaskAutomationService>,
     pub sheets: Arc<SheetsService>,
     pub looper: Arc<LooperHandler>,
     pub voice: Arc<voice_runtime_service::VoiceRuntimeService>,
@@ -69,6 +71,10 @@ impl AppContext {
         let permissions = Arc::new(permission_service::PermissionService::new(hub.clone()));
         let model_manager = Arc::new(model_manager_service::ModelManagerService::new(hub.clone()));
         let files = Arc::new(files_service::FilesService::new());
+        let tasks = Arc::new(
+            tasks_service::TaskAutomationService::new(tasks_service::TaskAutomationService::default_path())
+                .map_err(|err| format!("failed to initialize tasks service: {err}"))?,
+        );
         let looper = Arc::new(LooperHandler::new(
             hub.clone(),
             Arc::clone(&terminal),
@@ -99,6 +105,7 @@ impl AppContext {
             permissions,
             model_manager,
             files,
+            tasks,
             sheets,
             looper,
             voice,
@@ -129,6 +136,7 @@ impl AppContext {
             permissions: Arc::clone(&self.permissions),
             model_manager: Arc::clone(&self.model_manager),
             files: Arc::clone(&self.files),
+            tasks: Arc::clone(&self.tasks),
             sheets: Arc::clone(&self.sheets),
             voice: Arc::clone(&self.voice),
         }

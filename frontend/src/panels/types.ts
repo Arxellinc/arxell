@@ -130,7 +130,8 @@ export const AVATAR_MESH_GROUPS = [
   { key: "eyes", label: "Eyes" },
   { key: "eyebrows", label: "Eyebrows" },
   { key: "hair", label: "Hair" },
-  { key: "jaw", label: "Jaw" },
+  { key: "jawTop", label: "Jaw Top" },
+  { key: "jawBtm", label: "Jaw Bottom" },
   { key: "tongue", label: "Tongue" },
 ] as const;
 
@@ -138,7 +139,13 @@ export function defaultAvatarMeshes(): AvatarMeshSetting[] {
   return AVATAR_MESH_GROUPS.map((g) => ({
     key: g.key,
     visible: g.key !== "eyebrows" && g.key !== "hair",
-    color: g.key === "wireframe" ? "#00ccff" : g.key === "body" || g.key === "eyes" || g.key === "jaw" || g.key === "tongue" ? "#102527" : "#16E9F5",
+    color: g.key === "wireframe"
+      ? "#00ccff"
+      : g.key === "jawTop"
+      ? "#C0BFBC"
+      : g.key === "body" || g.key === "eyes" || g.key === "jawBtm" || g.key === "tongue"
+      ? "#102527"
+      : "#16E9F5",
     opacity: 1,
     textureUrl: "",
     textureName: "",
@@ -207,8 +214,6 @@ export interface TtsState {
   voicesPath: string;
   tokensPath: string;
   dataDir: string;
-  pythonPath: string;
-  scriptPath: string;
   voices: string[];
   selectedVoice: string;
   speed: number;
@@ -272,6 +277,7 @@ export interface PrimaryPanelRenderState {
   llamaRuntime: LlamaRuntimeStatusResponse | null;
   llamaRuntimeSelectedEngineId: string;
   llamaRuntimeModelPath: string;
+  llamaRuntimeActiveModelPath: string;
   llamaRuntimePort: number;
   llamaRuntimeCtxSize: number;
   llamaRuntimeGpuLayers: number;
@@ -311,6 +317,14 @@ export interface PrimaryPanelRenderState {
   modelManagerCollection: string;
   modelManagerSearchResults: ModelManagerHfCandidate[];
   modelManagerBusy: boolean;
+  modelManagerDownloading: boolean;
+  modelManagerActiveDownloadKey: string | null;
+  modelManagerActiveDownloadFileName: string | null;
+  modelManagerActiveDownloadCorrelationId: string | null;
+  modelManagerDownloadReceivedBytes: number | null;
+  modelManagerDownloadTotalBytes: number | null;
+  modelManagerDownloadPercent: number | null;
+  modelManagerDownloadSpeedBytesPerSec: number | null;
   modelManagerMessage: string | null;
   modelManagerUnslothUdCatalog: Array<{
     repoId: string;
@@ -350,7 +364,7 @@ export interface PrimaryPanelRenderState {
   projectsNameDraft: string;
   projectsModalOpen: boolean;
   avatar: AvatarState;
-  avatarActiveTab: "appearance" | "animation";
+  avatarActiveTab: "appearance" | "animation" | "morphTargets";
   avatarLipSyncStrength: number;
   avatarLipSyncJawBlend: number;
   avatarLipSyncJawAmp: number;
@@ -359,6 +373,14 @@ export interface PrimaryPanelRenderState {
   avatarLipSyncOpenRate: number;
   avatarLipSyncCloseRate: number;
   avatarLipSyncFallbackRate: number;
+  avatarJawBtmX: number;
+  avatarJawBtmY: number;
+  avatarJawBtmZ: number;
+  avatarJawBtmValue: number;
+  avatarJawTopX: number;
+  avatarJawTopY: number;
+  avatarJawTopZ: number;
+  avatarJawTopValue: number;
 }
 
 export interface PrimaryPanelDefinition {
@@ -431,6 +453,7 @@ export interface PrimaryPanelBindings {
   onModelManagerSetCollection: (collection: string) => Promise<void>;
   onModelManagerSearchHf: () => Promise<void>;
   onModelManagerDownloadHf: (args: { repoId: string; fileName: string }) => Promise<void>;
+  onModelManagerCancelDownload: () => Promise<void>;
   onModelManagerSetUdQuant: (args: { repoId: string; fileName: string }) => Promise<void>;
   onModelManagerUseAsLlamaPath: (modelPath: string) => Promise<void>;
   onModelManagerEjectActive: () => Promise<void>;
@@ -496,10 +519,11 @@ export interface PrimaryPanelBindings {
   onAvatarMeshTextureUpload: (key: string) => void;
   onAvatarBorderChange: (size: number, color: string) => Promise<void>;
   onAvatarBgChange: (color: string, opacity: number) => Promise<void>;
-  onAvatarSetActiveTab: (tab: "appearance" | "animation") => Promise<void>;
+  onAvatarSetActiveTab: (tab: "appearance" | "animation" | "morphTargets") => Promise<void>;
   onAvatarMorphChange: (name: string, value: number) => Promise<void>;
   onAvatarBoneChange: (key: string, axis: "x" | "y" | "z", value: number) => Promise<void>;
   onAvatarLipSyncChange: (key: string, value: number) => void;
+  onAvatarLipSyncReset: () => Promise<void>;
   onProjectCreate: (name: string) => Promise<void>;
   onProjectSelect: (id: string | null) => void;
   onProjectDelete: (id: string) => Promise<void>;

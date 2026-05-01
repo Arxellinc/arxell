@@ -11,6 +11,7 @@ import type {
   ChatStreamReasoningChunkPayload,
   ConversationSummaryRecord,
   FilesListDirectoryEntry,
+  LlamaRuntimeEngine,
   LlamaRuntimeStatusResponse,
   ModelManagerHfCandidate,
   ModelManagerInstalledModel,
@@ -117,6 +118,7 @@ import { getInitialSheetsState } from "./tools/sheets/state";
 import type { SheetsToolState } from "./tools/sheets/state";
 import { mountSheetsRuntime, unmountSheetsRuntime } from "./tools/sheets/canvas/mount";
 import { persistTasksById } from "./tools/tasks/actions";
+import { syncAllTasksFromBackend } from "./tools/tasks/bindings";
 import type { TaskFolder, TaskSortDirection, TaskSortKey, TaskRecord } from "./tools/tasks/state";
 import {
   loadPersistedProjectsById,
@@ -136,6 +138,8 @@ import { getAllToolManifests } from "./tools/registry";
 import { renderChatMessages } from "./panels/chatPanel";
 import { renderAvatarPreview } from "./panels/avatarPanel";
 import { buildPhonemeTimeline } from "./avatar/phonemeUtils";
+import { ChatTtsPipeline } from "./voice/chatTtsPipeline";
+import type { ChatTtsQueueItem } from "./voice/chatTtsPipeline";
 import { APP_BUILD_VERSION, normalizeVersionLabel } from "./version";
 import {
   closeTerminalSessionAndPickNext,
@@ -155,6 +159,7 @@ import {
   loadPersistedChatRoutePreference,
   loadPersistedMemoryAlwaysLoadTools,
   loadPersistedMemoryAlwaysLoadSkills,
+  loadPersistedLlamaEngineId,
   loadPersistedLlamaMaxTokens,
   loadPersistedLlamaModelPath,
   loadPersistedShowAppResourcesCpu,
@@ -169,6 +174,7 @@ import {
   persistChatModelId,
   persistMemoryAlwaysLoadTools,
   persistMemoryAlwaysLoadSkills,
+  persistLlamaEngineId,
   persistLlamaMaxTokens,
   persistLlamaModelPath,
   persistMicBubbleDismissed,
@@ -199,17 +205,66 @@ import {
   createInitialTasksState,
   defaultApiConnectionDraft,
   defaultDevicesState,
-  selectDocsToolState,
-  selectFilesToolState,
-  selectFlowToolState,
-  selectMemoryToolState,
-  selectNotepadToolState,
-  selectSkillsToolState,
-  selectTasksToolState,
   type FlowPhaseTranscriptEntry,
   type FlowRerunValidationResult,
   type FlowRunView
 } from "./app/state";
+import { selectPrimaryPanelState, selectWorkspaceViewState } from "./app/selectors";
+import {
+  appendChatToolRowForPanelState,
+  appendChatToolRowState,
+  ensureAssistantMessageForPanelState,
+  ensureAssistantMessageForState,
+  normalizeChatText as normalizeChatTextDomain,
+  resetCurrentConversationUiState as resetCurrentConversationUiStateDomain,
+  ensureToolIntentRowState,
+  parseReasoningStreamChunkPayload,
+  parseStreamChunkPayload,
+  syncThinkingPlacementForPanelState,
+  syncThinkingPlacementState,
+  updateAssistantDraftState,
+  updateReasoningDraftState,
+  updateSecondaryAssistantDraftState,
+  updateSecondaryReasoningDraftState
+} from "./app/chatOrchestration";
+import {
+  extractRuntimeProcessLine as extractRuntimeProcessLineRuntime,
+  formatAgentEventLine as formatAgentEventLineRuntime,
+  formatRuntimeEventLine as formatRuntimeEventLineRuntime,
+  parseAgentToolPayload as parseAgentToolPayloadRuntime,
+  toolIconName as toolIconNameRuntime,
+  toolTitleName as toolTitleNameRuntime,
+  updateRuntimeMetricsFromLine as updateRuntimeMetricsFromLineRuntime
+} from "./app/runtimeOrchestration";
+import {
+  browseAndSetModelPath,
+  ejectActiveModel,
+  installEngine,
+  startRuntime,
+  stopRuntime,
+  useModelPathFromManager,
+  type LlamaCppControllerDeps,
+  type LlamaStateSlice,
+} from "./panels/llamaCppController";
+import { browseLlamaModelPath, refreshLlamaRuntimeState } from "./panels/llamaCppServices";
+import {
+  closeMemoryModalState,
+  handleMemoryModalChangeEvent,
+  handleMemoryModalEditorKeyDown,
+  handleMemoryModalInputEvent,
+  loadMemoryContextState,
+  openHistoryIndexModalState,
+  openMemoryCreateModalState,
+  openMemoryModalState
+} from "./app/memoryOrchestration";
+import {
+  getChatPanelById as getChatPanelByIdWorkspace,
+  getPrimaryChatPanelState as getPrimaryChatPanelStateWorkspace,
+  getSecondaryChatPanelState as getSecondaryChatPanelStateWorkspace,
+  rememberChatCorrelationTarget as rememberChatCorrelationTargetWorkspace,
+  resolveChatPaneIdForEvent as resolveChatPaneIdForEventWorkspace,
+  syncPrimaryChatPanelFromFlatState as syncPrimaryChatPanelFromFlatStateWorkspace
+} from "./app/workspaceOrchestration";
 import {
   buildBottomStatus,
   buildConversationMarkdown,
@@ -267,6 +322,7 @@ const initialWorkspaceTab = initialWorkspaceTabCandidate === "flow-tool"
   ? initialWorkspaceTabCandidate
   : "events";
 const FIRST_RUN_ONBOARDING_DISMISSED_KEY = "arxell.firstRunOnboarding.dismissed";
+const AUTO_SAFE_ENABLED_KEY = "arxell.autoSafeEnabled";
 type FirstRunOnboardingStep = "welcome" | "model" | "tts";
 interface FirstRunModelOption {
   id: string;
@@ -324,6 +380,21 @@ function persistFirstRunOnboardingDismissed(): void {
     window.localStorage.setItem(FIRST_RUN_ONBOARDING_DISMISSED_KEY, "1");
   } catch {}
 }
+
+function loadPersistedAutoSafeEnabled(): boolean {
+  try {
+    return window.localStorage.getItem(AUTO_SAFE_ENABLED_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function persistAutoSafeEnabled(enabled: boolean): void {
+  try {
+    window.localStorage.setItem(AUTO_SAFE_ENABLED_KEY, enabled ? "1" : "0");
+  } catch {}
+}
+
 type ConsoleView = "all" | "errors-warnings" | "security-events";
 type DisplayModePreference = DisplayMode | "system" | "terminal";
 const FLOW_TERMINAL_PHASES: string[] = [];
@@ -511,7 +582,7 @@ const state: {
     borderSize: number;
     borderColor: string;
   };
-  avatarActiveTab: "appearance" | "animation";
+  avatarActiveTab: "appearance" | "animation" | "morphTargets";
   avatarLipSyncStrength: number;
   avatarLipSyncJawBlend: number;
   avatarLipSyncJawAmp: number;
@@ -520,6 +591,14 @@ const state: {
   avatarLipSyncOpenRate: number;
   avatarLipSyncCloseRate: number;
   avatarLipSyncFallbackRate: number;
+  avatarJawBtmX: number;
+  avatarJawBtmY: number;
+  avatarJawBtmZ: number;
+  avatarJawBtmValue: number;
+  avatarJawTopX: number;
+  avatarJawTopY: number;
+  avatarJawTopZ: number;
+  avatarJawTopValue: number;
   devices: DevicesState;
   apiConnections: ApiConnectionRecord[];
   apiFormOpen: boolean;
@@ -706,6 +785,7 @@ const state: {
   memoryLoading: boolean;
   memoryError: string | null;
   tasksById: Record<string, TaskRecord>;
+  tasksRunsByTaskId: Record<string, import("./tools/tasks/state").TaskRunRecord[]>;
   tasksSelectedId: string | null;
   tasksFolder: TaskFolder;
   tasksSortKey: TaskSortKey;
@@ -761,6 +841,7 @@ const state: {
   flowModelUnavailableStatus: string;
   displayMode: DisplayMode;
   displayModePreference: DisplayModePreference;
+  autoSafeEnabled: boolean;
   appVersion: string;
   chatThinkingEnabled: boolean;
   chatRoutePreference: ChatRoutePreference;
@@ -779,6 +860,7 @@ const state: {
   llamaRuntime: LlamaRuntimeStatusResponse | null;
   llamaRuntimeSelectedEngineId: string;
   llamaRuntimeModelPath: string;
+  llamaRuntimeActiveModelPath: string;
   llamaRuntimePort: number;
   llamaRuntimeCtxSize: number;
   llamaRuntimeGpuLayers: number;
@@ -814,6 +896,14 @@ const state: {
   modelManagerCollection: string;
   modelManagerSearchResults: ModelManagerHfCandidate[];
   modelManagerBusy: boolean;
+  modelManagerDownloading: boolean;
+  modelManagerActiveDownloadKey: string | null;
+  modelManagerActiveDownloadFileName: string | null;
+  modelManagerActiveDownloadCorrelationId: string | null;
+  modelManagerDownloadReceivedBytes: number | null;
+  modelManagerDownloadTotalBytes: number | null;
+  modelManagerDownloadPercent: number | null;
+  modelManagerDownloadSpeedBytesPerSec: number | null;
   modelManagerMessage: string | null;
   modelManagerUnslothUdCatalog: Array<{
     repoId: string;
@@ -884,8 +974,6 @@ const state: {
     voicesPath: string;
     tokensPath: string;
     dataDir: string;
-    pythonPath: string;
-    scriptPath: string;
     voices: string[];
     selectedVoice: string;
     speed: number;
@@ -958,6 +1046,14 @@ const state: {
   avatarLipSyncOpenRate: 0.8,
   avatarLipSyncCloseRate: 0.55,
   avatarLipSyncFallbackRate: 0.4,
+  avatarJawBtmX: 0,
+  avatarJawBtmY: -0.06,
+  avatarJawBtmZ: 0.02,
+  avatarJawBtmValue: 1,
+  avatarJawTopX: 0,
+  avatarJawTopY: 0,
+  avatarJawTopZ: 0,
+  avatarJawTopValue: 0,
   devices: defaultDevicesState(),
   apiConnections: [],
   apiFormOpen: false,
@@ -1026,6 +1122,7 @@ const state: {
   }),
   displayMode: "dark",
   displayModePreference: "dark",
+  autoSafeEnabled: loadPersistedAutoSafeEnabled(),
   appVersion: FALLBACK_APP_VERSION,
   chatThinkingEnabled: false,
   chatRoutePreference: loadPersistedChatRoutePreference(),
@@ -1042,8 +1139,9 @@ const state: {
   appResourceNetworkRxBytesPerSec: null,
   appResourceNetworkTxBytesPerSec: null,
   llamaRuntime: null,
-  llamaRuntimeSelectedEngineId: "",
+  llamaRuntimeSelectedEngineId: loadPersistedLlamaEngineId(),
   llamaRuntimeModelPath: loadPersistedLlamaModelPath(),
+  llamaRuntimeActiveModelPath: "",
   llamaRuntimePort: 1420,
   llamaRuntimeCtxSize: 8192,
   llamaRuntimeGpuLayers: 999,
@@ -1079,6 +1177,14 @@ const state: {
   modelManagerCollection: "unsloth_ud",
   modelManagerSearchResults: [],
   modelManagerBusy: false,
+  modelManagerDownloading: false,
+  modelManagerActiveDownloadKey: null,
+  modelManagerActiveDownloadFileName: null,
+  modelManagerActiveDownloadCorrelationId: null,
+  modelManagerDownloadReceivedBytes: null,
+  modelManagerDownloadTotalBytes: null,
+  modelManagerDownloadPercent: null,
+  modelManagerDownloadSpeedBytesPerSec: null,
   modelManagerMessage: null,
   modelManagerUnslothUdCatalog: [],
   modelManagerUnslothUdLoading: false,
@@ -1133,8 +1239,6 @@ const state: {
     voicesPath: "",
     tokensPath: "",
     dataDir: "",
-    pythonPath: "",
-    scriptPath: "",
     voices: ["af_heart"],
     selectedVoice: "af_heart",
     speed: 1,
@@ -1156,67 +1260,33 @@ const PRIMARY_CHAT_PANE_ID = "chat-0";
 const chatPaneIdByCorrelation = new Map<string, string>();
 
 function syncPrimaryChatPanelFromFlatState(): void {
-  const cp = state.chatPanels[0];
-  if (!cp) return;
-  cp.conversationId = state.conversationId;
-  cp.messages = state.messages;
-  cp.chatReasoningByCorrelation = state.chatReasoningByCorrelation;
-  cp.chatThinkingPlacementByCorrelation = state.chatThinkingPlacementByCorrelation;
-  cp.chatThinkingExpandedByCorrelation = state.chatThinkingExpandedByCorrelation;
-  cp.chatToolRowsByCorrelation = state.chatToolRowsByCorrelation;
-  cp.chatToolRowExpandedById = state.chatToolRowExpandedById;
-  cp.chatStreamCompleteByCorrelation = state.chatStreamCompleteByCorrelation;
-  cp.chatStreaming = state.chatStreaming;
-  cp.chatDraft = state.chatDraft;
-  cp.chatAttachedFileName = state.chatAttachedFileName;
-  cp.chatAttachedFileContent = state.chatAttachedFileContent;
-  cp.chatActiveModelId = state.chatActiveModelId;
-  cp.chatActiveModelLabel = state.chatActiveModelLabel;
-  cp.chatActiveModelCapabilities = state.chatActiveModelCapabilities;
-  cp.chatThinkingEnabled = state.chatThinkingEnabled;
-  cp.chatTtsEnabled = state.chatTtsEnabled;
-  cp.chatTtsPlaying = state.chatTtsPlaying;
-  cp.activeChatCorrelationId = state.activeChatCorrelationId;
+  syncPrimaryChatPanelFromFlatStateWorkspace(state);
 }
 
 function getPrimaryChatPanelState(): ChatPanelState {
-  let cp = state.chatPanels[0];
-  if (!cp) {
-    cp = createChatPanelState(PRIMARY_CHAT_PANE_ID, state);
-    state.chatPanels[0] = cp;
-  }
-  syncPrimaryChatPanelFromFlatState();
-  return cp;
+  return getPrimaryChatPanelStateWorkspace(state, PRIMARY_CHAT_PANE_ID, createChatPanelState);
 }
 
 function getSecondaryChatPanelState(panelId: string): ChatPanelState | null {
-  if (panelId === PRIMARY_CHAT_PANE_ID) return null;
-  return state.chatPanels.find((panel) => panel.panelId === panelId) ?? null;
+  return getSecondaryChatPanelStateWorkspace(state, PRIMARY_CHAT_PANE_ID, panelId);
 }
 
 function getChatPanelById(panelId: string): ChatPanelState | null {
-  if (panelId === PRIMARY_CHAT_PANE_ID) {
-    return getPrimaryChatPanelState();
-  }
-  return getSecondaryChatPanelState(panelId);
+  return getChatPanelByIdWorkspace(state, PRIMARY_CHAT_PANE_ID, panelId, createChatPanelState);
 }
 
 function rememberChatCorrelationTarget(panelId: string, correlationId: string): void {
-  chatPaneIdByCorrelation.set(correlationId, panelId);
+  rememberChatCorrelationTargetWorkspace(chatPaneIdByCorrelation, panelId, correlationId);
 }
 
 function resolveChatPaneIdForEvent(correlationId: string, conversationId?: string | null): string | null {
-  const knownPaneId = chatPaneIdByCorrelation.get(correlationId);
-  if (knownPaneId) return knownPaneId;
-  if (state.activeChatCorrelationId === correlationId || state.conversationId === conversationId) {
-    return PRIMARY_CHAT_PANE_ID;
-  }
-  for (const cp of state.chatPanels.slice(1)) {
-    if (cp.activeChatCorrelationId === correlationId || cp.conversationId === conversationId) {
-      return cp.panelId;
-    }
-  }
-  return null;
+  return resolveChatPaneIdForEventWorkspace(
+    state,
+    PRIMARY_CHAT_PANE_ID,
+    chatPaneIdByCorrelation,
+    correlationId,
+    conversationId
+  );
 }
 
 function createChatPanelState(panelId: string, src: typeof state): ChatPanelState {
@@ -1455,34 +1525,38 @@ let chatTtsStreamAudioContext: AudioContext | null = null;
 let chatTtsStreamNextStartAtSec = 0;
 let chatTtsStreamFinalizeTimerId: number | null = null;
 const chatTtsRequestToChatCorrelation = new Map<string, string | null>();
-const chatTtsStreamSeenByRequest = new Set<string>();
 const chatTtsStreamDoneWaiters = new Map<string, Array<() => void>>();
-type ChatTtsQueueItem = {
-  text: string;
-  correlationId: string | null;
-};
-
-let chatTtsQueue: ChatTtsQueueItem[] = [];
-let chatTtsQueueWaiters: Array<() => void> = [];
 let chatTtsQueueRunning = false;
 let chatTtsStopRequested = false;
 let chatTtsSpeakingSinceMs = 0;
-let chatTtsActiveCorrelationId: string | null = null;
 let chatTtsSawStreamDeltaByCorrelation = new Set<string>();
 let chatTtsLatencyCapturedByCorrelation = new Set<string>();
+let chatTtsActiveStreamRequestId: string | null = null;
+let chatTtsStreamChunkSeq = 0;
+const chatTtsStreamStatsByRequest = new Map<string, { chunks: number; bytes: number; finalSeen: boolean; firstMs: number; lastMs: number }>();
 let chatTtsWarmSignature = "";
 let chatTtsPrewarmPromise: Promise<void> | null = null;
-let chatTtsStreamBuffer = "";
-let chatTtsPendingTicks = "";
-let chatTtsInInlineCode = false;
-let chatTtsInFencedCode = false;
-let chatTtsFlushTimerId: number | null = null;
 const CHAT_TTS_MIN_SENTENCE_CHARS = 24;
-const CHAT_TTS_FIRST_CHUNK_TARGET = 110;
+const CHAT_TTS_FIRST_CHUNK_TARGET = 95;
 const CHAT_TTS_STEADY_CHUNK_TARGET = 260;
-const CHAT_TTS_MIN_FLUSH_CHARS = 90;
+const CHAT_TTS_MIN_FLUSH_CHARS = 70;
 const CHAT_TTS_FLUSH_INTERVAL_MS = 180;
 const CHAT_TTS_MERGE_TARGET = 320;
+const chatTtsPipeline = new ChatTtsPipeline({
+  minSentenceChars: CHAT_TTS_MIN_SENTENCE_CHARS,
+  firstChunkTarget: CHAT_TTS_FIRST_CHUNK_TARGET,
+  steadyChunkTarget: CHAT_TTS_STEADY_CHUNK_TARGET,
+  minFlushChars: CHAT_TTS_MIN_FLUSH_CHARS,
+  flushIntervalMs: CHAT_TTS_FLUSH_INTERVAL_MS,
+});
+type ChatTtsAccounting = {
+  streamChars: number;
+  speakableChars: number;
+  enqueuedChars: number | null;
+  synthesizedChars: number;
+  playedChars: number;
+};
+const chatTtsAccountingByCorrelation = new Map<string, ChatTtsAccounting>();
 const VOICE_BARGE_IN_GRACE_MS = 900;
 const VOICE_BARGE_IN_MIN_RMS = 0.0035;
 const VOICE_BARGE_IN_DYNAMIC_MULTIPLIER = 1.35;
@@ -1661,12 +1735,6 @@ function releaseTtsAudioUrl(): void {
   ttsActiveAudioUrl = null;
 }
 
-function clearChatTtsFlushTimer(): void {
-  if (chatTtsFlushTimerId === null) return;
-  window.clearTimeout(chatTtsFlushTimerId);
-  chatTtsFlushTimerId = null;
-}
-
 function clearVoicePrefillWarmupTimer(): void {
   if (voicePrefillWarmupTimerId === null) return;
   window.clearTimeout(voicePrefillWarmupTimerId);
@@ -1705,15 +1773,6 @@ function maybeTriggerVoicePrefillWarmup(partialRaw: string): void {
   }, remaining);
 }
 
-function notifyChatTtsQueueAvailable(): void {
-  if (!chatTtsQueueWaiters.length) return;
-  const waiters = chatTtsQueueWaiters.slice();
-  chatTtsQueueWaiters = [];
-  for (const waiter of waiters) {
-    waiter();
-  }
-}
-
 function stopTtsPlaybackLocal(): void {
   if (ttsActiveWebAudioStop) {
     const stop = ttsActiveWebAudioStop;
@@ -1749,8 +1808,9 @@ function stopTtsPlaybackLocal(): void {
     for (const resolve of waiters) resolve();
   }
   chatTtsStreamDoneWaiters.clear();
-  chatTtsStreamSeenByRequest.clear();
   chatTtsRequestToChatCorrelation.clear();
+  chatTtsActiveStreamRequestId = null;
+  chatTtsStreamChunkSeq = 0;
   state.chatTtsPlaying = false;
   updateAvatarSpeechState(false, 0);
   chatTtsSpeakingSinceMs = 0;
@@ -1802,41 +1862,169 @@ function resolveChatTtsStreamWaiters(requestCorrelationId: string): void {
   for (const resolve of waiters) resolve();
 }
 
-function waitForChatTtsStreamDone(requestCorrelationId: string, timeoutMs = 12000): Promise<void> {
-  return new Promise<void>((resolve) => {
-    const timer = window.setTimeout(() => {
-      const waiters = chatTtsStreamDoneWaiters.get(requestCorrelationId) ?? [];
-      chatTtsStreamDoneWaiters.set(
-        requestCorrelationId,
-        waiters.filter((fn) => fn !== onDone)
-      );
-      resolve();
-    }, timeoutMs);
-    const onDone = () => {
-      window.clearTimeout(timer);
-      resolve();
-    };
-    const waiters = chatTtsStreamDoneWaiters.get(requestCorrelationId) ?? [];
-    waiters.push(onDone);
-    chatTtsStreamDoneWaiters.set(requestCorrelationId, waiters);
-  });
+function noteChatTtsStreamChunk(requestCorrelationId: string, pcm16Base64: string, sawFinal: boolean): void {
+  const now = Date.now();
+  const existing = chatTtsStreamStatsByRequest.get(requestCorrelationId);
+  const bytes = pcm16Base64 ? Math.floor((pcm16Base64.length * 3) / 4) : 0;
+  if (!existing) {
+    chatTtsStreamStatsByRequest.set(requestCorrelationId, {
+      chunks: pcm16Base64 ? 1 : 0,
+      bytes,
+      finalSeen: sawFinal,
+      firstMs: now,
+      lastMs: now
+    });
+    return;
+  }
+  existing.chunks += pcm16Base64 ? 1 : 0;
+  existing.bytes += bytes;
+  existing.finalSeen = existing.finalSeen || sawFinal;
+  existing.lastMs = now;
+}
+
+function flushChatTtsStreamStats(requestCorrelationId: string, reason: string): void {
+  const stats = chatTtsStreamStatsByRequest.get(requestCorrelationId);
+  if (!stats) return;
+  const elapsed = Math.max(0, stats.lastMs - stats.firstMs);
+  pushConsoleEntry(
+    "debug",
+    "browser",
+    `TTS stream stats: req=${requestCorrelationId.slice(0, 8)} chunks=${stats.chunks} bytes=${stats.bytes} final=${String(stats.finalSeen)} elapsedMs=${elapsed} reason=${reason}`
+  );
+  chatTtsStreamStatsByRequest.delete(requestCorrelationId);
 }
 
 function onChatTtsStreamChunkEvent(event: AppEvent): void {
   if (chatTtsStopRequested) {
+    flushChatTtsStreamStats(event.correlationId, "stop_requested");
     resolveChatTtsStreamWaiters(event.correlationId);
     return;
   }
   if (!state.chatTtsEnabled || event.action !== "tts.stream.chunk") return;
-  // Chat voice mode currently uses full WAV playback from ttsSpeak responses.
-  // Ignore incremental stream chunks to avoid renderer-side chunk timing dropouts.
+  if (chatTtsActiveStreamRequestId && event.correlationId !== chatTtsActiveStreamRequestId) {
+    pushConsoleEntry(
+      "warn",
+      "browser",
+      `TTS stream drop: req=${event.correlationId.slice(0, 8)} active=${chatTtsActiveStreamRequestId.slice(0, 8)}`
+    );
+    return;
+  }
   const payload =
     event.payload && typeof event.payload === "object"
       ? (event.payload as Record<string, unknown>)
       : null;
-  if (payload?.final === true) {
-    resolveChatTtsStreamWaiters(event.correlationId);
+  if (!payload) return;
+  const pcm16Base64 = typeof payload.pcm16Base64 === "string" ? payload.pcm16Base64 : "";
+  const sampleRate = Number(payload.sampleRate);
+  const sawFinal = payload?.final === true;
+  noteChatTtsStreamChunk(event.correlationId, pcm16Base64, sawFinal);
+  if (pcm16Base64 && Number.isFinite(sampleRate) && sampleRate > 0) {
+    playChatTtsStreamChunk(event.correlationId, pcm16Base64, Math.round(sampleRate));
   }
+  if (sawFinal) {
+    if (event.correlationId === chatTtsActiveStreamRequestId) {
+      chatTtsActiveStreamRequestId = null;
+    }
+    scheduleChatTtsStreamFinalize();
+    resolveChatTtsStreamWaiters(event.correlationId);
+    flushChatTtsStreamStats(event.correlationId, "final");
+  }
+}
+
+function decodeBase64ToUint8Array(input: string): Uint8Array {
+  try {
+    const binary = atob(input);
+    const out = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i += 1) {
+      out[i] = binary.charCodeAt(i);
+    }
+    return out;
+  } catch {
+    return new Uint8Array();
+  }
+}
+
+function playChatTtsStreamChunk(requestCorrelationId: string, pcm16Base64: string, sampleRate: number): void {
+  const bytes = decodeBase64ToUint8Array(pcm16Base64);
+  if (!bytes.length || bytes.length % 2 !== 0) return;
+  const frameCount = Math.floor(bytes.length / 2);
+  if (frameCount <= 0) return;
+  if (!chatTtsStreamAudioContext) {
+    chatTtsStreamAudioContext = new AudioContext();
+    chatTtsStreamNextStartAtSec = chatTtsStreamAudioContext.currentTime + 0.12;
+    if (chatTtsStreamAudioContext.state === "suspended") {
+      void chatTtsStreamAudioContext.resume();
+    }
+  }
+  const ctx = chatTtsStreamAudioContext;
+  const pcm16 = new Int16Array(frameCount);
+  for (let i = 0; i < frameCount; i += 1) {
+    const lo = bytes[i * 2] ?? 0;
+    const hi = bytes[i * 2 + 1] ?? 0;
+    const value = (hi << 8) | lo;
+    pcm16[i] = value >= 0x8000 ? value - 0x10000 : value;
+  }
+  const audio = new Float32Array(frameCount);
+  let rmsSum = 0;
+  for (let i = 0; i < frameCount; i += 1) {
+    const sample = (pcm16[i] ?? 0) / 32768;
+    audio[i] = sample;
+    rmsSum += sample * sample;
+  }
+  const rms = frameCount > 0 ? Math.sqrt(rmsSum / frameCount) : 0;
+  const buffer = ctx.createBuffer(1, frameCount, sampleRate);
+  buffer.copyToChannel(audio, 0);
+  const source = ctx.createBufferSource();
+  source.buffer = buffer;
+  source.connect(ctx.destination);
+  const now = ctx.currentTime;
+  const startAt = Math.max(now + 0.02, chatTtsStreamNextStartAtSec || now + 0.02);
+  source.start(startAt);
+  chatTtsStreamNextStartAtSec = startAt + buffer.duration;
+  if (chatTtsStreamFinalizeTimerId !== null) {
+    window.clearTimeout(chatTtsStreamFinalizeTimerId);
+    chatTtsStreamFinalizeTimerId = null;
+  }
+  chatTtsStreamChunkSeq++;
+  if (chatTtsStreamChunkSeq % 20 === 1) {
+    pushConsoleEntry(
+      "debug",
+      "browser",
+      `TTS stream diag: seq=${chatTtsStreamChunkSeq} sr=${sampleRate} frames=${frameCount} scheduled=${startAt.toFixed(3)}-${(startAt + buffer.duration).toFixed(3)} ctxNow=${now.toFixed(3)} backlogMs=${Math.max(0, (chatTtsStreamNextStartAtSec - now) * 1000).toFixed(0)} rms=${rms.toFixed(4)}`
+    );
+  }
+  state.chatTtsPlaying = true;
+  if (!chatTtsSpeakingSinceMs) {
+    chatTtsSpeakingSinceMs = Date.now();
+  }
+  if (voicePipelineState !== "agent_speaking") {
+    setVoicePipelineState("agent_speaking");
+  }
+  updateAvatarSpeechState(true, Math.min(1, rms * 10));
+  if (requestCorrelationId) {
+    const chatCorrelationId = chatTtsRequestToChatCorrelation.get(requestCorrelationId) ?? requestCorrelationId;
+    if (chatCorrelationId && !chatTtsLatencyCapturedByCorrelation.has(chatCorrelationId)) {
+      const firstTokenMs = state.chatFirstAssistantChunkMsByCorrelation[chatCorrelationId];
+      if (firstTokenMs) {
+        state.chatTtsLatencyMs = Math.max(0, Date.now() - firstTokenMs);
+        chatTtsLatencyCapturedByCorrelation.add(chatCorrelationId);
+      }
+    }
+  }
+}
+
+function scheduleChatTtsStreamFinalize(): void {
+  if (chatTtsStreamFinalizeTimerId !== null) {
+    window.clearTimeout(chatTtsStreamFinalizeTimerId);
+  }
+  const delayMs = chatTtsStreamAudioContext
+    ? Math.max(120, Math.ceil((chatTtsStreamNextStartAtSec - chatTtsStreamAudioContext.currentTime) * 1000) + 50)
+    : 120;
+  chatTtsStreamFinalizeTimerId = window.setTimeout(() => {
+    chatTtsStreamFinalizeTimerId = null;
+    state.chatTtsPlaying = false;
+    updateAvatarSpeechState(false, 0);
+  }, delayMs);
 }
 
 function decodeTtsAudioBytes(audioBytes: unknown): Uint8Array {
@@ -1851,196 +2039,109 @@ function decodeTtsAudioBytes(audioBytes: unknown): Uint8Array {
 
 function postprocessSpeakableText(raw: string): string {
   if (!raw) return "";
-  let out = raw;
-  out = out.replace(/(?<!\w)#{1,6}\s+/g, " ");
-  out = out.replace(/\*\*\*(.+?)\*\*\*/g, "$1");
-  out = out.replace(/___(.+?)___/g, "$1");
-  out = out.replace(/\*\*(.+?)\*\*/g, "$1");
-  out = out.replace(/__(.+?)__/g, "$1");
-  out = out.replace(/\*(.+?)\*/g, "$1");
-  out = out.replace(/_(.+?)_/g, "$1");
-  out = out.replace(/~~(.+?)~~/g, "$1");
-  out = out.replace(/(?<=\s|^)\[(.+?)\]\([^)]+\)/g, "$1");
-  out = out.replace(/\bhttps?:\/\/\S+/gi, " ");
-  out = out.replace(/\[(tool|command|stdout|stderr|result)[^\]]*\]/gi, " ");
-  out = out.replace(/:[a-z0-9_+\-]+:/gi, " ");
-  out = out.replace(/[\p{Extended_Pictographic}\p{Emoji_Presentation}\uFE0F]/gu, " ");
-  return out.replace(/\s+/g, " ").trim();
+  // Voice-mode path must preserve text fidelity to avoid dropped headings
+  // and in-word character loss when streamed chunks split formatting markers.
+  return raw
+    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function fallbackSpeakableText(raw: string): string {
+  if (!raw) return "";
+  return raw.replace(/\s+/g, " ").trim();
+}
+
+function updateChatTtsAccounting(
+  correlationId: string | null | undefined,
+  patch: Partial<ChatTtsAccounting>
+): void {
+  if (!correlationId) return;
+  const existing = chatTtsAccountingByCorrelation.get(correlationId) ?? {
+    streamChars: 0,
+    speakableChars: 0,
+    enqueuedChars: null,
+    synthesizedChars: 0,
+    playedChars: 0
+  };
+  const next = {
+    streamChars: existing.streamChars + (patch.streamChars ?? 0),
+    speakableChars: existing.speakableChars + (patch.speakableChars ?? 0),
+    enqueuedChars: patch.enqueuedChars ?? existing.enqueuedChars,
+    synthesizedChars: existing.synthesizedChars + (patch.synthesizedChars ?? 0),
+    playedChars: existing.playedChars + (patch.playedChars ?? 0)
+  };
+  chatTtsAccountingByCorrelation.set(correlationId, next);
+  if (
+    next.enqueuedChars === null &&
+    next.streamChars === 0 &&
+    next.speakableChars === 0 &&
+    (patch.playedChars ?? 0) > 0
+  ) {
+    pushConsoleEntry(
+      "debug",
+      "browser",
+      `TTS accounting: corr=${correlationId.slice(0, 8)} synthesizedChars=${next.synthesizedChars} playedChars=${next.playedChars}`
+    );
+    chatTtsAccountingByCorrelation.delete(correlationId);
+    return;
+  }
+  if (next.enqueuedChars !== null && next.playedChars >= next.enqueuedChars) {
+    pushConsoleEntry(
+      "debug",
+      "browser",
+      `TTS accounting: corr=${correlationId.slice(0, 8)} streamChars=${next.streamChars} speakableChars=${next.speakableChars} enqueuedChars=${next.enqueuedChars} synthesizedChars=${next.synthesizedChars} playedChars=${next.playedChars}`
+    );
+    chatTtsAccountingByCorrelation.delete(correlationId);
+  }
+}
+
+function noteChatTtsEnqueuedChars(correlationId: string, enqueuedChars: number | null): void {
+  if (enqueuedChars === null) return;
+  updateChatTtsAccounting(correlationId, { enqueuedChars });
 }
 
 function resetChatTtsStreamParser(correlationId: string | null): void {
-  clearChatTtsFlushTimer();
-  chatTtsActiveCorrelationId = correlationId;
-  chatTtsStreamBuffer = "";
-  chatTtsPendingTicks = "";
-  chatTtsInInlineCode = false;
-  chatTtsInFencedCode = false;
+  chatTtsPipeline.resetStreamParser(correlationId);
 }
 
 function resetChatTtsQueue(): void {
-  clearChatTtsFlushTimer();
-  chatTtsQueue = [];
-  notifyChatTtsQueueAvailable();
-  resetChatTtsStreamParser(null);
+  chatTtsPipeline.resetQueue();
+  chatTtsActiveStreamRequestId = null;
+  chatTtsStreamChunkSeq = 0;
 }
 
 function extractSpeakableStreamDelta(delta: string): string {
-  if (!delta) return "";
-  let input = `${chatTtsPendingTicks}${delta}`;
-  chatTtsPendingTicks = "";
-  let output = "";
-  let index = 0;
-  while (index < input.length) {
-    const char = input[index];
-    if (char !== "`") {
-      if (!chatTtsInInlineCode && !chatTtsInFencedCode) {
-        output += char;
-      }
-      index += 1;
-      continue;
-    }
-    let run = 1;
-    while (index + run < input.length && input[index + run] === "`") {
-      run += 1;
-    }
-    const atEnd = index + run >= input.length;
-    if (atEnd && !chatTtsInInlineCode && !chatTtsInFencedCode && run < 3) {
-      chatTtsPendingTicks = "`".repeat(run);
-      break;
-    }
-    if (chatTtsInFencedCode) {
-      if (run >= 3) {
-        chatTtsInFencedCode = false;
-      }
-      index += run;
-      continue;
-    }
-    if (chatTtsInInlineCode) {
-      chatTtsInInlineCode = false;
-      index += run;
-      continue;
-    }
-    if (run >= 3) {
-      chatTtsInFencedCode = true;
-      index += run;
-      continue;
-    }
-    chatTtsInInlineCode = true;
-    index += run;
-  }
-  return output;
-}
-
-function nextSpeakableBoundary(text: string, finalFlush = false): number {
-  const trimmedLength = text.trim().length;
-  if (!trimmedLength) return -1;
-  let boundary = -1;
-  for (let i = 0; i < text.length; i += 1) {
-    const ch = text[i];
-    if (ch === "." || ch === "!" || ch === "?" || ch === "\n") {
-      boundary = i;
-    }
-  }
-  if (boundary >= 0 && boundary + 1 >= CHAT_TTS_MIN_SENTENCE_CHARS) {
-    return boundary + 1;
-  }
-  const backlogActive = chatTtsQueueRunning || chatTtsQueue.length > 0 || state.chatTtsPlaying;
-  const eagerTarget = backlogActive ? CHAT_TTS_STEADY_CHUNK_TARGET : CHAT_TTS_FIRST_CHUNK_TARGET;
-  if (!backlogActive && text.length >= 80) {
-    const softSplit = findSafeWordBoundary(text, Math.min(text.length, 120), 55);
-    if (softSplit >= 55) return softSplit;
-  }
-  if (text.length >= eagerTarget) {
-    const split = findSafeWordBoundary(text, eagerTarget - 4, 55);
-    if (split >= 55) return split;
-    if (finalFlush) return text.length;
-    return -1;
-  }
-  if (finalFlush) {
-    return text.length;
-  }
-  return -1;
-}
-
-function findSafeWordBoundary(text: string, target: number, minIndex = 0): number {
-  const clampedTarget = Math.max(minIndex, Math.min(target, text.length));
-  if (!text.length) return -1;
-  const isBoundary = (ch: string): boolean =>
-    ch === " " || ch === "\n" || ch === "\t" || ch === "." || ch === "!" || ch === "?" || ch === "," || ch === ";" || ch === ":";
-
-  for (let i = clampedTarget; i >= minIndex; i -= 1) {
-    const ch = text[i - 1] ?? "";
-    if (isBoundary(ch)) return i;
-  }
-  for (let i = clampedTarget; i < text.length; i += 1) {
-    const ch = text[i] ?? "";
-    if (isBoundary(ch)) return i + 1;
-  }
-  return -1;
+  return chatTtsPipeline.extractSpeakableStreamDelta(delta);
 }
 
 function tryLowLatencyBufferFlush(): boolean {
-  if (!chatTtsStreamBuffer.trim()) return false;
-  const speakableCandidate = postprocessSpeakableText(chatTtsStreamBuffer);
-  if (speakableCandidate.length < CHAT_TTS_MIN_FLUSH_CHARS) return false;
-  const backlogActive = chatTtsQueueRunning || chatTtsQueue.length > 0 || state.chatTtsPlaying;
-  const target = backlogActive ? CHAT_TTS_STEADY_CHUNK_TARGET : CHAT_TTS_FIRST_CHUNK_TARGET;
-  const boundary = findSafeWordBoundary(
-    chatTtsStreamBuffer,
-    Math.min(chatTtsStreamBuffer.length, target),
-    55
-  );
-  if (boundary < 55) return false;
-  const part = chatTtsStreamBuffer.slice(0, boundary);
-  chatTtsStreamBuffer = chatTtsStreamBuffer.slice(boundary);
-  const speakable = postprocessSpeakableText(part);
-  if (!speakable) return false;
-  chatTtsQueue.push({ text: speakable, correlationId: chatTtsActiveCorrelationId });
-  notifyChatTtsQueueAvailable();
-  return true;
+  const backlogActive = chatTtsQueueRunning || chatTtsPipeline.queueLength() > 0 || state.chatTtsPlaying;
+  return chatTtsPipeline.tryLowLatencyBufferFlush(backlogActive, postprocessSpeakableText, fallbackSpeakableText);
 }
 
 function scheduleLowLatencyBufferFlush(sendMessage: (text: string) => Promise<void>): void {
-  if (chatTtsFlushTimerId !== null || !state.chatTtsEnabled) return;
-  if (!chatTtsStreamBuffer.trim()) return;
-  chatTtsFlushTimerId = window.setTimeout(() => {
-    chatTtsFlushTimerId = null;
-    if (!state.chatTtsEnabled) return;
-    const flushed = tryLowLatencyBufferFlush();
-    if (flushed) {
-      void runChatTtsQueue(sendMessage);
-    }
-    if (chatTtsStreamBuffer.trim()) {
-      scheduleLowLatencyBufferFlush(sendMessage);
-    }
-  }, CHAT_TTS_FLUSH_INTERVAL_MS);
+  chatTtsPipeline.scheduleLowLatencyBufferFlush(
+    state.chatTtsEnabled,
+    () => tryLowLatencyBufferFlush(),
+    () => { void runChatTtsQueue(sendMessage); }
+  );
 }
 
 function enqueueSpeakableChunk(
   rawChunk: string,
   finalFlush = false,
-  correlationId: string | null = chatTtsActiveCorrelationId
+  correlationId: string | null = chatTtsPipeline.getActiveCorrelationId()
 ): void {
-  if (!rawChunk) {
-    if (!finalFlush) return;
-  }
-  chatTtsStreamBuffer += rawChunk;
-  while (chatTtsStreamBuffer.length > 0) {
-    const boundary = nextSpeakableBoundary(chatTtsStreamBuffer, finalFlush);
-    if (boundary < 0) break;
-    const part = chatTtsStreamBuffer.slice(0, boundary);
-    chatTtsStreamBuffer = chatTtsStreamBuffer.slice(boundary);
-    const speakable = postprocessSpeakableText(part);
-    if (speakable) {
-      chatTtsQueue.push({ text: speakable, correlationId });
-      notifyChatTtsQueueAvailable();
-    }
-    if (!finalFlush) continue;
-    if (!chatTtsStreamBuffer.trim()) {
-      chatTtsStreamBuffer = "";
-      break;
-    }
-  }
+  const backlogActive = chatTtsQueueRunning || chatTtsPipeline.queueLength() > 0 || state.chatTtsPlaying;
+  chatTtsPipeline.enqueueSpeakableChunk(
+    rawChunk,
+    finalFlush,
+    correlationId,
+    backlogActive,
+    postprocessSpeakableText,
+    fallbackSpeakableText
+  );
 }
 
 async function playTtsAudio(audioBytes: unknown, correlationId: string | null, spokenText?: string | null): Promise<void> {
@@ -2160,70 +2261,29 @@ async function playTtsAudio(audioBytes: unknown, correlationId: string | null, s
 }
 
 function shiftChatTtsQueueText(): ChatTtsQueueItem | null {
-  const next = chatTtsQueue.shift();
-  if (!next || typeof next.text !== "string" || next.text.length === 0) return null;
-  let merged = next.text.trim();
-  const correlationId = next.correlationId;
-  while (chatTtsQueue.length > 0 && merged.length < CHAT_TTS_MERGE_TARGET) {
-    const peek = chatTtsQueue[0];
-    if (!peek || typeof peek.text !== "string" || peek.text.trim().length === 0) {
-      chatTtsQueue.shift();
-      continue;
-    }
-    if (peek.correlationId !== correlationId) break;
-    if (/[.!?]\s*$/.test(merged) && merged.length >= CHAT_TTS_FIRST_CHUNK_TARGET) {
-      break;
-    }
-    const tail = chatTtsQueue.shift();
-    if (!tail) break;
-    merged = `${merged} ${tail.text}`.replace(/\s+/g, " ").trim();
-  }
-  return merged ? { text: merged, correlationId } : null;
+  return chatTtsPipeline.takeQueueTextNow(CHAT_TTS_MERGE_TARGET, CHAT_TTS_FIRST_CHUNK_TARGET);
 }
 
 async function waitForChatTtsQueueText(timeoutMs: number): Promise<ChatTtsQueueItem | null> {
-  const immediate = shiftChatTtsQueueText();
-  if (immediate) return immediate;
-  await new Promise<void>((resolve) => {
-    let settled = false;
-    const timer = window.setTimeout(() => {
-      if (settled) return;
-      settled = true;
-      chatTtsQueueWaiters = chatTtsQueueWaiters.filter((waiter) => waiter !== onReady);
-      resolve();
-    }, timeoutMs);
-    const onReady = () => {
-      if (settled) return;
-      settled = true;
-      window.clearTimeout(timer);
-      resolve();
-    };
-    chatTtsQueueWaiters.push(onReady);
-  });
-  return shiftChatTtsQueueText();
+  return chatTtsPipeline.waitForQueueText(timeoutMs, CHAT_TTS_MERGE_TARGET, CHAT_TTS_FIRST_CHUNK_TARGET);
 }
 
 type ChatTtsSynthResult = {
-  requestCorrelationId: string;
-  chatCorrelationId: string | null;
   response: TtsSpeakResponse;
 };
 
-async function synthesizeChatTtsChunk(
-  text: string,
-  chatCorrelationId: string | null
-): Promise<ChatTtsSynthResult> {
+async function synthesizeChatTtsChunk(text: string): Promise<ChatTtsSynthResult> {
   if (!clientRef) {
     throw new Error("TTS backend unavailable.");
   }
   const requestCorrelationId = nextCorrelationId();
-  chatTtsRequestToChatCorrelation.set(requestCorrelationId, chatCorrelationId);
   const startedAt = performance.now();
+  const requestedSpeed = state.tts.speed;
   const response = await clientRef.ttsSpeak({
     correlationId: requestCorrelationId,
     text,
     voice: state.tts.selectedVoice,
-    speed: state.tts.speed
+    speed: requestedSpeed
   });
   const elapsedMs = Math.round(performance.now() - startedAt);
   pushConsoleEntry(
@@ -2234,13 +2294,10 @@ async function synthesizeChatTtsChunk(
   state.tts.status = "ready";
   state.tts.message = `Reading with ${response.voice}`;
   state.tts.selectedVoice = response.voice;
-  state.tts.speed = response.speed;
   state.tts.lastBytes = response.audioBytes.length;
   state.tts.lastDurationMs = response.durationMs;
   state.tts.lastSampleRate = response.sampleRate;
   return {
-    requestCorrelationId,
-    chatCorrelationId,
     response
   };
 }
@@ -2295,7 +2352,7 @@ async function runChatTtsQueue(sendMessage: (text: string) => Promise<void>): Pr
       return;
     }
     let currentItem = nextItem;
-    let currentSynth = await synthesizeChatTtsChunk(currentItem.text, currentItem.correlationId);
+    let currentSynth = await synthesizeChatTtsChunk(currentItem.text);
     state.chatTtsPlaying = true;
     if (!chatTtsSpeakingSinceMs) {
       chatTtsSpeakingSinceMs = Date.now();
@@ -2305,19 +2362,21 @@ async function runChatTtsQueue(sendMessage: (text: string) => Promise<void>): Pr
     state.tts.message = "Auto-speaking response...";
     renderAndBind(sendMessage);
     while (state.chatTtsEnabled) {
+      const playbackItem = currentItem;
+      const playbackSynth = currentSynth;
+      updateChatTtsAccounting(playbackItem.correlationId, { synthesizedChars: playbackItem.text.length });
       const playbackPromise = playTtsAudio(
-        currentSynth.response.audioBytes,
-        currentItem.correlationId,
-        currentItem.text,
-      );
+        playbackSynth.response.audioBytes,
+        playbackItem.correlationId,
+        playbackItem.text
+      ).then(() => {
+        updateChatTtsAccounting(playbackItem.correlationId, { playedChars: playbackItem.text.length });
+      });
       let prefetchedResponsePromise: Promise<ChatTtsSynthResult> | null = null;
       const queuedItem = shiftChatTtsQueueText();
       if (queuedItem) {
         currentItem = queuedItem;
-        prefetchedResponsePromise = synthesizeChatTtsChunk(
-          queuedItem.text,
-          queuedItem.correlationId
-        );
+        prefetchedResponsePromise = synthesizeChatTtsChunk(queuedItem.text);
       }
 
       await playbackPromise;
@@ -2328,12 +2387,13 @@ async function runChatTtsQueue(sendMessage: (text: string) => Promise<void>): Pr
         continue;
       }
 
-      nextItem = await waitForChatTtsQueueText(60);
+      nextItem = await waitForChatTtsQueueText(220);
       if (!nextItem) {
+        pushConsoleEntry("debug", "browser", `TTS queue loop: exit (no text within 220ms, queue=${chatTtsPipeline.queueLength()})`);
         break;
       }
       currentItem = nextItem;
-      currentSynth = await synthesizeChatTtsChunk(currentItem.text, currentItem.correlationId);
+      currentSynth = await synthesizeChatTtsChunk(currentItem.text);
     }
   } catch (error) {
     state.tts.status = "error";
@@ -2344,6 +2404,10 @@ async function runChatTtsQueue(sendMessage: (text: string) => Promise<void>): Pr
     chatTtsSpeakingSinceMs = 0;
     if (voicePipelineState === "agent_speaking") {
       setVoicePipelineState("idle");
+    }
+    if (state.chatTtsEnabled && !chatTtsStopRequested && chatTtsPipeline.queueLength() > 0) {
+      pushConsoleEntry("debug", "browser", `TTS queue loop: re-enter from finally (${chatTtsPipeline.queueLength()} items)`);
+      void runChatTtsQueue(sendMessage);
     }
     renderAndBind(sendMessage);
   }
@@ -2356,14 +2420,17 @@ function ingestChatStreamForTts(
 ): void {
   if (chatTtsStopRequested) return;
   if (!state.chatTtsEnabled) return;
-  if (!chatTtsActiveCorrelationId) {
+  if (!chatTtsPipeline.getActiveCorrelationId()) {
     resetChatTtsStreamParser(correlationId);
   }
-  if (chatTtsActiveCorrelationId !== correlationId) {
+  if (chatTtsPipeline.getActiveCorrelationId() !== correlationId) {
     return;
   }
+  chatTtsPipeline.noteStreamChars(correlationId, delta.length);
+  updateChatTtsAccounting(correlationId, { streamChars: delta.length });
   chatTtsSawStreamDeltaByCorrelation.add(correlationId);
   const speakableDelta = extractSpeakableStreamDelta(delta);
+  updateChatTtsAccounting(correlationId, { speakableChars: speakableDelta.length });
   enqueueSpeakableChunk(speakableDelta, false, correlationId);
   // Eagerly flush first chunk to reduce time-to-first-audio.
   if (!state.chatTtsPlaying) {
@@ -2382,10 +2449,17 @@ function flushChatStreamForTts(
   correlationId: string
 ): void {
   if (chatTtsStopRequested) return;
-  if (!state.chatTtsEnabled || chatTtsActiveCorrelationId !== correlationId) return;
-  clearChatTtsFlushTimer();
-  chatTtsPendingTicks = "";
+  if (!state.chatTtsEnabled || chatTtsPipeline.getActiveCorrelationId() !== correlationId) return;
   enqueueSpeakableChunk("", true, correlationId);
+  const stats = chatTtsPipeline.consumeTextStats(correlationId);
+  if (stats) {
+    pushConsoleEntry(
+      "debug",
+      "browser",
+      `TTS text stats: corr=${correlationId.slice(0, 8)} streamChars=${stats.streamChars} enqueuedChars=${stats.enqueuedChars}`
+    );
+  }
+  noteChatTtsEnqueuedChars(correlationId, stats?.enqueuedChars ?? null);
   resetChatTtsStreamParser(null);
   void runChatTtsQueue(sendMessage);
 }
@@ -2806,7 +2880,8 @@ function render(): void {
       state.llamaRuntime.state === "healthy" &&
       state.llamaRuntime.activeEngineId &&
       state.llamaRuntime.endpoint &&
-      state.llamaRuntime.pid
+      state.llamaRuntime.pid &&
+      state.llamaRuntimeActiveModelPath.trim()
   );
 
   const visibleConsoleEntries = getVisibleConsoleEntries(state.consoleEntries, state.consoleView);
@@ -2845,135 +2920,21 @@ function render(): void {
     label: item.label
   }));
   state.looperState.availableModels = state.flowAvailableModels;
-  const toolViews = buildWorkspaceToolViews({
-    chartSource: state.chartSource,
-    chartRenderSource: state.chartRenderSource,
-    chartError: state.chartError,
+  const toolViews = buildWorkspaceToolViews(selectWorkspaceViewState({
+    state,
     activeWebTab,
-    webTabs: state.webTabs,
-    activeWebTabId: state.activeWebTabId,
-    webHistoryOpen: state.webHistoryOpen,
-    webHistoryClearConfirmOpen: state.webHistoryClearConfirmOpen,
-    webHistory: state.webHistory,
-    webSetupModalOpen: state.webSetupModalOpen,
-    webSetupAccount: state.webSetupAccount,
-    webSetupApiKey: state.webSetupApiKey,
-    webSetupMessage: state.webSetupMessage,
-    webSetupBusy: state.webSetupBusy,
-    ...selectFilesToolState(state),
-    ...selectNotepadToolState(state),
-    sheetsState: state.sheetsState,
-    ...selectDocsToolState(state),
-    ...selectSkillsToolState(state),
-    ...selectMemoryToolState(state),
-    ...selectTasksToolState(state),
-    projectsById: state.projectsById,
-    ...selectFlowToolState(state),
-    flowTerminalPhases: [...FLOW_TERMINAL_PHASES],
+    filteredFlowForRender: filteredFlow.forRender,
+    flowTerminalPhases: FLOW_TERMINAL_PHASES,
     terminalSessions: terminalManager.listSessions("terminal").map((session) => ({
       sessionId: session.sessionId,
       title: session.title,
       status: session.status
-    })),
-    filteredFlowEvents: filteredFlow.forRender,
-    opencodeState: state.opencodeState,
-    looperState: state.looperState
-  });
+    }))
+  }));
 
   const primaryChatPanel = getPrimaryChatPanelState();
 
-  const panel = getPanelDefinition(state.sidebarTab, {
-    displayMode: state.displayMode,
-    displayModePreference: state.displayModePreference,
-    chatRoutePreference: state.chatRoutePreference,
-    showAppResourceCpu: state.showAppResourceCpu,
-    showAppResourceMemory: state.showAppResourceMemory,
-    showAppResourceNetwork: state.showAppResourceNetwork,
-    showBottomEngine: state.showBottomEngine,
-    showBottomModel: state.showBottomModel,
-    showBottomContext: state.showBottomContext,
-    showBottomSpeed: state.showBottomSpeed,
-    showBottomTtsLatency: state.showBottomTtsLatency,
-    chat: primaryChatPanel,
-    chatToolIntentByCorrelation: state.chatToolIntentByCorrelation,
-    chatFirstAssistantChunkMsByCorrelation: state.chatFirstAssistantChunkMsByCorrelation,
-    chatFirstReasoningChunkMsByCorrelation: state.chatFirstReasoningChunkMsByCorrelation,
-    chatTtsLatencyMs: state.chatTtsLatencyMs,
-    devices: state.devices,
-    apiConnections: state.apiConnections,
-    apiFormOpen: state.apiFormOpen,
-    apiDraft: state.apiDraft,
-    apiEditingId: state.apiEditingId,
-    apiMessage: state.apiMessage,
-    apiSaveBusy: state.apiSaveBusy,
-    apiProbeBusy: state.apiProbeBusy,
-    apiProbeStatus: state.apiProbeStatus,
-    apiProbeMessage: state.apiProbeMessage,
-    apiDetectedModels: state.apiDetectedModels,
-    conversations: state.conversations,
-    llamaRuntime: state.llamaRuntime,
-    llamaRuntimeSelectedEngineId: state.llamaRuntimeSelectedEngineId,
-    llamaRuntimeModelPath: state.llamaRuntimeModelPath,
-    llamaRuntimePort: state.llamaRuntimePort,
-    llamaRuntimeCtxSize: state.llamaRuntimeCtxSize,
-    llamaRuntimeGpuLayers: state.llamaRuntimeGpuLayers,
-    llamaRuntimeThreads: state.llamaRuntimeThreads,
-    llamaRuntimeBatchSize: state.llamaRuntimeBatchSize,
-    llamaRuntimeUbatchSize: state.llamaRuntimeUbatchSize,
-    llamaRuntimeTemperature: state.llamaRuntimeTemperature,
-    llamaRuntimeTopP: state.llamaRuntimeTopP,
-    llamaRuntimeTopK: state.llamaRuntimeTopK,
-    llamaRuntimeRepeatPenalty: state.llamaRuntimeRepeatPenalty,
-    llamaRuntimeFlashAttn: state.llamaRuntimeFlashAttn,
-    llamaRuntimeMmap: state.llamaRuntimeMmap,
-    llamaRuntimeMlock: state.llamaRuntimeMlock,
-    llamaRuntimeSeed: state.llamaRuntimeSeed,
-    llamaRuntimeMaxTokens: state.llamaRuntimeMaxTokens,
-    llamaRuntimeBusy: state.llamaRuntimeBusy,
-    llamaRuntimeLogs: state.llamaRuntimeLogs,
-    modelManagerInstalled: state.modelManagerInstalled,
-    modelManagerActiveTab: state.modelManagerActiveTab,
-    modelManagerDisabledModelIds: state.modelManagerDisabledModelIds,
-    modelManagerInfoModalModelId: state.modelManagerInfoModalModelId,
-    chatModelOptions: state.chatModelOptions,
-    allModelsList: state.allModelsList,
-    modelManagerQuery: state.modelManagerQuery,
-    modelManagerCollection: state.modelManagerCollection,
-    modelManagerSearchResults: state.modelManagerSearchResults,
-    modelManagerBusy: state.modelManagerBusy,
-    modelManagerMessage: state.modelManagerMessage,
-    modelManagerUnslothUdCatalog: state.modelManagerUnslothUdCatalog,
-    modelManagerUnslothUdLoading: state.modelManagerUnslothUdLoading,
-    stt: state.stt,
-    vadMethods: state.vadMethods,
-    vadIncludeExperimental: state.vadIncludeExperimental,
-    vadSelectedMethod: state.vadSelectedMethod,
-    vadShadowMethod: state.vadShadowMethod,
-    vadStandbyMethod: state.vadStandbyMethod,
-    vadSettings: state.vadSettings,
-    voiceRuntimeState: state.voiceRuntimeState,
-    voiceHandoffState: state.voiceHandoffState,
-    voiceSpeculationState: state.voiceSpeculationState,
-    voiceDuplexMode: state.voiceDuplexMode,
-    vadShadowSummary: state.vadShadowSummary,
-    vadMessage: state.vadMessage,
-    tts: state.tts,
-    consoleEntries: state.consoleEntries,
-    projectsById: state.projectsById,
-    projectsSelectedId: state.projectsSelectedId,
-    projectsNameDraft: state.projectsNameDraft,
-    projectsModalOpen: state.projectsModalOpen,
-    avatar: state.avatar,
-    avatarActiveTab: state.avatarActiveTab,
-    avatarLipSyncStrength: state.avatarLipSyncStrength,
-    avatarLipSyncJawBlend: state.avatarLipSyncJawBlend,
-    avatarLipSyncJawAmp: state.avatarLipSyncJawAmp,
-    avatarLipSyncPhonemeBoost: state.avatarLipSyncPhonemeBoost,
-    avatarLipSyncJawMorphScale: state.avatarLipSyncJawMorphScale,
-    avatarLipSyncOpenRate: state.avatarLipSyncOpenRate,
-    avatarLipSyncCloseRate: state.avatarLipSyncCloseRate,
-    avatarLipSyncFallbackRate: state.avatarLipSyncFallbackRate
-  });
+  const panel = getPanelDefinition(state.sidebarTab, selectPrimaryPanelState(state, primaryChatPanel) as any);
 
   const isChatTab = state.sidebarTab === "chat";
   const extraPanelHtmls =
@@ -3012,6 +2973,7 @@ function render(): void {
             llamaRuntime: state.llamaRuntime,
             llamaRuntimeSelectedEngineId: state.llamaRuntimeSelectedEngineId,
             llamaRuntimeModelPath: state.llamaRuntimeModelPath,
+            llamaRuntimeActiveModelPath: state.llamaRuntimeActiveModelPath,
             llamaRuntimePort: state.llamaRuntimePort,
             llamaRuntimeCtxSize: state.llamaRuntimeCtxSize,
             llamaRuntimeGpuLayers: state.llamaRuntimeGpuLayers,
@@ -3039,6 +3001,14 @@ function render(): void {
             modelManagerCollection: state.modelManagerCollection,
             modelManagerSearchResults: state.modelManagerSearchResults,
             modelManagerBusy: state.modelManagerBusy,
+            modelManagerDownloading: state.modelManagerDownloading,
+            modelManagerActiveDownloadKey: state.modelManagerActiveDownloadKey,
+            modelManagerActiveDownloadFileName: state.modelManagerActiveDownloadFileName,
+            modelManagerActiveDownloadCorrelationId: state.modelManagerActiveDownloadCorrelationId,
+            modelManagerDownloadReceivedBytes: state.modelManagerDownloadReceivedBytes,
+            modelManagerDownloadTotalBytes: state.modelManagerDownloadTotalBytes,
+            modelManagerDownloadPercent: state.modelManagerDownloadPercent,
+            modelManagerDownloadSpeedBytesPerSec: state.modelManagerDownloadSpeedBytesPerSec,
             modelManagerMessage: state.modelManagerMessage,
             modelManagerUnslothUdCatalog: state.modelManagerUnslothUdCatalog,
             modelManagerUnslothUdLoading: state.modelManagerUnslothUdLoading,
@@ -3070,7 +3040,15 @@ function render(): void {
     avatarLipSyncJawMorphScale: state.avatarLipSyncJawMorphScale,
     avatarLipSyncOpenRate: state.avatarLipSyncOpenRate,
     avatarLipSyncCloseRate: state.avatarLipSyncCloseRate,
-    avatarLipSyncFallbackRate: state.avatarLipSyncFallbackRate
+    avatarLipSyncFallbackRate: state.avatarLipSyncFallbackRate,
+    avatarJawBtmX: state.avatarJawBtmX,
+    avatarJawBtmY: state.avatarJawBtmY,
+    avatarJawBtmZ: state.avatarJawBtmZ,
+    avatarJawBtmValue: state.avatarJawBtmValue,
+    avatarJawTopX: state.avatarJawTopX,
+    avatarJawTopY: state.avatarJawTopY,
+    avatarJawTopZ: state.avatarJawTopZ,
+    avatarJawTopValue: state.avatarJawTopValue
           }, scopeId);
           return {
             paneTitleHtml: renderPanelTitleIcon({
@@ -3152,7 +3130,8 @@ function render(): void {
       state.displayMode,
       state.layoutOrientation,
       state.appVersion,
-      state.runtimeMode
+      state.runtimeMode,
+      state.autoSafeEnabled
     ),
     micPermissionBubbleHtml: renderMicPermissionBubble({
       microphonePermission: state.devices.microphonePermission,
@@ -3203,207 +3182,81 @@ function scheduleDeferredStartupTask(
 }
 
 function updateAssistantDraft(correlationId: string, delta: string): void {
-  if (!state.chatFirstAssistantChunkMsByCorrelation[correlationId]) {
-    state.chatFirstAssistantChunkMsByCorrelation[correlationId] = Date.now();
-    syncThinkingPlacement(correlationId);
-  }
-  const existing = state.messages.find(
-    (m) => m.role === "assistant" && m.correlationId === correlationId
-  );
-
-  if (existing) {
-    existing.text = normalizeChatText(`${existing.text}${delta}`);
-    return;
-  }
-
-  state.messages.push({ role: "assistant", text: normalizeChatText(delta), correlationId });
+  updateAssistantDraftState(state, correlationId, delta, normalizeChatText, syncThinkingPlacement);
 }
 
 function updateReasoningDraft(correlationId: string, delta: string): void {
-  if (!state.chatFirstReasoningChunkMsByCorrelation[correlationId]) {
-    state.chatFirstReasoningChunkMsByCorrelation[correlationId] = Date.now();
-    syncThinkingPlacement(correlationId);
-  }
-  if (state.chatThinkingExpandedByCorrelation[correlationId] === undefined) {
-    state.chatThinkingExpandedByCorrelation[correlationId] = false;
-  }
-  const current = state.chatReasoningByCorrelation[correlationId] ?? "";
-  state.chatReasoningByCorrelation[correlationId] = normalizeChatText(`${current}${delta}`);
+  updateReasoningDraftState(state, correlationId, delta, normalizeChatText, syncThinkingPlacement);
 }
 
 function updateSecondaryAssistantDraft(cp: ChatPanelState, correlationId: string, delta: string): void {
-  if (!state.chatFirstAssistantChunkMsByCorrelation[correlationId]) {
-    state.chatFirstAssistantChunkMsByCorrelation[correlationId] = Date.now();
-    syncSecondaryThinkingPlacement(cp, correlationId);
-  }
-  const existing = cp.messages.find((message) => message.role === "assistant" && message.correlationId === correlationId);
-  if (existing) {
-    existing.text = normalizeChatText(`${existing.text}${delta}`);
-    return;
-  }
-  cp.messages.push({ role: "assistant", text: normalizeChatText(delta), correlationId });
+  updateSecondaryAssistantDraftState(
+    state,
+    cp,
+    correlationId,
+    delta,
+    normalizeChatText,
+    syncSecondaryThinkingPlacement
+  );
 }
 
 function updateSecondaryReasoningDraft(cp: ChatPanelState, correlationId: string, delta: string): void {
-  if (!state.chatFirstReasoningChunkMsByCorrelation[correlationId]) {
-    state.chatFirstReasoningChunkMsByCorrelation[correlationId] = Date.now();
-    syncSecondaryThinkingPlacement(cp, correlationId);
-  }
-  if (cp.chatThinkingExpandedByCorrelation[correlationId] === undefined) {
-    cp.chatThinkingExpandedByCorrelation[correlationId] = false;
-  }
-  const current = cp.chatReasoningByCorrelation[correlationId] ?? "";
-  cp.chatReasoningByCorrelation[correlationId] = normalizeChatText(`${current}${delta}`);
+  updateSecondaryReasoningDraftState(
+    state,
+    cp,
+    correlationId,
+    delta,
+    normalizeChatText,
+    syncSecondaryThinkingPlacement
+  );
 }
 
 function syncThinkingPlacement(correlationId: string): void {
-  const assistantTs = state.chatFirstAssistantChunkMsByCorrelation[correlationId];
-  const reasoningTs = state.chatFirstReasoningChunkMsByCorrelation[correlationId];
-  if (assistantTs && reasoningTs) {
-    state.chatThinkingPlacementByCorrelation[correlationId] =
-      reasoningTs <= assistantTs ? "before" : "after";
-    return;
-  }
-  if (reasoningTs && !assistantTs) {
-    state.chatThinkingPlacementByCorrelation[correlationId] = "before";
-    return;
-  }
-  if (assistantTs && !reasoningTs) {
-    state.chatThinkingPlacementByCorrelation[correlationId] = "after";
-  }
+  syncThinkingPlacementState(state, correlationId);
 }
 
 function syncSecondaryThinkingPlacement(cp: ChatPanelState, correlationId: string): void {
-  const assistantTs = state.chatFirstAssistantChunkMsByCorrelation[correlationId];
-  const reasoningTs = state.chatFirstReasoningChunkMsByCorrelation[correlationId];
-  if (assistantTs && reasoningTs) {
-    cp.chatThinkingPlacementByCorrelation[correlationId] = reasoningTs <= assistantTs ? "before" : "after";
-    return;
-  }
-  if (reasoningTs && !assistantTs) {
-    cp.chatThinkingPlacementByCorrelation[correlationId] = "before";
-    return;
-  }
-  if (assistantTs && !reasoningTs) {
-    cp.chatThinkingPlacementByCorrelation[correlationId] = "after";
-  }
+  syncThinkingPlacementForPanelState(state, cp, correlationId);
 }
 
 function resetCurrentConversationUiState(): void {
-  state.messages = [];
-  state.chatDraft = "";
-  state.chatAttachedFileName = null;
-  state.chatAttachedFileContent = null;
-  state.chatReasoningByCorrelation = {};
-  state.chatThinkingPlacementByCorrelation = {};
-  state.chatThinkingExpandedByCorrelation = {};
-  state.chatToolRowsByCorrelation = {};
-  state.chatToolRowExpandedById = {};
-  state.chatStreamCompleteByCorrelation = {};
-  state.chatToolIntentByCorrelation = {};
-  state.chatFirstAssistantChunkMsByCorrelation = {};
-  state.chatFirstReasoningChunkMsByCorrelation = {};
-  state.chatTtsLatencyMs = null;
-  chatTtsLatencyCapturedByCorrelation.clear();
-  state.chatStreaming = false;
-  state.activeChatCorrelationId = null;
+  resetCurrentConversationUiStateDomain(state, chatTtsLatencyCapturedByCorrelation);
 }
 
 function normalizeChatText(input: string): string {
-  return input
-    .replace(/\r\n/g, "\n")
-    .replace(/(^|\s)[\[(<]\s*(?:blank[_ ]audio|silence|no[_ ]speech|no[_ ]audio|inaudible|noise|music|applause|laughter|laughing|cough(?:ing)?|breathing|typing)\s*[\])>](?=\s|$)/gi, " ")
-    .replace(/\n{3,}/g, "\n\n")
-    .trim();
+  return normalizeChatTextDomain(input);
 }
 
 function parseStreamChunk(payload: AppEvent["payload"]): ChatStreamChunkPayload | null {
-  if (!payload || typeof payload !== "object") return null;
-  const value = payload as Record<string, unknown>;
-  if (
-    typeof value.conversationId !== "string" ||
-    typeof value.delta !== "string" ||
-    typeof value.done !== "boolean"
-  ) {
-    return null;
-  }
-  return {
-    conversationId: value.conversationId,
-    delta: value.delta,
-    done: value.done
-  };
+  return parseStreamChunkPayload(payload);
 }
 
 function parseReasoningStreamChunk(
   payload: AppEvent["payload"]
 ): ChatStreamReasoningChunkPayload | null {
-  if (!payload || typeof payload !== "object") return null;
-  const value = payload as Record<string, unknown>;
-  if (
-    typeof value.conversationId !== "string" ||
-    typeof value.delta !== "string" ||
-    typeof value.done !== "boolean"
-  ) {
-    return null;
-  }
-  return {
-    conversationId: value.conversationId,
-    delta: value.delta,
-    done: value.done
-  };
+  return parseReasoningStreamChunkPayload(payload);
 }
 
 function parseAgentToolPayload(
   payload: AppEvent["payload"]
 ): { toolCallId: string; toolName: string; display: string; success: boolean | null } | null {
-  if (!payload || typeof payload !== "object") return null;
-  const value = payload as Record<string, unknown>;
-  if (typeof value.toolCallId !== "string" || typeof value.toolName !== "string") {
-    return null;
-  }
-  return {
-    toolCallId: value.toolCallId,
-    toolName: value.toolName,
-    display: typeof value.display === "string" ? value.display : "",
-    success: typeof value.success === "boolean" ? value.success : null
-  };
+  return parseAgentToolPayloadRuntime(payload);
 }
 
 function toolTitleName(rawToolName: string): string {
-  const raw = rawToolName.trim();
-  if (!raw) return "Tool";
-  if (raw === "web_search") return "Web Search";
-  if (raw === "bash") return "Terminal";
-  if (["read", "write", "edit", "move_file", "mkdir", "find", "grep", "chmod", "ls"].includes(raw)) {
-    return "Files";
-  }
-  return raw
-    .replace(/[_-]+/g, " ")
-    .replace(/\b\w/g, (ch) => ch.toUpperCase());
+  return toolTitleNameRuntime(rawToolName);
 }
 
 function toolIconName(rawToolName: string): IconName {
-  const raw = rawToolName.trim();
-  if (raw === "web_search") return "globe";
-  if (raw === "bash") return "square-terminal";
-  if (["read", "write", "edit", "move_file", "mkdir", "find", "grep", "chmod", "ls"].includes(raw)) {
-    return "file-badge";
-  }
-  return "wrench";
+  return toolIconNameRuntime(rawToolName);
 }
 
 function ensureAssistantMessageForCorrelation(correlationId: string): void {
-  const existing = state.messages.find(
-    (m) => m.role === "assistant" && m.correlationId === correlationId
-  );
-  if (existing) return;
-  state.messages.push({ role: "assistant", text: "", correlationId });
+  ensureAssistantMessageForState(state, correlationId);
 }
 
 function ensureAssistantMessageForPanel(cp: ChatPanelState, correlationId: string): void {
-  const existing = cp.messages.find((message) => message.role === "assistant" && message.correlationId === correlationId);
-  if (existing) return;
-  cp.messages.push({ role: "assistant", text: "", correlationId });
+  ensureAssistantMessageForPanelState(cp, correlationId);
 }
 
 function isCurrentChatCorrelation(correlationId: string): boolean {
@@ -3417,12 +3270,7 @@ function appendChatToolRow(
   correlationId: string,
   row: Omit<ChatToolEventRow, "rowId">
 ): void {
-  const existing = state.chatToolRowsByCorrelation[correlationId] ?? [];
-  const rowId = `tool-row-${correlationId}-${existing.length + 1}`;
-  state.chatToolRowsByCorrelation[correlationId] = [...existing, { rowId, ...row }];
-  if (state.chatToolRowExpandedById[rowId] === undefined) {
-    state.chatToolRowExpandedById[rowId] = false;
-  }
+  appendChatToolRowState(state, correlationId, row);
 }
 
 function appendChatToolRowForPanel(
@@ -3430,114 +3278,28 @@ function appendChatToolRowForPanel(
   correlationId: string,
   row: Omit<ChatToolEventRow, "rowId">
 ): void {
-  const existing = cp.chatToolRowsByCorrelation[correlationId] ?? [];
-  const rowId = `tool-row-${correlationId}-${existing.length + 1}`;
-  cp.chatToolRowsByCorrelation[correlationId] = [...existing, { rowId, ...row }];
-  if (cp.chatToolRowExpandedById[rowId] === undefined) {
-    cp.chatToolRowExpandedById[rowId] = false;
-  }
+  appendChatToolRowForPanelState(cp, correlationId, row);
 }
 
 function ensureToolIntentRow(correlationId: string, toolName: string): void {
-  const key = `${correlationId}:${toolName}`;
-  if (state.chatToolIntentByCorrelation[key]) return;
-  state.chatToolIntentByCorrelation[key] = true;
-  appendChatToolRow(correlationId, {
-    icon: toolIconName(toolName),
-    title: `Use ${toolTitleName(toolName)} tool`,
-    details: `Agent confirmed it will use the ${toolTitleName(toolName)} tool.`,
-  });
+  ensureToolIntentRowState(state, correlationId, toolName, toolIconName, toolTitleName);
 }
 
 
 function formatRuntimeEventLine(event: AppEvent): string {
-  const payloadText =
-    event.payload && typeof event.payload === "object"
-      ? JSON.stringify(event.payload)
-      : String(event.payload);
-  const payloadObj =
-    event.payload && typeof event.payload === "object"
-      ? (event.payload as Record<string, unknown>)
-      : null;
-  const lineText =
-    payloadObj && typeof payloadObj.line === "string" ? payloadObj.line : null;
-
-  if (event.action === "llama.runtime.process.stdout" && lineText) {
-    return `${new Date(event.timestampMs).toLocaleTimeString()} [stdout] ${lineText}`;
-  }
-  if (event.action === "llama.runtime.process.stderr" && lineText) {
-    return `${new Date(event.timestampMs).toLocaleTimeString()} [stderr] ${lineText}`;
-  }
-  return `${new Date(event.timestampMs).toLocaleTimeString()} ${event.action} ${event.stage} ${payloadText}`;
+  return formatRuntimeEventLineRuntime(event);
 }
 
 function formatAgentEventLine(event: AppEvent): string | null {
-  const payload = payloadAsRecord(event.payload);
-  if (event.action === "chat.agent.request") {
-    const model = typeof payload?.model === "string" ? payload.model : "unknown";
-    const maxTokens =
-      typeof payload?.maxTokens === "number" ? String(payload.maxTokens) : "n/a";
-    const baseUrl = typeof payload?.baseUrl === "string" ? payload.baseUrl : "n/a";
-    return `${event.action} ${event.stage} model=${model} maxTokens=${maxTokens} baseUrl=${baseUrl}`;
-  }
-  if (event.action === "chat.agent.tool.start") {
-    const tool = typeof payload?.toolName === "string" ? payload.toolName : "unknown";
-    const callId =
-      typeof payload?.toolCallId === "string" ? payload.toolCallId : "unknown";
-    return `tool.start ${tool} call=${callId}`;
-  }
-  if (event.action === "chat.agent.tool.end") {
-    const tool = typeof payload?.toolName === "string" ? payload.toolName : "unknown";
-    const display =
-      typeof payload?.display === "string" ? payload.display : "";
-    return display ? `tool.end ${tool} ${display}` : `tool.end ${tool}`;
-  }
-  if (event.action === "chat.agent.tool.result") {
-    const tool = typeof payload?.toolName === "string" ? payload.toolName : "unknown";
-    const success = payload?.success === true;
-    const display =
-      typeof payload?.display === "string" ? payload.display : "";
-    const status = success ? "ok" : "error";
-    return display ? `tool.result ${tool} ${status} ${display}` : `tool.result ${tool} ${status}`;
-  }
-  if (event.action === "chat.agent.fallback") {
-    const message =
-      typeof payload?.message === "string" ? payload.message : safePayloadPreview(event.payload);
-    return `${event.action} ${event.stage} ${message}`;
-  }
-  return null;
+  return formatAgentEventLineRuntime(event, payloadAsRecord);
 }
 
 function extractRuntimeProcessLine(event: AppEvent): string | null {
-  if (
-    event.action !== "llama.runtime.process.stderr" &&
-    event.action !== "llama.runtime.process.stdout"
-  ) {
-    return null;
-  }
-  if (!event.payload || typeof event.payload !== "object") return null;
-  const payloadObj = event.payload as Record<string, unknown>;
-  return typeof payloadObj.line === "string" ? payloadObj.line : null;
+  return extractRuntimeProcessLineRuntime(event);
 }
 
 function updateRuntimeMetricsFromLine(line: string): void {
-  const ctxMatch = line.match(/n_ctx_slot\s*=\s*(\d+)/i);
-  const ctxValue = ctxMatch?.[1];
-  if (ctxValue) {
-    state.llamaRuntimeContextCapacity = Number.parseInt(ctxValue, 10);
-  }
-
-  const tokensMatch = line.match(/n_tokens\s*=\s*(\d+)/i);
-  const tokenValue = tokensMatch?.[1];
-  if (tokenValue) {
-    state.llamaRuntimeContextTokens = Number.parseInt(tokenValue, 10);
-  }
-
-  const tpsMatch = line.match(/([0-9]+(?:\.[0-9]+)?)\s+tokens per second/i);
-  const tpsValue = tpsMatch?.[1];
-  if (tpsValue) {
-    state.llamaRuntimeTokensPerSecond = Number.parseFloat(tpsValue);
-  }
+  updateRuntimeMetricsFromLineRuntime(state, line);
 }
 
 function prettifyRepoName(repoId: string): string {
@@ -3561,13 +3323,14 @@ function currentBottomStatus() {
     (state.llamaRuntimeSelectedEngineId
       ? state.llamaRuntime?.engines.find((engine) => engine.engineId === state.llamaRuntimeSelectedEngineId)
       : undefined);
+  const activeModelPath = state.llamaRuntimeActiveModelPath.trim();
   const hasLoadedLlamaModel =
     state.llamaRuntime?.state === "healthy" &&
     Boolean(state.llamaRuntime.activeEngineId) &&
     Boolean(state.llamaRuntime.pid) &&
-    Boolean(state.llamaRuntimeModelPath.trim());
+    Boolean(activeModelPath);
   const loadedLlamaModelLabel = hasLoadedLlamaModel
-    ? `Llama.cpp: ${modelNameFromPath(state.llamaRuntimeModelPath)}`
+    ? `Llama.cpp: ${modelNameFromPath(activeModelPath)}`
     : null;
   return buildBottomStatus({
     activeEngineBackend: activeEngine?.backend ?? null,
@@ -3579,7 +3342,7 @@ function currentBottomStatus() {
     showAppResourceCpu: state.showAppResourceCpu,
     showAppResourceMemory: state.showAppResourceMemory,
     showAppResourceNetwork: state.showAppResourceNetwork,
-    modelPath: hasLoadedLlamaModel ? state.llamaRuntimeModelPath : "",
+    modelPath: hasLoadedLlamaModel ? activeModelPath : "",
     modelLabel: loadedLlamaModelLabel,
     contextTokens: state.llamaRuntimeContextTokens,
     contextCapacity: state.llamaRuntimeContextCapacity,
@@ -3615,108 +3378,24 @@ function mapMemoryContextItem(item: ChatContextBreakdownItem) {
 
 async function loadMemoryContext(): Promise<void> {
   if (!clientRef) return;
-  state.memoryLoading = true;
-  state.memoryError = null;
-  try {
-    const response = await clientRef.inspectChatContext({
-      conversationId: state.conversationId,
-      correlationId: nextCorrelationId(),
-      chatMode: state.chatRoutePreference,
-      alwaysLoadToolKeys: state.memoryAlwaysLoadToolKeys,
-      alwaysLoadSkillKeys: state.memoryAlwaysLoadSkillKeys
-    });
-    state.memoryContextItems = response.items.map(mapMemoryContextItem);
-    const conversations = response.conversations.slice(0, 10);
-    const historyBodies = await Promise.all(
-      conversations.map(async (conv) => {
-        try {
-          const msgResponse = await clientRef!.getMessages({
-            conversationId: conv.conversationId,
-            correlationId: nextCorrelationId()
-          });
-          const body = msgResponse.messages.map((m) => m.content).join("\n");
-          return { conversationId: conv.conversationId, body };
-        } catch {
-          const fallback = conv.lastMessagePreview || "";
-          return { conversationId: conv.conversationId, body: fallback };
-        }
-      })
-    );
-    const bodyMap = new Map(historyBodies.map((b) => [b.conversationId, b.body]));
-    state.memoryChatHistory = conversations.map((conv) => {
-      const fullBody = bodyMap.get(conv.conversationId) || conv.lastMessagePreview || "";
-      const chars = fullBody.length;
-      const words = fullBody.split(/\s+/).filter(Boolean).length;
-      const tokenEstimate = Math.round(((chars * 0.25) + (words * 1.3)) * 0.5);
-      return { ...conv, fullBody, charCount: chars, wordCount: words, tokenEstimate };
-    });
-    state.memoryPersistentItems = response.memoryItems.map(mapMemoryContextItem);
-    state.memorySkillsItems = response.skillsItems.map(mapMemoryContextItem);
-    state.memoryToolsItems = response.toolsItems.map(mapMemoryContextItem);
-    state.memoryRouteMode = response.routeMode;
-    state.memoryTotalTokenEstimate = response.totalTokenEstimate;
-  } catch (error) {
-    state.memoryError = error instanceof Error ? error.message : String(error);
-  } finally {
-    state.memoryLoading = false;
-  }
+  await loadMemoryContextState({
+    state,
+    clientRef,
+    nextCorrelationId,
+    mapMemoryContextItem
+  });
 }
 
 function closeMemoryModal(): void {
-  state.memoryModalOpen = false;
-  state.memoryModalMode = "edit";
-  state.memoryModalSection = null;
-  state.memoryModalTitle = "";
-  state.memoryModalValue = "";
-  state.memoryModalEditable = false;
-  state.memoryModalTarget = null;
-  state.memoryModalNamespace = null;
-  state.memoryModalKey = null;
-  state.memoryModalSourcePath = null;
-  state.memoryModalConversationId = null;
-  state.memoryModalDraftKey = "";
-  state.memoryModalDraftCategory = "directive";
-  state.memoryModalDraftDescription = "";
+  closeMemoryModalState(state);
 }
 
 function openMemoryCreateModal(section: "context" | "history" | "memory" | "skills" | "tools"): void {
-  state.memoryModalOpen = true;
-  state.memoryModalMode = "create";
-  state.memoryModalSection = section;
-  state.memoryModalTitle = `Add New ${section.charAt(0).toUpperCase()}${section.slice(1)} Item`;
-  state.memoryModalValue = "";
-  state.memoryModalEditable = true;
-  state.memoryModalTarget = null;
-  state.memoryModalNamespace = null;
-  state.memoryModalKey = null;
-  state.memoryModalSourcePath = null;
-  state.memoryModalConversationId = null;
-  state.memoryModalDraftKey = "";
-  state.memoryModalDraftCategory = section === "memory" ? "directive" : "";
-  state.memoryModalDraftDescription = "";
+  openMemoryCreateModalState(state, section);
 }
 
 function openHistoryIndexModal(): void {
-  const value = state.memoryChatHistory
-    .slice(0, 10)
-    .map((chat) => {
-      const date = formatMemoryTimestamp(chat.updatedAtMs);
-      const title = chat.title?.trim() || chat.lastMessagePreview || chat.conversationId;
-      const preview = chat.lastMessagePreview || title;
-      return `- ${date} | ${title} | ${chat.messageCount} msgs | ${preview}`;
-    })
-    .join("\n");
-  state.memoryModalOpen = true;
-  state.memoryModalMode = "edit";
-  state.memoryModalSection = "history";
-  state.memoryModalTitle = "History Index";
-  state.memoryModalValue = `# History\n\n${value}`;
-  state.memoryModalEditable = false;
-  state.memoryModalTarget = null;
-  state.memoryModalNamespace = null;
-  state.memoryModalKey = null;
-  state.memoryModalSourcePath = null;
-  state.memoryModalConversationId = null;
+  openHistoryIndexModalState(state, formatMemoryTimestamp);
 }
 
 function refreshMemoryModalEditor(textarea: HTMLTextAreaElement): void {
@@ -3761,54 +3440,7 @@ function refreshMemoryModalEditor(textarea: HTMLTextAreaElement): void {
 }
 
 function openMemoryModal(section: "context" | "history" | "memory" | "skills" | "tools", index: number): void {
-  if (section === "history") {
-    const item = state.memoryChatHistory.slice(0, 10)[index];
-    if (!item) return;
-    const title = item.title?.trim() || item.lastMessagePreview || item.conversationId;
-    const isCustomHistory = item.conversationId.startsWith("custom-history:");
-    state.memoryModalOpen = true;
-    state.memoryModalMode = "edit";
-    state.memoryModalSection = section;
-    state.memoryModalTitle = title;
-    state.memoryModalValue = item.fullBody || item.lastMessagePreview || "";
-    state.memoryModalEditable = isCustomHistory;
-    state.memoryModalTarget = isCustomHistory ? "custom-item" : null;
-    state.memoryModalNamespace = isCustomHistory ? "history" : null;
-    state.memoryModalKey = isCustomHistory ? item.title : null;
-    state.memoryModalConversationId = isCustomHistory ? null : item.conversationId;
-    return;
-  }
-
-  const source =
-    section === "memory"
-      ? state.memoryPersistentItems
-      : section === "skills"
-        ? state.memorySkillsItems
-        : section === "tools"
-          ? state.memoryToolsItems
-          : state.memoryContextItems;
-  const item = source[index];
-  if (!item) return;
-  const namespaceKey = section === "memory" ? item.key.split(":") : [];
-  const isIndex = item.category === "skill-index" || item.category === "tool-index";
-  const isReadOnlyKey = item.key === "Skill Index" || item.key === "Tool Index" || item.key === "Runtime metadata" || item.key === "Verified API registry context";
-  const isSystemPrompt = section === "context" && item.key === "Base system prompt";
-  const isCustomContext = section === "context" && item.category === "custom-context";
-  const isCustomTool = section === "tools" && item.category === "tool-note";
-  const isSkillFile = section === "skills" && !!item.sourcePath;
-  const editable = isSystemPrompt || isCustomContext || isCustomTool || isSkillFile || (section === "memory" && !isIndex && !isReadOnlyKey);
-  const modalValue = item.value;
-  state.memoryModalOpen = true;
-  state.memoryModalMode = "edit";
-  state.memoryModalSection = section;
-  state.memoryModalTitle = item.key;
-  state.memoryModalValue = modalValue;
-  state.memoryModalEditable = editable;
-  state.memoryModalTarget = section === "memory" ? "memory" : isSystemPrompt ? "system-prompt" : isCustomContext || isCustomTool ? "custom-item" : isSkillFile ? null : null;
-  state.memoryModalNamespace = section === "memory" ? namespaceKey[0] || null : isCustomContext || isCustomTool ? section : null;
-  state.memoryModalKey = section === "memory" ? namespaceKey.slice(1).join(":") || item.key : isCustomContext || isCustomTool ? item.key : null;
-  state.memoryModalSourcePath = item.sourcePath || null;
-  state.memoryModalConversationId = null;
+  openMemoryModalState(state, section, index);
 }
 
 async function loadConversation(conversationId: string): Promise<void> {
@@ -4263,8 +3895,6 @@ async function refreshTtsState(): Promise<void> {
   state.tts.voicesPath = status.voicesPath;
   state.tts.tokensPath = status.tokensPath || settings.tokensPath || "";
   state.tts.dataDir = status.dataDir || settings.dataDir || "";
-  state.tts.pythonPath = status.pythonPath || settings.pythonPath;
-  state.tts.scriptPath = status.scriptPath;
   state.tts.voices = voices.voices.length ? voices.voices : status.availableVoices;
   state.tts.selectedVoice = status.selectedVoice || voices.selectedVoice || settings.voice;
   state.tts.speed = settings.speed || status.speed || state.tts.speed;
@@ -4337,6 +3967,76 @@ function handleTtsDownloadProgressEvent(event: AppEvent, rerender: () => void): 
     state.tts.downloadReceivedBytes = null;
     state.tts.downloadTotalBytes = null;
     state.tts.downloadPercent = null;
+    return false;
+  }
+  return false;
+}
+
+let modelManagerDownloadLastSampleAtMs: number | null = null;
+let modelManagerDownloadLastSampleBytes: number | null = null;
+
+function handleModelManagerDownloadProgressEvent(event: AppEvent, rerender: () => void): boolean {
+  if (event.action !== "model.manager.download_hf") return false;
+  const payload = payloadAsRecord(event.payload);
+  const repoId = typeof payload?.repoId === "string" ? payload.repoId : "";
+  const fileName = typeof payload?.fileName === "string" ? payload.fileName : "";
+  const key = repoId && fileName ? `${repoId}::${fileName}` : null;
+  if (event.stage === "start") {
+    state.modelManagerDownloading = true;
+    state.modelManagerActiveDownloadKey = key;
+    state.modelManagerActiveDownloadFileName = fileName || null;
+    state.modelManagerDownloadReceivedBytes = 0;
+    state.modelManagerDownloadTotalBytes = null;
+    state.modelManagerDownloadPercent = null;
+    state.modelManagerDownloadSpeedBytesPerSec = null;
+    modelManagerDownloadLastSampleAtMs = null;
+    modelManagerDownloadLastSampleBytes = null;
+    rerender();
+    return false;
+  }
+  if (event.stage === "progress") {
+    state.modelManagerDownloading = true;
+    if (key) {
+      state.modelManagerActiveDownloadKey = key;
+    }
+    if (fileName) {
+      state.modelManagerActiveDownloadFileName = fileName;
+    }
+    const receivedBytes = Number(payload?.receivedBytes);
+    const totalBytes = Number(payload?.totalBytes);
+    const percent = Number(payload?.percent);
+    state.modelManagerDownloadReceivedBytes = Number.isFinite(receivedBytes)
+      ? receivedBytes
+      : state.modelManagerDownloadReceivedBytes;
+    state.modelManagerDownloadTotalBytes = Number.isFinite(totalBytes) && totalBytes > 0 ? totalBytes : null;
+    state.modelManagerDownloadPercent = Number.isFinite(percent) ? percent : null;
+    const now = Date.now();
+    if (Number.isFinite(receivedBytes) && receivedBytes >= 0) {
+      if (modelManagerDownloadLastSampleAtMs !== null && modelManagerDownloadLastSampleBytes !== null) {
+        const elapsedMs = now - modelManagerDownloadLastSampleAtMs;
+        const deltaBytes = receivedBytes - modelManagerDownloadLastSampleBytes;
+        if (elapsedMs > 0 && deltaBytes >= 0) {
+          state.modelManagerDownloadSpeedBytesPerSec = (deltaBytes * 1000) / elapsedMs;
+        }
+      }
+      modelManagerDownloadLastSampleAtMs = now;
+      modelManagerDownloadLastSampleBytes = receivedBytes;
+    }
+    rerender();
+    return false;
+  }
+  if (event.stage === "complete" || event.stage === "error") {
+    state.modelManagerDownloading = false;
+    state.modelManagerActiveDownloadKey = null;
+    state.modelManagerActiveDownloadFileName = null;
+    state.modelManagerActiveDownloadCorrelationId = null;
+    state.modelManagerDownloadReceivedBytes = null;
+    state.modelManagerDownloadTotalBytes = null;
+    state.modelManagerDownloadPercent = null;
+    state.modelManagerDownloadSpeedBytesPerSec = null;
+    modelManagerDownloadLastSampleAtMs = null;
+    modelManagerDownloadLastSampleBytes = null;
+    rerender();
     return false;
   }
   return false;
@@ -4454,7 +4154,7 @@ function buildChatModelOptions(): ChatModelOption[] {
   const options: ChatModelOption[] = [];
   const seen = new Set<string>();
 
-  const localModel = modelNameFromPath(state.llamaRuntimeModelPath);
+  const localModel = modelNameFromPath(state.llamaRuntimeActiveModelPath);
   const localRuntimeStarting =
     state.llamaRuntimeBusy || state.llamaRuntime?.state === "starting";
   if (localModel && localModel !== "-") {
@@ -4656,103 +4356,18 @@ async function refreshModelManagerUnslothUdCatalog(): Promise<void> {
 }
 
 async function refreshLlamaRuntime(): Promise<void> {
-  if (!clientRef) return;
-  const response = await clientRef.getLlamaRuntimeStatus({ correlationId: nextCorrelationId() });
-  state.llamaRuntime = response;
-  let current = response.engines.find(
-    (engine) => engine.engineId === state.llamaRuntimeSelectedEngineId
+  warnedMissingBundleEngineId = await refreshLlamaRuntimeState(
+    state,
+    clientRef,
+    nextCorrelationId,
+    warnedMissingBundleEngineId,
+    pushConsoleEntry,
+    refreshChatModelProfile
   );
-
-  const isSelectableGpu = (engine: (typeof response.engines)[number]): boolean => {
-    if (engine.backend === "cpu") return false;
-    if (!engine.isApplicable) return false;
-    return engine.isReady || engine.isInstalled || engine.prerequisites.some((item) => item.ok);
-  };
-
-  // Prefer Linux GPU backends in this order when detected and applicable.
-  const preferredRocm = response.engines.find(
-    (engine) => engine.backend === "rocm" && isSelectableGpu(engine)
-  );
-  const preferredVulkan = response.engines.find(
-    (engine) => engine.backend === "vulkan" && isSelectableGpu(engine)
-  );
-  const preferredAnyGpu = response.engines.find(
-    (engine) => isSelectableGpu(engine)
-  );
-  const preferredGpu = preferredRocm ?? preferredVulkan ?? preferredAnyGpu ?? null;
-
-  if (preferredGpu) {
-    const isCurrentCpu = current?.backend === "cpu";
-    if (!current || isCurrentCpu || !current.isReady) {
-      state.llamaRuntimeSelectedEngineId = preferredGpu.engineId;
-      current = response.engines.find(
-        (engine) => engine.engineId === state.llamaRuntimeSelectedEngineId
-      );
-    }
-  }
-
-  if (!current) {
-    const firstEngine = response.engines.at(0);
-    if (firstEngine) {
-      state.llamaRuntimeSelectedEngineId = firstEngine.engineId;
-      current = firstEngine;
-    }
-  }
-
-  const selectedEngine = current;
-  if (
-    selectedEngine &&
-    selectedEngine.isApplicable &&
-    !selectedEngine.isBundled &&
-    !selectedEngine.isInstalled
-  ) {
-    if (warnedMissingBundleEngineId !== selectedEngine.engineId) {
-      pushConsoleEntry(
-        "warn",
-        "browser",
-        `Selected engine ${selectedEngine.label} is not bundled in this build. Install will require local PATH or runtime download fallback.`
-      );
-      warnedMissingBundleEngineId = selectedEngine.engineId;
-    }
-  } else {
-    warnedMissingBundleEngineId = null;
-  }
-  refreshChatModelProfile();
 }
 
 async function browseModelPath(): Promise<string | null> {
-  const currentValue = state.llamaRuntimeModelPath.trim();
-  if (state.runtimeMode === "tauri") {
-    try {
-      const { invoke } = await import("@tauri-apps/api/core");
-      const selected = await invoke<string | string[] | null>("plugin:dialog|open", {
-        options: {
-          title: "Select GGUF Model",
-          directory: false,
-          multiple: false,
-          filters: [
-            { name: "GGUF", extensions: ["gguf"] },
-            { name: "All files", extensions: ["*"] }
-          ]
-        }
-      });
-      if (Array.isArray(selected)) {
-        return selected[0] ?? null;
-      }
-      return selected;
-    } catch (error) {
-      pushConsoleEntry(
-        "warn",
-        "browser",
-        `Native model picker unavailable, falling back to manual entry: ${String(error)}`
-      );
-    }
-  }
-
-  const manual = window.prompt("Enter absolute model path (GGUF file)", currentValue);
-  if (!manual) return null;
-  const normalized = manual.trim();
-  return normalized ? normalized : null;
+  return browseLlamaModelPath(state.runtimeMode, state.llamaRuntimeModelPath.trim(), pushConsoleEntry);
 }
 
 async function browseTtsModelPath(currentValue: string): Promise<string | null> {
@@ -4837,11 +4452,86 @@ async function browseTtsSecondaryPath(currentValue: string): Promise<string | nu
   return normalized ? normalized : null;
 }
 
+function isUsableLlamaEngine(engine: LlamaRuntimeEngine): boolean {
+  if (!engine.isApplicable) return false;
+  if (engine.backend === "cpu") return engine.isReady || engine.isInstalled || engine.isBundled;
+  return engine.isReady || engine.isInstalled || engine.prerequisites.some((item) => item.ok);
+}
+
+function resolveAutoStartEngineCandidates(): LlamaRuntimeEngine[] {
+  const engines = state.llamaRuntime?.engines ?? [];
+  const selectedId = state.llamaRuntimeSelectedEngineId.trim();
+  const ordered: LlamaRuntimeEngine[] = [];
+  const add = (engine: LlamaRuntimeEngine | undefined): void => {
+    if (!engine || ordered.some((item) => item.engineId === engine.engineId)) return;
+    ordered.push(engine);
+  };
+  add(engines.find((engine) => engine.engineId === selectedId));
+  for (const engine of engines.filter(isUsableLlamaEngine)) add(engine);
+  add(engines.find((engine) => engine.backend === "cpu"));
+  for (const engine of engines) add(engine);
+  return ordered;
+}
+
+async function startLlamaRuntimeWithEngine(engine: LlamaRuntimeEngine, modelPath: string): Promise<void> {
+  const shouldVerifyInstall = engine.backend !== "cpu" || !engine.isInstalled || !engine.isReady;
+  if (shouldVerifyInstall) {
+    pushConsoleEntry("info", "browser", `Auto-start: verifying runtime files for ${engine.label}...`);
+    await clientRef!.installLlamaRuntimeEngine({
+      correlationId: nextCorrelationId(),
+      engineId: engine.engineId
+    });
+    await refreshLlamaRuntime();
+  }
+
+  const refreshedEngine = state.llamaRuntime?.engines.find((item) => item.engineId === engine.engineId);
+  if (!refreshedEngine?.isReady) {
+    const canProceedWithGpu =
+      refreshedEngine?.backend !== "cpu" &&
+      refreshedEngine?.isApplicable &&
+      refreshedEngine?.isInstalled;
+    if (!canProceedWithGpu) {
+      const blocking = refreshedEngine?.prerequisites
+        .filter((item) => !item.ok)
+        .map((item) => `${item.key}: ${item.message}`)
+        .join(" | ");
+      throw new Error(
+        blocking
+          ? `Auto-start blocked: ${blocking}`
+          : `Auto-start blocked: runtime engine is not ready (${engine.engineId})`
+      );
+    }
+  }
+
+  await clientRef!.startLlamaRuntime({
+    correlationId: nextCorrelationId(),
+    engineId: engine.engineId,
+    modelPath,
+    port: state.llamaRuntimePort,
+    ctxSize: state.llamaRuntimeCtxSize,
+    nGpuLayers: state.llamaRuntimeGpuLayers
+  });
+  state.llamaRuntimeSelectedEngineId = engine.engineId;
+  state.llamaRuntimeActiveModelPath = modelPath;
+  persistLlamaEngineId(engine.engineId);
+  persistLlamaModelPath(modelPath);
+  await refreshLlamaRuntime();
+  refreshChatModelProfile();
+}
+
 async function autoStartLlamaRuntimeIfConfigured(): Promise<void> {
   if (!clientRef) return;
-  const modelPath = state.llamaRuntimeModelPath.trim();
+  const persistedModelPath = state.llamaRuntimeModelPath.trim();
+  const fallbackInstalledModelPath = [...state.modelManagerInstalled]
+    .sort((a, b) => (b.modifiedMs || 0) - (a.modifiedMs || 0))[0]?.path?.trim() || "";
+  const modelPath = persistedModelPath || fallbackInstalledModelPath;
   if (!modelPath) {
     return;
+  }
+  if (!persistedModelPath && fallbackInstalledModelPath) {
+    state.llamaRuntimeModelPath = fallbackInstalledModelPath;
+    persistLlamaModelPath(fallbackInstalledModelPath);
+    pushConsoleEntry("info", "browser", `Auto-selected local model: ${fallbackInstalledModelPath}`);
   }
 
   await refreshLlamaRuntime();
@@ -4855,64 +4545,30 @@ async function autoStartLlamaRuntimeIfConfigured(): Promise<void> {
     return;
   }
 
-  const engineId =
-    state.llamaRuntimeSelectedEngineId || state.llamaRuntime?.engines[0]?.engineId || "";
-  if (!engineId) {
+  const candidates = resolveAutoStartEngineCandidates();
+  if (!candidates.length) {
     pushConsoleEntry("warn", "browser", "Auto-start skipped: no llama runtime engine available.");
     return;
   }
 
   state.llamaRuntimeBusy = true;
   try {
-    const selectedEngine = state.llamaRuntime?.engines.find((engine) => engine.engineId === engineId);
-    if (!selectedEngine) {
-      throw new Error(`Runtime engine not found: ${engineId}`);
-    }
-
-    const shouldVerifyInstall =
-      selectedEngine.backend !== "cpu" || !selectedEngine.isInstalled || !selectedEngine.isReady;
-    if (shouldVerifyInstall) {
-      pushConsoleEntry(
-        "info",
-        "browser",
-        `Auto-start: verifying runtime files for ${selectedEngine.label}...`
-      );
-      await clientRef.installLlamaRuntimeEngine({
-        correlationId: nextCorrelationId(),
-        engineId
-      });
-      await refreshLlamaRuntime();
-    }
-
-    const refreshedEngine = state.llamaRuntime?.engines.find((engine) => engine.engineId === engineId);
-    if (!refreshedEngine?.isReady) {
-      const canProceedWithGpu =
-        refreshedEngine?.backend !== "cpu" &&
-        refreshedEngine?.isApplicable &&
-        refreshedEngine?.isInstalled;
-      if (!canProceedWithGpu) {
-        const blocking = refreshedEngine?.prerequisites
-          .filter((item) => !item.ok)
-          .map((item) => `${item.key}: ${item.message}`)
-          .join(" | ");
-        throw new Error(
-          blocking
-            ? `Auto-start blocked: ${blocking}`
-            : `Auto-start blocked: runtime engine is not ready (${engineId})`
+    const failures: string[] = [];
+    for (const candidate of candidates) {
+      try {
+        await startLlamaRuntimeWithEngine(candidate, modelPath);
+        pushConsoleEntry(
+          "info",
+          "browser",
+          `Auto-started llama runtime using ${candidate.engineId} with ${modelPath}.`
         );
+        return;
+      } catch (error) {
+        failures.push(`${candidate.engineId}: ${String(error)}`);
+        pushConsoleEntry("warn", "browser", `Auto-start failed for ${candidate.engineId}: ${String(error)}`);
       }
     }
-
-    await clientRef.startLlamaRuntime({
-      correlationId: nextCorrelationId(),
-      engineId,
-      modelPath,
-      port: state.llamaRuntimePort,
-      ctxSize: state.llamaRuntimeCtxSize,
-      nGpuLayers: state.llamaRuntimeGpuLayers
-    });
-    await refreshLlamaRuntime();
-    pushConsoleEntry("info", "browser", `Auto-started llama runtime using ${engineId}.`);
+    throw new Error(failures.join(" | "));
   } catch (error) {
     pushConsoleEntry("warn", "browser", `Auto-start failed: ${String(error)}`);
     await refreshLlamaRuntime();
@@ -4954,6 +4610,35 @@ function renderAndBind(sendMessage: (text: string) => Promise<void>): void {
     }
   };
 
+  const isLocalChatModelSelected = (): boolean => state.chatActiveModelId.startsWith("local:");
+  const isLlamaRuntimeHealthy = (): boolean => Boolean(
+    state.llamaRuntime?.state === "healthy" &&
+    state.llamaRuntime.activeEngineId &&
+    state.llamaRuntime.endpoint &&
+    state.llamaRuntime.pid
+  );
+  const ensureVoiceChatModelReady = async (): Promise<boolean> => {
+    if (!isLocalChatModelSelected()) return true;
+    await refreshLlamaRuntime();
+    if (isLlamaRuntimeHealthy()) return true;
+    const modelPath = state.llamaRuntimeModelPath.trim();
+    if (!modelPath) {
+      state.tts.message = "Voice mode needs a chat model. Select a GGUF model or choose an API chat model.";
+      pushConsoleEntry("warn", "browser", state.tts.message);
+      renderAndBind(sendMessage);
+      return false;
+    }
+    state.tts.message = "Starting chat model for voice mode...";
+    renderAndBind(sendMessage);
+    await autoStartLlamaRuntimeIfConfigured();
+    await refreshLlamaRuntime();
+    if (isLlamaRuntimeHealthy()) return true;
+    state.tts.message = "Voice mode needs a running chat model. Start llama.cpp or choose an API model.";
+    pushConsoleEntry("warn", "browser", state.tts.message);
+    renderAndBind(sendMessage);
+    return false;
+  };
+
   const toggleSttRuntime = async (): Promise<void> => {
     if (!clientRef) return;
     if (sttToggleInFlight) return;
@@ -4993,7 +4678,10 @@ function renderAndBind(sendMessage: (text: string) => Promise<void>): void {
         state.stt.serverWarmed = false;
         state.stt.status = "running";
         state.stt.message = state.stt.backend === "sherpa_onnx" ? "Sherpa backend ready" : "Server started";
-        await setupSttTranscriptListener(sendMessage);
+        await setupSttTranscriptListener(async (text) => {
+          if (!(await ensureVoiceChatModelReady())) return;
+          await sendMessage(text);
+        });
         await startSttAudioCapture(invoke);
       } else if (state.stt.status === "running" || state.stt.status === "starting") {
         stopSttAudioCapture();
@@ -5063,6 +4751,10 @@ function renderAndBind(sendMessage: (text: string) => Promise<void>): void {
         renderAndBind(sendMessage);
         return;
       }
+    }
+
+    if (!(await ensureVoiceChatModelReady())) {
+      return;
     }
 
     if (!state.chatTtsEnabled) {
@@ -5166,8 +4858,7 @@ syncOverlayScrollbars();
       postprocessSpeakableText,
       extractSpeakableStreamDelta,
       enqueueImmediateTtsChunk: (text, correlationId) => {
-        chatTtsQueue.push({ text, correlationId });
-        notifyChatTtsQueueAvailable();
+        chatTtsPipeline.enqueueImmediate(text, correlationId);
       },
       enqueueSpeakableChunk,
       runChatTtsQueue,
@@ -5416,6 +5107,15 @@ syncOverlayScrollbars();
   if (firstRunFinish) {
     firstRunFinish.onclick = dismissFirstRunOnboarding;
   }
+  const llamaState: LlamaStateSlice = state;
+  const llamaControllerDeps: LlamaCppControllerDeps = {
+    nextCorrelationId,
+    refreshLlamaRuntime,
+    browseModelPath,
+    persistLlamaModelPath,
+    persistLlamaEngineId,
+    pushConsoleEntry
+  };
   attachPrimaryPanelInteractions(state.sidebarTab, currentPrimaryPanelRenderState(), {
     onSendMessage: sendMessage,
     onUpdateChatDraft: (text: string) => {
@@ -5990,32 +5690,14 @@ syncOverlayScrollbars();
       renderAndBind(sendMessage);
     },
     onLlamaRuntimeInstall: async (engineId: string) => {
-      if (!clientRef) return;
-      state.llamaRuntimeBusy = true;
-      state.llamaRuntimeSelectedEngineId = engineId;
-      try {
-        await clientRef.installLlamaRuntimeEngine({
-          correlationId: nextCorrelationId(),
-          engineId
-        });
-        await refreshLlamaRuntime();
-      } catch (error) {
-        pushConsoleEntry(
-          "error",
-          "browser",
-          `Failed to install runtime engine ${engineId}: ${String(error)}`
-        );
-        await refreshLlamaRuntime();
-      } finally {
-        state.llamaRuntimeBusy = false;
-      }
+      await installEngine(llamaState, clientRef, engineId, llamaControllerDeps);
       renderAndBind(sendMessage);
     },
     onLlamaRuntimeBrowseModelPath: async () => {
-      const selectedPath = await browseModelPath();
-      if (!selectedPath) return;
-      state.llamaRuntimeModelPath = selectedPath;
-      persistLlamaModelPath(selectedPath);
+      await browseAndSetModelPath(llamaState, {
+        browseModelPath,
+        persistLlamaModelPath
+      });
       renderAndBind(sendMessage);
     },
     onLlamaRuntimeSetMaxTokens: async (maxTokens: number | null) => {
@@ -6045,121 +5727,39 @@ syncOverlayScrollbars();
       mlock,
       seed
     }) => {
-      if (!clientRef) return;
-      state.llamaRuntimeBusy = true;
-      state.llamaRuntimeSelectedEngineId = engineId;
-      state.llamaRuntimeModelPath = modelPath;
-      persistLlamaModelPath(modelPath);
-      state.llamaRuntimePort = port;
-      state.llamaRuntimeCtxSize = ctxSize;
-      state.llamaRuntimeGpuLayers = nGpuLayers;
-      state.llamaRuntimeThreads = threads;
-      state.llamaRuntimeBatchSize = batchSize;
-      state.llamaRuntimeUbatchSize = ubatchSize;
-      state.llamaRuntimeTemperature = temperature;
-      state.llamaRuntimeTopP = topP;
-      state.llamaRuntimeTopK = topK;
-      state.llamaRuntimeRepeatPenalty = repeatPenalty;
-      state.llamaRuntimeFlashAttn = flashAttn;
-      state.llamaRuntimeMmap = mmap;
-      state.llamaRuntimeMlock = mlock;
-      state.llamaRuntimeSeed = seed;
-      try {
-        await refreshLlamaRuntime();
-        const selectedEngine = state.llamaRuntime?.engines.find(
-          (engine) => engine.engineId === engineId
-        );
-        if (!selectedEngine) {
-          throw new Error(`Runtime engine not found: ${engineId}`);
-        }
-
-        const shouldVerifyInstall =
-          selectedEngine.backend !== "cpu" || !selectedEngine.isInstalled || !selectedEngine.isReady;
-        if (shouldVerifyInstall) {
-          pushConsoleEntry(
-            "info",
-            "browser",
-            `Verifying runtime files for ${selectedEngine.label} before start...`
-          );
-          await clientRef.installLlamaRuntimeEngine({
-            correlationId: nextCorrelationId(),
-            engineId
-          });
-          await refreshLlamaRuntime();
-        }
-
-        const refreshedEngine = state.llamaRuntime?.engines.find(
-          (engine) => engine.engineId === engineId
-        );
-        if (!refreshedEngine?.isReady) {
-          const canProceedWithGpu =
-            refreshedEngine?.backend !== "cpu" &&
-            refreshedEngine?.isApplicable &&
-            refreshedEngine?.isInstalled;
-          if (canProceedWithGpu) {
-            pushConsoleEntry(
-              "warn",
-              "browser",
-              `Proceeding with ${refreshedEngine.label} even though prerequisite probes are inconclusive.`
-            );
-          } else {
-          const blocking = refreshedEngine?.prerequisites
-            .filter((item) => !item.ok)
-            .map((item) => `${item.key}: ${item.message}`)
-            .join(" | ");
-            throw new Error(
-              blocking
-                ? `Runtime engine is not ready: ${blocking}`
-                : `Runtime engine is not ready: ${engineId}`
-            );
-          }
-        }
-
-        const startRequest = {
-          correlationId: nextCorrelationId(),
-          engineId,
-          modelPath,
-          port,
-          ctxSize,
-          nGpuLayers,
-          temperature,
-          topP,
-          topK,
-          repeatPenalty,
-          flashAttn,
-          mmap,
-          mlock,
-          ...(threads !== null ? { threads } : {}),
-          ...(batchSize !== null ? { batchSize } : {}),
-          ...(ubatchSize !== null ? { ubatchSize } : {}),
-          ...(seed !== null ? { seed } : {})
-        };
-        await clientRef.startLlamaRuntime(startRequest);
-        await refreshLlamaRuntime();
-      } catch (error) {
-        pushConsoleEntry(
-          "error",
-          "browser",
-          `Failed to start runtime ${engineId}: ${String(error)}`
-        );
-        await refreshLlamaRuntime();
-      } finally {
-        state.llamaRuntimeBusy = false;
-      }
+      const startArgs = {
+        engineId,
+        modelPath,
+        port,
+        ctxSize,
+        nGpuLayers,
+        threads,
+        batchSize,
+        ubatchSize,
+        temperature,
+        topP,
+        topK,
+        repeatPenalty,
+        flashAttn,
+        mmap,
+        mlock,
+        seed
+      };
+      await startRuntime(llamaState, clientRef, startArgs, {
+        nextCorrelationId: llamaControllerDeps.nextCorrelationId,
+        refreshLlamaRuntime: llamaControllerDeps.refreshLlamaRuntime,
+        persistLlamaModelPath: llamaControllerDeps.persistLlamaModelPath,
+        persistLlamaEngineId: llamaControllerDeps.persistLlamaEngineId,
+        pushConsoleEntry: llamaControllerDeps.pushConsoleEntry
+      });
       renderAndBind(sendMessage);
     },
     onLlamaRuntimeStop: async () => {
-      if (!clientRef) return;
-      state.llamaRuntimeBusy = true;
-      try {
-        await clientRef.stopLlamaRuntime({ correlationId: nextCorrelationId() });
-        await refreshLlamaRuntime();
-      } catch (error) {
-        pushConsoleEntry("error", "browser", `Failed to stop runtime: ${String(error)}`);
-        await refreshLlamaRuntime();
-      } finally {
-        state.llamaRuntimeBusy = false;
-      }
+      await stopRuntime(llamaState, clientRef, {
+        nextCorrelationId: llamaControllerDeps.nextCorrelationId,
+        refreshLlamaRuntime: llamaControllerDeps.refreshLlamaRuntime,
+        pushConsoleEntry: llamaControllerDeps.pushConsoleEntry
+      });
       renderAndBind(sendMessage);
     },
     onModelManagerRefreshInstalled: async () => {
@@ -6200,7 +5800,11 @@ syncOverlayScrollbars();
       renderAndBind(sendMessage);
     },
     onModelManagerSetQuery: async (query: string) => {
-      state.modelManagerQuery = query.trim();
+      const nextQuery = query.trim();
+      if (nextQuery === state.modelManagerQuery) {
+        return;
+      }
+      state.modelManagerQuery = nextQuery;
       renderAndBind(sendMessage);
     },
     onModelManagerSetCollection: async (collection: string) => {
@@ -6249,11 +5853,22 @@ syncOverlayScrollbars();
     },
     onModelManagerDownloadHf: async ({ repoId, fileName }) => {
       if (!clientRef) return;
+      const activeDownloadKey = `${repoId}::${fileName}`;
+      const correlationId = nextCorrelationId();
       state.modelManagerBusy = true;
+      state.modelManagerDownloading = true;
+      state.modelManagerActiveDownloadKey = activeDownloadKey;
+      state.modelManagerActiveDownloadFileName = fileName;
+      state.modelManagerActiveDownloadCorrelationId = correlationId;
+      state.modelManagerDownloadReceivedBytes = 0;
+      state.modelManagerDownloadTotalBytes = null;
+      state.modelManagerDownloadPercent = null;
+      state.modelManagerDownloadSpeedBytesPerSec = null;
       state.modelManagerMessage = `Downloading ${repoId}/${fileName}...`;
+      renderAndBind(sendMessage);
       try {
         const response = await clientRef.modelManagerDownloadHf({
-          correlationId: nextCorrelationId(),
+          correlationId,
           repoId,
           fileName
         });
@@ -6263,40 +5878,63 @@ syncOverlayScrollbars();
         state.modelManagerMessage = `Download failed: ${String(error)}`;
       } finally {
         state.modelManagerBusy = false;
+        if (!state.modelManagerDownloading) {
+          state.modelManagerActiveDownloadKey = null;
+          state.modelManagerActiveDownloadFileName = null;
+          state.modelManagerActiveDownloadCorrelationId = null;
+          state.modelManagerDownloadReceivedBytes = null;
+          state.modelManagerDownloadTotalBytes = null;
+          state.modelManagerDownloadPercent = null;
+          state.modelManagerDownloadSpeedBytesPerSec = null;
+        }
+      }
+      renderAndBind(sendMessage);
+    },
+    onModelManagerCancelDownload: async () => {
+      if (!clientRef) return;
+      const targetCorrelationId = state.modelManagerActiveDownloadCorrelationId;
+      if (!targetCorrelationId) return;
+      try {
+        await clientRef.modelManagerCancelDownload({
+          correlationId: nextCorrelationId(),
+          targetCorrelationId
+        });
+        state.modelManagerMessage = "Cancelling model download...";
+        state.modelManagerDownloading = true;
+      } catch (error) {
+        state.modelManagerMessage = `Cancel failed: ${String(error)}`;
       }
       renderAndBind(sendMessage);
     },
     onModelManagerSetUdQuant: async ({ repoId, fileName }) => {
+      const pane = document.querySelector<HTMLElement>(".primary-pane > .primary-pane-body");
+      const viewport = pane?.querySelector<HTMLElement>(".os-viewport");
+      const previousScrollTop = (viewport || pane)?.scrollTop ?? 0;
       state.modelManagerUnslothUdCatalog = state.modelManagerUnslothUdCatalog.map((row) =>
         row.repoId === repoId ? { ...row, selectedAssetFileName: fileName } : row
       );
       renderAndBind(sendMessage);
+      window.requestAnimationFrame(() => {
+        window.requestAnimationFrame(() => {
+          const newPane = document.querySelector<HTMLElement>(".primary-pane > .primary-pane-body");
+          const newViewport = newPane?.querySelector<HTMLElement>(".os-viewport");
+          const scrollEl = newViewport || newPane;
+          if (scrollEl) {
+            scrollEl.scrollTop = previousScrollTop;
+          }
+        });
+      });
     },
     onModelManagerUseAsLlamaPath: async (modelPath: string) => {
-      state.llamaRuntimeModelPath = modelPath;
-      persistLlamaModelPath(modelPath);
-      state.modelManagerMessage = `Selected model for llama.cpp: ${modelPath}`;
+      useModelPathFromManager(llamaState, modelPath, persistLlamaModelPath);
       renderAndBind(sendMessage);
     },
     onModelManagerEjectActive: async () => {
-      if (!clientRef) return;
-      state.modelManagerBusy = true;
-      state.modelManagerMessage = "Ejecting active model and stopping llama.cpp...";
-      try {
-        await clientRef.stopLlamaRuntime({ correlationId: nextCorrelationId() });
-      } catch {
-        // Ignore stop failure and still clear local model selection.
-      }
-      try {
-        state.llamaRuntimeModelPath = "";
-        persistLlamaModelPath("");
-        await refreshLlamaRuntime();
-        state.modelManagerMessage = "Active model ejected and llama.cpp stopped.";
-      } catch (error) {
-        state.modelManagerMessage = `Eject completed, refresh failed: ${String(error)}`;
-      } finally {
-        state.modelManagerBusy = false;
-      }
+      await ejectActiveModel(llamaState, clientRef, {
+        nextCorrelationId: llamaControllerDeps.nextCorrelationId,
+        persistLlamaModelPath: llamaControllerDeps.persistLlamaModelPath,
+        refreshLlamaRuntime: llamaControllerDeps.refreshLlamaRuntime
+      });
       renderAndBind(sendMessage);
     },
     onModelManagerDeleteInstalled: async (modelId: string) => {
@@ -6944,7 +6582,7 @@ syncOverlayScrollbars();
       state.avatar.bgOpacity = opacity;
       avatarRuntimeModule?.setLiveBg(color, opacity);
     },
-    onAvatarSetActiveTab: async (tab: "appearance" | "animation") => {
+    onAvatarSetActiveTab: async (tab: "appearance" | "animation" | "morphTargets") => {
       state.avatarActiveTab = tab;
       renderAndBind(sendMessage);
     },
@@ -6968,8 +6606,53 @@ syncOverlayScrollbars();
         case "openRate": state.avatarLipSyncOpenRate = value; break;
         case "closeRate": state.avatarLipSyncCloseRate = value; break;
         case "fallbackRate": state.avatarLipSyncFallbackRate = value; break;
+        case "jawBtmX": state.avatarJawBtmX = value; break;
+        case "jawBtmY": state.avatarJawBtmY = value; break;
+        case "jawBtmZ": state.avatarJawBtmZ = value; break;
+        case "jawBtmValue": state.avatarJawBtmValue = value; break;
+        case "jawTopX": state.avatarJawTopX = value; break;
+        case "jawTopY": state.avatarJawTopY = value; break;
+        case "jawTopZ": state.avatarJawTopZ = value; break;
+        case "jawTopValue": state.avatarJawTopValue = value; break;
       }
       avatarRuntimeModule?.setAvatarLipSyncSettings({ [key]: value });
+    },
+    onAvatarLipSyncReset: async () => {
+      state.avatarLipSyncStrength = 0.5;
+      state.avatarLipSyncJawBlend = 0.15;
+      state.avatarLipSyncJawAmp = 0.9;
+      state.avatarLipSyncPhonemeBoost = 1.5;
+      state.avatarLipSyncJawMorphScale = 0.3;
+      state.avatarLipSyncOpenRate = 0.8;
+      state.avatarLipSyncCloseRate = 0.55;
+      state.avatarLipSyncFallbackRate = 0.4;
+      state.avatarJawBtmX = 0;
+      state.avatarJawBtmY = -0.06;
+      state.avatarJawBtmZ = 0.02;
+      state.avatarJawBtmValue = 1;
+      state.avatarJawTopX = 0;
+      state.avatarJawTopY = 0;
+      state.avatarJawTopZ = 0;
+      state.avatarJawTopValue = 0;
+      avatarRuntimeModule?.setAvatarLipSyncSettings({
+        strength: state.avatarLipSyncStrength,
+        jawBlend: state.avatarLipSyncJawBlend,
+        jawAmp: state.avatarLipSyncJawAmp,
+        phonemeBoost: state.avatarLipSyncPhonemeBoost,
+        jawMorphScale: state.avatarLipSyncJawMorphScale,
+        openRate: state.avatarLipSyncOpenRate,
+        closeRate: state.avatarLipSyncCloseRate,
+        fallbackRate: state.avatarLipSyncFallbackRate,
+        jawBtmX: state.avatarJawBtmX,
+        jawBtmY: state.avatarJawBtmY,
+        jawBtmZ: state.avatarJawBtmZ,
+        jawBtmValue: state.avatarJawBtmValue,
+        jawTopX: state.avatarJawTopX,
+        jawTopY: state.avatarJawTopY,
+        jawTopZ: state.avatarJawTopZ,
+        jawTopValue: state.avatarJawTopValue,
+      });
+      renderAndBind(sendMessage);
     },
     onProjectCreate: async (name: string) => {
       const trimmed = name.trim();
@@ -7463,6 +7146,7 @@ async function setupSttTranscriptListener(onTranscript: (text: string) => Promis
       (event) => {
         const partial = event.payload.text?.trim();
         if (!partial || isIgnorableSttTranscript(partial)) return;
+        if (state.chatStreaming) return;
         state.chatDraft = partial;
         maybeTriggerVoicePrefillWarmup(partial);
         const input = document.querySelector<HTMLTextAreaElement>("#msg");
@@ -7820,98 +7504,7 @@ function stopSttAudioCapture(): void {
 
 function currentPrimaryPanelRenderState() {
   const primaryChatPanel = getPrimaryChatPanelState();
-  return {
-    displayMode: state.displayMode,
-    displayModePreference: state.displayModePreference,
-    chatRoutePreference: state.chatRoutePreference,
-    showAppResourceCpu: state.showAppResourceCpu,
-    showAppResourceMemory: state.showAppResourceMemory,
-    showAppResourceNetwork: state.showAppResourceNetwork,
-    showBottomEngine: state.showBottomEngine,
-    showBottomModel: state.showBottomModel,
-    showBottomContext: state.showBottomContext,
-    showBottomSpeed: state.showBottomSpeed,
-    showBottomTtsLatency: state.showBottomTtsLatency,
-    chat: primaryChatPanel,
-    chatToolIntentByCorrelation: state.chatToolIntentByCorrelation,
-    chatFirstAssistantChunkMsByCorrelation: state.chatFirstAssistantChunkMsByCorrelation,
-    chatFirstReasoningChunkMsByCorrelation: state.chatFirstReasoningChunkMsByCorrelation,
-    chatTtsLatencyMs: state.chatTtsLatencyMs,
-    devices: state.devices,
-    apiConnections: state.apiConnections,
-    apiFormOpen: state.apiFormOpen,
-    apiDraft: state.apiDraft,
-    apiEditingId: state.apiEditingId,
-    apiMessage: state.apiMessage,
-    apiSaveBusy: state.apiSaveBusy,
-    apiProbeBusy: state.apiProbeBusy,
-    apiProbeStatus: state.apiProbeStatus,
-    apiProbeMessage: state.apiProbeMessage,
-    apiDetectedModels: state.apiDetectedModels,
-    conversations: state.conversations,
-    llamaRuntime: state.llamaRuntime,
-    llamaRuntimeSelectedEngineId: state.llamaRuntimeSelectedEngineId,
-    llamaRuntimeModelPath: state.llamaRuntimeModelPath,
-    llamaRuntimePort: state.llamaRuntimePort,
-    llamaRuntimeCtxSize: state.llamaRuntimeCtxSize,
-    llamaRuntimeGpuLayers: state.llamaRuntimeGpuLayers,
-    llamaRuntimeThreads: state.llamaRuntimeThreads,
-    llamaRuntimeBatchSize: state.llamaRuntimeBatchSize,
-    llamaRuntimeUbatchSize: state.llamaRuntimeUbatchSize,
-    llamaRuntimeTemperature: state.llamaRuntimeTemperature,
-    llamaRuntimeTopP: state.llamaRuntimeTopP,
-    llamaRuntimeTopK: state.llamaRuntimeTopK,
-    llamaRuntimeRepeatPenalty: state.llamaRuntimeRepeatPenalty,
-    llamaRuntimeFlashAttn: state.llamaRuntimeFlashAttn,
-    llamaRuntimeMmap: state.llamaRuntimeMmap,
-    llamaRuntimeMlock: state.llamaRuntimeMlock,
-    llamaRuntimeSeed: state.llamaRuntimeSeed,
-    llamaRuntimeMaxTokens: state.llamaRuntimeMaxTokens,
-    llamaRuntimeBusy: state.llamaRuntimeBusy,
-    llamaRuntimeLogs: state.llamaRuntimeLogs,
-    modelManagerInstalled: state.modelManagerInstalled,
-    modelManagerActiveTab: state.modelManagerActiveTab,
-    modelManagerDisabledModelIds: state.modelManagerDisabledModelIds,
-    modelManagerInfoModalModelId: state.modelManagerInfoModalModelId,
-    chatModelOptions: state.chatModelOptions,
-    allModelsList: state.allModelsList,
-    modelManagerQuery: state.modelManagerQuery,
-    modelManagerCollection: state.modelManagerCollection,
-    modelManagerSearchResults: state.modelManagerSearchResults,
-    modelManagerBusy: state.modelManagerBusy,
-    modelManagerMessage: state.modelManagerMessage,
-    modelManagerUnslothUdCatalog: state.modelManagerUnslothUdCatalog,
-    modelManagerUnslothUdLoading: state.modelManagerUnslothUdLoading,
-    stt: state.stt,
-    vadMethods: state.vadMethods,
-    vadIncludeExperimental: state.vadIncludeExperimental,
-    vadSelectedMethod: state.vadSelectedMethod,
-    vadShadowMethod: state.vadShadowMethod,
-    vadStandbyMethod: state.vadStandbyMethod,
-    vadSettings: state.vadSettings,
-    voiceRuntimeState: state.voiceRuntimeState,
-    voiceHandoffState: state.voiceHandoffState,
-    voiceSpeculationState: state.voiceSpeculationState,
-    voiceDuplexMode: state.voiceDuplexMode,
-    vadShadowSummary: state.vadShadowSummary,
-    vadMessage: state.vadMessage,
-    tts: state.tts,
-    consoleEntries: state.consoleEntries,
-    projectsById: state.projectsById,
-    projectsSelectedId: state.projectsSelectedId,
-    projectsNameDraft: state.projectsNameDraft,
-    projectsModalOpen: state.projectsModalOpen,
-    avatar: state.avatar,
-    avatarActiveTab: state.avatarActiveTab,
-    avatarLipSyncStrength: state.avatarLipSyncStrength,
-    avatarLipSyncJawBlend: state.avatarLipSyncJawBlend,
-    avatarLipSyncJawAmp: state.avatarLipSyncJawAmp,
-    avatarLipSyncPhonemeBoost: state.avatarLipSyncPhonemeBoost,
-    avatarLipSyncJawMorphScale: state.avatarLipSyncJawMorphScale,
-    avatarLipSyncOpenRate: state.avatarLipSyncOpenRate,
-    avatarLipSyncCloseRate: state.avatarLipSyncCloseRate,
-    avatarLipSyncFallbackRate: state.avatarLipSyncFallbackRate
-  };
+  return selectPrimaryPanelState(state, primaryChatPanel) as any;
 }
 
 function renderChatMessagesOnly(panelId = PRIMARY_CHAT_PANE_ID): void {
@@ -8016,6 +7609,14 @@ function attachTopbarInteractions(sendMessage: (text: string) => Promise<void>):
     layoutToggle.onclick = () => {
       state.layoutOrientation =
         state.layoutOrientation === "landscape" ? "portrait" : "landscape";
+      renderAndBind(sendMessage);
+    };
+  }
+  const autoSafeToggle = document.querySelector<HTMLButtonElement>("#autoSafeToggle");
+  if (autoSafeToggle) {
+    autoSafeToggle.onclick = () => {
+      state.autoSafeEnabled = !state.autoSafeEnabled;
+      persistAutoSafeEnabled(state.autoSafeEnabled);
       renderAndBind(sendMessage);
     };
   }
@@ -8477,6 +8078,10 @@ function attachWorkspaceInteractions(sendMessage: (text: string) => Promise<void
           renderAndBind: () => renderAndBind(sendMessage),
           projectsById: state.projectsById
         }
+      },
+      tasks: {
+        client: clientRef,
+        nextCorrelationId
       }
     };
     workspacePane.onclick = async (event) => {
@@ -8526,6 +8131,9 @@ if (workspaceTab === "sheets-tool") {
   mountActiveSheetsRuntime(sendMessage);
 } else {
   unmountSheetsRuntime();
+}
+if (workspaceTab === "tasks-tool") {
+  await syncAllTasksFromBackend(state as any, { client: clientRef, nextCorrelationId });
 }
 },
         maybeOpenFlowProjectSetup,
@@ -8918,22 +8526,9 @@ if (workspaceTab === "sheets-tool") {
     });
     workspacePane.addEventListener("input", (event: Event) => {
       const input = event.target as HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement;
-      const action = input.getAttribute?.("data-memory-action");
-      if (action === "editor-input" && input instanceof HTMLTextAreaElement) {
-        state.memoryModalValue = input.value;
+      const memoryResult = handleMemoryModalInputEvent(state, input);
+      if (memoryResult.refreshEditor && input instanceof HTMLTextAreaElement) {
         refreshMemoryModalEditor(input);
-        return;
-      }
-      if (action === "modal-draft-key") {
-        state.memoryModalDraftKey = input.value;
-        return;
-      }
-      if (action === "modal-draft-category") {
-        state.memoryModalDraftCategory = input.value;
-        return;
-      }
-      if (action === "modal-draft-description") {
-        state.memoryModalDraftDescription = input.value;
       }
       if (input.getAttribute?.("data-chart-field") === "source") {
         void renderChartCanvasIfNeeded(sendMessage);
@@ -8941,23 +8536,15 @@ if (workspaceTab === "sheets-tool") {
     });
     workspacePane.addEventListener("change", (event: Event) => {
       const input = event.target as HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement;
-      const action = input.getAttribute?.("data-memory-action");
-      if (action === "modal-draft-category") {
-        state.memoryModalDraftCategory = input.value;
-      }
+      handleMemoryModalChangeEvent(state, input);
     });
     workspacePane.addEventListener("keydown", (event: KeyboardEvent) => {
       const ta = event.target as HTMLTextAreaElement;
-      if (ta.getAttribute?.("data-memory-action") !== "editor-input") return;
-      if (event.key === "Tab") {
-        event.preventDefault();
-        const start = ta.selectionStart;
-        const end = ta.selectionEnd;
-        ta.value = ta.value.substring(0, start) + "\t" + ta.value.substring(end);
-        ta.selectionStart = ta.selectionEnd = start + 1;
+      const result = handleMemoryModalEditorKeyDown(event, ta);
+      if (result.refreshEditor) {
         refreshMemoryModalEditor(ta);
       }
-      if (event.key === "Escape") {
+      if (result.closeModal) {
         closeMemoryModal();
         renderAndBind(sendMessage);
       }
@@ -9141,6 +8728,7 @@ async function bootstrap(): Promise<void> {
     client,
     handleCoreEvent: (event) => {
       handleTtsDownloadProgressEvent(event, () => renderAndBind(sendMessage));
+      handleModelManagerDownloadProgressEvent(event, () => renderAndBind(sendMessage));
       if (event.action === "chart.definition.set") {
         const payload = payloadAsRecord(event.payload);
         const definition = typeof payload?.definition === "string" ? payload.definition.trim() : "";
@@ -9300,8 +8888,7 @@ async function bootstrap(): Promise<void> {
     postprocessSpeakableText,
     extractSpeakableStreamDelta,
     enqueueImmediateTtsChunk: (text, correlationId) => {
-      chatTtsQueue.push({ text, correlationId });
-      notifyChatTtsQueueAvailable();
+      chatTtsPipeline.enqueueImmediate(text, correlationId);
     },
     enqueueSpeakableChunk,
     runChatTtsQueue,

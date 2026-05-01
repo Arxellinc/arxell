@@ -9,19 +9,58 @@ function modelNameFromPath(path: string): string {
   return parts[parts.length - 1] ?? trimmed;
 }
 
-export function renderLlamaCppActions(): string {
+export function renderLlamaCppActions(state: PrimaryPanelRenderState): string {
+  const runtime = state.llamaRuntime;
+  const selected =
+    runtime?.engines.find((engine) => engine.engineId === state.llamaRuntimeSelectedEngineId) ??
+    runtime?.engines[0] ??
+    null;
+  const engineOptions = runtime?.engines.length
+    ? runtime.engines
+        .map((engine) => {
+          const selectedAttr =
+            engine.engineId === state.llamaRuntimeSelectedEngineId ? " selected" : "";
+          return `<option value="${escapeHtml(engine.engineId)}"${selectedAttr}>${escapeHtml(engine.label)}</option>`;
+        })
+        .join("")
+    : `<option value="${escapeHtml(state.llamaRuntimeSelectedEngineId)}">${escapeHtml(state.llamaRuntimeSelectedEngineId)}</option>`;
+  const engineStatusClass = selected?.isReady ? " is-ready" : "";
+  const engineStatusLabel = selected?.isReady ? "Ready" : selected?.isInstalled ? "Installed" : "Not installed";
+  const isBusy = state.llamaRuntimeBusy;
+  const runtimeState = (runtime?.state || "").toLowerCase();
+  const isRunning = runtimeState === "healthy" && Boolean(runtime?.pid);
+  const isStarting = runtimeState === "starting";
+  const hasModelPath = Boolean(state.llamaRuntimeModelPath.trim());
+  const canInstall = !isBusy && Boolean(selected) && !selected.isInstalled;
+  const canStart = !isBusy && !isRunning && !isStarting && Boolean(selected?.isReady) && hasModelPath;
+  const canStop = !isBusy && (isRunning || isStarting);
+  const refreshDisabledAttr = isBusy ? " disabled" : "";
+  const installDisabledAttr = canInstall ? "" : " disabled";
+  const startDisabledAttr = canStart ? "" : " disabled";
+  const stopDisabledAttr = canStop ? "" : " disabled";
+  const engineSelectDisabledAttr = isBusy ? " disabled" : "";
   return `
     <div class="llama-actions">
-      <button type="button" class="topbar-icon-btn" id="llamaRefreshBtn" aria-label="Refresh llama runtime" data-title="Refresh Runtime" title="Refresh Runtime">↻</button>
-      <button type="button" class="topbar-icon-btn" id="llamaInstallBtn" aria-label="Install selected engine" data-title="Install Engine" title="Install Engine">⇣</button>
-      <button type="button" class="topbar-icon-btn" id="llamaStartBtn" aria-label="Start runtime" data-title="Start Server" title="Start Server">▶</button>
-      <button type="button" class="topbar-icon-btn" id="llamaStopBtn" aria-label="Stop runtime" data-title="Stop Server" title="Stop Server">■</button>
+      <div class="llama-actions-engine">
+        <select id="llamaEngineSelect" class="llama-input" aria-label="Engine"${engineSelectDisabledAttr}>
+          ${engineOptions}
+        </select>
+        <span class="llama-engine-status${engineStatusClass}" title="${escapeHtml(engineStatusLabel)}" aria-label="${escapeHtml(engineStatusLabel)}">${selected?.isReady ? "✓" : "•"}</span>
+      </div>
+      <button type="button" class="topbar-icon-btn" id="llamaRefreshBtn" aria-label="Refresh llama runtime" data-title="Refresh Runtime" title="Refresh Runtime"${refreshDisabledAttr}>↻</button>
+      <button type="button" class="topbar-icon-btn" id="llamaInstallBtn" aria-label="Install selected engine" data-title="Install Engine" title="Install Engine"${installDisabledAttr}>⇣</button>
+      <button type="button" class="topbar-icon-btn" id="llamaStartBtn" aria-label="Start runtime" data-title="Start Server" title="Start Server"${startDisabledAttr}>▶</button>
+      <button type="button" class="topbar-icon-btn" id="llamaStopBtn" aria-label="Stop runtime" data-title="Stop Server" title="Stop Server"${stopDisabledAttr}>■</button>
     </div>
   `;
 }
 
 export function renderLlamaCppBody(state: PrimaryPanelRenderState): string {
-  const activeModelName = modelNameFromPath(state.llamaRuntimeModelPath || "");
+  const runtime = state.llamaRuntime;
+  const activeModelPath = (state.llamaRuntimeActiveModelPath || "").trim();
+  const hasActiveRuntime =
+    runtime?.state === "healthy" && Boolean(runtime?.activeEngineId) && Boolean(runtime?.pid);
+  const activeModelName = hasActiveRuntime ? modelNameFromPath(activeModelPath) : "";
   const currentModelPath = state.llamaRuntimeModelPath.trim();
   const installedModelOptions = state.modelManagerInstalled
     .map((model) => {
@@ -52,19 +91,10 @@ export function renderLlamaCppBody(state: PrimaryPanelRenderState): string {
       </div>
     `
     : `<div class="model-manager-installed-row is-empty"><span>No active model selected</span><span>-</span><span>-</span><span>-</span></div>`;
-  const runtime = state.llamaRuntime;
   const selected =
     runtime?.engines.find((e) => e.engineId === state.llamaRuntimeSelectedEngineId) ??
     runtime?.engines[0] ??
     null;
-  const readyMeta = selected
-    ? selected.isReady
-      ? "Ready"
-      : selected.isInstalled
-        ? "Installed"
-        : "Not installed"
-    : "Unknown";
-  const prerequisites = selected?.prerequisites ?? [];
   const detectGpuEngine = () => {
     if (!runtime) return { label: "None detected", meta: "CPU only" };
     const activeGpu = runtime.engines.find(
@@ -104,16 +134,6 @@ export function renderLlamaCppBody(state: PrimaryPanelRenderState): string {
     };
   };
   const detectedGpu = detectGpuEngine();
-  const engineOptions = runtime?.engines.length
-    ? runtime.engines
-        .map((engine) => {
-          const selectedAttr =
-            engine.engineId === state.llamaRuntimeSelectedEngineId ? " selected" : "";
-          return `<option value="${escapeHtml(engine.engineId)}"${selectedAttr}>${escapeHtml(engine.label)}</option>`;
-        })
-        .join("")
-    : `<option value="${escapeHtml(state.llamaRuntimeSelectedEngineId)}">${escapeHtml(state.llamaRuntimeSelectedEngineId)}</option>`;
-
   const runtimeConsoleHtml = state.llamaRuntimeLogs.length
     ? state.llamaRuntimeLogs
         .map((line) => `<div class="llama-runtime-line">${escapeHtml(line)}</div>`)
@@ -122,7 +142,7 @@ export function renderLlamaCppBody(state: PrimaryPanelRenderState): string {
 
   return `
     <div class="primary-pane-body">
-      <div class="llama-form">
+      <div class="llama-form llama-panel-form">
         <h3 class="model-manager-title">Active Models</h3>
         <div class="model-manager-installed-table is-active">
           <div class="model-manager-installed-header">
@@ -135,22 +155,7 @@ export function renderLlamaCppBody(state: PrimaryPanelRenderState): string {
         </div>
       </div>
 
-      <div class="llama-form llama-settings-form">
-        <br />
-        <div class="model-manager-installed-table is-engine">
-          <div class="model-manager-installed-header">
-            <span>Engine</span>
-            <span>Backend</span>
-            <span>State</span>
-            <span>Action</span>
-          </div>
-          <div class="model-manager-installed-row">
-            <span><select id="llamaEngineSelect" class="llama-input">${engineOptions}</select></span>
-            <span>${escapeHtml(selected?.backend ?? "unknown")}</span>
-            <span>${escapeHtml(readyMeta)}</span>
-            <span class="model-manager-installed-actions">-</span>
-          </div>
-        </div>
+      <div class="llama-form llama-settings-form llama-panel-form">
         <h3>Settings</h3>
         <div class="llama-settings-actions">
           <button type="button" class="tool-action-btn" id="llamaClearLogsBtn" title="Clear runtime logs">

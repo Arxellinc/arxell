@@ -2170,6 +2170,7 @@ impl ChatService {
         let namespaces = [
             ("episodic", "other"),
             ("fact", "fact"),
+            ("user", "user"),
             ("personality", "personality"),
             ("directive", "directive"),
             ("other", "other"),

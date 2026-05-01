@@ -24,6 +24,15 @@ function resolveTtsCompatHint(
   return null;
 }
 
+function bundleDirFromUrl(url: string): string {
+  const fileName = url.split("/").pop() || "";
+  return fileName.replace(/\.tar\.bz2$/, "");
+}
+
+function isBundleInstalled(bundleDir: string, availableModelPaths: string[]): boolean {
+  return availableModelPaths.some((p) => p.replace(/\\/g, "/").includes("/" + bundleDir + "/"));
+}
+
 function bundleLabelFromModelPath(modelPath: string): string {
   const normalized = modelPath.replace(/\\/g, "/").replace(/\/+$/, "");
   if (!normalized) return "(unset)";
@@ -132,6 +141,11 @@ export function renderTtsBody(state: PrimaryPanelRenderState): string {
     <div class="primary-pane-body">
       <div class="config-table tts-engine-table">
         <div class="config-row tts-config-row">
+          <span class="config-key">Model Bundle</span>
+          <span class="config-value">${tts.ready ? "Installed" : "Missing / Invalid"}</span>
+          <span class="config-meta">sherpa-onnx ${engineLabel}</span>
+        </div>
+        <div class="config-row tts-config-row">
           <label class="config-key" for="ttsEngineSelect">Engine</label>
           <span class="config-value">
               <select id="ttsEngineSelect" class="settings-select" ${busy ? "disabled" : ""}>
@@ -142,11 +156,7 @@ export function renderTtsBody(state: PrimaryPanelRenderState): string {
           </span>
           <span class="config-meta">${tts.ready ? "Ready" : "Not Ready"}</span>
         </div>
-        <div class="config-row tts-config-row">
-          <span class="config-key">Model Bundle</span>
-          <span class="config-value">${tts.ready ? "Installed" : "Missing / Invalid"}</span>
-          <span class="config-meta">sherpa-onnx ${engineLabel}</span>
-        </div>
+      
         <div class="config-row tts-config-row">
           <label class="config-key" for="ttsBundleSelect">Bundle</label>
           <span class="config-value">
@@ -156,9 +166,21 @@ export function renderTtsBody(state: PrimaryPanelRenderState): string {
             </select>
           </span>
           <span class="config-meta">${modelPathOptions.length} found</span>
-        </div>
-      </div>
-
+         <span class="config-value"></span>
+         
+          <span class="config-meta">      
+ ${
+        tts.engine === "kokoro" && KOKORO_BUNDLE_OPTIONS.some((b) => !isBundleInstalled(bundleDirFromUrl(b.url), modelPathOptions))
+          ? `<div class="tts-bundle-links">
+              ${KOKORO_BUNDLE_OPTIONS
+                .filter((b) => !isBundleInstalled(bundleDirFromUrl(b.url), modelPathOptions))
+                .map((b) => `<a href="#" class="tts-bundle-link" data-url="${b.url}">${b.label} (${b.sizeLabel})</a>`)
+                .join("")}
+            </div>`
+          : ""
+      }
+</span>
+          <span>
       ${
         showInlineBanner
           ? `<div class="tts-download-banner">
@@ -180,7 +202,10 @@ export function renderTtsBody(state: PrimaryPanelRenderState): string {
               }
             </div>`
           : ""
-      }
+      }</span>
+          
+      </div>
+       </div>
 
       ${setupModalHtml}
 

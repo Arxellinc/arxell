@@ -53,8 +53,6 @@ export interface TtsEngineResettableState {
   voicesPath: string;
   tokensPath: string;
   dataDir: string;
-  pythonPath: string;
-  scriptPath: string;
   voices: string[];
   selectedVoice: string;
   speed: number;
@@ -159,8 +157,6 @@ export function resetTtsStateForEngine<T extends TtsEngineResettableState>(
     voicesPath: "",
     tokensPath: "",
     dataDir: "",
-    pythonPath: "",
-    scriptPath: "",
     voices,
     selectedVoice: voices[0] ?? defaultVoiceForEngine(engine),
     speed: 1,

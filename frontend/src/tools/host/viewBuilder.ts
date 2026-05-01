@@ -10,7 +10,7 @@ import {
 } from "../memory";
 import { renderChartToolActions, renderChartToolBody } from "../chart";
 import { renderTasksToolActions, renderTasksToolBody } from "../tasks";
-import type { TaskFolder, TaskSortDirection, TaskSortKey, TaskRecord } from "../tasks/state";
+import type { TaskFolder, TaskSortDirection, TaskSortKey, TaskRecord, TaskRunRecord } from "../tasks/state";
 import type { ProjectRecord } from "../../projectsStore";
 import { renderWebToolActions, renderWebToolBody } from "../webSearch";
 import type { WebSearchHistoryItem, WebTabState } from "../webSearch/state";
@@ -84,6 +84,7 @@ export interface WorkspaceToolViewInput {
   filesSelectionGesture: "single" | "toggle" | "range" | null;
   filesError: string | null;
   tasksById: Record<string, TaskRecord>;
+  tasksRunsByTaskId: Record<string, TaskRunRecord[]>;
   tasksSelectedId: string | null;
   tasksFolder: TaskFolder;
   tasksSortKey: TaskSortKey;
@@ -365,7 +366,8 @@ export function buildWorkspaceToolViews(input: WorkspaceToolViewInput): Record<s
         sortDirection: input.tasksSortDirection,
         detailsCollapsed: input.tasksDetailsCollapsed,
         jsonDraft: input.tasksJsonDraft,
-        projectsById: input.projectsById
+        projectsById: input.projectsById,
+        runsByTaskId: input.tasksRunsByTaskId
       }),
       bodyHtml: renderTasksToolBody({
         tasksById: input.tasksById,
@@ -375,7 +377,8 @@ export function buildWorkspaceToolViews(input: WorkspaceToolViewInput): Record<s
         sortDirection: input.tasksSortDirection,
         detailsCollapsed: input.tasksDetailsCollapsed,
         jsonDraft: input.tasksJsonDraft,
-        projectsById: input.projectsById
+        projectsById: input.projectsById,
+        runsByTaskId: input.tasksRunsByTaskId
       })
     },
     memory: {

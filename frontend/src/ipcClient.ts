@@ -58,6 +58,7 @@ import type {
   TtsSettingsSetResponse,
   TtsSpeakRequest,
   TtsSpeakResponse,
+  TtsSpeakStreamResponse,
   TtsStatusRequest,
   TtsStatusResponse,
   TtsStopRequest,
@@ -88,6 +89,8 @@ import type {
   LlamaRuntimeStopResponse,
   ModelManagerDeleteInstalledRequest,
   ModelManagerDeleteInstalledResponse,
+  ModelManagerCancelDownloadRequest,
+  ModelManagerCancelDownloadResponse,
   ModelManagerDownloadHfRequest,
   ModelManagerDownloadHfResponse,
   ModelManagerListCatalogCsvRequest,
@@ -229,6 +232,9 @@ export interface ChatIpcClient {
   modelManagerDownloadHf(
     request: ModelManagerDownloadHfRequest
   ): Promise<ModelManagerDownloadHfResponse>;
+  modelManagerCancelDownload(
+    request: ModelManagerCancelDownloadRequest
+  ): Promise<ModelManagerCancelDownloadResponse>;
   modelManagerDeleteInstalled(
     request: ModelManagerDeleteInstalledRequest
   ): Promise<ModelManagerDeleteInstalledResponse>;
@@ -244,6 +250,7 @@ export interface ChatIpcClient {
   ttsStatus(request: TtsStatusRequest): Promise<TtsStatusResponse>;
   ttsListVoices(request: TtsListVoicesRequest): Promise<TtsListVoicesResponse>;
   ttsSpeak(request: TtsSpeakRequest): Promise<TtsSpeakResponse>;
+  ttsSpeakStream(request: TtsSpeakRequest): Promise<TtsSpeakStreamResponse>;
   ttsStop(request: TtsStopRequest): Promise<TtsStopResponse>;
   ttsSelfTest(request: TtsSelfTestRequest): Promise<TtsSelfTestResponse>;
   ttsSettingsGet(request: TtsSettingsGetRequest): Promise<TtsSettingsGetResponse>;
@@ -600,6 +607,14 @@ class TauriChatIpcClient implements ChatIpcClient {
     });
   }
 
+  modelManagerCancelDownload(
+    request: ModelManagerCancelDownloadRequest
+  ): Promise<ModelManagerCancelDownloadResponse> {
+    return this.invokeFn<ModelManagerCancelDownloadResponse>("cmd_model_manager_cancel_download", {
+      request
+    });
+  }
+
   modelManagerDeleteInstalled(
     request: ModelManagerDeleteInstalledRequest
   ): Promise<ModelManagerDeleteInstalledResponse> {
@@ -643,6 +658,10 @@ class TauriChatIpcClient implements ChatIpcClient {
 
   ttsSpeak(request: TtsSpeakRequest): Promise<TtsSpeakResponse> {
     return this.invokeFn<TtsSpeakResponse>("cmd_tts_speak", { request });
+  }
+
+  ttsSpeakStream(request: TtsSpeakRequest): Promise<TtsSpeakStreamResponse> {
+    return this.invokeFn<TtsSpeakStreamResponse>("cmd_tts_speak_stream", { request });
   }
 
   ttsStop(request: TtsStopRequest): Promise<TtsStopResponse> {
@@ -1765,6 +1784,7 @@ export class MockChatIpcClient implements ChatIpcClient {
       correlationId: request.correlationId,
       state: "idle",
       activeEngineId: null,
+      activeModelPath: null,
       endpoint: null,
       pid: null,
       engines: [
@@ -1890,6 +1910,16 @@ export class MockChatIpcClient implements ChatIpcClient {
     };
   }
 
+  async modelManagerCancelDownload(
+    request: ModelManagerCancelDownloadRequest
+  ): Promise<ModelManagerCancelDownloadResponse> {
+    return {
+      correlationId: request.correlationId,
+      targetCorrelationId: request.targetCorrelationId,
+      cancelled: true
+    };
+  }
+
   async modelManagerDeleteInstalled(
     request: ModelManagerDeleteInstalledRequest
   ): Promise<ModelManagerDeleteInstalledResponse> {
@@ -1972,8 +2002,6 @@ export class MockChatIpcClient implements ChatIpcClient {
       voicesPath: this.mockTts.engine === "piper" ? "" : this.mockTts.voicesPath,
       tokensPath: this.mockTts.tokensPath,
       dataDir: this.mockTts.dataDir,
-      pythonPath: "",
-      scriptPath: "",
       runtimeArchivePresent: false,
       availableModelPaths: this.mockTts.modelPath ? [this.mockTts.modelPath] : [],
       availableVoices: voices,
@@ -2247,6 +2275,16 @@ export class MockChatIpcClient implements ChatIpcClient {
     throw new Error("Mock runtime does not synthesize TTS audio.");
   }
 
+  async ttsSpeakStream(request: TtsSpeakRequest): Promise<TtsSpeakStreamResponse> {
+    return {
+      correlationId: request.correlationId,
+      accepted: false,
+      engineId: `sherpa-${this.mockTts.engine}`,
+      voice: this.mockTts.voice,
+      speed: this.mockTts.speed
+    };
+  }
+
   async ttsStop(request: TtsStopRequest): Promise<TtsStopResponse> {
     return {
       correlationId: request.correlationId,
@@ -2279,8 +2317,7 @@ export class MockChatIpcClient implements ChatIpcClient {
       secondaryPath: this.mockTts.secondaryPath,
       voicesPath: this.mockTts.engine === "piper" ? "" : this.mockTts.voicesPath,
       tokensPath: this.mockTts.tokensPath,
-      dataDir: this.mockTts.dataDir,
-      pythonPath: ""
+      dataDir: this.mockTts.dataDir
     };
   }
 

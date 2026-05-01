@@ -39,6 +39,7 @@ sysinfo = "0.37"
 git2 = { version = "0.20", features = ["vendored-libgit2"] }
 ironcalc = "0.7.1"
 keyring = "3"
+base64 = "0.22"
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }

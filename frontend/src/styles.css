@@ -2841,6 +2841,42 @@ body {
 .llama-actions {
   display: inline-flex;
   gap: 6px;
+  width: 100%;
+}
+
+.llama-actions-engine {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-right: auto;
+  min-width: 0;
+}
+
+.llama-actions-engine .llama-input {
+  min-width: 180px;
+  max-width: 280px;
+  height: 24px;
+  background-color: var(--panel);
+  padding: 0 22px 0 8px;
+  font-size: var(--text-sm);
+}
+
+.llama-engine-status {
+  width: 18px;
+  height: 18px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  color: var(--muted);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: var(--text-sm);
+  line-height: 1;
+}
+
+.llama-engine-status.is-ready {
+  border-color: color-mix(in srgb, var(--status-success) 60%, var(--line));
+  color: var(--status-success);
 }
 
 .llama-status-table {
@@ -2888,15 +2924,34 @@ body {
   margin-top: 0;
 }
 
+.llama-panel-form {
+  gap: 0;
+}
+
 .llama-form .config-row:last-child {
   border-bottom: 1px solid var(--line);
 }
 
 .llama-settings-form .config-row {
-  grid-template-columns: minmax(108px, 0.6fr) minmax(260px, 1.5fr) 150px;
+  grid-template-columns: minmax(108px, 0.65fr) minmax(0, 1.55fr) minmax(100px, 0.8fr);
   border-bottom: none;
   padding-top: 0.2rem;
   padding-bottom: 0.2rem;
+  white-space: normal;
+}
+
+.llama-settings-form .config-row:first-of-type {
+  margin-bottom: 6px;
+}
+
+.llama-settings-form .config-meta {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.llama-settings-form .model-manager-installed-table.is-engine {
+  width: 100%;
+  margin-right: 0;
 }
 
 .model-manager-installed-table.is-engine {
@@ -3039,6 +3094,70 @@ body {
 .model-manager-actions-row .tool-action-btn {
   height: 30px;
   padding: 0 10px;
+}
+
+.model-manager-actions-row .tool-action-btn.mm-download-btn.is-downloading,
+.model-manager-simple-row .tool-action-btn.mm-download-btn.is-downloading {
+  background: var(--status-info);
+  border-color: var(--status-info);
+  color: var(--accent-ink);
+}
+
+.model-manager-actions-row .tool-action-btn.mm-download-btn.is-downloading:disabled,
+.model-manager-simple-row .tool-action-btn.mm-download-btn.is-downloading:disabled {
+  opacity: 1;
+}
+
+.mm-download-progress {
+  display: grid;
+  gap: 6px;
+  margin-bottom: 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 8px 10px;
+  background: var(--surface-soft);
+}
+
+.mm-download-progress-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: var(--text-sm);
+  color: var(--ink);
+}
+
+.mm-download-progress-track {
+  width: 100%;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--hover-bg);
+  border: 1px solid var(--line);
+  overflow: hidden;
+}
+
+.mm-download-progress-fill {
+  height: 100%;
+  width: 0;
+  background: var(--accent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 70%, transparent);
+  transition: width 0.18s ease;
+}
+
+.mm-download-progress-detail {
+  font-size: var(--text-xs);
+  color: var(--muted);
+}
+
+.mm-download-progress-bottom {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.mm-download-cancel-btn {
+  height: 22px;
+  padding: 0 8px;
 }
 
 .model-manager-title {
@@ -4411,6 +4530,25 @@ body {
 
 .tts-model-browse-btn:hover:not(:disabled) {
   background: var(--hover-bg);
+}
+
+.tts-bundle-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  overflow: visible !important;
+  white-space: normal !important;
+}
+
+.tts-bundle-link {
+  color: var(--accent);
+  font-size: var(--text-xs);
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.tts-bundle-link:hover {
+  text-decoration: underline;
 }
 
 .tts-test-row .config-value {

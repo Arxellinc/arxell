@@ -956,6 +956,7 @@ pub struct LlamaRuntimeStatusResponse {
     pub correlation_id: String,
     pub state: String,
     pub active_engine_id: Option<String>,
+    pub active_model_path: Option<String>,
     pub endpoint: Option<String>,
     pub pid: Option<u32>,
     pub engines: Vec<LlamaRuntimeEngine>,
@@ -1081,6 +1082,21 @@ pub struct ModelManagerDownloadHfRequest {
 pub struct ModelManagerDownloadHfResponse {
     pub correlation_id: String,
     pub model: ModelManagerInstalledModel,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ModelManagerCancelDownloadRequest {
+    pub correlation_id: String,
+    pub target_correlation_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ModelManagerCancelDownloadResponse {
+    pub correlation_id: String,
+    pub target_correlation_id: String,
+    pub cancelled: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1719,8 +1735,6 @@ pub struct TtsStatusResponse {
     pub voices_path: String,
     pub tokens_path: String,
     pub data_dir: String,
-    pub python_path: String,
-    pub script_path: String,
     pub runtime_archive_present: bool,
     pub available_model_paths: Vec<String>,
     pub available_voices: Vec<String>,
@@ -1762,6 +1776,16 @@ pub struct TtsSpeakResponse {
     pub sample_rate: u32,
     pub duration_ms: u32,
     pub audio_bytes: Vec<u8>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TtsSpeakStreamResponse {
+    pub correlation_id: String,
+    pub accepted: bool,
+    pub engine_id: String,
+    pub voice: String,
+    pub speed: f32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1813,7 +1837,6 @@ pub struct TtsSettingsGetResponse {
     pub voices_path: String,
     pub tokens_path: String,
     pub data_dir: String,
-    pub python_path: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1828,7 +1851,6 @@ pub struct TtsSettingsSetRequest {
     pub voices_path: Option<String>,
     pub tokens_path: Option<String>,
     pub data_dir: Option<String>,
-    pub python_path: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

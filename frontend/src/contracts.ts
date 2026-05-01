@@ -668,6 +668,7 @@ export interface LlamaRuntimeStatusResponse {
   correlationId: string;
   state: string;
   activeEngineId: string | null;
+  activeModelPath: string | null;
   endpoint: string | null;
   pid: number | null;
   engines: LlamaRuntimeEngine[];
@@ -765,6 +766,17 @@ export interface ModelManagerDownloadHfRequest {
 export interface ModelManagerDownloadHfResponse {
   correlationId: string;
   model: ModelManagerInstalledModel;
+}
+
+export interface ModelManagerCancelDownloadRequest {
+  correlationId: string;
+  targetCorrelationId: string;
+}
+
+export interface ModelManagerCancelDownloadResponse {
+  correlationId: string;
+  targetCorrelationId: string;
+  cancelled: boolean;
 }
 
 export interface ModelManagerDeleteInstalledRequest {
@@ -1002,8 +1014,6 @@ export interface TtsStatusResponse {
   voicesPath: string;
   tokensPath: string;
   dataDir: string;
-  pythonPath: string;
-  scriptPath: string;
   runtimeArchivePresent: boolean;
   availableModelPaths: string[];
   availableVoices: string[];
@@ -1037,6 +1047,14 @@ export interface TtsSpeakResponse {
   sampleRate: number;
   durationMs: number;
   audioBytes: number[];
+}
+
+export interface TtsSpeakStreamResponse {
+  correlationId: string;
+  accepted: boolean;
+  engineId: string;
+  voice: string;
+  speed: number;
 }
 
 export interface TtsStopRequest {
@@ -1076,7 +1094,6 @@ export interface TtsSettingsGetResponse {
   voicesPath: string;
   tokensPath: string;
   dataDir: string;
-  pythonPath: string;
 }
 
 export interface TtsSettingsSetRequest {
@@ -1089,7 +1106,6 @@ export interface TtsSettingsSetRequest {
   voicesPath?: string;
   tokensPath?: string;
   dataDir?: string;
-  pythonPath?: string;
 }
 
 export interface TtsSettingsSetResponse {

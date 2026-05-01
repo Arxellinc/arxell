@@ -146,6 +146,9 @@ export function handleCoreAppEvent(
       const synthesis = num(timings.synthesis);
       const wavEncode = num(timings.wavEncode);
       const workerWait = num(timings.workerWait);
+      const ipcMarshal = num(timings.ipcMarshal);
+      const firstChunk = num(timings.firstChunk);
+      const ttfa = num(timings.ttfa);
       deps.pushConsoleEntry(
         "debug",
         "app",
@@ -158,7 +161,10 @@ export function handleCoreAppEvent(
           `enginePrepare=${enginePrepare ?? "n/a"}`,
           `synthesis=${synthesis ?? "n/a"}`,
           `wavEncode=${wavEncode ?? "n/a"}`,
-          `workerWait=${workerWait ?? "n/a"}`
+          `workerWait=${workerWait ?? "n/a"}`,
+          `ipcMarshal=${ipcMarshal ?? "n/a"}`,
+          `firstChunk=${firstChunk ?? "n/a"}`,
+          `ttfa=${ttfa ?? "n/a"}`
         ].join(" ")
       );
     }

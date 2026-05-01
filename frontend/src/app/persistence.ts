@@ -1,6 +1,7 @@
 import type { DisplayMode } from "../layout";
 
 const LLAMA_MODEL_PATH_STORAGE_KEY = "arxell.llama.modelPath";
+const LLAMA_ENGINE_ID_STORAGE_KEY = "arxell.llama.engineId";
 const LLAMA_MAX_TOKENS_STORAGE_KEY = "arxell.llama.maxTokens";
 const CHAT_ROUTE_PREFERENCE_STORAGE_KEY = "arxell.chat.routePreference";
 const SHOW_APP_RESOURCES_CPU_STORAGE_KEY = "arxell.settings.showAppResources.cpu";
@@ -65,6 +66,26 @@ export function persistLlamaModelPath(modelPath: string): void {
       return;
     }
     window.localStorage.setItem(LLAMA_MODEL_PATH_STORAGE_KEY, normalized);
+  } catch {}
+}
+
+export function loadPersistedLlamaEngineId(): string {
+  try {
+    const value = window.localStorage.getItem(LLAMA_ENGINE_ID_STORAGE_KEY);
+    return value?.trim() ?? "";
+  } catch {
+    return "";
+  }
+}
+
+export function persistLlamaEngineId(engineId: string): void {
+  try {
+    const normalized = engineId.trim();
+    if (!normalized) {
+      window.localStorage.removeItem(LLAMA_ENGINE_ID_STORAGE_KEY);
+      return;
+    }
+    window.localStorage.setItem(LLAMA_ENGINE_ID_STORAGE_KEY, normalized);
   } catch {}
 }
 

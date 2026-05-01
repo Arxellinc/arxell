@@ -8,6 +8,9 @@ export interface TaskRecord {
   projectId: string;
   name: string;
   description: string;
+  state: "draft" | "approved" | "complete" | "rejected";
+  riskLevel: "low" | "medium" | "high";
+  estimatedCostUsd: number;
   createdAtMs: number;
   updatedAtMs: number;
   archived: boolean;
@@ -15,8 +18,22 @@ export interface TaskRecord {
   agentOwner: string;
 }
 
+export interface TaskRunRecord {
+  id: string;
+  taskId: string;
+  status: string;
+  triggerReason: string;
+  policyDecision: string;
+  policyReason: string;
+  createdAtMs: number;
+  startedAtMs?: number | null;
+  completedAtMs?: number | null;
+  error: string;
+}
+
 export interface TasksRuntimeSlice {
   tasksById: Record<string, TaskRecord>;
+  tasksRunsByTaskId: Record<string, TaskRunRecord[]>;
   tasksSelectedId: string | null;
   tasksFolder: TaskFolder;
   tasksSortKey: TaskSortKey;

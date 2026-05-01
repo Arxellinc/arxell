@@ -298,6 +298,20 @@
   background: var(--surface-soft);
 }
 
+.memory-modal-fields .field-input-soft,
+.memory-modal-fields .field-textarea-soft {
+  background-color: var(--surface);
+  color: var(--ink);
+  border: 1px solid var(--line);
+}
+
+.memory-modal-fields .field-select {
+  background-color: var(--surface);
+  color: var(--ink);
+  border: 1px solid var(--line);
+  background-repeat: no-repeat;
+}
+
 .memory-modal-editor-panel {
   flex: 1;
   min-height: 0;

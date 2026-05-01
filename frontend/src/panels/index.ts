@@ -103,7 +103,7 @@ export function getPanelDefinition(
       title: "llama.cpp",
       icon: APP_ICON.sidebar.llamaCpp,
       renderBody: () => renderLlamaCppBody(state),
-      renderActions: renderLlamaCppActions
+      renderActions: () => renderLlamaCppActions(state)
     };
   }
 
@@ -266,10 +266,11 @@ export function attachPrimaryPanelInteractions(
       };
     }
     // Bind Kokoro bundle download buttons (rendered dynamically when Kokoro is selected and model not ready)
-    const kokoroBundleBtns = document.querySelectorAll<HTMLButtonElement>(".kokoro-bundle-btn");
+    const kokoroBundleBtns = document.querySelectorAll<HTMLElement>(".tts-bundle-link, .kokoro-bundle-btn");
     kokoroBundleBtns.forEach((btn) => {
-      btn.onclick = async () => {
-        const url = btn.dataset.url;
+      btn.onclick = async (e) => {
+        e.preventDefault();
+        const url = (btn as HTMLElement).dataset.url;
         if (url) {
           await bindings.onTtsDownloadModelWithUrl(url);
         }

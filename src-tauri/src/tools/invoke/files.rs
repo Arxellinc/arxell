@@ -24,7 +24,7 @@ pub fn register(registry: &mut InvokeRegistry) {
     registry.register("files", &["delete-path", "deletePath"], invoke_delete_path);
 }
 
-fn invoke_list_directory(state: &TauriBridgeState, payload: Value) -> ToolInvokeFuture {
+fn invoke_list_directory(state: &TauriBridgeState, payload: Value) -> ToolInvokeFuture<'_> {
     let files = state.files.clone();
     Box::pin(async move {
         let req: FilesListDirectoryRequest = decode_payload(payload)?;
@@ -34,7 +34,7 @@ fn invoke_list_directory(state: &TauriBridgeState, payload: Value) -> ToolInvoke
     })
 }
 
-fn invoke_read_file(state: &TauriBridgeState, payload: Value) -> ToolInvokeFuture {
+fn invoke_read_file(state: &TauriBridgeState, payload: Value) -> ToolInvokeFuture<'_> {
     let files = state.files.clone();
     Box::pin(async move {
         let req: FilesReadFileRequest = decode_payload(payload)?;
@@ -44,7 +44,7 @@ fn invoke_read_file(state: &TauriBridgeState, payload: Value) -> ToolInvokeFutur
     })
 }
 
-fn invoke_write_file(state: &TauriBridgeState, payload: Value) -> ToolInvokeFuture {
+fn invoke_write_file(state: &TauriBridgeState, payload: Value) -> ToolInvokeFuture<'_> {
     let files = state.files.clone();
     Box::pin(async move {
         let req: FilesWriteFileRequest = decode_payload(payload)?;
@@ -55,7 +55,7 @@ fn invoke_write_file(state: &TauriBridgeState, payload: Value) -> ToolInvokeFutu
     })
 }
 
-fn invoke_delete_path(state: &TauriBridgeState, payload: Value) -> ToolInvokeFuture {
+fn invoke_delete_path(state: &TauriBridgeState, payload: Value) -> ToolInvokeFuture<'_> {
     let files = state.files.clone();
     Box::pin(async move {
         let req: FilesDeletePathRequest = decode_payload(payload)?;
@@ -69,7 +69,7 @@ fn invoke_delete_path(state: &TauriBridgeState, payload: Value) -> ToolInvokeFut
     })
 }
 
-fn invoke_create_directory(state: &TauriBridgeState, payload: Value) -> ToolInvokeFuture {
+fn invoke_create_directory(state: &TauriBridgeState, payload: Value) -> ToolInvokeFuture<'_> {
     let files = state.files.clone();
     Box::pin(async move {
         let req: FilesCreateDirectoryRequest = decode_payload(payload)?;

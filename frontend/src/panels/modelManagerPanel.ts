@@ -317,6 +317,8 @@ export function renderModelManagerBody(state: PrimaryPanelRenderState): string {
 }
 
 function renderDownloadTab(state: PrimaryPanelRenderState): string {
+  const activeDownloadKey = state.modelManagerActiveDownloadKey;
+  const isAnyDownloadActive = state.modelManagerDownloading;
   const collectionOptions = MODEL_COLLECTIONS.map((item) => {
     const selected = item.id === state.modelManagerCollection ? " selected" : "";
     return `<option value="${escapeHtml(item.id)}"${selected}>${escapeHtml(item.label)}</option>`;
@@ -325,7 +327,10 @@ function renderDownloadTab(state: PrimaryPanelRenderState): string {
   const searchRows = state.modelManagerSearchResults.length
     ? state.modelManagerSearchResults
         .map(
-          (result) => `
+          (result) => {
+            const downloadKey = `${result.repoId}::${result.fileName}`;
+            const isDownloading = isAnyDownloadActive && activeDownloadKey === downloadKey;
+            return `
       <div class="config-row">
         <span class="config-key">${escapeHtml(result.repoId)}</span>
         <span class="config-value">${escapeHtml(result.fileName)}</span>
@@ -336,14 +341,16 @@ function renderDownloadTab(state: PrimaryPanelRenderState): string {
       <div class="model-manager-actions-row">
         <button
           type="button"
-          class="tool-action-btn"
+          class="tool-action-btn mm-download-btn${isDownloading ? " is-downloading" : ""}"
           data-hf-download-repo="${escapeHtml(result.repoId)}"
           data-hf-download-file="${escapeHtml(result.fileName)}"
+          ${isDownloading ? "disabled" : ""}
         >
-          Download
+          ${isDownloading ? "Downloading" : "Download"}
         </button>
       </div>
     `
+          }
         )
         .join("")
     : "";
@@ -382,6 +389,8 @@ function renderDownloadTab(state: PrimaryPanelRenderState): string {
                         const selectedAsset =
                           row.udAssets.find((asset) => asset.fileName === row.selectedAssetFileName) ??
                           row.udAssets[0];
+                        const downloadKey = `${row.repoId}::${selectedAsset?.fileName ?? ""}`;
+                        const isDownloading = isAnyDownloadActive && activeDownloadKey === downloadKey;
                         return `
                 <div class="model-manager-simple-row">
                   <span>${escapeHtml(row.modelName)}</span>
@@ -403,11 +412,12 @@ function renderDownloadTab(state: PrimaryPanelRenderState): string {
                   <span>
                     <button
                       type="button"
-                      class="tool-action-btn"
+                      class="tool-action-btn mm-download-btn${isDownloading ? " is-downloading" : ""}"
                       data-hf-download-repo="${escapeHtml(row.repoId)}"
-                      data-hf-download-file="${escapeHtml(selectedAsset?.fileName ?? "")}"
+                      data-hf-download-file="${escapeHtml(selectedAsset?.fileName ?? "")}" 
+                      ${isDownloading ? "disabled" : ""}
                     >
-                      Download
+                      ${isDownloading ? "Downloading" : "Download"}
                     </button>
                   </span>
                 </div>
@@ -422,8 +432,36 @@ function renderDownloadTab(state: PrimaryPanelRenderState): string {
       `
       : "";
 
+  const progressValue = Number.isFinite(state.modelManagerDownloadPercent ?? NaN)
+    ? Math.max(0, Math.min(100, state.modelManagerDownloadPercent ?? 0))
+    : 0;
+  const progressLabel = state.modelManagerDownloadPercent !== null
+    ? `${progressValue.toFixed(1)}%`
+    : state.modelManagerDownloadReceivedBytes !== null
+      ? "Downloading"
+      : "";
+  const progressDetail = state.modelManagerDownloadReceivedBytes !== null
+    ? state.modelManagerDownloadTotalBytes !== null
+      ? `${formatModelSize(Math.round(state.modelManagerDownloadReceivedBytes / (1024 * 1024)))} of ${formatModelSize(Math.round(state.modelManagerDownloadTotalBytes / (1024 * 1024)))}`
+      : formatModelSize(Math.round(state.modelManagerDownloadReceivedBytes / (1024 * 1024)))
+    : "";
+  const progressHtml = state.modelManagerDownloading
+    ? `<div class="tts-download-progress" role="status" aria-live="polite">
+        <div class="tts-download-progress-top">
+          <span>Downloading ${escapeHtml(state.modelManagerActiveDownloadFileName ?? "model")}</span>
+          <span>${escapeHtml(progressLabel)}</span>
+        </div>
+        <progress ${state.modelManagerDownloadPercent !== null ? `value="${progressValue.toFixed(2)}" max="100"` : ""}></progress>
+        <div class="mm-download-progress-bottom">
+          ${progressDetail ? `<div class="tts-download-progress-detail">${escapeHtml(progressDetail)}${state.modelManagerDownloadSpeedBytesPerSec !== null ? ` (${escapeHtml(formatModelSize(Math.round(state.modelManagerDownloadSpeedBytesPerSec / (1024 * 1024))) + "/s")})` : ""}</div>` : ""}
+          <button type="button" class="tool-action-btn mm-download-cancel-btn" id="modelManagerCancelDownloadBtn">Cancel</button>
+        </div>
+      </div>`
+    : "";
+
   return `
     <div class="llama-form">
+      ${progressHtml}
       ${collectionLinkHtml}
       <label class="config-row">
         <select id="modelManagerCollectionSelect" class="llama-input model-manager-collection-select">${collectionOptions}</select>
@@ -575,4 +613,11 @@ export function bindModelManagerPanel(bindings: PrimaryPanelBindings): void {
       await bindings.onModelManagerSetUdQuant({ repoId, fileName: select.value });
     };
   });
+
+  const cancelDownloadBtn = document.querySelector<HTMLButtonElement>("#modelManagerCancelDownloadBtn");
+  if (cancelDownloadBtn) {
+    cancelDownloadBtn.onclick = async () => {
+      await bindings.onModelManagerCancelDownload();
+    };
+  }
 }
