@@ -9,6 +9,7 @@ interface ChatSendState {
   chatTtsLatencyMs: number | null;
   chatModelOptions: Array<{ id: string; modelName: string }>;
   chatActiveModelId: string;
+  chatModelStatusMessage: string | null;
   conversationId: string;
   chatThinkingEnabled: boolean;
   chatRoutePreference: string;
@@ -44,7 +45,14 @@ interface ChatSendDeps {
   enqueueSpeakableChunk: (text: string, isFinalFlush?: boolean, correlationId?: string | null) => void;
   runChatTtsQueue: (sendMessage: (text: string, attachments?: ChatAttachment[]) => Promise<void>) => Promise<void>;
   refreshConversations: () => Promise<void>;
+  refreshLlamaRuntime: () => Promise<void>;
+  waitForLocalModelReady: () => Promise<boolean>;
   renderAndBind: (sendMessage: (text: string, attachments?: ChatAttachment[]) => Promise<void>) => void;
+}
+
+function isModelLoadingError(error: unknown): boolean {
+  const text = String(error ?? "").toLowerCase();
+  return text.includes("loading model") && text.includes("503");
 }
 
 export function createSendMessageHandler(
@@ -67,6 +75,7 @@ export function createSendMessageHandler(
     deps.state.activeChatCorrelationId = correlationId;
     deps.state.chatStreamCompleteByCorrelation[correlationId] = false;
     deps.state.chatTtsLatencyMs = null;
+    deps.state.chatModelStatusMessage = null;
     deps.chatTtsLatencyCapturedByCorrelation.delete(correlationId);
     deps.renderAndBind(sendMessage);
 
@@ -91,14 +100,30 @@ export function createSendMessageHandler(
             attachments
           }
         : requestPayloadBase;
-      const response = await clientRef.sendMessage(
-        deps.state.llamaRuntimeMaxTokens === null
-          ? requestPayload
-          : {
-              ...requestPayload,
-              maxTokens: deps.state.llamaRuntimeMaxTokens
-            }
-      );
+      let response;
+      for (;;) {
+        try {
+          response = await clientRef.sendMessage(
+            deps.state.llamaRuntimeMaxTokens === null
+              ? requestPayload
+              : {
+                  ...requestPayload,
+                  maxTokens: deps.state.llamaRuntimeMaxTokens
+                }
+          );
+          break;
+        } catch (error) {
+          if (!isModelLoadingError(error) || !deps.state.chatActiveModelId.startsWith("local:")) {
+            throw error;
+          }
+          if (!deps.state.chatModelStatusMessage) {
+            deps.state.chatModelStatusMessage = "Waiting for model...";
+            deps.renderAndBind(sendMessage);
+          }
+          await new Promise((resolve) => window.setTimeout(resolve, 2000));
+          await deps.refreshLlamaRuntime();
+        }
+      }
 
       const existing = deps.state.messages.find(
         (m) => m.role === "assistant" && m.correlationId === response.correlationId
@@ -154,6 +179,7 @@ export function createSendMessageHandler(
       deps.chatTtsSawStreamDeltaByCorrelation.delete(response.correlationId);
       await deps.refreshConversations();
     } catch (error) {
+      deps.state.chatModelStatusMessage = null;
       const message = error instanceof Error ? error.message : String(error);
       const existing = deps.state.messages.find(
         (m) => m.role === "assistant" && m.correlationId === correlationId
@@ -182,6 +208,7 @@ export function createSendMessageHandler(
         void deps.runChatTtsQueue(sendMessage);
       }
     } finally {
+      deps.state.chatModelStatusMessage = null;
       if (deps.state.activeChatCorrelationId === correlationId) {
         deps.state.activeChatCorrelationId = null;
       }

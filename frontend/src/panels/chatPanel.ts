@@ -73,13 +73,14 @@ export function renderChatBody(state: PrimaryPanelRenderState, scopeId = ""): st
   ]
     .filter((part): part is string => Boolean(part))
     .join(", ");
+  const modelMetaText = capabilitySummary || "text";
   return `
     ${maximizedAvatarPreviewHtml}
     <div class="messages" data-chat-pane-id="${escapeHtml(state.chat.panelId)}">${renderChatMessages(state)}</div>
     ${minimizedAvatarPreviewHtml}
     <form class="composer" id="composer${scopeId}">
       <div class="composer-model-meta" id="chatModelMeta${scopeId}">
-        <span class="composer-model-caps">${escapeHtml(capabilitySummary || "text")}</span>
+        <span class="composer-model-caps">${escapeHtml(modelMetaText)}</span>
       </div>
       <div class="composer-attachment-meta" id="chatAttachmentMeta${scopeId}" ${hasAttachedFile ? "" : "hidden"}>
         <span class="composer-attachment-icon" aria-hidden="true">${iconHtml("file-badge", { size: 16, tone: "dark" })}</span>
@@ -213,7 +214,18 @@ export function renderChatMessages(state: Pick<PrimaryPanelRenderState, "chat">)
     )
     .join("");
 
-  return messagesHtml || '<div class="message assistant is-placeholder"><div class="message-text">Ready.</div></div>';
+  const loadingMsg = state.chat.chatModelStatusMessage?.trim() || (state.chat.llamaRuntimeBusy ? "Loading model..." : null);
+  if (messagesHtml) return messagesHtml;
+  if (loadingMsg) {
+    return `<div class="message assistant is-model-loading"><div class="message-text">${escapeHtml(loadingMsg)}</div></div>`;
+  }
+  const isLocalModel = state.chat.chatActiveModelId.startsWith("local:");
+  const runtimeHealthy = state.llamaRuntime?.state === "healthy" && state.llamaRuntimeActiveModelPath.trim();
+  if (isLocalModel && !runtimeHealthy) {
+    const hasConfiguredModel = state.llamaRuntimeModelPath.trim();
+    return `<div class="message assistant is-placeholder"><div class="message-text">${hasConfiguredModel ? "No model loaded." : "No model selected."}</div></div>`;
+  }
+  return '<div class="message assistant is-placeholder"><div class="message-text">Ready.</div></div>';
 }
 
 export function bindChatPanel(

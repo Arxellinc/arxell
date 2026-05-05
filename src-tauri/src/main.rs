@@ -39,7 +39,7 @@ use arxell_lite::contracts::{
     SystemPromptSetResponse, TerminalCloseSessionRequest, TerminalCloseSessionResponse,
     TerminalInputRequest, TerminalInputResponse, TerminalOpenSessionRequest,
     TerminalOpenSessionResponse, TerminalResizeRequest, TerminalResizeResponse, ToolInvokeRequest,
-    ToolInvokeResponse, TtsDownloadModelRequest, TtsDownloadModelResponse, TtsListVoicesRequest,
+    ToolInvokeResponse, TtsListVoicesRequest,
     TtsListVoicesResponse, TtsSelfTestRequest, TtsSelfTestResponse, TtsSettingsGetRequest,
     TtsSettingsGetResponse, TtsSettingsSetRequest, TtsSettingsSetResponse, TtsSpeakRequest,
     TtsSpeakResponse, TtsSpeakStreamResponse, TtsStatusRequest, TtsStatusResponse, TtsStopRequest,
@@ -310,7 +310,6 @@ fn main() {
             cmd_tts_self_test,
             cmd_tts_settings_get,
             cmd_tts_settings_set,
-            cmd_tts_download_model,
             cmd_voice_list_vad_methods,
             cmd_voice_get_vad_settings,
             cmd_voice_set_vad_method,
@@ -474,16 +473,6 @@ async fn cmd_tts_settings_set(
     request: TtsSettingsSetRequest,
 ) -> Result<TtsSettingsSetResponse, String> {
     arxell_lite::tts::settings_set(&app, &tts_state, request)
-}
-
-#[cfg(feature = "tauri-runtime")]
-#[tauri::command]
-async fn cmd_tts_download_model(
-    app: tauri::AppHandle,
-    tts_state: tauri::State<'_, TTSState>,
-    request: TtsDownloadModelRequest,
-) -> Result<TtsDownloadModelResponse, String> {
-    arxell_lite::tts::download_model(&app, request, &tts_state).await
 }
 
 #[cfg(feature = "tauri-runtime")]

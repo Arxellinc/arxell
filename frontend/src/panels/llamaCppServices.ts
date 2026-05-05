@@ -19,7 +19,7 @@ export async function refreshLlamaRuntimeState(
   state.llamaRuntime = response;
   const previousSelectedEngineId = state.llamaRuntimeSelectedEngineId;
   if (shouldClearActiveModelPath(response)) {
-    state.llamaRuntimeActiveModelPath = "";
+    state.llamaRuntimeActiveModelPath = state.llamaRuntimeModelPath?.trim() || "";
   } else {
     state.llamaRuntimeActiveModelPath = response.activeModelPath?.trim() || state.llamaRuntimeActiveModelPath;
   }

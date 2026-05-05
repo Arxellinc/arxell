@@ -1010,12 +1010,6 @@ export interface TtsStatusResponse {
   ready: boolean;
   message: string;
   modelPath: string;
-  secondaryPath: string;
-  voicesPath: string;
-  tokensPath: string;
-  dataDir: string;
-  runtimeArchivePresent: boolean;
-  availableModelPaths: string[];
   availableVoices: string[];
   selectedVoice: string;
   speed: number;
@@ -1090,10 +1084,6 @@ export interface TtsSettingsGetResponse {
   voice: string;
   speed: number;
   modelPath: string;
-  secondaryPath: string;
-  voicesPath: string;
-  tokensPath: string;
-  dataDir: string;
 }
 
 export interface TtsSettingsSetRequest {
@@ -1102,10 +1092,6 @@ export interface TtsSettingsSetRequest {
   voice?: string;
   speed?: number;
   modelPath?: string;
-  secondaryPath?: string;
-  voicesPath?: string;
-  tokensPath?: string;
-  dataDir?: string;
 }
 
 export interface TtsSettingsSetResponse {
@@ -1114,21 +1100,6 @@ export interface TtsSettingsSetResponse {
   engine: string;
   voice: string;
   speed: number;
-}
-
-export interface TtsDownloadModelRequest {
-  correlationId: string;
-  url?: string;
-}
-
-export interface TtsDownloadModelResponse {
-  correlationId: string;
-  ok: boolean;
-  message: string;
-  modelPath: string;
-  voicesPath: string;
-  tokensPath: string;
-  dataDir: string;
 }
 
 export interface AppVersionResponse {

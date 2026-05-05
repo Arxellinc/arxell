@@ -120,7 +120,6 @@ export async function startRuntime(
   } catch (error) {
     deps.pushConsoleEntry("error", "browser", `Failed to start runtime ${args.engineId}: ${String(error)}`);
     await deps.refreshLlamaRuntime();
-  } finally {
     state.llamaRuntimeBusy = false;
   }
 }

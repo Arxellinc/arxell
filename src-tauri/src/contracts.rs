@@ -1731,12 +1731,6 @@ pub struct TtsStatusResponse {
     pub ready: bool,
     pub message: String,
     pub model_path: String,
-    pub secondary_path: String,
-    pub voices_path: String,
-    pub tokens_path: String,
-    pub data_dir: String,
-    pub runtime_archive_present: bool,
-    pub available_model_paths: Vec<String>,
     pub available_voices: Vec<String>,
     pub selected_voice: String,
     pub speed: f32,
@@ -1833,10 +1827,6 @@ pub struct TtsSettingsGetResponse {
     pub voice: String,
     pub speed: f32,
     pub model_path: String,
-    pub secondary_path: String,
-    pub voices_path: String,
-    pub tokens_path: String,
-    pub data_dir: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1847,10 +1837,6 @@ pub struct TtsSettingsSetRequest {
     pub voice: Option<String>,
     pub speed: Option<f32>,
     pub model_path: Option<String>,
-    pub secondary_path: Option<String>,
-    pub voices_path: Option<String>,
-    pub tokens_path: Option<String>,
-    pub data_dir: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1861,25 +1847,6 @@ pub struct TtsSettingsSetResponse {
     pub engine: String,
     pub voice: String,
     pub speed: f32,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct TtsDownloadModelRequest {
-    pub correlation_id: String,
-    pub url: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct TtsDownloadModelResponse {
-    pub correlation_id: String,
-    pub ok: bool,
-    pub message: String,
-    pub model_path: String,
-    pub voices_path: String,
-    pub tokens_path: String,
-    pub data_dir: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

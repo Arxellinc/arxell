@@ -23,6 +23,8 @@ export function syncPrimaryChatPanelFromFlatState(state: AnyState): void {
   cp.chatThinkingEnabled = state.chatThinkingEnabled;
   cp.chatTtsEnabled = state.chatTtsEnabled;
   cp.chatTtsPlaying = state.chatTtsPlaying;
+  cp.chatModelStatusMessage = state.chatModelStatusMessage;
+  cp.llamaRuntimeBusy = state.llamaRuntimeBusy;
   cp.activeChatCorrelationId = state.activeChatCorrelationId;
 }
 

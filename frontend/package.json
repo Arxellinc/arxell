@@ -7,6 +7,7 @@
     "dev": "vite",
     "build": "vite build",
     "check": "tsc --noEmit",
+    "lint": "tsc --noEmit",
     "test:unit": "node tests/run-unit-tests.mjs",
     "test": "npm run -s test:unit",
     "icons:sync-ignore": "node ../scripts/sync-icon-gitignore.mjs",

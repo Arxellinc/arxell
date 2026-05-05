@@ -73,6 +73,8 @@ export interface ChatPanelState {
   chatAttachedFileContent: string | null;
   chatActiveModelId: string;
   chatActiveModelLabel: string;
+  chatModelStatusMessage: string | null;
+  llamaRuntimeBusy: boolean;
   chatActiveModelCapabilities: ChatModelCapabilities;
   chatThinkingEnabled: boolean;
   chatTtsEnabled: boolean;
@@ -207,13 +209,7 @@ export interface TtsState {
   engineId: string;
   engine: "kokoro" | "piper" | "matcha" | "kitten" | "pocket";
   ready: boolean;
-  runtimeArchivePresent: boolean;
-  availableModelPaths: string[];
   modelPath: string;
-  secondaryPath: string;
-  voicesPath: string;
-  tokensPath: string;
-  dataDir: string;
   voices: string[];
   selectedVoice: string;
   speed: number;
@@ -222,10 +218,6 @@ export interface TtsState {
   lastDurationMs: number | null;
   lastBytes: number | null;
   lastSampleRate: number | null;
-  downloadReceivedBytes: number | null;
-  downloadTotalBytes: number | null;
-  downloadPercent: number | null;
-  ttsSetupModalOpen: boolean;
 }
 
 export interface ConsoleEntry {
@@ -469,14 +461,9 @@ export interface PrimaryPanelBindings {
   onTtsRefresh: () => Promise<void>;
   onTtsSetVoice: (voice: string) => Promise<void>;
   onTtsSetEngine: (engine: "kokoro" | "piper" | "matcha" | "kitten" | "pocket") => Promise<void>;
-  onTtsSetModelBundle: (modelPath: string) => Promise<void>;
   onTtsSetSpeed: (speed: number) => Promise<void>;
   onTtsSetTestText: (text: string) => Promise<void>;
   onTtsBrowseModelPath: () => Promise<void>;
-  onTtsBrowseSecondaryPath: () => Promise<void>;
-  onTtsDownloadModel: () => Promise<void>;
-  onTtsDownloadModelWithUrl: (url: string) => Promise<void>;
-  onTtsSetSetupModalOpen: (open: boolean) => void;
   onTtsSpeakTest: () => Promise<void>;
   onTtsStop: () => Promise<void>;
   onTtsSelfTest: () => Promise<void>;

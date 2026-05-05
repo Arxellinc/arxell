@@ -140,8 +140,13 @@ export function renderLlamaCppBody(state: PrimaryPanelRenderState): string {
         .join("")
     : `<div class="llama-runtime-line is-empty">No runtime output yet.</div>`;
 
+  const loadingMessage = state.llamaRuntimeBusy
+    ? (state.chat?.chatModelStatusMessage?.trim() || "Loading model...")
+    : null;
+
   return `
     <div class="primary-pane-body">
+      ${loadingMessage ? `<div class="llama-loading-banner"><span class="llama-loading-text">${escapeHtml(loadingMessage)}</span></div>` : ""}
       <div class="llama-form llama-panel-form">
         <h3 class="model-manager-title">Active Models</h3>
         <div class="model-manager-installed-table is-active">

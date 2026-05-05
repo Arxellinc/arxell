@@ -259,29 +259,6 @@ export function attachPrimaryPanelInteractions(
         await bindings.onTtsStart();
       };
     }
-    const downloadBtn = document.querySelector<HTMLButtonElement>("#ttsDownloadModelBtn");
-    if (downloadBtn) {
-      downloadBtn.onclick = async () => {
-        await bindings.onTtsDownloadModel();
-      };
-    }
-    // Bind Kokoro bundle download buttons (rendered dynamically when Kokoro is selected and model not ready)
-    const kokoroBundleBtns = document.querySelectorAll<HTMLElement>(".tts-bundle-link, .kokoro-bundle-btn");
-    kokoroBundleBtns.forEach((btn) => {
-      btn.onclick = async (e) => {
-        e.preventDefault();
-        const url = (btn as HTMLElement).dataset.url;
-        if (url) {
-          await bindings.onTtsDownloadModelWithUrl(url);
-        }
-      };
-    });
-    const setupModalCloseBtns = document.querySelectorAll<HTMLButtonElement>("[data-tts-action=\"close-setup-modal\"]");
-    setupModalCloseBtns.forEach((btn) => {
-      btn.onclick = () => {
-        bindings.onTtsSetSetupModalOpen(false);
-      };
-    });
     const refreshBtn = document.querySelector<HTMLButtonElement>("#ttsRefreshBtn");
     if (refreshBtn) {
       refreshBtn.onclick = async () => {
@@ -304,14 +281,6 @@ export function attachPrimaryPanelInteractions(
         await bindings.onTtsSetEngine(engine);
       };
     }
-    const bundleSelect = document.querySelector<HTMLSelectElement>("#ttsBundleSelect");
-    if (bundleSelect) {
-      bundleSelect.onchange = async () => {
-        const modelPath = bundleSelect.value.trim();
-        if (!modelPath) return;
-        await bindings.onTtsSetModelBundle(modelPath);
-      };
-    }
     const speedInput = document.querySelector<HTMLInputElement>("#ttsSpeedInput");
     if (speedInput) {
       speedInput.onchange = async () => {
@@ -330,12 +299,6 @@ export function attachPrimaryPanelInteractions(
     if (browseModelBtn) {
       browseModelBtn.onclick = async () => {
         await bindings.onTtsBrowseModelPath();
-      };
-    }
-    const browseSecondaryBtn = document.querySelector<HTMLButtonElement>("#ttsSecondaryBrowseBtn");
-    if (browseSecondaryBtn) {
-      browseSecondaryBtn.onclick = async () => {
-        await bindings.onTtsBrowseSecondaryPath();
       };
     }
     const speakBtn = document.querySelector<HTMLButtonElement>("#ttsSpeakBtn");

@@ -330,6 +330,8 @@ impl LlamaRuntimeService {
             if let Some(active) = state.active.take() {
                 let _ = terminate_process(active.child);
             }
+            let port = request.port.unwrap_or(DEFAULT_PORT);
+            kill_orphaned_llama_server(port);
         }
 
         let binary_path = engine_binary_path(app_data_dir, request.engine_id.as_str());
@@ -511,6 +513,39 @@ impl LlamaRuntimeService {
                 });
             }
         }
+
+        let loading_correlation_id = request.correlation_id.clone();
+        let loading_hub = self.hub.clone();
+        std::thread::spawn(move || {
+            let deadline = std::time::Instant::now() + Duration::from_secs(300);
+            while std::time::Instant::now() < deadline {
+                match query_health_progress(port) {
+                    Some(progress) if progress >= 1.0 => {
+                        loading_hub.emit(loading_hub.make_event(
+                            loading_correlation_id.as_str(),
+                            Subsystem::Runtime,
+                            "llama.runtime.loading",
+                            EventStage::Complete,
+                            EventSeverity::Info,
+                            json!({ "progress": 1.0 }),
+                        ));
+                        return;
+                    }
+                    Some(progress) => {
+                        loading_hub.emit(loading_hub.make_event(
+                            loading_correlation_id.as_str(),
+                            Subsystem::Runtime,
+                            "llama.runtime.loading",
+                            EventStage::Progress,
+                            EventSeverity::Info,
+                            json!({ "progress": progress }),
+                        ));
+                    }
+                    None => {}
+                }
+                std::thread::sleep(Duration::from_millis(800));
+            }
+        });
 
         let endpoint = format!("http://127.0.0.1:{}/v1", port);
         self.emit(
@@ -704,6 +739,32 @@ fn wait_for_port(port: u16, timeout_secs: u64) -> bool {
     false
 }
 
+fn query_health_progress(port: u16) -> Option<f64> {
+    let url = format!("http://127.0.0.1:{}/health", port);
+    let resp = std::process::Command::new("curl")
+        .args(["-s", "-m", "2", &url])
+        .output()
+        .ok()?;
+    let body = String::from_utf8_lossy(&resp.stdout);
+    let trimmed = body.trim();
+    if trimmed.contains("\"status\":\"ok\"") || trimmed.contains("\"status\": \"ok\"") {
+        return Some(1.0);
+    }
+    let progress_key = "\"progress\"";
+    if let Some(idx) = trimmed.find(progress_key) {
+        let after = &trimmed[idx + progress_key.len()..];
+        let cleaned: String = after
+            .chars()
+            .skip_while(|c| *c == ' ' || *c == ':' || *c == '"')
+            .take_while(|c| c.is_ascii_digit() || *c == '.')
+            .collect();
+        if let Ok(v) = cleaned.parse::<f64>() {
+            return Some(v.clamp(0.0, 1.0));
+        }
+    }
+    None
+}
+
 fn should_disable_thinking_for_model(model_path: &str) -> bool {
     let lower = model_path.to_ascii_lowercase();
     lower.contains("qwen")
@@ -718,7 +779,44 @@ fn terminate_process(mut child: Child) -> Result<(), String> {
         }
     }
     let _ = child.wait();
+    std::thread::sleep(std::time::Duration::from_millis(250));
     Ok(())
+}
+
+fn kill_orphaned_llama_server(port: u16) {
+    let output = match Command::new("ss")
+        .args(["-tlnp"])
+        .output()
+    {
+        Ok(o) => o,
+        Err(_) => return,
+    };
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    for line in stdout.lines() {
+        if !line.contains(&format!(":{port}")) {
+            continue;
+        }
+        let pid = if let Some(start) = line.find("pid=") {
+            let rest = &line[start + 4..];
+            rest.chars()
+                .take_while(|c| c.is_ascii_digit())
+                .collect::<String>()
+                .parse::<u32>()
+                .ok()
+        } else {
+            None
+        };
+        if let Some(pid) = pid {
+            unsafe {
+                libc::kill(pid as i32, libc::SIGTERM);
+            }
+            std::thread::sleep(Duration::from_millis(100));
+            unsafe {
+                libc::kill(pid as i32, libc::SIGKILL);
+            }
+            std::thread::sleep(Duration::from_millis(150));
+        }
+    }
 }
 
 fn spawn_output_forwarder<R>(

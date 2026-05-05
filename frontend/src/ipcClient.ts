@@ -48,8 +48,6 @@ import type {
   DevicesProbeMicrophoneResponse,
   TtsListVoicesRequest,
   TtsListVoicesResponse,
-  TtsDownloadModelRequest,
-  TtsDownloadModelResponse,
   TtsSelfTestRequest,
   TtsSelfTestResponse,
   TtsSettingsGetRequest,
@@ -255,7 +253,6 @@ export interface ChatIpcClient {
   ttsSelfTest(request: TtsSelfTestRequest): Promise<TtsSelfTestResponse>;
   ttsSettingsGet(request: TtsSettingsGetRequest): Promise<TtsSettingsGetResponse>;
   ttsSettingsSet(request: TtsSettingsSetRequest): Promise<TtsSettingsSetResponse>;
-  ttsDownloadModel(request: TtsDownloadModelRequest): Promise<TtsDownloadModelResponse>;
   voiceListVadMethods(request: VoiceListVadMethodsRequest): Promise<VoiceListVadMethodsResponse>;
   voiceGetVadSettings(request: VoiceGetVadSettingsRequest): Promise<VoiceGetVadSettingsResponse>;
   voiceSetVadMethod(request: VoiceSetVadMethodRequest): Promise<VoiceRuntimeSnapshotResponse>;
@@ -680,9 +677,6 @@ class TauriChatIpcClient implements ChatIpcClient {
     return this.invokeFn<TtsSettingsSetResponse>("cmd_tts_settings_set", { request });
   }
 
-  ttsDownloadModel(request: TtsDownloadModelRequest): Promise<TtsDownloadModelResponse> {
-    return this.invokeFn<TtsDownloadModelResponse>("cmd_tts_download_model", { request });
-  }
 
   voiceListVadMethods(request: VoiceListVadMethodsRequest): Promise<VoiceListVadMethodsResponse> {
     return this.invokeFn<VoiceListVadMethodsResponse>("cmd_voice_list_vad_methods", { request });
@@ -771,19 +765,11 @@ export class MockChatIpcClient implements ChatIpcClient {
     voice: string;
     speed: number;
     modelPath: string;
-    secondaryPath: string;
-    voicesPath: string;
-    tokensPath: string;
-    dataDir: string;
   } = {
     engine: "kokoro",
     voice: "af_heart",
     speed: 1,
-    modelPath: "",
-    secondaryPath: "",
-    voicesPath: "",
-    tokensPath: "",
-    dataDir: ""
+    modelPath: ""
   };
 
   private normalizeMockTtsEngine(value: string | undefined | null): "kokoro" | "piper" | "matcha" | "kitten" | "pocket" {
@@ -1993,17 +1979,11 @@ export class MockChatIpcClient implements ChatIpcClient {
     const fallbackVoice = voices[0] ?? (this.mockTts.engine === "kokoro" ? "af_heart" : "speaker_0");
     return {
       correlationId: request.correlationId,
-      engineId: `sherpa-${this.mockTts.engine}`,
+      engineId: this.mockTts.engine,
       engine: this.mockTts.engine,
       ready: false,
       message: "Mock runtime: TTS unavailable",
       modelPath: this.mockTts.modelPath,
-      secondaryPath: this.mockTts.secondaryPath,
-      voicesPath: this.mockTts.engine === "piper" ? "" : this.mockTts.voicesPath,
-      tokensPath: this.mockTts.tokensPath,
-      dataDir: this.mockTts.dataDir,
-      runtimeArchivePresent: false,
-      availableModelPaths: this.mockTts.modelPath ? [this.mockTts.modelPath] : [],
       availableVoices: voices,
       selectedVoice: voices.includes(this.mockTts.voice) ? this.mockTts.voice : fallbackVoice,
       speed: this.mockTts.speed,
@@ -2279,7 +2259,7 @@ export class MockChatIpcClient implements ChatIpcClient {
     return {
       correlationId: request.correlationId,
       accepted: false,
-      engineId: `sherpa-${this.mockTts.engine}`,
+      engineId: this.mockTts.engine,
       voice: this.mockTts.voice,
       speed: this.mockTts.speed
     };
@@ -2309,15 +2289,11 @@ export class MockChatIpcClient implements ChatIpcClient {
     const voice = voices.includes(this.mockTts.voice) ? this.mockTts.voice : fallbackVoice;
     return {
       correlationId: request.correlationId,
-      engineId: `sherpa-${this.mockTts.engine}`,
+      engineId: this.mockTts.engine,
       engine: this.mockTts.engine,
       voice,
       speed: this.mockTts.speed,
-      modelPath: this.mockTts.modelPath,
-      secondaryPath: this.mockTts.secondaryPath,
-      voicesPath: this.mockTts.engine === "piper" ? "" : this.mockTts.voicesPath,
-      tokensPath: this.mockTts.tokensPath,
-      dataDir: this.mockTts.dataDir
+      modelPath: this.mockTts.modelPath
     };
   }
 
@@ -2327,10 +2303,6 @@ export class MockChatIpcClient implements ChatIpcClient {
     if (engineChanged) {
       this.mockTts.engine = nextEngine;
       this.mockTts.modelPath = "";
-      this.mockTts.secondaryPath = "";
-      this.mockTts.voicesPath = "";
-      this.mockTts.tokensPath = "";
-      this.mockTts.dataDir = "";
       this.mockTts.speed = 1;
       this.mockTts.voice = this.mockVoicesForEngine(nextEngine)[0] ?? (nextEngine === "kokoro" ? "af_heart" : "speaker_0");
     }
@@ -2346,28 +2318,6 @@ export class MockChatIpcClient implements ChatIpcClient {
     if (typeof request.modelPath === "string") {
       this.mockTts.modelPath = request.modelPath.trim();
     }
-    if (typeof request.secondaryPath === "string") {
-      this.mockTts.secondaryPath = request.secondaryPath.trim();
-      if (this.mockTts.engine !== "piper") {
-        this.mockTts.voicesPath = this.mockTts.secondaryPath;
-      }
-    }
-    if (typeof request.voicesPath === "string") {
-      const value = request.voicesPath.trim();
-      if (this.mockTts.engine === "piper") {
-        this.mockTts.secondaryPath = value;
-        this.mockTts.voicesPath = "";
-      } else {
-        this.mockTts.voicesPath = value;
-        this.mockTts.secondaryPath = value;
-      }
-    }
-    if (typeof request.tokensPath === "string") {
-      this.mockTts.tokensPath = request.tokensPath.trim();
-    }
-    if (typeof request.dataDir === "string") {
-      this.mockTts.dataDir = request.dataDir.trim();
-    }
     const voices = this.mockVoicesForEngine(this.mockTts.engine);
     if (!voices.includes(this.mockTts.voice)) {
       this.mockTts.voice = voices[0] ?? (this.mockTts.engine === "kokoro" ? "af_heart" : "speaker_0");
@@ -2379,18 +2329,6 @@ export class MockChatIpcClient implements ChatIpcClient {
       engine: this.mockTts.engine,
       voice: this.mockTts.voice,
       speed: this.mockTts.speed
-    };
-  }
-
-  async ttsDownloadModel(request: TtsDownloadModelRequest): Promise<TtsDownloadModelResponse> {
-    return {
-      correlationId: request.correlationId,
-      ok: false,
-      message: "Mock runtime cannot download TTS models.",
-      modelPath: "",
-      voicesPath: "",
-      tokensPath: "",
-      dataDir: ""
     };
   }
 

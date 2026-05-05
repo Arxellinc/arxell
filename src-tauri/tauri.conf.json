@@ -33,6 +33,9 @@
       "resources/llama-runtime/**/*",
       "resources/kokoro-runtime/*",
       "resources/kokoro-runtime/**/*",
+      "resources/kokoro/*",
+      "resources/espeak-ng/**/*",
+      "resources/onnxruntime/**/*",
       "resources/whisper/*",
       "resources/whisper/**/*"
     ]
