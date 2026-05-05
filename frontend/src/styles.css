@@ -1383,7 +1383,6 @@ body {
   grid-template-rows: var(--pane-bar-h) var(--tool-toolbar-h) 1fr auto;
   position: relative;
   overflow: hidden;
-  contain: layout style;
 }
 
 .chat-pane:has(> .avatar-preview.is-chat.is-maximized) {
@@ -2046,6 +2045,19 @@ body {
   line-height: 1.2;
   opacity: 0.9;
   white-space: nowrap;
+}
+
+.composer .composer-model-caps.is-loading {
+  color: var(--accent);
+  opacity: 1;
+  font-size: var(--text-sm);
+}
+
+.message.is-model-loading .message-text {
+  color: var(--accent);
+  font-size: var(--text-lg);
+  font-family: var(--font-mono);
+  white-space: pre;
 }
 
 .composer .composer-attachment-meta[hidden] {
@@ -2922,6 +2934,21 @@ body {
   display: grid;
   gap: 8px;
   margin-top: 0;
+}
+
+.llama-loading-banner {
+  padding: 6px 10px;
+  margin-bottom: 6px;
+  background: var(--surface-soft);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+}
+
+.llama-loading-text {
+  color: var(--accent);
+  font-size: var(--text-sm);
+  font-family: var(--font-mono);
+  white-space: pre;
 }
 
 .llama-panel-form {

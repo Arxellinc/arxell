@@ -235,13 +235,13 @@ export class ChatTtsPipeline {
     }
     if (boundary >= 0 && boundary + 1 >= this.options.minSentenceChars) return boundary + 1;
     const eagerTarget = backlogActive ? this.options.steadyChunkTarget : this.options.firstChunkTarget;
-    if (!backlogActive && text.length >= 80) {
-      const softSplit = this.findSafeWordBoundary(text, Math.min(text.length, 120), 55);
-      if (softSplit >= 55) return softSplit;
+    if (!backlogActive && text.length >= 40) {
+      const softSplit = this.findSafeWordBoundary(text, Math.min(text.length, 80), 25);
+      if (softSplit >= 25) return softSplit;
     }
     if (text.length >= eagerTarget) {
-      const split = this.findSafeWordBoundary(text, eagerTarget - 4, 55);
-      if (split >= 55) return split;
+      const split = this.findSafeWordBoundary(text, eagerTarget - 4, 25);
+      if (split >= 25) return split;
       if (finalFlush) return text.length;
       return -1;
     }

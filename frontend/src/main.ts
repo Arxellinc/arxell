@@ -133,7 +133,13 @@ import {
   type ProjectRecord
 } from "./projectsStore";
 import { ensureUserProject } from "./projects";
-import { KOKORO_BUNDLE_OPTIONS, resetTtsStateForEngine, type TtsEngine } from "./tts/engineRules";
+import { createTtsPanelBindings } from "./tts/panelController";
+import { refreshTtsStateFromIpc } from "./tts/stateAdapter";
+import {
+  bindFirstRunOnboardingInteractions,
+  renderFirstRunOnboardingModal,
+  type FirstRunOnboardingStep
+} from "./onboarding/firstRunOnboarding";
 import { getAllToolManifests } from "./tools/registry";
 import { renderChatMessages } from "./panels/chatPanel";
 import { renderAvatarPreview } from "./panels/avatarPanel";
@@ -323,7 +329,6 @@ const initialWorkspaceTab = initialWorkspaceTabCandidate === "flow-tool"
   : "events";
 const FIRST_RUN_ONBOARDING_DISMISSED_KEY = "arxell.firstRunOnboarding.dismissed";
 const AUTO_SAFE_ENABLED_KEY = "arxell.autoSafeEnabled";
-type FirstRunOnboardingStep = "welcome" | "model" | "tts";
 interface FirstRunModelOption {
   id: string;
   name: string;
@@ -558,6 +563,7 @@ const state: {
   chatAttachedFileContent: string | null;
   chatActiveModelId: string;
   chatActiveModelLabel: string;
+  chatModelStatusMessage: string | null;
   chatActiveModelCapabilities: ChatModelCapabilities;
   chatModelOptions: ChatModelOption[];
   allModelsList: ChatModelOption[];
@@ -967,13 +973,7 @@ const state: {
     engineId: string;
     engine: "kokoro" | "piper" | "matcha" | "kitten" | "pocket";
     ready: boolean;
-    runtimeArchivePresent: boolean;
-    availableModelPaths: string[];
     modelPath: string;
-    secondaryPath: string;
-    voicesPath: string;
-    tokensPath: string;
-    dataDir: string;
     voices: string[];
     selectedVoice: string;
     speed: number;
@@ -982,10 +982,6 @@ const state: {
     lastDurationMs: number | null;
     lastBytes: number | null;
     lastSampleRate: number | null;
-    downloadReceivedBytes: number | null;
-    downloadTotalBytes: number | null;
-    downloadPercent: number | null;
-    ttsSetupModalOpen: boolean;
   };
 } = {
   conversationId: generateChatConversationId(),
@@ -1006,6 +1002,7 @@ const state: {
   chatAttachedFileContent: null,
   chatActiveModelId: preferredChatModelId,
   chatActiveModelLabel: "local-model",
+  chatModelStatusMessage: null,
   chatActiveModelCapabilities: inferChatModelCapabilities("local-model"),
   chatModelOptions: [],
   allModelsList: [],
@@ -1232,13 +1229,7 @@ const state: {
     engineId: "kokoro",
     engine: "kokoro",
     ready: false,
-    runtimeArchivePresent: false,
-    availableModelPaths: [],
     modelPath: "",
-    secondaryPath: "",
-    voicesPath: "",
-    tokensPath: "",
-    dataDir: "",
     voices: ["af_heart"],
     selectedVoice: "af_heart",
     speed: 1,
@@ -1246,11 +1237,7 @@ const state: {
     testText: "Hello from Arxell text to speech.",
     lastDurationMs: null,
     lastBytes: null,
-    lastSampleRate: null,
-    downloadReceivedBytes: null,
-    downloadTotalBytes: null,
-    downloadPercent: null,
-    ttsSetupModalOpen: false
+    lastSampleRate: null
   }
 };
 state.activeWebTabId = state.webTabs[0]?.id ?? "";
@@ -1306,6 +1293,8 @@ function createChatPanelState(panelId: string, src: typeof state): ChatPanelStat
     chatAttachedFileContent: null,
     chatActiveModelId: src.chatActiveModelId,
     chatActiveModelLabel: src.chatActiveModelLabel,
+    chatModelStatusMessage: src.chatModelStatusMessage,
+    llamaRuntimeBusy: src.llamaRuntimeBusy,
     chatActiveModelCapabilities: src.chatActiveModelCapabilities,
     chatThinkingEnabled: src.chatThinkingEnabled,
     chatTtsEnabled: false,
@@ -1331,6 +1320,8 @@ function createFreshChatPanelState(panelId: string, modelId: string, modelLabel:
     chatAttachedFileContent: null,
     chatActiveModelId: modelId,
     chatActiveModelLabel: modelLabel,
+    chatModelStatusMessage: null,
+    llamaRuntimeBusy: false,
     chatActiveModelCapabilities: inferChatModelCapabilities(modelLabel),
     chatThinkingEnabled: false,
     chatTtsEnabled: false,
@@ -1344,6 +1335,8 @@ function resetSecondaryChatPaneState(cp: ChatPanelState): void {
   cp.chatDraft = "";
   cp.chatAttachedFileName = null;
   cp.chatAttachedFileContent = null;
+  cp.chatModelStatusMessage = null;
+  cp.llamaRuntimeBusy = false;
   cp.chatReasoningByCorrelation = {};
   cp.chatThinkingPlacementByCorrelation = {};
   cp.chatThinkingExpandedByCorrelation = {};
@@ -1429,6 +1422,12 @@ function createSecondaryChatSendState(
     },
     set chatActiveModelLabel(value) {
       cp.chatActiveModelLabel = value;
+    },
+    get chatModelStatusMessage() {
+      return cp.chatModelStatusMessage;
+    },
+    set chatModelStatusMessage(value) {
+      cp.chatModelStatusMessage = value;
     },
     get llamaRuntimeMaxTokens() {
       return state.llamaRuntimeMaxTokens;
@@ -1533,15 +1532,16 @@ let chatTtsSawStreamDeltaByCorrelation = new Set<string>();
 let chatTtsLatencyCapturedByCorrelation = new Set<string>();
 let chatTtsActiveStreamRequestId: string | null = null;
 let chatTtsStreamChunkSeq = 0;
+let chatTtsActiveStreamText: string | null = null;
 const chatTtsStreamStatsByRequest = new Map<string, { chunks: number; bytes: number; finalSeen: boolean; firstMs: number; lastMs: number }>();
 let chatTtsWarmSignature = "";
 let chatTtsPrewarmPromise: Promise<void> | null = null;
-const CHAT_TTS_MIN_SENTENCE_CHARS = 24;
-const CHAT_TTS_FIRST_CHUNK_TARGET = 95;
-const CHAT_TTS_STEADY_CHUNK_TARGET = 260;
-const CHAT_TTS_MIN_FLUSH_CHARS = 70;
-const CHAT_TTS_FLUSH_INTERVAL_MS = 180;
-const CHAT_TTS_MERGE_TARGET = 320;
+const CHAT_TTS_MIN_SENTENCE_CHARS = 12;
+const CHAT_TTS_FIRST_CHUNK_TARGET = 40;
+const CHAT_TTS_STEADY_CHUNK_TARGET = 140;
+const CHAT_TTS_MIN_FLUSH_CHARS = 30;
+const CHAT_TTS_FLUSH_INTERVAL_MS = 120;
+const CHAT_TTS_MERGE_TARGET = 180;
 const chatTtsPipeline = new ChatTtsPipeline({
   minSentenceChars: CHAT_TTS_MIN_SENTENCE_CHARS,
   firstChunkTarget: CHAT_TTS_FIRST_CHUNK_TARGET,
@@ -1715,7 +1715,7 @@ function formatTtsError(error: unknown): string {
   const raw = String(error ?? "Unknown TTS error");
   const text = raw.toLowerCase();
   if (text.includes("missing required metadata key 'sample_rate'")) {
-    return "Selected ONNX is not sherpa-compatible (missing sample_rate metadata). Use a sherpa Kokoro model bundle.";
+    return "Selected ONNX model is incompatible (missing sample_rate metadata). Use a Kokoro model bundle.";
   }
   if (text.includes("incompatible kokoro bundle")) {
     return "Model/voices bundle mismatch. Use model, voices.bin, tokens.txt, and espeak-ng-data from the same release.";
@@ -1810,6 +1810,7 @@ function stopTtsPlaybackLocal(): void {
   chatTtsStreamDoneWaiters.clear();
   chatTtsRequestToChatCorrelation.clear();
   chatTtsActiveStreamRequestId = null;
+  chatTtsActiveStreamText = null;
   chatTtsStreamChunkSeq = 0;
   state.chatTtsPlaying = false;
   updateAvatarSpeechState(false, 0);
@@ -1902,11 +1903,14 @@ function onChatTtsStreamChunkEvent(event: AppEvent): void {
   }
   if (!state.chatTtsEnabled || event.action !== "tts.stream.chunk") return;
   if (chatTtsActiveStreamRequestId && event.correlationId !== chatTtsActiveStreamRequestId) {
-    pushConsoleEntry(
-      "warn",
-      "browser",
-      `TTS stream drop: req=${event.correlationId.slice(0, 8)} active=${chatTtsActiveStreamRequestId.slice(0, 8)}`
-    );
+    const payload =
+      event.payload && typeof event.payload === "object"
+        ? (event.payload as Record<string, unknown>)
+        : null;
+    if (payload?.final === true) {
+      resolveChatTtsStreamWaiters(event.correlationId);
+      flushChatTtsStreamStats(event.correlationId, "dropped_final");
+    }
     return;
   }
   const payload =
@@ -1924,6 +1928,7 @@ function onChatTtsStreamChunkEvent(event: AppEvent): void {
   if (sawFinal) {
     if (event.correlationId === chatTtsActiveStreamRequestId) {
       chatTtsActiveStreamRequestId = null;
+      chatTtsActiveStreamText = null;
     }
     scheduleChatTtsStreamFinalize();
     resolveChatTtsStreamWaiters(event.correlationId);
@@ -1945,6 +1950,7 @@ function decodeBase64ToUint8Array(input: string): Uint8Array {
 }
 
 function playChatTtsStreamChunk(requestCorrelationId: string, pcm16Base64: string, sampleRate: number): void {
+  try {
   const bytes = decodeBase64ToUint8Array(pcm16Base64);
   if (!bytes.length || bytes.length % 2 !== 0) return;
   const frameCount = Math.floor(bytes.length / 2);
@@ -1986,6 +1992,10 @@ function playChatTtsStreamChunk(requestCorrelationId: string, pcm16Base64: strin
     chatTtsStreamFinalizeTimerId = null;
   }
   chatTtsStreamChunkSeq++;
+  if (chatTtsStreamChunkSeq === 1 && chatTtsActiveStreamText) {
+    const estimatedDurationMs = (chatTtsActiveStreamText.length / 15) * 1000;
+    updateAvatarPhonemeTimeline(chatTtsActiveStreamText, Math.max(500, estimatedDurationMs));
+  }
   if (chatTtsStreamChunkSeq % 20 === 1) {
     pushConsoleEntry(
       "debug",
@@ -2010,6 +2020,9 @@ function playChatTtsStreamChunk(requestCorrelationId: string, pcm16Base64: strin
         chatTtsLatencyCapturedByCorrelation.add(chatCorrelationId);
       }
     }
+  }
+  } catch (error) {
+    pushConsoleEntry("warn", "browser", `TTS stream chunk playback error: ${String(error)}`);
   }
 }
 
@@ -2108,7 +2121,69 @@ function resetChatTtsStreamParser(correlationId: string | null): void {
 function resetChatTtsQueue(): void {
   chatTtsPipeline.resetQueue();
   chatTtsActiveStreamRequestId = null;
+  chatTtsActiveStreamText = null;
   chatTtsStreamChunkSeq = 0;
+}
+
+function waitForStreamDone(requestCorrelationId: string, timeoutMs = 30_000): Promise<void> {
+  return new Promise<void>((resolve) => {
+    const timer = window.setTimeout(() => {
+      const waiters = chatTtsStreamDoneWaiters.get(requestCorrelationId);
+      if (waiters) {
+        chatTtsStreamDoneWaiters.set(requestCorrelationId, waiters.filter((w) => w !== resolve));
+        if (!chatTtsStreamDoneWaiters.get(requestCorrelationId)?.length) {
+          chatTtsStreamDoneWaiters.delete(requestCorrelationId);
+        }
+      }
+      flushChatTtsStreamStats(requestCorrelationId, "timeout");
+      pushConsoleEntry("warn", "browser", `TTS stream wait timed out after ${timeoutMs}ms: req=${requestCorrelationId.slice(0, 8)}`);
+      if (clientRef) {
+        clientRef.ttsStop({ correlationId: nextCorrelationId() }).catch(() => {});
+      }
+      resolve();
+    }, timeoutMs);
+    const onDone = () => {
+      window.clearTimeout(timer);
+      resolve();
+    };
+    const waiters = chatTtsStreamDoneWaiters.get(requestCorrelationId);
+    if (waiters) {
+      waiters.push(onDone);
+    } else {
+      chatTtsStreamDoneWaiters.set(requestCorrelationId, [onDone]);
+    }
+  });
+}
+
+async function synthesizeChatTtsChunkStream(text: string): Promise<string> {
+  if (!clientRef) {
+    throw new Error("TTS backend unavailable.");
+  }
+  const requestCorrelationId = nextCorrelationId();
+  if (chatTtsActiveStreamRequestId && chatTtsActiveStreamRequestId !== requestCorrelationId) {
+    resolveChatTtsStreamWaiters(chatTtsActiveStreamRequestId);
+    flushChatTtsStreamStats(chatTtsActiveStreamRequestId, "superseded");
+  }
+  const startedAt = performance.now();
+  chatTtsActiveStreamRequestId = requestCorrelationId;
+  chatTtsStreamChunkSeq = 0;
+  chatTtsActiveStreamText = text;
+  const response = await clientRef.ttsSpeakStream({
+    correlationId: requestCorrelationId,
+    text,
+    voice: state.tts.selectedVoice,
+    speed: state.tts.speed
+  });
+  const elapsedMs = Math.round(performance.now() - startedAt);
+  pushConsoleEntry(
+    "debug",
+    "browser",
+    `Chat TTS stream accepted ${elapsedMs}ms for ${text.length} chars (engine=${response.engineId})`
+  );
+  state.tts.status = "ready";
+  state.tts.message = `Reading with ${response.voice}`;
+  state.tts.selectedVoice = response.voice;
+  return requestCorrelationId;
 }
 
 function extractSpeakableStreamDelta(delta: string): string {
@@ -2151,8 +2226,9 @@ async function playTtsAudio(audioBytes: unknown, correlationId: string | null, s
   }
   stopTtsPlaybackLocal();
   const arrayBuffer = new Uint8Array(bytes).buffer.slice(0) as ArrayBuffer;
+  let audioContext: AudioContext | null = null;
   try {
-    const audioContext = new AudioContext();
+    audioContext = new AudioContext();
     if (audioContext.state === "suspended") {
       await audioContext.resume();
     }
@@ -2214,6 +2290,7 @@ async function playTtsAudio(audioBytes: unknown, correlationId: string | null, s
   } catch (error) {
     updateAvatarSpeechState(false, 0);
     pushConsoleEntry("debug", "browser", `WebAudio TTS playback fallback: ${String(error)}`);
+    if (audioContext) void audioContext.close().catch(() => {});
   }
   const blobBytes = new Uint8Array(bytes);
   const blob = new Blob([blobBytes], { type: "audio/wav" });
@@ -2351,8 +2428,6 @@ async function runChatTtsQueue(sendMessage: (text: string) => Promise<void>): Pr
     if (!nextItem) {
       return;
     }
-    let currentItem = nextItem;
-    let currentSynth = await synthesizeChatTtsChunk(currentItem.text);
     state.chatTtsPlaying = true;
     if (!chatTtsSpeakingSinceMs) {
       chatTtsSpeakingSinceMs = Date.now();
@@ -2361,39 +2436,40 @@ async function runChatTtsQueue(sendMessage: (text: string) => Promise<void>): Pr
     state.tts.status = "busy";
     state.tts.message = "Auto-speaking response...";
     renderAndBind(sendMessage);
-    while (state.chatTtsEnabled) {
-      const playbackItem = currentItem;
-      const playbackSynth = currentSynth;
-      updateChatTtsAccounting(playbackItem.correlationId, { synthesizedChars: playbackItem.text.length });
-      const playbackPromise = playTtsAudio(
-        playbackSynth.response.audioBytes,
-        playbackItem.correlationId,
-        playbackItem.text
-      ).then(() => {
-        updateChatTtsAccounting(playbackItem.correlationId, { playedChars: playbackItem.text.length });
-      });
-      let prefetchedResponsePromise: Promise<ChatTtsSynthResult> | null = null;
-      const queuedItem = shiftChatTtsQueueText();
-      if (queuedItem) {
-        currentItem = queuedItem;
-        prefetchedResponsePromise = synthesizeChatTtsChunk(queuedItem.text);
+    let prefetchedStreamId: string | null = null;
+    let prefetchedItem: ChatTtsQueueItem | null = null;
+    let loopIter = 0;
+    while (state.chatTtsEnabled && !chatTtsStopRequested) {
+      let requestCorrelationId: string;
+      if (prefetchedStreamId && prefetchedItem) {
+        requestCorrelationId = prefetchedStreamId;
+        nextItem = prefetchedItem;
+        prefetchedStreamId = null;
+        prefetchedItem = null;
+      } else {
+        const item = nextItem!;
+        updateChatTtsAccounting(item.correlationId, { synthesizedChars: item.text.length });
+        requestCorrelationId = await synthesizeChatTtsChunkStream(item.text);
+        updateChatTtsAccounting(item.correlationId, { playedChars: item.text.length });
       }
-
-      await playbackPromise;
-      if (!state.chatTtsEnabled) break;
-
-      if (prefetchedResponsePromise) {
-        currentSynth = await prefetchedResponsePromise;
+      loopIter++;
+      if (loopIter <= 20 || loopIter % 20 === 0) {
+        pushConsoleEntry("debug", "browser", `TTS queue loop: iter=${loopIter} text="${nextItem!.text.slice(0, 60)}${nextItem!.text.length > 60 ? "..." : ""}" corr=${nextItem!.correlationId?.slice(0, 8) ?? "null"} req=${requestCorrelationId.slice(0, 8)} queue=${chatTtsPipeline.queueLength()}`);
+      }
+      await waitForStreamDone(requestCorrelationId);
+      if (!state.chatTtsEnabled || chatTtsStopRequested) break;
+      const queued = shiftChatTtsQueueText();
+      if (queued) {
+        updateChatTtsAccounting(queued.correlationId, { synthesizedChars: queued.text.length });
+        prefetchedStreamId = await synthesizeChatTtsChunkStream(queued.text);
+        prefetchedItem = queued;
         continue;
       }
-
       nextItem = await waitForChatTtsQueueText(220);
       if (!nextItem) {
         pushConsoleEntry("debug", "browser", `TTS queue loop: exit (no text within 220ms, queue=${chatTtsPipeline.queueLength()})`);
         break;
       }
-      currentItem = nextItem;
-      currentSynth = await synthesizeChatTtsChunk(currentItem.text);
     }
   } catch (error) {
     state.tts.status = "error";
@@ -2420,6 +2496,7 @@ function ingestChatStreamForTts(
 ): void {
   if (chatTtsStopRequested) return;
   if (!state.chatTtsEnabled) return;
+  if (state.chatStreamCompleteByCorrelation[correlationId]) return;
   if (!chatTtsPipeline.getActiveCorrelationId()) {
     resetChatTtsStreamParser(correlationId);
   }
@@ -2431,7 +2508,12 @@ function ingestChatStreamForTts(
   chatTtsSawStreamDeltaByCorrelation.add(correlationId);
   const speakableDelta = extractSpeakableStreamDelta(delta);
   updateChatTtsAccounting(correlationId, { speakableChars: speakableDelta.length });
+  const queueBefore = chatTtsPipeline.queueLength();
   enqueueSpeakableChunk(speakableDelta, false, correlationId);
+  const queueAfter = chatTtsPipeline.queueLength();
+  if (queueAfter > queueBefore) {
+    pushConsoleEntry("debug", "browser", `TTS ingest: corr=${correlationId.slice(0, 8)} delta=${delta.length}chars speakable=${speakableDelta.length}chars queue ${queueBefore}->${queueAfter}`);
+  }
   // Eagerly flush first chunk to reduce time-to-first-audio.
   if (!state.chatTtsPlaying) {
     const flushed = tryLowLatencyBufferFlush();
@@ -2763,113 +2845,6 @@ async function requestSpeakerAccess(): Promise<void> {
   await refreshDevicesState();
 }
 
-function renderFirstRunOnboardingModal(): string {
-  if (!state.firstRunOnboardingOpen) return "";
-  const selectedModel =
-    FIRST_RUN_MODEL_OPTIONS.find((model) => model.id === state.firstRunSelectedModelId) ??
-    FIRST_RUN_MODEL_OPTIONS[0];
-  const busyAttr = state.firstRunBusy ? " disabled" : "";
-  const step = state.firstRunOnboardingStep;
-  const nextDisabledAttr = state.firstRunBusy || (step === "welcome" && !state.firstRunTermsAccepted) ? " disabled" : "";
-  const stepsHtml = ["welcome", "model", "tts"]
-    .map((item, idx) => `<span class="first-run-step${step === item ? " is-active" : ""}">${idx + 1}</span>`)
-    .join("");
-  const messageHtml = state.firstRunMessage
-    ? `<div class="first-run-message">${escapeHtml(state.firstRunMessage)}</div>`
-    : "";
-  const progressValue = Number.isFinite(state.tts.downloadPercent ?? NaN)
-    ? Math.max(0, Math.min(100, state.tts.downloadPercent ?? 0))
-    : null;
-  const progressLabel = progressValue !== null
-    ? `${progressValue.toFixed(0)}%`
-    : state.tts.downloadReceivedBytes !== null
-    ? formatBytesShort(state.tts.downloadReceivedBytes)
-    : "Downloading";
-  const progressDetail = state.tts.downloadReceivedBytes !== null
-    ? state.tts.downloadTotalBytes !== null
-      ? `${formatBytesShort(state.tts.downloadReceivedBytes)} of ${formatBytesShort(state.tts.downloadTotalBytes)}`
-      : formatBytesShort(state.tts.downloadReceivedBytes)
-    : "";
-  const progressHtml = state.firstRunOnboardingStep === "tts" && state.firstRunBusy
-    ? `<div class="tts-download-progress first-run-progress" role="status" aria-live="polite">
-        <div class="tts-download-progress-top">
-          <span>Downloading Kokoro voice bundle</span>
-          <span>${escapeHtml(progressLabel)}</span>
-        </div>
-        <progress ${progressValue !== null ? `value="${progressValue.toFixed(2)}" max="100"` : ""}></progress>
-        ${progressDetail ? `<div class="tts-download-progress-detail">${escapeHtml(progressDetail)}</div>` : ""}
-      </div>`
-    : "";
-
-  const bodyHtml =
-    step === "welcome"
-      ? `<div class="tts-setup-modal-title">Welcome to Arxell</div>
-        <div class="tts-setup-modal-desc">Arxell is a local-first AI workstation for chat, voice, tools, files, terminals, and agent workflows. It is under active development and some tools may be incomplete.</div>
-        <div class="first-run-checklist">
-          <div><strong>Features.</strong> Local GGUF models, API models, voice input/output, workspace tools, and configurable guardrails.</div>
-          <div><strong>Setup.</strong> Pick a starter model that fits your RAM/VRAM, then download a Kokoro voice bundle.</div>
-          <div><strong>Safety.</strong> This software is experimental and provided with no guarantees. You are responsible for reviewing output and using guardrails before autonomous workflows.</div>
-          <div><strong>License.</strong> Personal use is free. Commercial use requires a valid license. Review the <a href="https://www.arxell.com/legal" target="_blank" rel="noreferrer noopener">Terms</a>.</div>
-        </div>
-        <label class="first-run-terms"><input type="checkbox" id="firstRunTermsCheckbox" ${state.firstRunTermsAccepted ? "checked" : ""}${busyAttr} /> I have read and agree to the terms of use.</label>`
-      : step === "model"
-      ? `<div class="tts-setup-modal-title">Choose your first model</div>
-        <div class="tts-setup-modal-desc">Download a starter model or select an existing local .gguf file. Use Next when you are ready to continue.</div>
-        <div class="first-run-model-list">
-          ${FIRST_RUN_MODEL_OPTIONS.map((model) => `
-            <label class="first-run-model-option${model.id === state.firstRunSelectedModelId ? " is-selected" : ""}">
-              <input type="radio" name="firstRunModel" value="${escapeHtml(model.id)}" ${model.id === state.firstRunSelectedModelId ? "checked" : ""}${busyAttr} />
-              <span class="first-run-model-copy">
-                <span class="first-run-model-title">${escapeHtml(model.name)} <small>${escapeHtml(model.size)}</small></span>
-                <span class="first-run-model-desc">${escapeHtml(model.description)}</span>
-              </span>
-            </label>
-          `).join("")}
-        </div>
-        ${state.firstRunSelectedModelId === "custom-gguf" ? `<div class="first-run-custom-path">${escapeHtml(state.firstRunCustomModelPath || "No local model selected yet.")}</div>` : ""}`
-      : `<div class="tts-setup-modal-title">Install voice bundle</div>
-        <div class="tts-setup-modal-desc">Download a compatible sherpa-onnx Kokoro bundle so voice mode and read-aloud work on first use.</div>
-        <div class="tts-setup-modal-bundles">
-          ${KOKORO_BUNDLE_OPTIONS.map((bundle, idx) => `
-            <button type="button" class="tts-setup-modal-bundle-btn first-run-tts-download" data-url="${escapeHtml(bundle.url)}"${busyAttr}>
-              <span class="tts-setup-modal-bundle-name">Kokoro ${escapeHtml(bundle.label)}${idx === 0 ? " (recommended)" : ""}</span>
-              <span class="tts-setup-modal-bundle-size">${escapeHtml(bundle.sizeLabel)}</span>
-            </button>
-          `).join("")}
-        </div>`;
-
-  const primaryAction =
-    step === "welcome"
-      ? `<button type="button" class="tts-setup-modal-bundle-btn first-run-next"${nextDisabledAttr}>Next</button>`
-      : step === "model"
-      ? `<button type="button" class="tts-setup-modal-bundle-btn first-run-next"${busyAttr}>Next</button>`
-      : `<button type="button" class="tts-setup-modal-cancel-btn first-run-finish"${busyAttr}>Finish</button>`;
-  const stepAction =
-    step === "model"
-      ? selectedModel?.custom
-        ? `<button type="button" class="tts-setup-modal-cancel-btn first-run-select-custom-model"${busyAttr}>Select GGUF</button>`
-        : `<button type="button" class="tts-setup-modal-cancel-btn first-run-download-model"${busyAttr}>${state.firstRunBusy ? "Downloading..." : "Download"}</button>`
-      : "";
-
-  return `<div class="tts-setup-modal-backdrop first-run-backdrop">
-    <div class="tts-setup-modal-box first-run-modal-box">
-      <button type="button" class="tts-setup-modal-close first-run-skip"${busyAttr}>${iconHtml("x", { size: 16, tone: "dark", label: "Close" })}</button>
-      <div class="first-run-steps">${stepsHtml}</div>
-      ${bodyHtml}
-      ${messageHtml}
-      ${progressHtml}
-      <div class="tts-setup-modal-actions first-run-actions">
-        ${step !== "welcome" ? `<button type="button" class="tts-setup-modal-cancel-btn first-run-skip-step"${busyAttr}>Skip step</button>` : ""}
-        <div class="first-run-action-group">
-          ${step !== "welcome" ? `<button type="button" class="tts-setup-modal-cancel-btn first-run-back"${busyAttr}>Back</button>` : ""}
-          ${stepAction}
-          ${primaryAction}
-        </div>
-      </div>
-    </div>
-  </div>`;
-}
-
 function render(): void {
   syncPrimaryChatPanelFromFlatState();
   const app = document.querySelector<HTMLDivElement>("#app");
@@ -3138,7 +3113,7 @@ function render(): void {
       micPermissionBubbleDismissed: state.micPermissionBubbleDismissed
     }),
     appBodyHtml,
-    bottombarHtml: `${renderGlobalBottombar(currentBottomStatus())}${renderFirstRunOnboardingModal()}`
+    bottombarHtml: `${renderGlobalBottombar(currentBottomStatus())}${renderFirstRunOnboardingModal(state, FIRST_RUN_MODEL_OPTIONS)}`
   });
   restoreAvatarPreviewAfterRender(preservedAvatarPreview);
   restoreEditableFocusAfterRender(preservedEditableFocus);
@@ -3880,27 +3855,11 @@ function fromApiConnectionsCsv(csvText: string): ApiConnectionsPortableSnapshot 
 
 async function refreshTtsState(): Promise<void> {
   if (!clientRef) return;
-  const [status, settings, voices] = await Promise.all([
-    clientRef.ttsStatus({ correlationId: nextCorrelationId() }),
-    clientRef.ttsSettingsGet({ correlationId: nextCorrelationId() }),
-    clientRef.ttsListVoices({ correlationId: nextCorrelationId() })
-  ]);
-  state.tts.engineId = status.engineId;
-  state.tts.engine = (status.engine as "kokoro" | "piper" | "matcha" | "kitten" | "pocket") || "kokoro";
-  state.tts.ready = status.ready;
-  state.tts.runtimeArchivePresent = status.runtimeArchivePresent;
-  state.tts.availableModelPaths = status.availableModelPaths || [];
-  state.tts.modelPath = status.modelPath;
-  state.tts.secondaryPath = status.secondaryPath || status.voicesPath || "";
-  state.tts.voicesPath = status.voicesPath;
-  state.tts.tokensPath = status.tokensPath || settings.tokensPath || "";
-  state.tts.dataDir = status.dataDir || settings.dataDir || "";
-  state.tts.voices = voices.voices.length ? voices.voices : status.availableVoices;
-  state.tts.selectedVoice = status.selectedVoice || voices.selectedVoice || settings.voice;
-  state.tts.speed = settings.speed || status.speed || state.tts.speed;
-  state.tts.lexiconStatus = status.lexiconStatus || "";
-  state.tts.status = status.ready ? "ready" : "idle";
-  state.tts.message = status.message;
+  await refreshTtsStateFromIpc({
+    client: clientRef,
+    tts: state.tts,
+    nextCorrelationId
+  });
 }
 
 function applyVadSettingsToLegacyStt(): void {
@@ -3942,34 +3901,6 @@ async function refreshVadState(): Promise<void> {
   state.voiceDuplexMode = diagnostics.snapshot.duplexMode || settings.settings.duplexMode || "single_turn";
   state.vadShadowSummary = diagnostics.snapshot.shadowSummary;
   applyVadSettingsToLegacyStt();
-}
-
-function handleTtsDownloadProgressEvent(event: AppEvent, rerender: () => void): boolean {
-  if (event.action !== "tts.download_model") return false;
-  const payload = payloadAsRecord(event.payload);
-  if (event.stage === "start") {
-    state.tts.downloadReceivedBytes = 0;
-    state.tts.downloadTotalBytes = null;
-    state.tts.downloadPercent = null;
-    return false;
-  }
-  if (event.stage === "progress") {
-    const receivedBytes = Number(payload?.receivedBytes);
-    const totalBytes = Number(payload?.totalBytes);
-    const percent = Number(payload?.percent);
-    state.tts.downloadReceivedBytes = Number.isFinite(receivedBytes) ? receivedBytes : state.tts.downloadReceivedBytes;
-    state.tts.downloadTotalBytes = Number.isFinite(totalBytes) && totalBytes > 0 ? totalBytes : null;
-    state.tts.downloadPercent = Number.isFinite(percent) ? percent : null;
-    rerender();
-    return false;
-  }
-  if (event.stage === "complete" || event.stage === "error") {
-    state.tts.downloadReceivedBytes = null;
-    state.tts.downloadTotalBytes = null;
-    state.tts.downloadPercent = null;
-    return false;
-  }
-  return false;
 }
 
 let modelManagerDownloadLastSampleAtMs: number | null = null;
@@ -4382,9 +4313,7 @@ async function browseTtsModelPath(currentValue: string): Promise<string | null> 
   const trimmedCurrent = currentValue.trim();
   const defaultPath =
     resolveParentDir(trimmedCurrent) ||
-    resolveParentDir(state.tts.modelPath) ||
-    resolveParentDir(state.tts.secondaryPath) ||
-    resolveParentDir(state.tts.voicesPath);
+    resolveParentDir(state.tts.modelPath);
   if (state.runtimeMode === "tauri") {
     try {
       const { invoke } = await import("@tauri-apps/api/core");
@@ -4414,39 +4343,6 @@ async function browseTtsModelPath(currentValue: string): Promise<string | null> 
   }
 
   const manual = window.prompt("Enter absolute TTS model path (ONNX file)", trimmedCurrent);
-  if (!manual) return null;
-  const normalized = manual.trim();
-  return normalized ? normalized : null;
-}
-
-async function browseTtsSecondaryPath(currentValue: string): Promise<string | null> {
-  const trimmedCurrent = currentValue.trim();
-  if (state.runtimeMode === "tauri") {
-    try {
-      const { invoke } = await import("@tauri-apps/api/core");
-      const selected = await invoke<string | string[] | null>("plugin:dialog|open", {
-        options: {
-          title: "Select TTS secondary asset",
-          directory: false,
-          multiple: false,
-          filters: [
-            { name: "Common assets", extensions: ["bin", "onnx", "txt"] },
-            { name: "All files", extensions: ["*"] }
-          ],
-          defaultPath: trimmedCurrent || undefined
-        }
-      });
-      if (Array.isArray(selected)) return selected[0] ?? null;
-      return selected;
-    } catch (error) {
-      pushConsoleEntry(
-        "warn",
-        "browser",
-        `Native TTS secondary picker unavailable, falling back to manual entry: ${String(error)}`
-      );
-    }
-  }
-  const manual = window.prompt("Enter absolute TTS secondary asset path", trimmedCurrent);
   if (!manual) return null;
   const normalized = manual.trim();
   return normalized ? normalized : null;
@@ -4552,6 +4448,8 @@ async function autoStartLlamaRuntimeIfConfigured(): Promise<void> {
   }
 
   state.llamaRuntimeBusy = true;
+  const modelName = modelPath.split("/").pop() || "model";
+  state.chatModelStatusMessage = `Loading ${modelName}...`;
   try {
     const failures: string[] = [];
     for (const candidate of candidates) {
@@ -4572,8 +4470,8 @@ async function autoStartLlamaRuntimeIfConfigured(): Promise<void> {
   } catch (error) {
     pushConsoleEntry("warn", "browser", `Auto-start failed: ${String(error)}`);
     await refreshLlamaRuntime();
-  } finally {
     state.llamaRuntimeBusy = false;
+    state.chatModelStatusMessage = null;
   }
 }
 
@@ -4587,25 +4485,37 @@ function renderAndBind(sendMessage: (text: string) => Promise<void>): void {
     if (!clientRef) return;
     state.chatTtsEnabled = !state.chatTtsEnabled;
     if (!state.chatTtsEnabled) {
+      chatTtsStopRequested = true;
       resetChatTtsQueue();
       stopTtsPlaybackLocal();
+      if (clientRef) {
+        try {
+          await clientRef.ttsStop({ correlationId: nextCorrelationId() });
+        } catch {}
+      }
       state.tts.message = "Auto-speak disabled.";
       renderAndBind(sendMessage);
       return;
     }
+    chatTtsStopRequested = false;
     state.tts.message = "Auto-speak enabled.";
     renderAndBind(sendMessage);
     void prewarmChatTtsIfNeeded();
     if (state.activeChatCorrelationId) {
-      const existing = state.messages.find(
-        (message) =>
-          message.role === "assistant" && message.correlationId === state.activeChatCorrelationId
-      );
-      if (existing?.text) {
+      const isStreamComplete = state.chatStreamCompleteByCorrelation[state.activeChatCorrelationId] === true;
+      if (isStreamComplete) {
+        const existing = state.messages.find(
+          (message) =>
+            message.role === "assistant" && message.correlationId === state.activeChatCorrelationId
+        );
+        if (existing?.text) {
+          resetChatTtsStreamParser(state.activeChatCorrelationId);
+          const seed = extractSpeakableStreamDelta(existing.text);
+          enqueueSpeakableChunk(seed, false);
+          void runChatTtsQueue(sendMessage);
+        }
+      } else {
         resetChatTtsStreamParser(state.activeChatCorrelationId);
-        const seed = extractSpeakableStreamDelta(existing.text);
-        enqueueSpeakableChunk(seed, false);
-        void runChatTtsQueue(sendMessage);
       }
     }
   };
@@ -4719,6 +4629,14 @@ function renderAndBind(sendMessage: (text: string) => Promise<void>): void {
     const voiceModeActive = sttRunning && ttsActive;
 
     if (voiceModeActive) {
+      chatTtsStopRequested = true;
+      resetChatTtsQueue();
+      stopTtsPlaybackLocal();
+      if (clientRef) {
+        try {
+          await clientRef.ttsStop({ correlationId: nextCorrelationId() });
+        } catch {}
+      }
       await toggleSttRuntime();
       if (state.chatTtsEnabled) {
         await toggleChatAutoSpeak();
@@ -4727,12 +4645,6 @@ function renderAndBind(sendMessage: (text: string) => Promise<void>): void {
     }
 
     if (!state.tts.ready) {
-      if (!state.tts.modelPath && !state.tts.availableModelPaths.length) {
-        state.tts.status = "error";
-        state.tts.message = "Voice mode requires a TTS bundle. Install one in the TTS panel first.";
-        renderAndBind(sendMessage);
-        return;
-      }
       state.tts.status = "busy";
       state.tts.message = "Starting TTS engine...";
       renderAndBind(sendMessage);
@@ -4758,6 +4670,7 @@ function renderAndBind(sendMessage: (text: string) => Promise<void>): void {
     }
 
     if (!state.chatTtsEnabled) {
+      chatTtsStopRequested = false;
       await toggleChatAutoSpeak();
     }
     if (state.stt.status !== "running" && state.stt.status !== "starting") {
@@ -4863,6 +4776,8 @@ syncOverlayScrollbars();
       enqueueSpeakableChunk,
       runChatTtsQueue,
       refreshConversations,
+      refreshLlamaRuntime,
+      waitForLocalModelReady,
       renderAndBind: (_boundSendMessage) => renderAndBind(sendMessage)
     });
     bindPaneMenu(`chatPaneMenu-${i}`, {
@@ -4965,148 +4880,17 @@ syncOverlayScrollbars();
       };
     }
   }
-  const dismissFirstRunOnboarding = () => {
-    state.firstRunOnboardingOpen = false;
-    state.firstRunBusy = false;
-    state.firstRunMessage = null;
-    persistFirstRunOnboardingDismissed();
-    renderAndBind(sendMessage);
-  };
-  document.querySelectorAll<HTMLButtonElement>(".first-run-skip").forEach((btn) => {
-    btn.onclick = dismissFirstRunOnboarding;
+  bindFirstRunOnboardingInteractions({
+    state,
+    modelOptions: FIRST_RUN_MODEL_OPTIONS,
+    getClient: () => clientRef,
+    nextCorrelationId,
+    browseModelPath,
+    persistLlamaModelPath,
+    refreshModelManagerInstalled,
+    persistFirstRunOnboardingDismissed,
+    render: () => renderAndBind(sendMessage)
   });
-  const termsCheckbox = document.querySelector<HTMLInputElement>("#firstRunTermsCheckbox");
-  if (termsCheckbox) {
-    termsCheckbox.onchange = () => {
-      state.firstRunTermsAccepted = termsCheckbox.checked;
-      state.firstRunMessage = null;
-      renderAndBind(sendMessage);
-    };
-  }
-  const firstRunSkipStep = document.querySelector<HTMLButtonElement>(".first-run-skip-step");
-  if (firstRunSkipStep) {
-    firstRunSkipStep.onclick = () => {
-      if (state.firstRunOnboardingStep === "welcome") {
-        state.firstRunOnboardingStep = "model";
-      } else if (state.firstRunOnboardingStep === "model") {
-        state.firstRunOnboardingStep = "tts";
-      } else {
-        dismissFirstRunOnboarding();
-        return;
-      }
-      state.firstRunMessage = null;
-      renderAndBind(sendMessage);
-    };
-  }
-  const firstRunNext = document.querySelector<HTMLButtonElement>(".first-run-next");
-  if (firstRunNext) {
-    firstRunNext.onclick = () => {
-      if (state.firstRunOnboardingStep === "welcome" && !state.firstRunTermsAccepted) return;
-      state.firstRunOnboardingStep = state.firstRunOnboardingStep === "welcome" ? "model" : "tts";
-      state.firstRunMessage = null;
-      renderAndBind(sendMessage);
-    };
-  }
-  const firstRunBack = document.querySelector<HTMLButtonElement>(".first-run-back");
-  if (firstRunBack) {
-    firstRunBack.onclick = () => {
-      state.firstRunOnboardingStep = state.firstRunOnboardingStep === "tts" ? "model" : "welcome";
-      state.firstRunMessage = null;
-      renderAndBind(sendMessage);
-    };
-  }
-  document.querySelectorAll<HTMLInputElement>('input[name="firstRunModel"]').forEach((input) => {
-    input.onchange = () => {
-      state.firstRunSelectedModelId = input.value;
-      state.firstRunMessage = null;
-      renderAndBind(sendMessage);
-    };
-  });
-  const firstRunDownloadModel = document.querySelector<HTMLButtonElement>(".first-run-download-model");
-  if (firstRunDownloadModel) {
-    firstRunDownloadModel.onclick = async () => {
-      if (!clientRef || state.firstRunBusy) return;
-      const model = FIRST_RUN_MODEL_OPTIONS.find((item) => item.id === state.firstRunSelectedModelId) ?? FIRST_RUN_MODEL_OPTIONS[0];
-      if (!model || model.custom || !model.repoId || !model.fileName) return;
-      state.firstRunBusy = true;
-      state.firstRunMessage = `Downloading ${model.name}...`;
-      renderAndBind(sendMessage);
-      try {
-        const response = await clientRef.modelManagerDownloadHf({
-          correlationId: nextCorrelationId(),
-          repoId: model.repoId,
-          fileName: model.fileName
-        });
-        state.llamaRuntimeModelPath = response.model.path;
-        persistLlamaModelPath(response.model.path);
-        await refreshModelManagerInstalled();
-        state.firstRunOnboardingStep = "tts";
-        state.firstRunMessage = `Downloaded ${response.model.name}. Next, install voice output.`;
-      } catch (error) {
-        state.firstRunMessage = `Model download failed: ${String(error)}`;
-      } finally {
-        state.firstRunBusy = false;
-      }
-      renderAndBind(sendMessage);
-    };
-  }
-  const firstRunSelectCustomModel = document.querySelector<HTMLButtonElement>(".first-run-select-custom-model");
-  if (firstRunSelectCustomModel) {
-    firstRunSelectCustomModel.onclick = async () => {
-      if (state.firstRunBusy) return;
-      const selectedPath = await browseModelPath();
-      if (!selectedPath) return;
-      state.firstRunCustomModelPath = selectedPath;
-      state.llamaRuntimeModelPath = selectedPath;
-      persistLlamaModelPath(selectedPath);
-      state.firstRunMessage = `Selected local model: ${selectedPath}`;
-      renderAndBind(sendMessage);
-    };
-  }
-  document.querySelectorAll<HTMLButtonElement>(".first-run-tts-download").forEach((btn) => {
-    btn.onclick = async () => {
-      if (!clientRef || state.firstRunBusy) return;
-      const url = btn.dataset.url;
-      if (!url) return;
-      state.firstRunBusy = true;
-      state.firstRunMessage = "Downloading Kokoro voice bundle...";
-      state.tts.downloadReceivedBytes = 0;
-      state.tts.downloadTotalBytes = null;
-      state.tts.downloadPercent = null;
-      renderAndBind(sendMessage);
-      try {
-        const response = await clientRef.ttsDownloadModel({ correlationId: nextCorrelationId(), url });
-        await refreshTtsState();
-        if (!state.tts.ready) {
-          state.firstRunMessage = "Initializing TTS engine...";
-          renderAndBind(sendMessage);
-          try {
-            const selfTest = await clientRef.ttsSelfTest({ correlationId: nextCorrelationId() });
-            await refreshTtsState();
-            state.firstRunMessage = selfTest.ok
-              ? "Kokoro voice bundle installed and engine ready."
-              : (selfTest.message || "Bundle installed but engine not ready. You can enable voice mode later.");
-          } catch (initError) {
-            state.firstRunMessage = `Bundle installed. Engine init skipped: ${formatTtsError(initError)}`;
-          }
-        } else {
-          state.firstRunMessage = response.message || "Kokoro voice bundle installed and ready.";
-        }
-      } catch (error) {
-        state.firstRunMessage = `TTS download failed: ${formatTtsError(error)}`;
-      } finally {
-        state.firstRunBusy = false;
-        state.tts.downloadReceivedBytes = null;
-        state.tts.downloadTotalBytes = null;
-        state.tts.downloadPercent = null;
-      }
-      renderAndBind(sendMessage);
-    };
-  });
-  const firstRunFinish = document.querySelector<HTMLButtonElement>(".first-run-finish");
-  if (firstRunFinish) {
-    firstRunFinish.onclick = dismissFirstRunOnboarding;
-  }
   const llamaState: LlamaStateSlice = state;
   const llamaControllerDeps: LlamaCppControllerDeps = {
     nextCorrelationId,
@@ -5164,6 +4948,14 @@ syncOverlayScrollbars();
       renderAndBind(sendMessage);
     },
     onCreateConversation: async () => {
+      chatTtsStopRequested = true;
+      resetChatTtsQueue();
+      stopTtsPlaybackLocal();
+      if (clientRef) {
+        try {
+          await clientRef.ttsStop({ correlationId: nextCorrelationId() });
+        } catch {}
+      }
       const id = generateChatConversationId();
       state.conversationId = id;
       if (state.projectsSelectedId) {
@@ -5175,8 +4967,14 @@ syncOverlayScrollbars();
       renderAndBind(sendMessage);
     },
     onClearChat: async () => {
+      chatTtsStopRequested = true;
+      resetChatTtsQueue();
+      stopTtsPlaybackLocal();
       const currentId = state.conversationId;
       if (clientRef) {
+        try {
+          await clientRef.ttsStop({ correlationId: nextCorrelationId() });
+        } catch {}
         try {
           await clientRef.deleteConversation({
             conversationId: currentId,
@@ -5955,324 +5753,17 @@ syncOverlayScrollbars();
       }
       renderAndBind(sendMessage);
     },
-    onTtsRefresh: async () => {
-      if (!clientRef) return;
-      state.tts.status = "busy";
-      state.tts.message = "Refreshing TTS status...";
-      renderAndBind(sendMessage);
-      try {
-        await refreshTtsState();
-      } catch (error) {
-        state.tts.status = "error";
-        state.tts.message = `TTS refresh failed: ${formatTtsError(error)}`;
-      }
-      renderAndBind(sendMessage);
-    },
-    onTtsStart: async () => {
-      if (!clientRef) return;
-      state.tts.status = "busy";
-      state.tts.message = `Starting ${state.tts.engine} TTS engine...`;
-      renderAndBind(sendMessage);
-      try {
-        const response = await clientRef.ttsSelfTest({
-          correlationId: nextCorrelationId()
-        });
-        await refreshTtsState();
-        state.tts.status = response.ok ? "ready" : "error";
-        state.tts.message = response.ok
-          ? `${state.tts.engine} TTS engine ready.`
-          : response.message || `${state.tts.engine} TTS engine failed to start.`;
-        state.tts.lastBytes = response.bytes;
-        state.tts.lastDurationMs = response.durationMs;
-        state.tts.lastSampleRate = response.sampleRate;
-      } catch (error) {
-        state.tts.status = "error";
-        state.tts.message = `TTS start failed: ${formatTtsError(error)}`;
-      }
-      renderAndBind(sendMessage);
-    },
-    onTtsSetVoice: async (voice: string) => {
-      state.tts.selectedVoice = voice.trim() || state.tts.selectedVoice;
-      if (!clientRef) {
-        renderAndBind(sendMessage);
-        return;
-      }
-      try {
-        await clientRef.ttsSettingsSet({
-          correlationId: nextCorrelationId(),
-          voice: state.tts.selectedVoice
-        });
-      } catch (error) {
-        state.tts.status = "error";
-        state.tts.message = `Failed saving voice: ${String(error)}`;
-      }
-      renderAndBind(sendMessage);
-    },
-    onTtsSetEngine: async (engine: TtsEngine) => {
-      state.tts = resetTtsStateForEngine(state.tts, engine);
-      if (!clientRef) {
-        renderAndBind(sendMessage);
-        return;
-      }
-      state.tts.status = "busy";
-      state.tts.message = `Switching TTS engine to ${engine}...`;
-      renderAndBind(sendMessage);
-      try {
-        await clientRef.ttsSettingsSet({
-          correlationId: nextCorrelationId(),
-          engine
-        });
-        await refreshTtsState();
-        if (!state.tts.modelPath && !state.tts.availableModelPaths.length) {
-          state.tts.ttsSetupModalOpen = true;
-        }
-      } catch (error) {
-        state.tts.status = "error";
-        state.tts.message = `Failed switching engine: ${formatTtsError(error)}`;
-      }
-      renderAndBind(sendMessage);
-    },
-    onTtsSetSpeed: async (speed: number) => {
-      const normalized = Math.max(0.5, Math.min(2, speed));
-      state.tts.speed = normalized;
-      if (!clientRef) {
-        renderAndBind(sendMessage);
-        return;
-      }
-      try {
-        await clientRef.ttsSettingsSet({
-          correlationId: nextCorrelationId(),
-          speed: normalized
-        });
-      } catch (error) {
-        state.tts.status = "error";
-        state.tts.message = `Failed saving speed: ${String(error)}`;
-      }
-      renderAndBind(sendMessage);
-    },
-    onTtsSetTestText: async (text: string) => {
-      state.tts.testText = text;
-      renderAndBind(sendMessage);
-    },
-    onTtsSetModelBundle: async (modelPath: string) => {
-      const selectedPath = modelPath.trim();
-      if (!selectedPath) return;
-      if (!clientRef) {
-        state.tts.modelPath = selectedPath;
-        state.tts.message = `Selected bundle model: ${selectedPath}`;
-        renderAndBind(sendMessage);
-        return;
-      }
-      state.tts.status = "busy";
-      state.tts.message = "Switching model bundle...";
-      renderAndBind(sendMessage);
-      try {
-        await clientRef.ttsSettingsSet({
-          correlationId: nextCorrelationId(),
-          modelPath: selectedPath
-        });
-        await refreshTtsState();
-        state.tts.message = `Selected bundle model: ${selectedPath}`;
-      } catch (error) {
-        state.tts.status = "error";
-        state.tts.message = `Failed selecting model bundle: ${formatTtsError(error)}`;
-      }
-      renderAndBind(sendMessage);
-    },
-    onTtsBrowseModelPath: async () => {
-      const selectedPath = await browseTtsModelPath(state.tts.modelPath);
-      if (!selectedPath) return;
-      if (!clientRef) {
-        state.tts.modelPath = selectedPath;
-        state.tts.message = `Selected model: ${selectedPath}`;
-        renderAndBind(sendMessage);
-        return;
-      }
-      state.tts.status = "busy";
-      state.tts.message = "Saving TTS model path...";
-      renderAndBind(sendMessage);
-      try {
-        await clientRef.ttsSettingsSet({
-          correlationId: nextCorrelationId(),
-          modelPath: selectedPath
-        });
-        await refreshTtsState();
-        state.tts.message = `Selected model: ${selectedPath}`;
-      } catch (error) {
-        state.tts.status = "error";
-        state.tts.message = `Failed setting model path: ${formatTtsError(error)}`;
-      }
-      renderAndBind(sendMessage);
-    },
-    onTtsBrowseSecondaryPath: async () => {
-      const selectedPath = await browseTtsSecondaryPath(state.tts.secondaryPath || state.tts.voicesPath);
-      if (!selectedPath) return;
-      if (!clientRef) {
-        state.tts.secondaryPath = selectedPath;
-        state.tts.message = `Selected secondary asset: ${selectedPath}`;
-        renderAndBind(sendMessage);
-        return;
-      }
-      state.tts.status = "busy";
-      state.tts.message = "Saving secondary path...";
-      renderAndBind(sendMessage);
-      try {
-        await clientRef.ttsSettingsSet({
-          correlationId: nextCorrelationId(),
-          secondaryPath: selectedPath
-        });
-        await refreshTtsState();
-      } catch (error) {
-        state.tts.status = "error";
-        state.tts.message = `Failed setting secondary path: ${formatTtsError(error)}`;
-      }
-      renderAndBind(sendMessage);
-    },
-    onTtsDownloadModel: async () => {
-      if (!clientRef) return;
-      const trustedSourceUrl =
-        state.tts.engine === "kokoro"
-          ? "https://github.com/k2-fsa/sherpa-onnx/releases/tag/tts-models"
-          : state.tts.engine === "piper"
-          ? "https://k2-fsa.github.io/sherpa/onnx/tts/pretrained_models/vits.html"
-          : state.tts.engine === "matcha"
-          ? "https://k2-fsa.github.io/sherpa/onnx/tts/pretrained_models/matcha.html"
-          : state.tts.engine === "pocket"
-          ? "https://k2-fsa.github.io/sherpa/onnx/tts/pretrained_models/index.html"
-          : "https://k2-fsa.github.io/sherpa/onnx/tts/pretrained_models/index.html";
-      if (state.tts.engine !== "kokoro") {
-        window.open(trustedSourceUrl, "_blank", "noopener,noreferrer");
-        state.tts.message = `Opened trusted ${state.tts.engine} model source.`;
-        renderAndBind(sendMessage);
-        return;
-      }
-      state.tts.status = "busy";
-      state.tts.message = "Downloading sherpa Kokoro model bundle...";
-      state.tts.downloadReceivedBytes = 0;
-      state.tts.downloadTotalBytes = null;
-      state.tts.downloadPercent = null;
-      renderAndBind(sendMessage);
-      try {
-        const response = await clientRef.ttsDownloadModel({
-          correlationId: nextCorrelationId()
-        });
-        state.tts.message = response.message;
-        await refreshTtsState();
-        if (state.tts.ready) state.tts.ttsSetupModalOpen = false;
-      } catch (error) {
-        state.tts.status = "error";
-        state.tts.message = `Model download failed: ${formatTtsError(error)}`;
-      } finally {
-        state.tts.downloadReceivedBytes = null;
-        state.tts.downloadTotalBytes = null;
-        state.tts.downloadPercent = null;
-      }
-      renderAndBind(sendMessage);
-    },
-    onTtsDownloadModelWithUrl: async (url: string) => {
-      if (!clientRef) return;
-      if (state.tts.engine !== "kokoro") {
-        state.tts.message = "Model download is only available for Kokoro engine.";
-        renderAndBind(sendMessage);
-        return;
-      }
-      state.tts.status = "busy";
-      state.tts.message = "Downloading Kokoro model bundle...";
-      state.tts.downloadReceivedBytes = 0;
-      state.tts.downloadTotalBytes = null;
-      state.tts.downloadPercent = null;
-      renderAndBind(sendMessage);
-      try {
-        const response = await clientRef.ttsDownloadModel({
-          correlationId: nextCorrelationId(),
-          url
-        });
-        state.tts.message = response.message;
-        await refreshTtsState();
-        if (state.tts.ready) state.tts.ttsSetupModalOpen = false;
-      } catch (error) {
-        state.tts.status = "error";
-        state.tts.message = `Model download failed: ${formatTtsError(error)}`;
-      } finally {
-        state.tts.downloadReceivedBytes = null;
-        state.tts.downloadTotalBytes = null;
-        state.tts.downloadPercent = null;
-      }
-      renderAndBind(sendMessage);
-    },
-    onTtsSetSetupModalOpen: (open: boolean) => {
-      state.tts.ttsSetupModalOpen = open;
-      renderAndBind(sendMessage);
-    },
-    onTtsSpeakTest: async () => {
-      if (!clientRef) return;
-      const text = state.tts.testText.trim();
-      if (!text) {
-        state.tts.status = "error";
-        state.tts.message = "Enter text to speak.";
-        renderAndBind(sendMessage);
-        return;
-      }
-      state.tts.status = "busy";
-      state.tts.message = "Synthesizing...";
-      renderAndBind(sendMessage);
-      try {
-        const response = await clientRef.ttsSpeak({
-          correlationId: nextCorrelationId(),
-          text,
-          voice: state.tts.selectedVoice,
-          speed: state.tts.speed
-        });
-        state.tts.status = "ready";
-        state.tts.message = `Spoke with ${response.voice}`;
-        state.tts.selectedVoice = response.voice;
-        state.tts.speed = response.speed;
-        state.tts.lastBytes = response.audioBytes.length;
-        state.tts.lastDurationMs = response.durationMs;
-        state.tts.lastSampleRate = response.sampleRate;
-        await playTtsAudio(response.audioBytes, null, text);
-      } catch (error) {
-        state.tts.status = "error";
-        state.tts.message = `Speak failed: ${formatTtsError(error)}`;
-      }
-      renderAndBind(sendMessage);
-    },
-    onTtsStop: async () => {
-      stopTtsPlaybackLocal();
-      if (!clientRef) {
-        renderAndBind(sendMessage);
-        return;
-      }
-      try {
-        await clientRef.ttsStop({ correlationId: nextCorrelationId() });
-        state.tts.status = state.tts.ready ? "ready" : "idle";
-        state.tts.message = "Stopped.";
-      } catch (error) {
-        state.tts.status = "error";
-        state.tts.message = `Stop failed: ${String(error)}`;
-      }
-      renderAndBind(sendMessage);
-    },
-    onTtsSelfTest: async () => {
-      if (!clientRef) return;
-      state.tts.status = "busy";
-      state.tts.message = "Running self-test...";
-      renderAndBind(sendMessage);
-      try {
-        const response = await clientRef.ttsSelfTest({
-          correlationId: nextCorrelationId()
-        });
-        state.tts.status = response.ok ? "ready" : "error";
-        state.tts.message = response.message;
-        state.tts.lastBytes = response.bytes;
-        state.tts.lastDurationMs = response.durationMs;
-        state.tts.lastSampleRate = response.sampleRate;
-      } catch (error) {
-        state.tts.status = "error";
-        state.tts.message = `Self-test failed: ${formatTtsError(error)}`;
-      }
-      renderAndBind(sendMessage);
-    },
+    ...createTtsPanelBindings({
+      state,
+      getClient: () => clientRef,
+      nextCorrelationId,
+      refreshTtsState,
+      browseTtsModelPath,
+      playTtsAudio,
+      stopTtsPlaybackLocal,
+      formatTtsError,
+      render: () => renderAndBind(sendMessage)
+    }),
     onToggleStt: toggleSttRuntime,
     onSetSttBackend: async (backend) => {
       if (backend !== "whisper_cpp" && backend !== "sherpa_onnx") return;
@@ -7516,7 +7007,7 @@ function renderChatMessagesOnly(panelId = PRIMARY_CHAT_PANE_ID): void {
   const isNearBottom =
     messagesHost.scrollHeight - messagesHost.scrollTop - messagesHost.clientHeight < 36;
   messagesHost.innerHTML = renderChatMessages({ chat: panel });
-  if (isNearBottom || panel.chatStreaming) {
+  if (isNearBottom) {
     messagesHost.scrollTop = messagesHost.scrollHeight;
   }
 }
@@ -7694,9 +7185,6 @@ function attachSidebarInteractions(sendMessage: (text: string) => Promise<void>)
       if (nextTab === "tts") {
         try {
           await refreshTtsState();
-          if (!state.tts.modelPath && !state.tts.availableModelPaths.length && !state.tts.ttsSetupModalOpen) {
-            state.tts.ttsSetupModalOpen = true;
-          }
         } catch (error) {
           state.tts.status = "error";
           state.tts.message = `TTS refresh failed: ${String(error)}`;
@@ -8640,65 +8128,6 @@ async function bootstrap(): Promise<void> {
   terminalManager.setClient(client);
   terminalManager.setDisplayMode(state.displayMode);
 
-  await runCoreBootstrapSteps({
-    refreshConversations,
-    refreshTools,
-    refreshFlowRuns,
-    refreshApiConnections,
-    refreshTtsState,
-    onTtsBootstrapError: (error) => {
-      state.tts.status = "error";
-      state.tts.message = `TTS bootstrap failed: ${String(error)}`;
-    },
-    refreshDevicesState,
-    refreshLlamaRuntime,
-    refreshModelManagerInstalled,
-    shouldRefreshUnslothUdCatalog: () => false,
-    refreshModelManagerUnslothUdCatalog,
-    autoStartLlamaRuntimeIfConfigured,
-    loadConversation: () => loadConversation(state.conversationId)
-  });
-
-  appResourcePolling.restart(1000);
-
-  window.addEventListener("beforeunload", () => {
-    appResourcePolling.stop();
-    stopTtsPlaybackLocal();
-    void terminalManager.closeAll();
-  });
-  if (navigator.mediaDevices?.addEventListener) {
-    navigator.mediaDevices.addEventListener("devicechange", () => {
-      void refreshDevicesState().then(() => renderAndBind(sendMessage));
-    });
-  }
-  await installTauriSttListeners({
-    runtimeMode,
-    state,
-    sttPipelineErrorUnlisten,
-    sttVadUnlisten,
-    sttStatusUnlisten,
-    setSttPipelineErrorUnlisten: (value) => {
-      sttPipelineErrorUnlisten = value;
-    },
-    setSttVadUnlisten: (value) => {
-      sttVadUnlisten = value;
-    },
-    setSttStatusUnlisten: (value) => {
-      sttStatusUnlisten = value;
-    },
-    nextCorrelationId,
-    pushConsoleEntry,
-    rerender: () => renderAndBind(sendMessage),
-    onVadSpeakingChanged: (isSpeaking) => {
-      sttLastWasSpeaking = isSpeaking;
-      updateChatVoiceInputIcons();
-    }
-  });
-
-  if (runtimeMode === "tauri") {
-    prewarmWhisper();
-  }
-
   const scheduleFlowRunsRefresh = createFlowRunsRefreshScheduler({
     refresh: refreshFlowRuns,
     onRefreshed: () => renderAndBind(sendMessage),
@@ -8727,7 +8156,6 @@ async function bootstrap(): Promise<void> {
   registerClientEventBridge({
     client,
     handleCoreEvent: (event) => {
-      handleTtsDownloadProgressEvent(event, () => renderAndBind(sendMessage));
       handleModelManagerDownloadProgressEvent(event, () => renderAndBind(sendMessage));
       if (event.action === "chart.definition.set") {
         const payload = payloadAsRecord(event.payload);
@@ -8754,7 +8182,7 @@ async function bootstrap(): Promise<void> {
         const payload = payloadAsRecord(event.payload);
         const source = typeof payload?.source === "string" ? payload.source : null;
         const operation = typeof payload?.operation === "string" ? payload.operation : null;
-      if (source === "user" && operation === "write_range") {
+        if (source === "user" && operation === "write_range") {
           state.sheetsState.filePath = typeof payload?.filePath === "string" ? payload.filePath : state.sheetsState.filePath;
           state.sheetsState.fileName = typeof payload?.fileName === "string" ? payload.fileName : state.sheetsState.fileName;
           state.sheetsState.rowCount = typeof payload?.rowCount === "number" ? payload.rowCount : state.sheetsState.rowCount;
@@ -8781,6 +8209,7 @@ async function bootstrap(): Promise<void> {
         updateRuntimeMetricsFromLine,
         formatRuntimeEventLine,
         refreshLlamaRuntime,
+        setChatModelLoadingMessage: (message: string | null) => { state.chatModelStatusMessage = message; },
         state,
         applyFlowRuntimeEvent: (eventItem) => applyFlowRuntimeEvent(state, eventItem, scheduleFlowRunsRefresh),
         applyLooperRuntimeEvent: (eventItem) =>
@@ -8868,6 +8297,81 @@ async function bootstrap(): Promise<void> {
       })
   });
 
+  await runCoreBootstrapSteps({
+    refreshConversations,
+    refreshTools,
+    refreshFlowRuns,
+    refreshApiConnections,
+    refreshTtsState,
+    onTtsBootstrapError: (error) => {
+      state.tts.status = "error";
+      state.tts.message = `TTS bootstrap failed: ${String(error)}`;
+    },
+    refreshDevicesState,
+    refreshLlamaRuntime,
+    refreshModelManagerInstalled,
+    shouldRefreshUnslothUdCatalog: () => false,
+    refreshModelManagerUnslothUdCatalog,
+    autoStartLlamaRuntimeIfConfigured,
+    loadConversation: () => loadConversation(state.conversationId)
+  });
+
+  appResourcePolling.restart(1000);
+
+  window.addEventListener("beforeunload", () => {
+    appResourcePolling.stop();
+    stopTtsPlaybackLocal();
+    void terminalManager.closeAll();
+  });
+  if (navigator.mediaDevices?.addEventListener) {
+    navigator.mediaDevices.addEventListener("devicechange", () => {
+      void refreshDevicesState().then(() => renderAndBind(sendMessage));
+    });
+  }
+  await installTauriSttListeners({
+    runtimeMode,
+    state,
+    sttPipelineErrorUnlisten,
+    sttVadUnlisten,
+    sttStatusUnlisten,
+    setSttPipelineErrorUnlisten: (value) => {
+      sttPipelineErrorUnlisten = value;
+    },
+    setSttVadUnlisten: (value) => {
+      sttVadUnlisten = value;
+    },
+    setSttStatusUnlisten: (value) => {
+      sttStatusUnlisten = value;
+    },
+    nextCorrelationId,
+    pushConsoleEntry,
+    rerender: () => renderAndBind(sendMessage),
+    onVadSpeakingChanged: (isSpeaking) => {
+      sttLastWasSpeaking = isSpeaking;
+      updateChatVoiceInputIcons();
+    }
+  });
+
+  if (runtimeMode === "tauri") {
+    prewarmWhisper();
+  }
+
+  const waitForLocalModelReady = async (): Promise<boolean> => {
+    const deadline = Date.now() + 45000;
+    while (Date.now() < deadline) {
+      await refreshLlamaRuntime();
+      const healthy = Boolean(
+        state.llamaRuntime?.state === "healthy" &&
+        state.llamaRuntime.activeEngineId &&
+        state.llamaRuntime.endpoint &&
+        state.llamaRuntime.pid
+      );
+      if (healthy) return true;
+      await new Promise((resolve) => window.setTimeout(resolve, 1000));
+    }
+    return false;
+  };
+
   sendMessage = initializeSendMessageBinding({
     getClientRef: () => clientRef,
     state,
@@ -8893,6 +8397,8 @@ async function bootstrap(): Promise<void> {
     enqueueSpeakableChunk,
     runChatTtsQueue,
     refreshConversations,
+    refreshLlamaRuntime,
+    waitForLocalModelReady,
     renderAndBind
   }, (boundSendMessage) => {
     appResourceRenderSendMessageRef = boundSendMessage;
