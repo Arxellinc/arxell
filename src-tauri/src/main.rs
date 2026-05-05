@@ -62,6 +62,8 @@ use arxell_lite::ipc::tauri_bridge::{attach_event_forwarder, TauriBridgeState};
 #[cfg(feature = "tauri-runtime")]
 use arxell_lite::ipc::tool_runtime::{invoke_legacy_tool_command, invoke_tool};
 #[cfg(feature = "tauri-runtime")]
+use arxell_lite::tools::invoke::tasks::run_due_scheduled_tasks;
+#[cfg(feature = "tauri-runtime")]
 use arxell_lite::stt::STTState;
 #[cfg(feature = "tauri-runtime")]
 use arxell_lite::tts::TTSState;
@@ -178,11 +180,20 @@ fn main() {
         sheets: std::sync::Arc::clone(&app_context.sheets),
         voice: std::sync::Arc::clone(&app_context.voice),
     };
+    let scheduler_state = state.clone();
 
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .setup(move |app| {
             attach_event_forwarder(app.handle().clone(), hub.clone());
+            let scheduler_state = scheduler_state.clone();
+            tauri::async_runtime::spawn(async move {
+                let mut interval = tokio::time::interval(std::time::Duration::from_secs(15));
+                loop {
+                    interval.tick().await;
+                    let _ = run_due_scheduled_tasks(&scheduler_state, 16).await;
+                }
+            });
             if let Some(window) = app.get_webview_window("main") {
                 restore_window_state(&window);
             }
@@ -301,6 +312,7 @@ fn main() {
             transcribe_chunk,
             transcribe_partial_chunk,
             stt_stream_reset,
+            stt_stream_configure,
             stt_stream_ingest,
             cmd_tts_status,
             cmd_tts_list_voices,
@@ -609,6 +621,16 @@ async fn transcribe_partial_chunk(
 #[tauri::command]
 async fn stt_stream_reset() -> Result<(), String> {
     arxell_lite::stt::stt_stream_reset().await
+}
+
+#[cfg(feature = "tauri-runtime")]
+#[tauri::command]
+async fn stt_stream_configure(
+    start_frames: Option<u32>,
+    end_frames: Option<u32>,
+    pre_speech_ms: Option<u32>,
+) -> Result<(), String> {
+    arxell_lite::stt::stt_stream_configure(start_frames, end_frames, pre_speech_ms).await
 }
 
 #[cfg(feature = "tauri-runtime")]

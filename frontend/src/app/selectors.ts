@@ -4,7 +4,6 @@ import {
   selectFlowToolState,
   selectMemoryToolState,
   selectNotepadToolState,
-  selectSkillsToolState,
   selectTasksToolState
 } from "./state";
 
@@ -37,9 +36,9 @@ export function selectWorkspaceViewState(args: {
     ...selectNotepadToolState(state),
     sheetsState: state.sheetsState,
     ...selectDocsToolState(state),
-    ...selectSkillsToolState(state),
     ...selectMemoryToolState(state),
     ...selectTasksToolState(state),
+    chatModelOptions: state.chatModelOptions,
     projectsById: state.projectsById,
     ...selectFlowToolState(state),
     flowTerminalPhases: [...flowTerminalPhases],

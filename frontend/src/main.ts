@@ -147,6 +147,7 @@ import { buildPhonemeTimeline } from "./avatar/phonemeUtils";
 import { ChatTtsPipeline } from "./voice/chatTtsPipeline";
 import type { ChatTtsQueueItem } from "./voice/chatTtsPipeline";
 import { APP_BUILD_VERSION, normalizeVersionLabel } from "./version";
+import { createNotificationRecord } from "./notifications";
 import {
   closeTerminalSessionAndPickNext,
   createTerminalSessionForProfile,
@@ -207,7 +208,6 @@ import {
   createInitialFlowState,
   createInitialMemoryState,
   createInitialNotepadState,
-  createInitialSkillsFileState,
   createInitialTasksState,
   defaultApiConnectionDraft,
   defaultDevicesState,
@@ -322,13 +322,13 @@ let preferredChatModelId = loadPersistedChatModelId();
 const initialWorkspaceTabCandidate = loadPersistedWorkspaceTab("tasks-tool");
 const initialWorkspaceTab = initialWorkspaceTabCandidate === "flow-tool"
   ? "events"
-  : initialWorkspaceTabCandidate === "skills-tool"
-  ? "memory-tool"
   : isWorkspaceTab(initialWorkspaceTabCandidate)
   ? initialWorkspaceTabCandidate
   : "events";
 const FIRST_RUN_ONBOARDING_DISMISSED_KEY = "arxell.firstRunOnboarding.dismissed";
 const AUTO_SAFE_ENABLED_KEY = "arxell.autoSafeEnabled";
+const ENABLE_NOTIFICATION_CHIME_KEY = "arxell.enableNotificationChime";
+const ENABLE_CHAT_QUESTION_CHIME_KEY = "arxell.enableChatQuestionChime";
 interface FirstRunModelOption {
   id: string;
   name: string;
@@ -397,6 +397,36 @@ function loadPersistedAutoSafeEnabled(): boolean {
 function persistAutoSafeEnabled(enabled: boolean): void {
   try {
     window.localStorage.setItem(AUTO_SAFE_ENABLED_KEY, enabled ? "1" : "0");
+  } catch {}
+}
+
+function loadPersistedEnableNotificationChime(): boolean {
+  try {
+    const raw = window.localStorage.getItem(ENABLE_NOTIFICATION_CHIME_KEY);
+    return raw == null ? true : raw === "1";
+  } catch {
+    return true;
+  }
+}
+
+function persistEnableNotificationChime(enabled: boolean): void {
+  try {
+    window.localStorage.setItem(ENABLE_NOTIFICATION_CHIME_KEY, enabled ? "1" : "0");
+  } catch {}
+}
+
+function loadPersistedEnableChatQuestionChime(): boolean {
+  try {
+    const raw = window.localStorage.getItem(ENABLE_CHAT_QUESTION_CHIME_KEY);
+    return raw == null ? true : raw === "1";
+  } catch {
+    return true;
+  }
+}
+
+function persistEnableChatQuestionChime(enabled: boolean): void {
+  try {
+    window.localStorage.setItem(ENABLE_CHAT_QUESTION_CHIME_KEY, enabled ? "1" : "0");
   } catch {}
 }
 
@@ -717,6 +747,7 @@ const state: {
   notepadFindCaseSensitive: boolean;
   notepadLineWrap: boolean;
   notepadError: string | null;
+  notepadUnsavedModalTabId: string | null;
   sheetsState: SheetsToolState;
   docsRootPath: string | null;
   docsSelectedPath: string | null;
@@ -741,29 +772,6 @@ const state: {
   docsFindCaseSensitive: boolean;
   docsLineWrap: boolean;
   docsError: string | null;
-  skillsRootPath: string | null;
-  skillsSelectedPath: string | null;
-  skillsSelectedEntryPath: string | null;
-  skillsExpandedByPath: Record<string, boolean>;
-  skillsEntriesByPath: Record<string, FilesListDirectoryEntry[]>;
-  skillsLoadingByPath: Record<string, boolean>;
-  skillsOpenTabs: string[];
-  skillsActiveTabPath: string | null;
-  skillsContentByPath: Record<string, string>;
-  skillsSavedContentByPath: Record<string, string>;
-  skillsDirtyByPath: Record<string, boolean>;
-  skillsLoadingFileByPath: Record<string, boolean>;
-  skillsSavingFileByPath: Record<string, boolean>;
-  skillsReadOnlyByPath: Record<string, boolean>;
-  skillsSizeByPath: Record<string, number>;
-  skillsSidebarWidth: number;
-  skillsSidebarCollapsed: boolean;
-  skillsFindOpen: boolean;
-  skillsFindQuery: string;
-  skillsReplaceQuery: string;
-  skillsFindCaseSensitive: boolean;
-  skillsLineWrap: boolean;
-  skillsError: string | null;
   memoryContextItems: ChatContextBreakdownItem[];
   memoryChatHistory: Array<ConversationSummaryRecord & { fullBody: string; charCount: number; wordCount: number; tokenEstimate: number }>;
   memoryPersistentItems: ChatContextBreakdownItem[];
@@ -798,6 +806,7 @@ const state: {
   tasksSortDirection: TaskSortDirection;
   tasksDetailsCollapsed: boolean;
   tasksJsonDraft: string;
+  taskNotifications: import("./tools/tasks/state").TaskNotificationRecord[];
   projectsById: Record<string, ProjectRecord>;
   projectsSelectedId: string | null;
   projectsNameDraft: string;
@@ -859,6 +868,8 @@ const state: {
   showBottomContext: boolean;
   showBottomSpeed: boolean;
   showBottomTtsLatency: boolean;
+  enableNotificationChime: boolean;
+  enableChatQuestionChime: boolean;
   appResourceCpuPercent: number | null;
   appResourceMemoryBytes: number | null;
   appResourceNetworkRxBytesPerSec: number | null;
@@ -1098,7 +1109,6 @@ const state: {
   ...createInitialNotepadState(),
   sheetsState: getInitialSheetsState(),
   ...createInitialDocsState(),
-  ...createInitialSkillsFileState(),
   ...createInitialMemoryState({
     alwaysLoadToolKeys: loadPersistedMemoryAlwaysLoadTools(),
     alwaysLoadSkillKeys: loadPersistedMemoryAlwaysLoadSkills()
@@ -1131,6 +1141,8 @@ const state: {
   showBottomContext: loadPersistedBottomItem(BOTTOM_BAR_PREF_KEYS.showBottomContext, true),
   showBottomSpeed: loadPersistedBottomItem(BOTTOM_BAR_PREF_KEYS.showBottomSpeed, true),
   showBottomTtsLatency: loadPersistedBottomItem(BOTTOM_BAR_PREF_KEYS.showBottomTtsLatency, true),
+  enableNotificationChime: loadPersistedEnableNotificationChime(),
+  enableChatQuestionChime: loadPersistedEnableChatQuestionChime(),
   appResourceCpuPercent: null,
   appResourceMemoryBytes: null,
   appResourceNetworkRxBytesPerSec: null,
@@ -1532,6 +1544,8 @@ let chatTtsSawStreamDeltaByCorrelation = new Set<string>();
 let chatTtsLatencyCapturedByCorrelation = new Set<string>();
 let chatTtsActiveStreamRequestId: string | null = null;
 let chatTtsStreamChunkSeq = 0;
+const DEFAULT_NOTIFICATION_CHIME_PATH = "/home/user/Projects/arxell/src-tauri/resources/sounds/default-chime.wav";
+let cachedNotificationChimeUrl: string | null = null;
 let chatTtsActiveStreamText: string | null = null;
 const chatTtsStreamStatsByRequest = new Map<string, { chunks: number; bytes: number; finalSeen: boolean; firstMs: number; lastMs: number }>();
 let chatTtsWarmSignature = "";
@@ -3113,7 +3127,38 @@ function render(): void {
       micPermissionBubbleDismissed: state.micPermissionBubbleDismissed
     }),
     appBodyHtml,
+    notificationsHtml: renderNotificationToasts(),
     bottombarHtml: `${renderGlobalBottombar(currentBottomStatus())}${renderFirstRunOnboardingModal(state, FIRST_RUN_MODEL_OPTIONS)}`
+  });
+  const closeButtons = app.querySelectorAll<HTMLButtonElement>("button[data-notify-close]");
+  closeButtons.forEach((button) => {
+    button.onclick = () => {
+      const id = button.getAttribute("data-notify-close");
+      if (!id) return;
+      state.taskNotifications = state.taskNotifications.filter((row) => row.id !== id);
+      void dismissNotificationInBackend(id);
+      renderAndBind(sendMessage);
+    };
+  });
+  const actionButtons = app.querySelectorAll<HTMLButtonElement>("button[data-notify-action][data-notify-id]");
+  actionButtons.forEach((button) => {
+    button.onclick = () => {
+      const actionId = button.getAttribute("data-notify-action") || "";
+      const notifyId = button.getAttribute("data-notify-id") || "";
+      if (actionId.startsWith("open-task:")) {
+        const taskId = actionId.slice("open-task:".length);
+        if (taskId && state.tasksById[taskId]) {
+          state.workspaceTab = "tasks-tool";
+          state.tasksFolder = "inbox";
+          state.tasksSelectedId = taskId;
+        }
+      }
+      if (notifyId) {
+        state.taskNotifications = state.taskNotifications.map((row) => row.id === notifyId ? { ...row, read: true } : row);
+        void markNotificationReadInBackend(notifyId, true);
+      }
+      renderAndBind(sendMessage);
+    };
   });
   restoreAvatarPreviewAfterRender(preservedAvatarPreview);
   restoreEditableFocusAfterRender(preservedEditableFocus);
@@ -3133,6 +3178,162 @@ function pushConsoleEntry(
   if (state.consoleEntries.length > MAX_CONSOLE_ENTRIES) {
     state.consoleEntries.splice(0, state.consoleEntries.length - MAX_CONSOLE_ENTRIES);
   }
+}
+
+function renderNotificationToasts(): string {
+  const rows = state.taskNotifications.slice().sort((a, b) => b.createdAtMs - a.createdAtMs).filter((row) => !row.read).slice(0, 5);
+  if (!rows.length) return "";
+  return `<div class="app-notify-stack">${rows.map((row) => {
+    const actions = row.actions?.length
+      ? `<div class="app-notify-actions">${row.actions
+          .map((action) => action.href
+            ? `<a class="app-notify-link" href="${escapeHtml(action.href)}" target="_blank" rel="noopener noreferrer">${escapeHtml(action.label)}</a>`
+            : `<button type="button" class="app-notify-link app-notify-link-btn" data-notify-action="${escapeHtml(action.id)}" data-notify-id="${escapeHtml(row.id)}">${escapeHtml(action.label)}</button>`)
+          .join("")}</div>`
+      : "";
+    const toneClass = row.tone === "success" ? "is-success" : row.tone === "warn" ? "is-warn" : row.tone === "error" ? "is-error" : "is-info";
+    return `<article class="app-notify ${toneClass}" data-notify-id="${escapeHtml(row.id)}">
+      <button type="button" class="app-notify-close" data-notify-close="${escapeHtml(row.id)}" aria-label="Dismiss notification">&times;</button>
+      <div class="app-notify-title">${escapeHtml(row.title)}</div>
+      <div class="app-notify-desc">${escapeHtml(row.description)}</div>
+      ${actions}
+    </article>`;
+  }).join("")}</div>`;
+}
+
+function pushAppNotification(input: {
+  title: string;
+  description: string;
+  tone?: "info" | "success" | "warn" | "error";
+  actions?: Array<{ id: string; label: string; href?: string }>;
+}): void {
+  const row = createNotificationRecord(input);
+  state.taskNotifications.unshift(row);
+  if (state.taskNotifications.length > 100) state.taskNotifications.length = 100;
+  void upsertNotificationInBackend(row);
+  if (typeof Notification !== "undefined") {
+    if (Notification.permission === "granted") {
+      try {
+        new Notification(input.title, { body: input.description });
+      } catch {}
+    } else if (Notification.permission === "default") {
+      void Notification.requestPermission().catch(() => {});
+    }
+  }
+  if (state.enableNotificationChime) {
+    void playNotificationChime();
+  }
+}
+
+async function syncNotificationsFromBackend(): Promise<void> {
+  if (!clientRef) return;
+  try {
+    const correlationId = nextCorrelationId();
+    const resp = await clientRef.toolInvoke({
+      correlationId,
+      toolId: "tasks",
+      action: "notifications-list",
+      mode: "sandbox",
+      payload: { correlationId }
+    });
+    if (!resp.ok) return;
+    const rows = Array.isArray((resp.data as any)?.notifications) ? (resp.data as any).notifications : [];
+    state.taskNotifications = rows.map((row: any) => ({
+      id: String(row.id || ""),
+      title: String(row.title || ""),
+      description: String(row.description || ""),
+      tone: row.tone === "success" || row.tone === "warn" || row.tone === "error" ? row.tone : "info",
+      read: row.read === true,
+      actions: Array.isArray(row.actionsJson)
+        ? row.actionsJson.map((item: any) => ({
+            id: String(item?.id || ""),
+            label: String(item?.label || ""),
+            href: typeof item?.href === "string" ? item.href : undefined
+          })).filter((item: any) => item.id && item.label)
+        : [],
+      createdAtMs: Number.isFinite(row.createdAtMs) ? Number(row.createdAtMs) : Date.now()
+    }));
+  } catch {}
+}
+
+async function upsertNotificationInBackend(row: import("./tools/tasks/state").TaskNotificationRecord): Promise<void> {
+  if (!clientRef) return;
+  try {
+    const correlationId = nextCorrelationId();
+    await clientRef.toolInvoke({
+      correlationId,
+      toolId: "tasks",
+      action: "notifications-upsert",
+      mode: "sandbox",
+      payload: {
+        correlationId,
+        notification: {
+          id: row.id,
+          title: row.title,
+          description: row.description,
+          tone: row.tone || "info",
+          read: row.read,
+          actionsJson: row.actions,
+          createdAtMs: row.createdAtMs,
+          updatedAtMs: Date.now()
+        }
+      }
+    });
+  } catch {}
+}
+
+async function markNotificationReadInBackend(id: string, read: boolean): Promise<void> {
+  if (!clientRef) return;
+  try {
+    const correlationId = nextCorrelationId();
+    await clientRef.toolInvoke({
+      correlationId,
+      toolId: "tasks",
+      action: "notifications-mark-read",
+      mode: "sandbox",
+      payload: { correlationId, id, read }
+    });
+  } catch {}
+}
+
+async function dismissNotificationInBackend(id: string): Promise<void> {
+  if (!clientRef) return;
+  try {
+    const correlationId = nextCorrelationId();
+    await clientRef.toolInvoke({
+      correlationId,
+      toolId: "tasks",
+      action: "notifications-dismiss",
+      mode: "sandbox",
+      payload: { correlationId, id }
+    });
+  } catch {}
+}
+
+async function playNotificationChime(): Promise<void> {
+  try {
+    const src = await resolveNotificationChimeUrl();
+    if (!src) return;
+    const audio = new Audio(src);
+    audio.volume = 0.4;
+    await audio.play();
+  } catch {}
+}
+
+async function resolveNotificationChimeUrl(): Promise<string> {
+  if (cachedNotificationChimeUrl) return cachedNotificationChimeUrl;
+  if (state.runtimeMode === "tauri") {
+    try {
+      const tauriCore = await import("@tauri-apps/api/core");
+      const convertFileSrc = (tauriCore as unknown as { convertFileSrc?: (path: string) => string }).convertFileSrc;
+      if (typeof convertFileSrc === "function") {
+        cachedNotificationChimeUrl = convertFileSrc(DEFAULT_NOTIFICATION_CHIME_PATH);
+        return cachedNotificationChimeUrl;
+      }
+    } catch {}
+  }
+  cachedNotificationChimeUrl = DEFAULT_NOTIFICATION_CHIME_PATH;
+  return cachedNotificationChimeUrl;
 }
 
 function scheduleDeferredStartupTask(
@@ -4480,6 +4681,11 @@ function renderAndBind(sendMessage: (text: string) => Promise<void>): void {
     window.clearTimeout(deferredWorkspaceSelectionRenderTimerId);
     deferredWorkspaceSelectionRenderTimerId = null;
   }
+  const now = Date.now();
+  state.taskNotifications = state.taskNotifications.map((row) => {
+    if (row.read) return row;
+    return now - row.createdAtMs > 8000 ? { ...row, read: true } : row;
+  });
 
   const toggleChatAutoSpeak = async (): Promise<void> => {
     if (!clientRef) return;
@@ -4582,6 +4788,7 @@ function renderAndBind(sendMessage: (text: string) => Promise<void>): void {
         state.stt.isListening = false;
         renderAndBind(sendMessage);
         await invoke("stt_set_backend", { backend: state.stt.backend });
+        await syncSttStreamConfig(invoke);
         if (!state.stt.serverWarmed) {
           await invoke("start_stt");
         }
@@ -5840,6 +6047,14 @@ syncOverlayScrollbars();
       if (key === "vadMaxUtteranceS") normalized = Math.round(clampSttSetting(value, 1, 120, 30));
       if (key === "vadForceFlushS") normalized = clampSttSetting(value, 0.25, 30, 3);
       state.stt[key] = normalized;
+      if (state.stt.status === "running" || state.stt.status === "starting") {
+        try {
+          const { invoke } = await import("@tauri-apps/api/core");
+          await syncSttStreamConfig(invoke);
+        } catch (error) {
+          pushConsoleEntry("debug", "browser", "STT stream config sync failed: " + String(error));
+        }
+      }
       renderAndBind(sendMessage);
     },
     onSetVadMethod: async (methodId) => {
@@ -6020,6 +6235,16 @@ syncOverlayScrollbars();
     onSetShowBottomTtsLatency: async (value) => {
       state.showBottomTtsLatency = value;
       persistBottomItem(BOTTOM_BAR_PREF_KEYS.showBottomTtsLatency, value);
+      renderAndBind(sendMessage);
+    },
+    onSetEnableNotificationChime: async (value) => {
+      state.enableNotificationChime = value;
+      persistEnableNotificationChime(value);
+      renderAndBind(sendMessage);
+    },
+    onSetEnableChatQuestionChime: async (value) => {
+      state.enableChatQuestionChime = value;
+      persistEnableChatQuestionChime(value);
       renderAndBind(sendMessage);
     },
     onToggleAvatar: async () => {
@@ -6292,7 +6517,13 @@ function attachChatHeaderModelInteractions(sendMessage: (text: string) => Promis
   });
 }
 
-window.addEventListener("beforeunload", () => {
+window.addEventListener("beforeunload", (event) => {
+  const hasDirtyNotepad = state.notepadOpenTabs.some(
+    (tabId) => state.notepadDirtyByTabId[tabId]
+  );
+  if (hasDirtyNotepad) {
+    event.preventDefault();
+  }
   destroyOverlayScrollbars();
 });
 
@@ -6583,6 +6814,16 @@ function enqueueSttStreamIngest(
     .catch((error) => {
       pushConsoleEntry("debug", "browser", "STT stream ingest failed: " + String(error));
     });
+}
+
+async function syncSttStreamConfig(
+  invokeFn: typeof import("@tauri-apps/api/core").invoke
+): Promise<void> {
+  await invokeFn("stt_stream_configure", {
+    startFrames: Math.round(clampSttSetting(state.stt.vadStartFrames, 1, 100, 2)),
+    endFrames: Math.round(clampSttSetting(state.stt.vadEndFrames, 1, 200, 8)),
+    preSpeechMs: Math.round(clampSttSetting(state.stt.vadPreSpeechMs, 0, 2000, 200))
+  });
 }
 
 async function setupSttTranscriptListener(onTranscript: (text: string) => Promise<void>): Promise<void> {
@@ -7622,6 +7863,7 @@ if (workspaceTab === "sheets-tool") {
 }
 if (workspaceTab === "tasks-tool") {
   await syncAllTasksFromBackend(state as any, { client: clientRef, nextCorrelationId });
+  await syncNotificationsFromBackend();
 }
 },
         maybeOpenFlowProjectSetup,
@@ -8155,7 +8397,32 @@ async function bootstrap(): Promise<void> {
 
   registerClientEventBridge({
     client,
-    handleCoreEvent: (event) => {
+      handleCoreEvent: (event) => {
+      if (event.action === "looper.loop.complete") {
+        const payload = payloadAsRecord(event.payload);
+        const iteration = typeof payload?.iteration === "number" ? payload.iteration : null;
+        pushAppNotification({
+          title: "Looper complete",
+          description: iteration ? `Loop ${iteration} completed.` : "A Looper run completed.",
+          tone: "success"
+        });
+      } else if (event.action === "looper.loop.failed") {
+        const payload = payloadAsRecord(event.payload);
+        const iteration = typeof payload?.iteration === "number" ? payload.iteration : null;
+        pushAppNotification({
+          title: "Looper failed",
+          description: iteration ? `Loop ${iteration} failed.` : "A Looper run failed.",
+          tone: "error"
+        });
+      } else if (event.action === "looper.loop.paused") {
+        const payload = payloadAsRecord(event.payload);
+        const paused = payload?.paused === true;
+        pushAppNotification({
+          title: paused ? "Looper paused" : "Looper resumed",
+          description: paused ? "A Looper run was paused." : "A Looper run resumed.",
+          tone: "warn"
+        });
+      }
       handleModelManagerDownloadProgressEvent(event, () => renderAndBind(sendMessage));
       if (event.action === "chart.definition.set") {
         const payload = payloadAsRecord(event.payload);
@@ -8315,6 +8582,8 @@ async function bootstrap(): Promise<void> {
     autoStartLlamaRuntimeIfConfigured,
     loadConversation: () => loadConversation(state.conversationId)
   });
+
+  await syncNotificationsFromBackend();
 
   appResourcePolling.restart(1000);
 

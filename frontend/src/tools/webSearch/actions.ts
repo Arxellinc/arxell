@@ -166,15 +166,44 @@ export async function saveWebSearchSetup(slice: WebSearchSlice, deps: WebSearchD
   slice.webSetupBusy = true;
   slice.webSetupMessage = "Saving and verifying Serper connection...";
   try {
-    const created = await deps.client.createApiConnection({
-      correlationId: deps.nextCorrelationId(),
-      apiType: "search",
-      apiUrl: "https://google.serper.dev",
-      name: account,
-      apiKey
-    });
     await deps.refreshApiConnections();
-    if (created.connection.status === "verified") {
+    const existing = slice.apiConnections.find(
+      (connection) =>
+        connection.apiType === "search" &&
+        (connection.name.trim().toLowerCase() === account.toLowerCase() ||
+          connection.apiUrl.trim().toLowerCase() === "https://google.serper.dev")
+    );
+
+    const connection = existing
+      ? (
+          await deps.client.updateApiConnection({
+            correlationId: deps.nextCorrelationId(),
+            id: existing.id,
+            apiType: "search",
+            apiUrl: "https://google.serper.dev",
+            name: account,
+            apiKey,
+            allowPlaintextFallback: true
+          })
+        ).connection
+      : (
+          await deps.client.createApiConnection({
+            correlationId: deps.nextCorrelationId(),
+            apiType: "search",
+            apiUrl: "https://google.serper.dev",
+            name: account,
+            apiKey,
+            allowPlaintextFallback: true
+          })
+        ).connection;
+
+    const verified = await deps.client.reverifyApiConnection({
+      correlationId: deps.nextCorrelationId(),
+      id: connection.id
+    });
+
+    await deps.refreshApiConnections();
+    if (hasVerifiedSearchConnection(slice)) {
       slice.webSetupMessage = "Serper connection verified.";
       slice.webSetupModalOpen = false;
       slice.webSetupApiKey = "";
@@ -183,7 +212,10 @@ export async function saveWebSearchSetup(slice: WebSearchSlice, deps: WebSearchD
       });
       return;
     }
-    slice.webSetupMessage = created.connection.statusMessage;
+    slice.webSetupModalOpen = true;
+    slice.webSetupMessage =
+      verified.connection.statusMessage ||
+      "Connection saved, but verification did not pass. Check API key and try again.";
   } catch (error) {
     slice.webSetupMessage =
       error instanceof Error ? error.message : "Failed saving Serper connection.";

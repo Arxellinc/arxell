@@ -1,5 +1,8 @@
 use crate::agent_tools::chart::ChartTool;
-use crate::agent_tools::notepad::{NotepadEditLinesTool, NotepadReadTool, NotepadWriteTool};
+use crate::agent_tools::notepad::{
+    NotepadEditLinesTool, NotepadInspectTool, NotepadReadTool, NotepadSyncRegistry,
+    NotepadWriteTool,
+};
 use crate::agent_tools::sheets::SheetsTool;
 use crate::agent_tools::web_search::WebSearchTool;
 use crate::api_registry::ApiRegistryService;
@@ -34,7 +37,7 @@ use arx_rs::types::{
 use arx_rs::{Agent, AgentConfig, Session};
 use reqwest::StatusCode;
 use serde_json::json;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -52,6 +55,8 @@ pub struct ChatService {
     sheets: Arc<SheetsService>,
     web_search: Arc<WebSearchService>,
     cancelled_correlations: Arc<Mutex<HashSet<String>>>,
+    notepad_registry: NotepadSyncRegistry,
+    tool_focus_by_conversation: Arc<Mutex<HashMap<String, HashMap<String, f32>>>>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -94,14 +99,18 @@ fn bind_notepad_tools(
     resolved: &mut Vec<Box<dyn AgentTool>>,
     correlation_id: &str,
 ) {
+    let registry = chat.notepad_registry.clone_registry();
+    resolved.push(Box::new(NotepadInspectTool::new(registry.clone_registry())));
     resolved.push(Box::new(NotepadReadTool));
     resolved.push(Box::new(NotepadWriteTool::new(
         chat.hub.clone(),
         correlation_id.to_string(),
+        registry.clone_registry(),
     )));
     resolved.push(Box::new(NotepadEditLinesTool::new(
         chat.hub.clone(),
         correlation_id.to_string(),
+        registry.clone_registry(),
     )));
 }
 
@@ -195,6 +204,8 @@ impl ChatService {
             sheets,
             web_search,
             cancelled_correlations: Arc::new(Mutex::new(HashSet::new())),
+            notepad_registry: NotepadSyncRegistry::new(),
+            tool_focus_by_conversation: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -211,6 +222,7 @@ impl ChatService {
 
         self.memory
             .upsert("episodic", "latest_user_message", &req.user_message);
+        self.decay_tool_focus(req.conversation_id.as_str());
         self.append_message(
             &req.correlation_id,
             &ConversationMessageRecord {
@@ -505,6 +517,7 @@ impl ChatService {
             user_message,
             &recent_history,
             always_load_tool_keys,
+            conversation_id,
         );
         let enabled_tool_names: Vec<String> = agent_tools
             .iter()
@@ -651,6 +664,7 @@ impl ChatService {
                         result,
                     } => {
                         let success = result.as_ref().map(|value| value.success).unwrap_or(false);
+                        self.record_tool_focus(conversation_id, tool_name.as_str(), success);
                         self.hub.emit(self.hub.make_event(
                             correlation_id,
                             Subsystem::Tool,
@@ -943,12 +957,20 @@ impl ChatService {
         user_message: &str,
         history: &[ConversationMessageRecord],
         always_load_tool_keys: Option<&[String]>,
+        conversation_id: &str,
     ) -> Vec<Box<dyn AgentTool>> {
+        let focus = self
+            .tool_focus_by_conversation
+            .lock()
+            .ok()
+            .and_then(|map| map.get(conversation_id).cloned())
+            .unwrap_or_default();
         let selected = select_agent_tool_names(
             user_message,
             history,
             &available_tools,
             always_load_tool_keys,
+            &focus,
         );
         if selected.is_empty() {
             return Vec::new();
@@ -957,6 +979,40 @@ impl ChatService {
             .into_iter()
             .filter(|tool| selected.contains(tool.name()))
             .collect()
+    }
+
+    fn decay_tool_focus(&self, conversation_id: &str) {
+        let Ok(mut map) = self.tool_focus_by_conversation.lock() else {
+            return;
+        };
+        let focus = map.entry(conversation_id.to_string()).or_default();
+        for value in focus.values_mut() {
+            *value = (*value - 0.05).clamp(0.0, 1.0);
+        }
+    }
+
+    fn record_tool_focus(&self, conversation_id: &str, tool_name: &str, success: bool) {
+        let Some(domain) = tool_family_for_name(tool_name) else {
+            return;
+        };
+        let Ok(mut map) = self.tool_focus_by_conversation.lock() else {
+            return;
+        };
+        let focus = map.entry(conversation_id.to_string()).or_default();
+        let keys: Vec<String> = focus.keys().cloned().collect();
+        let value = focus.entry(domain.to_string()).or_insert(0.0);
+        if success {
+            *value = (*value + 0.30).clamp(0.0, 1.0);
+            for key in keys {
+                if key != domain {
+                    if let Some(other) = focus.get_mut(key.as_str()) {
+                        *other = (*other - 0.08).clamp(0.0, 1.0);
+                    }
+                }
+            }
+        } else {
+            *value = (*value - 0.40).clamp(0.0, 1.0);
+        }
     }
 
     async fn maybe_generate_conversation_title(
@@ -1994,6 +2050,10 @@ impl ChatService {
             user_message,
             history,
             always_load_tool_keys,
+            history
+                .first()
+                .map(|item| item.conversation_id.as_str())
+                .unwrap_or(""),
         );
         let enabled_tool_names: Vec<String> =
             tools.iter().map(|tool| tool.name().to_string()).collect();
@@ -2308,6 +2368,7 @@ impl ChatService {
             history,
             &tools,
             always_load_tool_keys,
+            &HashMap::new(),
         );
         let tool_defs = tool_definitions(&tools);
         let mut items = Vec::new();
@@ -2450,7 +2511,16 @@ fn select_agent_tool_names(
     history: &[ConversationMessageRecord],
     available_tools: &[Box<dyn AgentTool>],
     always_load_tool_keys: Option<&[String]>,
+    tool_focus: &HashMap<String, f32>,
 ) -> HashSet<String> {
+    if is_chat_only_message(user_message) {
+        return always_load_tool_keys
+            .unwrap_or(&[])
+            .iter()
+            .map(|item| item.trim().to_string())
+            .filter(|item| !item.is_empty())
+            .collect();
+    }
     let mut selected: HashSet<String> = always_load_tool_keys
         .unwrap_or(&[])
         .iter()
@@ -2514,10 +2584,11 @@ fn select_agent_tool_names(
         &text,
         &[
             "document", "notepad", "draft", "spec", "markdown", "write-up", "notes",
+            "write a", "create a", "compose", "note", "memo",
         ],
     ) {
         selected.extend(
-            ["notepad_read", "notepad_write", "notepad_edit_lines"]
+            ["notepad_inspect", "notepad_read", "notepad_write", "notepad_edit_lines"]
                 .iter()
                 .map(|item| item.to_string()),
         );
@@ -2566,6 +2637,32 @@ fn select_agent_tool_names(
             "formula",
         ],
     ) {
+        selected.insert("sheets".to_string());
+    }
+    if is_ambiguous_followup(user_message) {
+        if let Some(family) = top_focus_family(tool_focus, 0.45, 0.10) {
+            select_tools_for_family(family, &mut selected);
+        }
+    }
+
+    if matches_any(
+        &text,
+        &["that doc", "this doc", "that document", "this document", "add a line", "append", "update that note"],
+    ) && recent_user_text
+        .iter()
+        .any(|msg| matches_any(&msg.to_ascii_lowercase(), &["notepad", "document", "note", "draft", "memo"]))
+    {
+        selected.extend(
+            ["notepad_inspect", "notepad_read", "notepad_edit_lines"]
+                .iter()
+                .map(|item| item.to_string()),
+        );
+    }
+    if matches_any(&text, &["that sheet", "this sheet", "that spreadsheet", "this spreadsheet", "add a row", "update cell"]) 
+        && recent_user_text
+            .iter()
+            .any(|msg| matches_any(&msg.to_ascii_lowercase(), &["sheet", "spreadsheet", "cell", "row", "column"]))
+    {
         selected.insert("sheets".to_string());
     }
 
@@ -2630,18 +2727,140 @@ fn matches_any(text: &str, needles: &[&str]) -> bool {
     needles.iter().any(|needle| text.contains(needle))
 }
 
+fn tool_family_for_name(tool_name: &str) -> Option<&'static str> {
+    if tool_name.starts_with("notepad_") {
+        return Some("notepad");
+    }
+    if tool_name == "sheets" {
+        return Some("sheets");
+    }
+    if tool_name == "bash" {
+        return Some("terminal");
+    }
+    if tool_name == "web_search" {
+        return Some("web");
+    }
+    if tool_name == "chart_set" {
+        return Some("chart");
+    }
+    if ["read", "edit", "write", "ls", "mkdir", "move", "grep", "find", "chmod"].contains(&tool_name) {
+        return Some("files");
+    }
+    None
+}
+
+fn is_ambiguous_followup(user_message: &str) -> bool {
+    let text = user_message.to_ascii_lowercase();
+    matches_any(
+        &text,
+        &["this", "that", "it", "there", "update", "edit", "add", "append"],
+    )
+}
+
+fn top_focus_family<'a>(focus: &'a HashMap<String, f32>, min_score: f32, min_margin: f32) -> Option<&'a str> {
+    let mut scores: Vec<(&str, f32)> = focus.iter().map(|(k, v)| (k.as_str(), *v)).collect();
+    scores.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+    let (top_family, top_score) = *scores.first()?;
+    if top_score < min_score {
+        return None;
+    }
+    let second_score = scores.get(1).map(|(_, v)| *v).unwrap_or(0.0);
+    if top_score - second_score < min_margin {
+        return None;
+    }
+    Some(top_family)
+}
+
+fn select_tools_for_family(family: &str, selected: &mut HashSet<String>) {
+    match family {
+        "notepad" => {
+            selected.extend(["notepad_inspect", "notepad_read", "notepad_edit_lines"].iter().map(|v| v.to_string()));
+        }
+        "sheets" => {
+            selected.insert("sheets".to_string());
+        }
+        "files" => {
+            selected.extend(["read", "edit", "write", "ls", "mkdir", "move", "grep", "find"].iter().map(|v| v.to_string()));
+        }
+        "terminal" => {
+            selected.insert("bash".to_string());
+        }
+        "web" => {
+            selected.insert("web_search".to_string());
+        }
+        "chart" => {
+            selected.insert("chart_set".to_string());
+        }
+        _ => {}
+    }
+}
+
+fn is_chat_only_message(text: &str) -> bool {
+    let normalized = text.trim().to_ascii_lowercase();
+    if normalized.is_empty() {
+        return true;
+    }
+    let compact = normalized
+        .chars()
+        .filter(|ch| ch.is_ascii_alphanumeric() || ch.is_ascii_whitespace())
+        .collect::<String>();
+    let compact = compact.split_whitespace().collect::<Vec<_>>().join(" ");
+    matches!(
+        compact.as_str(),
+        "hi"
+            | "hello"
+            | "hey"
+            | "good morning"
+            | "good afternoon"
+            | "good evening"
+            | "are you there"
+            | "you there"
+            | "thanks"
+            | "thank you"
+            | "ok"
+            | "okay"
+            | "cool"
+            | "got it"
+    )
+}
+
 fn apply_tool_routing_hints(system_prompt: &mut String, enabled_tool_names: &[String]) {
     if enabled_tool_names
         .iter()
-        .any(|name| name == "notepad_write")
+        .any(|name| name == "notepad_write" || name == "notepad_edit_lines" || name == "notepad_inspect")
     {
         system_prompt.push_str(
-            "\n\nTool routing hint:\n- If the user asks you to create, draft, revise, or maintain a document in the Notepad workspace tool, prefer the dedicated Notepad tools over generic file tools.\n- Use `notepad_read` to inspect a document or a specific line range.\n- Use `notepad_write` to create or fully replace a document when appropriate.\n- Use `notepad_edit_lines` when the user requests targeted edits to specific lines or a narrow section so you do not rewrite the whole document unnecessarily.",
+            "\n\nNotepad tool workflow:\n\
+            1. Call notepad_inspect to see which documents are open and find the active path and line count.\n\
+            2. For NEW documents: call notepad_write with content. The `path` parameter is optional — if omitted a draft path is auto-generated.\n\
+            3. For EDITS to existing documents:\n\
+               a. First notepad_read the document to see current content and exact line numbers.\n\
+               b. Then notepad_edit_lines with the specific line range and replacement text.\n\
+               c. NEVER use notepad_write to edit an existing document — always use notepad_edit_lines.\n\
+            4. notepad_edit_lines replaces lines start_line through end_line (inclusive, 1-indexed). The replacement text can contain multiple lines.",
         );
     }
     if enabled_tool_names.iter().any(|name| name == "chart_set") {
         system_prompt.push_str(
             "\n\nTool routing hint:\n- If the user asks for a flowchart, diagram, architecture map, process map, or system overview, use `chart_set` with a valid Mermaid definition and present the result in the Chart workspace tool.\n- For Mermaid flowcharts, start with `flowchart TD` or `flowchart LR`. Use edge labels like `A -->|label| B`, `A -- text --> B`, or dotted arrows like `A -.->|label| B`. Do not use invalid dotted-label forms such as `A -.|label|-. B`.",
+        );
+    }
+    if enabled_tool_names.iter().any(|name| name == "sheets") {
+        system_prompt.push_str(
+            "\n\nSheets tool workflow:\n\
+            1. If the user asks to create a sheet, call `sheets` with `action: create_sheet`.\n\
+            2. If the user asks to edit cells/rows/columns and no sheet is open, first call `sheets` with `action: create_sheet` (or `open_sheet` only when the user explicitly references an existing file path), then continue with edits.\n\
+            3. To view the full current sheet contents, call `action: read_sheet` (it returns metadata plus cells for the active used range).\n\
+            4. If formula support is unclear, call `action: list_formula_signatures` (or `list_formula_functions`) before generating formulas.\n\
+            5. For one-cell edits use `action: set_cell` with `row`, `col`, and `input`.\n\
+            6. For row-level edits use `action: write_range` (for value updates) or `action: insert_rows` / `action: delete_rows` (for structure changes).\n\
+            7. Use zero-based indexes for `row`, `col`, `startRow`, `startCol`, `endRow`, `endCol`, and `index`.\n\
+            8. Relative sheet paths resolve under the user's `Documents/Arxell/Files` directory.\n\
+            9. For arbitrary spreadsheet tasks, ALWAYS follow this sequence: (a) plan the table schema first (columns, row groups, and required fields), (b) gather any factual data needed, (c) write data in larger contiguous 2D blocks, (d) read back and validate completeness, then (e) repair gaps before finishing.\n\
+            10. If factual data is requested (for example populations, country lists, market stats), use `web_search` to gather/verify source data before filling the sheet, and avoid fabricating numbers unless the user explicitly asks for mock/sample values.\n\
+            11. For multi-section outputs (financial analysis, plans, reports), prefer fewer large `write_range` calls with full 2D blocks instead of many tiny writes.\n\
+            12. Before finishing a sheets task, call `action: read_sheet` and verify: headers exist, expected sections/columns exist, and row count is materially larger than a stub. If incomplete, continue editing instead of concluding.\n\
+            13. Save explicit changes with `action: save_sheet` when the user asks to persist them.",
         );
     }
 }
@@ -3312,5 +3531,23 @@ fn extract_assistant_from_json_value(
             assistant,
             reasoning,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_chat_only_message;
+
+    #[test]
+    fn chat_only_message_detection_matches_greetings() {
+        assert!(is_chat_only_message("are you there?"));
+        assert!(is_chat_only_message("hello"));
+        assert!(is_chat_only_message("Thanks!"));
+    }
+
+    #[test]
+    fn chat_only_message_detection_skips_action_requests() {
+        assert!(!is_chat_only_message("create a spreadsheet"));
+        assert!(!is_chat_only_message("edit this note"));
     }
 }

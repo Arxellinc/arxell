@@ -406,12 +406,14 @@ export function composeAppFrameHtml(input: {
   micPermissionBubbleHtml: string;
   appBodyHtml: string;
   bottombarHtml: string;
+  notificationsHtml?: string;
 }): string {
   return `
     <main class="app-frame" style="--chat-pane-percent: ${input.chatPanePercent}; --portrait-workspace-percent: ${input.portraitWorkspacePercent};">
       ${input.topbarHtml}
       ${input.micPermissionBubbleHtml}
       ${input.appBodyHtml}
+      ${input.notificationsHtml ?? ""}
       ${input.bottombarHtml}
     </main>
   `;

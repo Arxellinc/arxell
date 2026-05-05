@@ -9,6 +9,7 @@ frontend/dist/
 frontend/.tmp-tests/
 src-tauri/target/
 copy/
+temp/
 
 # Large runtime/model artifacts
 src-tauri/resources/voice/*.onnx

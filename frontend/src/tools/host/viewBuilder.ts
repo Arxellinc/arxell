@@ -10,7 +10,7 @@ import {
 } from "../memory";
 import { renderChartToolActions, renderChartToolBody } from "../chart";
 import { renderTasksToolActions, renderTasksToolBody } from "../tasks";
-import type { TaskFolder, TaskSortDirection, TaskSortKey, TaskRecord, TaskRunRecord } from "../tasks/state";
+import type { TaskFolder, TaskSortDirection, TaskSortKey, TaskRecord, TaskRunRecord, TaskNotificationRecord } from "../tasks/state";
 import type { ProjectRecord } from "../../projectsStore";
 import { renderWebToolActions, renderWebToolBody } from "../webSearch";
 import type { WebSearchHistoryItem, WebTabState } from "../webSearch/state";
@@ -91,6 +91,8 @@ export interface WorkspaceToolViewInput {
   tasksSortDirection: TaskSortDirection;
   tasksDetailsCollapsed: boolean;
   tasksJsonDraft: string;
+  taskNotifications: TaskNotificationRecord[];
+  chatModelOptions: Array<{id: string; label: string}>;
   projectsById: Record<string, ProjectRecord>;
   flowRuns: Array<{ runId: string }>;
   flowActiveRunId: string | null;
@@ -153,6 +155,7 @@ export interface WorkspaceToolViewInput {
   notepadFindCaseSensitive: boolean;
   notepadLineWrap: boolean;
   notepadError: string | null;
+  notepadUnsavedModalTabId: string | null;
   sheetsState: SheetsToolState;
   docsRootPath: string | null;
   docsSelectedPath: string | null;
@@ -177,29 +180,6 @@ export interface WorkspaceToolViewInput {
   docsFindCaseSensitive: boolean;
   docsLineWrap: boolean;
   docsError: string | null;
-  skillsRootPath: string | null;
-  skillsSelectedPath: string | null;
-  skillsSelectedEntryPath: string | null;
-  skillsExpandedByPath: Record<string, boolean>;
-  skillsEntriesByPath: Record<string, FilesListDirectoryEntry[]>;
-  skillsLoadingByPath: Record<string, boolean>;
-  skillsOpenTabs: string[];
-  skillsActiveTabPath: string | null;
-  skillsContentByPath: Record<string, string>;
-  skillsSavedContentByPath: Record<string, string>;
-  skillsDirtyByPath: Record<string, boolean>;
-  skillsLoadingFileByPath: Record<string, boolean>;
-  skillsSavingFileByPath: Record<string, boolean>;
-  skillsReadOnlyByPath: Record<string, boolean>;
-  skillsSizeByPath: Record<string, number>;
-  skillsSidebarWidth: number;
-  skillsSidebarCollapsed: boolean;
-  skillsFindOpen: boolean;
-  skillsFindQuery: string;
-  skillsReplaceQuery: string;
-  skillsFindCaseSensitive: boolean;
-  skillsLineWrap: boolean;
-  skillsError: string | null;
   memoryContextItems: MemoryContextItem[];
   memoryChatHistory: MemoryToolState["chatHistory"];
   memoryPersistentItems: MemoryPersistentItem[];
@@ -367,7 +347,8 @@ export function buildWorkspaceToolViews(input: WorkspaceToolViewInput): Record<s
         detailsCollapsed: input.tasksDetailsCollapsed,
         jsonDraft: input.tasksJsonDraft,
         projectsById: input.projectsById,
-        runsByTaskId: input.tasksRunsByTaskId
+        runsByTaskId: input.tasksRunsByTaskId,
+        taskNotifications: input.taskNotifications
       }),
       bodyHtml: renderTasksToolBody({
         tasksById: input.tasksById,
@@ -378,7 +359,9 @@ export function buildWorkspaceToolViews(input: WorkspaceToolViewInput): Record<s
         detailsCollapsed: input.tasksDetailsCollapsed,
         jsonDraft: input.tasksJsonDraft,
         projectsById: input.projectsById,
-        runsByTaskId: input.tasksRunsByTaskId
+        runsByTaskId: input.tasksRunsByTaskId,
+        taskNotifications: input.taskNotifications,
+        modelOptions: input.chatModelOptions
       })
     },
     memory: {
@@ -439,7 +422,8 @@ export function buildWorkspaceToolViews(input: WorkspaceToolViewInput): Record<s
         replaceQuery: input.notepadReplaceQuery,
         findCaseSensitive: input.notepadFindCaseSensitive,
         lineWrap: input.notepadLineWrap,
-        error: input.notepadError
+        error: input.notepadError,
+        unsavedModalTabId: input.notepadUnsavedModalTabId
       }),
       bodyHtml: renderNotepadToolBody({
         openTabs: input.notepadOpenTabs,
@@ -457,7 +441,8 @@ export function buildWorkspaceToolViews(input: WorkspaceToolViewInput): Record<s
         replaceQuery: input.notepadReplaceQuery,
         findCaseSensitive: input.notepadFindCaseSensitive,
         lineWrap: input.notepadLineWrap,
-        error: input.notepadError
+        error: input.notepadError,
+        unsavedModalTabId: input.notepadUnsavedModalTabId
       })
     },
     sheets: {

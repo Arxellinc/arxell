@@ -4,6 +4,7 @@ use crate::observability::EventHub;
 use crate::services::sheets_capabilities::CapabilitySet;
 use crate::services::sheets_formula::{
     create_engine, AiFormulaProvider, FormulaEngine, FormulaError, FormulaErrorCode,
+    SUPPORTED_FORMULA_FUNCTIONS, SUPPORTED_FORMULA_FUNCTION_SPECS,
 };
 use crate::services::sheets_jsonl;
 use crate::services::sheets_source::{source_for_new_sheet, source_from_path, SheetSourceKind};
@@ -37,7 +38,33 @@ pub struct SheetsService {
     ai_model_id: Arc<RwLock<String>>,
 }
 
+#[derive(Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FormulaFunctionDescriptor {
+    pub name: String,
+    pub signature: String,
+    pub description: String,
+}
+
 impl SheetsService {
+    pub fn list_supported_formula_functions(&self) -> Vec<String> {
+        SUPPORTED_FORMULA_FUNCTIONS
+            .iter()
+            .map(|name| (*name).to_string())
+            .collect()
+    }
+
+    pub fn list_supported_formula_signatures(&self) -> Vec<FormulaFunctionDescriptor> {
+        SUPPORTED_FORMULA_FUNCTION_SPECS
+            .iter()
+            .map(|spec| FormulaFunctionDescriptor {
+                name: spec.name.to_string(),
+                signature: spec.signature.to_string(),
+                description: spec.description.to_string(),
+            })
+            .collect()
+    }
+
     pub fn new(hub: Option<EventHub>, api_registry: Arc<ApiRegistryService>) -> Self {
         let ai_model_id = Arc::new(RwLock::new("local:runtime".to_string()));
         let ai_provider: Arc<dyn AiFormulaProvider> = Arc::new(HttpAiFormulaProvider::new(

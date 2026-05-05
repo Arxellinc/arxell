@@ -85,14 +85,6 @@ const WORKSPACE_TOOL_MANIFESTS: &[WorkspaceToolManifest] = &[
         default_enabled: true,
     },
     WorkspaceToolManifest {
-        tool_id: "skills",
-        title: "Skills",
-        description: "Reusable skill packs and directives",
-        category: "agent",
-        core: false,
-        default_enabled: true,
-    },
-    WorkspaceToolManifest {
         tool_id: "docs",
         title: "Docs",
         description: "Browse and edit workspace documentation files",

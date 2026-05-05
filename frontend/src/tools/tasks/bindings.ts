@@ -16,6 +16,7 @@ import {
 import type { TaskFolder, TaskSortKey, TasksRuntimeSlice } from "./state";
 import { TASKS_DATA_ATTR } from "../ui/constants";
 import type { ChatIpcClient } from "../../ipcClient";
+import { createNotificationRecord } from "../../notifications";
 
 type TasksSlice = TasksRuntimeSlice & {
   tasksError?: string | null;
@@ -41,7 +42,7 @@ function asSortKey(value: string | null): TaskSortKey | null {
 }
 
 function asFolder(value: string | null): TaskFolder | null {
-  if (value === "inbox" || value === "archive" || value === "drafts") return value;
+  if (value === "inbox" || value === "archive" || value === "drafts" || value === "notifications") return value;
   return null;
 }
 
@@ -106,6 +107,15 @@ export async function handleTasksClick(target: HTMLElement, slice: TasksSlice, d
     await loadTaskRuns(slice, deps, task.id);
     syncJsonDraftFromSelected(slice);
     slice.tasksError = `Run requested for ${task.id}`;
+    const notifications = (slice as any).taskNotifications;
+    if (Array.isArray(notifications)) {
+      notifications.unshift(createNotificationRecord({
+        title: "Task run requested",
+        description: `${task.name} is queued to run.`,
+        actions: [{ id: `open-task:${task.id}`, label: "View task" }]
+      }));
+      if (notifications.length > 100) notifications.length = 100;
+    }
     persistToastMessage(slice.tasksError);
     return true;
   }
@@ -124,6 +134,36 @@ export async function handleTasksClick(target: HTMLElement, slice: TasksSlice, d
       syncJsonDraftFromSelected(slice);
       slice.tasksError = null;
     }
+    return true;
+  }
+  if (action === "save-and-run") {
+    const selected = slice.tasksSelectedId;
+    if (!selected) return true;
+    const task = slice.tasksById[selected];
+    if (!task) return true;
+    updateSelectedTaskField(slice, "state", "approved");
+    saveSelectedTask(slice);
+    if (selected) await syncTaskToBackend(slice, deps, selected);
+    if ((slice as any).autoSafeEnabled && task.riskLevel !== "low") {
+      slice.tasksError = "Auto Safe allows low-risk tasks only. Lower risk to run.";
+      persistToastMessage(slice.tasksError);
+      return true;
+    }
+    task.updatedAtMs = Date.now();
+    await runTaskNow(deps, task.id);
+    await loadTaskRuns(slice, deps, task.id);
+    syncJsonDraftFromSelected(slice);
+    slice.tasksError = `Run requested for ${task.id}`;
+    const notifications = (slice as any).taskNotifications;
+    if (Array.isArray(notifications)) {
+      notifications.unshift(createNotificationRecord({
+        title: "Task run requested",
+        description: `${task.name} is queued to run.`,
+        actions: [{ id: `open-task:${task.id}`, label: "View task" }]
+      }));
+      if (notifications.length > 100) notifications.length = 100;
+    }
+    persistToastMessage(slice.tasksError);
     return true;
   }
   if (action === "apply-json") {
@@ -200,6 +240,15 @@ export async function handleTasksClick(target: HTMLElement, slice: TasksSlice, d
     slice.tasksError = null;
     return true;
   }
+  if (action === "refresh-scheduler-status") {
+    await refreshSchedulerStatus(slice, deps);
+    return true;
+  }
+  if (action === "run-due-now") {
+    await runDueNow(slice, deps);
+    await refreshSchedulerStatus(slice, deps);
+    return true;
+  }
   if (action === "sort-column") {
     const sort = asSortKey(actionTarget?.getAttribute(TASKS_DATA_ATTR.sort) ?? null);
     if (!sort) return true;
@@ -208,6 +257,52 @@ export async function handleTasksClick(target: HTMLElement, slice: TasksSlice, d
     return true;
   }
   return false;
+}
+
+async function refreshSchedulerStatus(slice: TasksSlice, deps?: TasksDeps): Promise<void> {
+  if (!deps?.client) return;
+  try {
+    const correlationId = deps.nextCorrelationId();
+    const resp = await deps.client.toolInvoke({
+      correlationId,
+      toolId: "tasks",
+      action: "scheduler-status",
+      mode: "sandbox",
+      payload: { correlationId }
+    });
+    if (!resp.ok) return;
+    const dueCount = Number((resp.data as any)?.dueCount ?? 0);
+    (slice as any).tasksSchedulerStatus = `Scheduler: due ${dueCount}`;
+  } catch {
+    (slice as any).tasksSchedulerStatus = "Scheduler: unavailable";
+  }
+}
+
+async function runDueNow(slice: TasksSlice, deps?: TasksDeps): Promise<void> {
+  if (!deps?.client) return;
+  try {
+    const correlationId = deps.nextCorrelationId();
+    const resp = await deps.client.toolInvoke({
+      correlationId,
+      toolId: "tasks",
+      action: "scheduler-run-due-now",
+      mode: "sandbox",
+      payload: { correlationId, limit: 16 }
+    });
+    if (!resp.ok) return;
+    const executed = Number((resp.data as any)?.executed ?? 0);
+    (slice as any).tasksError = `Ran due scheduler tasks: ${executed}`;
+    const notifications = (slice as any).taskNotifications;
+    if (Array.isArray(notifications)) {
+      notifications.unshift(createNotificationRecord({
+        title: "Scheduler run",
+        description: `Executed ${executed} due task(s).`
+      }));
+      if (notifications.length > 100) notifications.length = 100;
+    }
+  } catch {
+    (slice as any).tasksError = "Failed to run due scheduler tasks.";
+  }
 }
 
 export function handleTasksInput(target: HTMLElement, slice: TasksSlice): boolean {
@@ -226,7 +321,11 @@ export function handleTasksInput(target: HTMLElement, slice: TasksSlice): boolea
     field === "agentOwner" ||
     field === "state" ||
     field === "riskLevel" ||
-    field === "estimatedCostUsd"
+    field === "estimatedCostUsd" ||
+    field === "repeat" ||
+    field === "repeatTimezone" ||
+    field === "scheduledAtMs" ||
+    field === "repeatTimeOfDayMs"
   ) {
     updateSelectedTaskField(slice, field, input.value);
     syncJsonDraftFromSelected(slice);
@@ -277,7 +376,20 @@ export async function syncAllTasksFromBackend(slice: TasksSlice, deps?: TasksDep
         updatedAtMs: Number.isFinite(row.updatedAtMs) ? row.updatedAtMs : Date.now(),
         archived: row.state === "complete" || row.state === "rejected",
         starred: false,
-        agentOwner: typeof row.agentOwner === "string" ? row.agentOwner : "agent"
+        agentOwner: typeof row.agentOwner === "string" ? row.agentOwner : "agent",
+        source: row.source === "user" ? "user" : "agent",
+        scheduledAtMs: Number.isFinite(row.scheduledAtMs) ? Number(row.scheduledAtMs) : null,
+        repeat:
+          row.repeat === "hourly" || row.repeat === "daily" || row.repeat === "weekly" || row.repeat === "monthly" || row.repeat === "yearly"
+            ? row.repeat
+            : "none",
+        repeatTimeOfDayMs: Number.isFinite(row.repeatTimeOfDayMs) ? Number(row.repeatTimeOfDayMs) : null,
+        repeatTimezone:
+          typeof row.repeatTimezone === "string" && row.repeatTimezone.trim()
+            ? row.repeatTimezone
+            : Intl.DateTimeFormat().resolvedOptions().timeZone,
+        isScheduleEnabled: typeof row.isScheduleEnabled === "boolean" ? row.isScheduleEnabled : true,
+        nextRunAtMs: Number.isFinite(row.nextRunAtMs) ? Number(row.nextRunAtMs) : null
       };
     }
     slice.tasksById = next;
@@ -360,6 +472,12 @@ async function syncTaskToBackend(slice: TasksSlice, deps: TasksDeps | undefined,
         payloadJson: { prompt: task.description || task.name },
         estimateJson: { estimatedCostUsd: task.estimatedCostUsd },
         estimatedCostUsd: task.estimatedCostUsd,
+        scheduledAtMs: task.scheduledAtMs ?? null,
+        repeat: task.repeat || "none",
+        repeatTimeOfDayMs: task.repeatTimeOfDayMs ?? null,
+        repeatTimezone: task.repeatTimezone || Intl.DateTimeFormat().resolvedOptions().timeZone,
+        isScheduleEnabled: task.isScheduleEnabled !== false,
+        nextRunAtMs: task.nextRunAtMs ?? null,
         createdAtMs: task.createdAtMs,
         updatedAtMs: task.updatedAtMs
       }
@@ -403,19 +521,53 @@ async function loadTaskRuns(slice: TasksSlice, deps: TasksDeps | undefined, task
   });
   if (!resp.ok) return;
   const runs = Array.isArray((resp.data as any)?.runs) ? (resp.data as any).runs : [];
+  const prevTopRunId = ((slice as any).tasksRunsByTaskId?.[taskId] || [])[0]?.id || "";
+  const nextMapped = runs.map((run: any) => ({
+    id: String(run.id || ""),
+    taskId: String(run.taskId || taskId),
+    status: String(run.status || ""),
+    triggerReason: String(run.triggerReason || ""),
+    policyDecision: String(run.policyDecision || ""),
+    policyReason: String(run.policyReason || ""),
+    createdAtMs: Number.isFinite(run.createdAtMs) ? Number(run.createdAtMs) : Date.now(),
+    startedAtMs: Number.isFinite(run.startedAtMs) ? Number(run.startedAtMs) : null,
+    completedAtMs: Number.isFinite(run.completedAtMs) ? Number(run.completedAtMs) : null,
+    error: String(run.error || "")
+  }));
   (slice as any).tasksRunsByTaskId = {
     ...((slice as any).tasksRunsByTaskId || {}),
-    [taskId]: runs.map((run: any) => ({
-      id: String(run.id || ""),
-      taskId: String(run.taskId || taskId),
-      status: String(run.status || ""),
-      triggerReason: String(run.triggerReason || ""),
-      policyDecision: String(run.policyDecision || ""),
-      policyReason: String(run.policyReason || ""),
-      createdAtMs: Number.isFinite(run.createdAtMs) ? Number(run.createdAtMs) : Date.now(),
-      startedAtMs: Number.isFinite(run.startedAtMs) ? Number(run.startedAtMs) : null,
-      completedAtMs: Number.isFinite(run.completedAtMs) ? Number(run.completedAtMs) : null,
-      error: String(run.error || "")
-    }))
+    [taskId]: nextMapped
   };
+  const newest = nextMapped[0];
+  if (newest && newest.id && newest.id !== prevTopRunId) {
+    const notifications = (slice as any).taskNotifications;
+    if (Array.isArray(notifications)) {
+      const taskName = (slice.tasksById?.[taskId]?.name || taskId) as string;
+      const statusLower = (newest.status || "").toLowerCase();
+      const title =
+        statusLower === "succeeded"
+          ? "Task run completed"
+          : statusLower === "blocked"
+            ? "Task run blocked"
+            : statusLower === "failed"
+              ? "Task run failed"
+              : "Task run updated";
+      const tone =
+        statusLower === "succeeded"
+          ? "success"
+          : statusLower === "blocked"
+            ? "warn"
+            : statusLower === "failed"
+              ? "error"
+              : "info";
+      const detail = newest.error || newest.policyReason || newest.status || "Run state changed.";
+      notifications.unshift(createNotificationRecord({
+        title,
+        description: `${taskName}: ${detail}`,
+        tone: tone as any,
+        actions: [{ id: `open-task:${taskId}`, label: "View task" }]
+      }));
+      if (notifications.length > 100) notifications.length = 100;
+    }
+  }
 }

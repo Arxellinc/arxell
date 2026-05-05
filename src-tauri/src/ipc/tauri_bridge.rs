@@ -20,6 +20,7 @@ use crate::workspace_tools::WorkspaceToolsService;
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter};
 
+#[derive(Clone)]
 pub struct TauriBridgeState {
     pub chat: Arc<ChatCommandHandler>,
     pub terminal: Arc<TerminalCommandHandler>,

@@ -1,4 +1,4 @@
-export type TaskFolder = "inbox" | "archive" | "drafts";
+export type TaskFolder = "inbox" | "archive" | "drafts" | "notifications";
 export type TaskSortKey = "done" | "starred" | "type" | "projectId" | "name" | "createdAt";
 export type TaskSortDirection = "asc" | "desc";
 
@@ -16,6 +16,13 @@ export interface TaskRecord {
   archived: boolean;
   starred: boolean;
   agentOwner: string;
+  source: "user" | "agent";
+  scheduledAtMs?: number | null;
+  repeat?: "none" | "hourly" | "daily" | "weekly" | "monthly" | "yearly";
+  repeatTimeOfDayMs?: number | null;
+  repeatTimezone?: string;
+  isScheduleEnabled?: boolean;
+  nextRunAtMs?: number | null;
 }
 
 export interface TaskRunRecord {
@@ -31,6 +38,22 @@ export interface TaskRunRecord {
   error: string;
 }
 
+export interface TaskNotificationAction {
+  id: string;
+  label: string;
+  href?: string;
+}
+
+export interface TaskNotificationRecord {
+  id: string;
+  title: string;
+  description: string;
+  createdAtMs: number;
+  read: boolean;
+  tone?: "info" | "success" | "warn" | "error";
+  actions: TaskNotificationAction[];
+}
+
 export interface TasksRuntimeSlice {
   tasksById: Record<string, TaskRecord>;
   tasksRunsByTaskId: Record<string, TaskRunRecord[]>;
@@ -40,4 +63,6 @@ export interface TasksRuntimeSlice {
   tasksSortDirection: TaskSortDirection;
   tasksDetailsCollapsed: boolean;
   tasksJsonDraft: string;
+  taskNotifications: TaskNotificationRecord[];
+  tasksSchedulerStatus?: string;
 }

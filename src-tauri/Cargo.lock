@@ -145,6 +145,8 @@ dependencies = [
  "async-trait",
  "base64 0.22.1",
  "bzip2",
+ "chrono",
+ "chrono-tz",
  "cpal",
  "csv",
  "dirs 5.0.1",

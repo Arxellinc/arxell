@@ -8,6 +8,74 @@ use thiserror::Error;
 #[cfg(feature = "ironcalc-engine")]
 use ironcalc::base::{cell::CellValue, types::CellType, Model};
 
+pub const SUPPORTED_FORMULA_FUNCTIONS: &[&str] = &[
+    "ABS", "AI", "AND", "AVERAGE", "AVERAGEIF", "CONCAT", "COUNT", "COUNTIF", "DATE", "DAY",
+    "FIND", "HOUR", "IF", "IFERROR", "INT", "ISBLANK", "ISERROR", "ISNUMBER", "ISTEXT", "LEFT",
+    "LEN", "LOWER", "MAX", "MEDIAN", "MID", "MIN", "MINUTE", "MOD", "MONTH", "NOT", "NOW",
+    "OR", "POWER", "PROPER", "REPLACE", "RIGHT", "ROUND", "ROUNDDOWN", "ROUNDUP", "SECOND",
+    "SQRT", "SUBSTITUTE", "SUM", "SUMIF", "TEXT", "TODAY", "TRIM", "UPPER", "VALUE", "YEAR",
+];
+
+#[derive(Clone, Copy)]
+pub struct FormulaFunctionSpec {
+    pub name: &'static str,
+    pub signature: &'static str,
+    pub description: &'static str,
+}
+
+pub const SUPPORTED_FORMULA_FUNCTION_SPECS: &[FormulaFunctionSpec] = &[
+    FormulaFunctionSpec { name: "ABS", signature: "ABS(value)", description: "Absolute value" },
+    FormulaFunctionSpec { name: "AI", signature: "AI(prompt, [range])", description: "Generate text with the selected AI model" },
+    FormulaFunctionSpec { name: "AND", signature: "AND(logical1, logical2, ...)", description: "True if all arguments are true" },
+    FormulaFunctionSpec { name: "AVERAGE", signature: "AVERAGE(value1, value2, ...)", description: "Average of numeric values" },
+    FormulaFunctionSpec { name: "AVERAGEIF", signature: "AVERAGEIF(range, criterion, [average_range])", description: "Average values matching a criterion" },
+    FormulaFunctionSpec { name: "CONCAT", signature: "CONCAT(value1, value2, ...)", description: "Join text values together" },
+    FormulaFunctionSpec { name: "COUNT", signature: "COUNT(value1, value2, ...)", description: "Count numeric values" },
+    FormulaFunctionSpec { name: "COUNTIF", signature: "COUNTIF(range, criterion)", description: "Count values matching a criterion" },
+    FormulaFunctionSpec { name: "DATE", signature: "DATE(year, month, day)", description: "Create a date serial value" },
+    FormulaFunctionSpec { name: "DAY", signature: "DAY(date)", description: "Day from a date" },
+    FormulaFunctionSpec { name: "FIND", signature: "FIND(search_for, text_to_search, [starting_at])", description: "Find text position" },
+    FormulaFunctionSpec { name: "HOUR", signature: "HOUR(time)", description: "Hour from a date or time" },
+    FormulaFunctionSpec { name: "IF", signature: "IF(condition, value_if_true, value_if_false)", description: "Conditional branch" },
+    FormulaFunctionSpec { name: "IFERROR", signature: "IFERROR(value, [value_if_error])", description: "Fallback when a formula errors" },
+    FormulaFunctionSpec { name: "INT", signature: "INT(value)", description: "Round down to integer" },
+    FormulaFunctionSpec { name: "ISBLANK", signature: "ISBLANK(value)", description: "True if value is blank" },
+    FormulaFunctionSpec { name: "ISERROR", signature: "ISERROR(value)", description: "True if expression errors" },
+    FormulaFunctionSpec { name: "ISNUMBER", signature: "ISNUMBER(value)", description: "True if value is numeric" },
+    FormulaFunctionSpec { name: "ISTEXT", signature: "ISTEXT(value)", description: "True if value is text" },
+    FormulaFunctionSpec { name: "LEFT", signature: "LEFT(text, [number_of_characters])", description: "Characters from the left" },
+    FormulaFunctionSpec { name: "LEN", signature: "LEN(text)", description: "Text length" },
+    FormulaFunctionSpec { name: "LOWER", signature: "LOWER(text)", description: "Lowercase text" },
+    FormulaFunctionSpec { name: "MAX", signature: "MAX(value1, value2, ...)", description: "Largest numeric value" },
+    FormulaFunctionSpec { name: "MEDIAN", signature: "MEDIAN(value1, value2, ...)", description: "Median numeric value" },
+    FormulaFunctionSpec { name: "MID", signature: "MID(text, starting_at, extract_length)", description: "Characters from the middle" },
+    FormulaFunctionSpec { name: "MIN", signature: "MIN(value1, value2, ...)", description: "Smallest numeric value" },
+    FormulaFunctionSpec { name: "MINUTE", signature: "MINUTE(time)", description: "Minute from a date or time" },
+    FormulaFunctionSpec { name: "MOD", signature: "MOD(dividend, divisor)", description: "Remainder after division" },
+    FormulaFunctionSpec { name: "MONTH", signature: "MONTH(date)", description: "Month from a date" },
+    FormulaFunctionSpec { name: "NOT", signature: "NOT(value)", description: "Logical negation" },
+    FormulaFunctionSpec { name: "NOW", signature: "NOW()", description: "Current date and time" },
+    FormulaFunctionSpec { name: "OR", signature: "OR(logical1, logical2, ...)", description: "True if any argument is true" },
+    FormulaFunctionSpec { name: "POWER", signature: "POWER(base, exponent)", description: "Raise to a power" },
+    FormulaFunctionSpec { name: "PROPER", signature: "PROPER(text)", description: "Title-case text" },
+    FormulaFunctionSpec { name: "REPLACE", signature: "REPLACE(text, position, length, new_text)", description: "Replace text by position" },
+    FormulaFunctionSpec { name: "RIGHT", signature: "RIGHT(text, [number_of_characters])", description: "Characters from the right" },
+    FormulaFunctionSpec { name: "ROUND", signature: "ROUND(value, [places])", description: "Round to nearest" },
+    FormulaFunctionSpec { name: "ROUNDDOWN", signature: "ROUNDDOWN(value, [places])", description: "Round toward zero" },
+    FormulaFunctionSpec { name: "ROUNDUP", signature: "ROUNDUP(value, [places])", description: "Round away from zero" },
+    FormulaFunctionSpec { name: "SECOND", signature: "SECOND(time)", description: "Second from a date or time" },
+    FormulaFunctionSpec { name: "SQRT", signature: "SQRT(value)", description: "Square root" },
+    FormulaFunctionSpec { name: "SUBSTITUTE", signature: "SUBSTITUTE(text, search_for, replace_with, [occurrence])", description: "Replace matching text" },
+    FormulaFunctionSpec { name: "SUM", signature: "SUM(value1, value2, ...)", description: "Sum numeric values" },
+    FormulaFunctionSpec { name: "SUMIF", signature: "SUMIF(range, criterion, [sum_range])", description: "Sum values matching a criterion" },
+    FormulaFunctionSpec { name: "TEXT", signature: "TEXT(value, format)", description: "Format a value as text" },
+    FormulaFunctionSpec { name: "TODAY", signature: "TODAY()", description: "Current date" },
+    FormulaFunctionSpec { name: "TRIM", signature: "TRIM(text)", description: "Trim repeated whitespace" },
+    FormulaFunctionSpec { name: "UPPER", signature: "UPPER(text)", description: "Uppercase text" },
+    FormulaFunctionSpec { name: "VALUE", signature: "VALUE(text)", description: "Parse text into a number" },
+    FormulaFunctionSpec { name: "YEAR", signature: "YEAR(date)", description: "Year from a date" },
+];
+
 pub trait FormulaEngine: Send + Sync {
     fn recompute_sheet(&self, sheet: &mut SheetState) -> Result<(), FormulaError>;
     fn validate(&self, input: &str) -> Result<(), FormulaError>;

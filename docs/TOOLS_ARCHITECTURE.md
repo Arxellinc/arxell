@@ -4,7 +4,7 @@
 
 Tools are the extension points that make workspace features available to users and, where appropriate, to the agent runtime. A tool can be a visible workspace surface, an executable backend capability, or both.
 
-The future `Sheets` tool should be treated as a workspace UI tool first: it needs a spreadsheet view for CSV/XLSX data, local state for open files and grid editing, and backend actions only when file parsing, persistence, or agent-readable operations require Rust-side support.
+The `Sheets` tool is now implemented as a builtin workspace UI tool with a canvas grid runtime, formula bar, backend-owned workbook state, and invoke actions for open/save/read/edit workflows.
 
 ## Tool Types
 
@@ -71,6 +71,7 @@ Not every tool needs every file. Static tools such as `memory` and `skills` may 
 | `tasks` | `frontend/src/tools/tasks/` | workspace | Task tracking |
 | `memory` | `frontend/src/tools/memory/` | workspace | Memory/context display |
 | `skills` | `frontend/src/tools/skills/` | agent | Agent skill browsing |
+| `sheets` | `frontend/src/tools/sheets/` | data | Spreadsheet editing with backend workbook state, formulas, and agent access |
 | `notepad` | `frontend/src/tools/notepad/` | workspace | Note editor |
 | `opencode` | `frontend/src/tools/opencode/` | automation | OpenCode integration |
 | `terminal` | `frontend/src/tools/terminal/` | workspace | Integrated terminal emulator |
@@ -107,7 +108,7 @@ It provides the canonical list used by the Tools manager and chat tool enablemen
 
 `WorkspaceToolsService` loads those manifests, merges persisted enabled/icon settings from `tools-registry.json`, discovers plugin tools, and returns `WorkspaceToolRecord` values to the frontend.
 
-For a builtin `Sheets` tool, add a `WorkspaceToolManifest` entry with a stable id such as `sheets`, title `Sheets`, category `data`, and an initial description focused on spreadsheet data viewing and editing.
+`Sheets` is registered as a builtin workspace tool in the backend manifest list with tool id `sheets` and category `data`.
 
 ## Workspace Rendering
 
@@ -121,7 +122,7 @@ The flow is:
 4. If a builtin manifest exists but no rendered view exists, the user sees a placeholder.
 5. If a custom/plugin tool has an enabled `entry`, it renders in a sandboxed iframe.
 
-For `Sheets`, add a `sheets` entry to `buildWorkspaceToolViews` once its render functions exist.
+`Sheets` is wired into `buildWorkspaceToolViews` and renders through native frontend view functions instead of an iframe.
 
 ## Workspace Events
 
@@ -135,7 +136,7 @@ Tool bindings should:
 - Trigger rerenders explicitly where the host expects it.
 - Route async side effects through dependency functions or action helpers.
 
-For `Sheets`, plan for bindings around opening data files, editing cells, changing sheets/tabs, sorting/filtering, saving, and import/export actions.
+`Sheets` bindings currently handle open/create/save, undo/redo, row and column insert/delete operations, and UI-only format/filter actions. Canvas runtime interactions (selection, editing, resizing, fill handle, context menus) are handled in the Sheets canvas runtime module.
 
 ## Backend Invoke Flow
 
@@ -149,7 +150,7 @@ The flow is:
 4. The registry looks up `(tool_id, action)`.
 5. The handler decodes payload with `decode_payload`, calls the appropriate service, and returns JSON data or an error string.
 
-Use invoke handlers when a tool needs backend-controlled side effects, stable typed contracts, or access to Rust services. For `Sheets`, likely backend actions include reading CSV/XLSX, saving CSV/XLSX, extracting workbook metadata, and producing normalized tabular data for agent workflows.
+Use invoke handlers when a tool needs backend-controlled side effects, stable typed contracts, or access to Rust services. `Sheets` now uses invoke handlers for `new_sheet`, `open_sheet`, `save_sheet`, `inspect_sheet`, `read_range`, `set_cell`, `set_ai_model`, `write_range`, `copy_paste_range`, row/column insert-delete, undo/redo, and cell formatting/mark toggles.
 
 ## Agent Tool Enablement
 
@@ -157,7 +158,7 @@ Agent tools are gated by workspace tool enablement in `src-tauri/src/app/chat_se
 
 The binding table maps a workspace tool id to a function that returns one or more agent tools. For example, the `chart` workspace tool enables chart-specific agent behavior.
 
-Do not expose `Sheets` to the agent by default unless there is a clear model-facing capability. A good first agent scope would be read-only summarization or structured queries over an open sheet. Editing files should require explicit user intent and registry-controlled actions.
+`Sheets` is exposed as an agent tool with explicit action schema for inspect/read/edit/save operations. Agent edits route through `SheetsService` with `EditSource::Agent` and correlation-id propagation.
 
 ## Custom And Plugin Tools
 
@@ -170,7 +171,7 @@ Custom/plugin tools differ from builtins:
 - Capabilities are checked by `ensure_custom_tool_capability`.
 - Enabled/icon state is persisted with the same registry snapshot.
 
-Builtin tools such as `Sheets` should prefer native frontend integration instead of iframe loading.
+Builtin tools such as `Sheets` use native frontend integration instead of iframe loading.
 
 ## Contracts And Observability
 
@@ -200,20 +201,18 @@ Use this checklist for a new builtin tool:
 10. Add agent tool bindings only if the model needs a direct capability.
 11. Add tests around registries, payload decoding, and high-risk parsing or persistence behavior.
 
-## Sheets Planning Notes
+## Sheets Current State
 
-For `Sheets`, the likely architecture is:
+`Sheets` currently ships as a builtin data tool with this split:
 
 - `toolId`: `sheets`
 - Category: `data`
-- Frontend role: workbook/grid view, selected sheet, active cell/range, edit buffer, dirty state, import/export controls.
-- Backend role: safe file read/write, CSV parsing, XLSX parsing/writing, workbook metadata, large-file limits.
-- Agent role: optional later phase for read-only inspection, table summarization, formula/data cleanup suggestions, or explicit edit plans.
+- Frontend role: canvas-based grid rendering, formula bar with autocomplete, selection/edit interactions, local view state (sorting/filtering), and optimistic cell updates.
+- Backend role: canonical workbook state, file open/save, formula evaluation, range/cell edits, undo/redo, resize operations, and capability reporting.
+- Agent role: direct sheet actions (create/open/inspect/read/edit/insert/delete/save) through the dedicated Sheets agent tool.
 
-Key design decisions before implementation:
+Current format scope and capability shape:
 
-- Whether CSV parsing starts in frontend, backend, or both.
-- Which XLSX library is acceptable for Rust or TypeScript use.
-- Size limits for loaded files and visible grids.
-- How edits are represented for undo/redo and save conflict handling.
-- Whether `Sheets` opens files through the existing `files` tool state or keeps its own open-workbook state.
+- Baseline CSV support is fully implemented.
+- Additional capability-driven source kinds are supported in the frontend state model (`csv`, `nativeJsonl`, `sqliteTable`).
+- Toolbar format/style controls are present; some actions are currently UI-only while core edit/save/structure actions are active.

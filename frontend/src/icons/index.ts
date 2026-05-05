@@ -98,6 +98,7 @@ import listFilterPlus from "./list-filter-plus.svg?raw";
 import funnelPlus from "./funnel-plus.svg?raw";
 import panelTop from "./panel-top.svg?raw";
 import link from "./link.svg?raw";
+import squareFunction from "./square-function.svg?raw";
 
 const ICON_SVGS = {
   bot,
@@ -199,7 +200,8 @@ const ICON_SVGS = {
   "list-filter-plus": listFilterPlus,
   "funnel-plus": funnelPlus,
   "panel-top": panelTop,
-  link
+  link,
+  "square-function": squareFunction
 } as const;
 
 export type IconName = keyof typeof ICON_SVGS;

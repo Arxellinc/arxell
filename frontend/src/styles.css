@@ -2286,6 +2286,79 @@ body {
   overflow: hidden;
 }
 
+.app-notify-stack {
+  position: fixed;
+  right: 0.75rem;
+  bottom: calc(var(--bottom-bar-h) + 0.75rem);
+  z-index: 180;
+  display: grid;
+  gap: 0.45rem;
+  width: min(320px, calc(100vw - 1.5rem));
+}
+
+.app-notify {
+  position: relative;
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--status-info);
+  background: var(--surface-soft);
+  color: var(--ink);
+  border-radius: 6px;
+  padding: 0.45rem 1.4rem 0.45rem 0.55rem;
+  box-shadow: 0 6px 20px color-mix(in oklab, #000 18%, transparent 82%);
+}
+
+.app-notify.is-success { border-left-color: var(--status-success); }
+.app-notify.is-warn { border-left-color: var(--status-warning); }
+.app-notify.is-error { border-left-color: var(--error); }
+.app-notify.is-info { border-left-color: var(--status-info); }
+
+.app-notify-title {
+  font-size: var(--text-sm);
+  line-height: 1.3;
+  font-weight: 600;
+}
+
+.app-notify-desc {
+  margin-top: 0.15rem;
+  font-size: var(--text-xs);
+  color: var(--muted);
+  line-height: 1.3;
+}
+
+.app-notify-close {
+  position: absolute;
+  top: 0.2rem;
+  right: 0.2rem;
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  width: 18px;
+  height: 18px;
+  cursor: pointer;
+  font-size: 0.9rem;
+  line-height: 1;
+}
+
+.app-notify-actions {
+  margin-top: 0.25rem;
+  display: inline-flex;
+  gap: 0.45rem;
+  flex-wrap: wrap;
+}
+
+.app-notify-link {
+  font-size: var(--text-xs);
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.app-notify-link-btn {
+  border: none;
+  background: transparent;
+  padding: 0;
+  cursor: pointer;
+}
+
 .workspace-content.no-actions {
   grid-template-rows: 1fr;
 }

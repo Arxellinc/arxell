@@ -12,6 +12,44 @@
   grid-template-columns: minmax(0, 1fr) 120px;
 }
 
+.tasks-tool.tasks-notifications-only {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.tasks-notifications-header {
+  grid-template-columns: 140px minmax(180px, 0.6fr) minmax(260px, 1fr);
+}
+
+.tasks-notification-row {
+  display: grid;
+  grid-template-columns: 140px minmax(180px, 0.6fr) minmax(260px, 1fr);
+  gap: 0.5rem;
+  padding: 0.55rem;
+  border-bottom: 1px solid color-mix(in oklab, var(--line) 62%, transparent 38%);
+}
+
+.tasks-notification-row.is-unread {
+  background: color-mix(in oklab, var(--active-bg) 52%, transparent 48%);
+}
+
+.tasks-notification-time,
+.tasks-notification-title,
+.tasks-notification-desc {
+  font-size: var(--text-xs);
+}
+
+.tasks-notification-actions {
+  grid-column: 2 / span 2;
+  display: inline-flex;
+  gap: 0.5rem;
+}
+
+.tasks-notification-link {
+  color: var(--accent);
+  font-size: var(--text-xs);
+  text-decoration: none;
+}
+
 .tasks-list-pane {
   min-width: 0;
   min-height: 0;
@@ -265,11 +303,19 @@
 
 .tasks-field input,
 .tasks-field-grid input,
-.tasks-field-grid select,
 .tasks-field textarea {
   border: 1px solid var(--line);
   border-radius: 6px;
   background: var(--surface-strong);
+  color: var(--ink);
+  font-size: var(--text-sm);
+  padding: 0.4rem 0.5rem;
+}
+
+.tasks-field-grid select {
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background-color: var(--surface-strong);
   color: var(--ink);
   font-size: var(--text-sm);
   padding: 0.4rem 0.5rem;
@@ -312,6 +358,21 @@
   margin-top: -0.25rem;
   font-size: 11px;
   color: var(--muted);
+}
+
+.tasks-optional-header {
+  border-top: 1px solid var(--line);
+  padding-top: 0.45rem;
+  font-size: var(--text-xs);
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.tasks-optional-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.55rem;
 }
 
 .tasks-field-actions {

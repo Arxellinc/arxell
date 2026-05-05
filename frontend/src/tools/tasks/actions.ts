@@ -45,7 +45,8 @@ export function loadPersistedTasksById(): Record<string, TaskRecord> {
         updatedAtMs: Number.isFinite(row.updatedAtMs) ? row.updatedAtMs : now,
         archived: row.archived === true || (row as any).state === "complete" || (row as any).state === "rejected",
         starred: row.starred === true,
-        agentOwner: typeof row.agentOwner === "string" ? row.agentOwner : "agent"
+        agentOwner: typeof row.agentOwner === "string" ? row.agentOwner : "agent",
+        source: row.source === "user" ? "user" : "agent"
       };
     }
     return result;
@@ -82,7 +83,14 @@ export function createTask(slice: TasksRuntimeSlice): string {
     updatedAtMs: now,
     archived: false,
     starred: false,
-    agentOwner: "agent"
+    agentOwner: "agent",
+    source: "user",
+    scheduledAtMs: null,
+    repeat: "none",
+    repeatTimeOfDayMs: null,
+    repeatTimezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+    isScheduleEnabled: true,
+    nextRunAtMs: null
   };
   slice.tasksSelectedId = id;
   slice.tasksFolder = "inbox";
@@ -174,7 +182,7 @@ export function deleteSelectedTask(slice: TasksRuntimeSlice): void {
 
 export function updateSelectedTaskField(
   slice: TasksRuntimeSlice,
-  field: "name" | "description" | "type" | "projectId" | "agentOwner" | "state" | "riskLevel" | "estimatedCostUsd",
+  field: "name" | "description" | "type" | "projectId" | "agentOwner" | "state" | "riskLevel" | "estimatedCostUsd" | "repeat" | "repeatTimezone" | "scheduledAtMs" | "repeatTimeOfDayMs",
   value: string
 ): void {
   const selected = getSelectedTask(slice);
@@ -190,6 +198,14 @@ export function updateSelectedTaskField(
     selected.riskLevel = normalizeRiskLevel(value);
   } else if (field === "estimatedCostUsd") {
     selected.estimatedCostUsd = normalizeEstimatedCostUsd(value);
+  } else if (field === "repeat") {
+    selected.repeat = normalizeRepeat(value);
+  } else if (field === "repeatTimezone") {
+    selected.repeatTimezone = value.trim() || selected.repeatTimezone || Intl.DateTimeFormat().resolvedOptions().timeZone;
+  } else if (field === "scheduledAtMs") {
+    selected.scheduledAtMs = normalizeScheduledAtMs(value);
+  } else if (field === "repeatTimeOfDayMs") {
+    selected.repeatTimeOfDayMs = normalizeRepeatTimeOfDayMs(value);
   } else {
     selected[field] = value;
   }
@@ -236,6 +252,22 @@ export function applySelectedTaskJson(slice: TasksRuntimeSlice, rawJson: string)
   selected.estimatedCostUsd = normalizeEstimatedCostUsd((payload as any).estimatedCostUsd ?? selected.estimatedCostUsd);
   if (typeof payload.archived === "boolean") selected.archived = payload.archived;
   if (typeof payload.starred === "boolean") selected.starred = payload.starred;
+  if ((payload as any).source === "user" || (payload as any).source === "agent") {
+    selected.source = (payload as any).source;
+  }
+  selected.repeat = normalizeRepeat((payload as any).repeat ?? selected.repeat ?? "none");
+  if (typeof (payload as any).repeatTimezone === "string") {
+    selected.repeatTimezone = (payload as any).repeatTimezone.trim() || selected.repeatTimezone;
+  }
+  if ((payload as any).scheduledAtMs == null || Number.isFinite((payload as any).scheduledAtMs)) {
+    selected.scheduledAtMs = (payload as any).scheduledAtMs == null ? null : Number((payload as any).scheduledAtMs);
+  }
+  if ((payload as any).repeatTimeOfDayMs == null || Number.isFinite((payload as any).repeatTimeOfDayMs)) {
+    selected.repeatTimeOfDayMs = (payload as any).repeatTimeOfDayMs == null ? null : Number((payload as any).repeatTimeOfDayMs);
+  }
+  if (typeof (payload as any).isScheduleEnabled === "boolean") {
+    selected.isScheduleEnabled = (payload as any).isScheduleEnabled;
+  }
   if (Number.isFinite(payload.createdAtMs)) {
     selected.createdAtMs = Number(payload.createdAtMs);
   }
@@ -260,6 +292,29 @@ function normalizeEstimatedCostUsd(value: unknown): number {
   const n = typeof value === "number" ? value : Number(value);
   if (!Number.isFinite(n) || n < 0) return 0;
   return Math.round(n * 10000) / 10000;
+}
+
+function normalizeRepeat(value: unknown): TaskRecord["repeat"] {
+  const raw = typeof value === "string" ? value.trim().toLowerCase() : "";
+  if (raw === "hourly" || raw === "daily" || raw === "weekly" || raw === "monthly" || raw === "yearly") return raw;
+  return "none";
+}
+
+function normalizeScheduledAtMs(value: string): number | null {
+  if (!value.trim()) return null;
+  const t = new Date(value).getTime();
+  return Number.isFinite(t) ? t : null;
+}
+
+function normalizeRepeatTimeOfDayMs(value: string): number | null {
+  if (!value.trim()) return null;
+  const match = value.match(/^(\d{2}):(\d{2})$/);
+  if (!match) return null;
+  const hh = Number(match[1]);
+  const mm = Number(match[2]);
+  if (!Number.isFinite(hh) || !Number.isFinite(mm)) return null;
+  if (hh < 0 || hh > 23 || mm < 0 || mm > 59) return null;
+  return (hh * 60 + mm) * 60 * 1000;
 }
 
 export function setSelectedTaskStarred(slice: TasksRuntimeSlice, starred: boolean): void {

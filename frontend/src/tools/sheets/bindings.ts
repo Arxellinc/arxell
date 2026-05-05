@@ -57,7 +57,6 @@ export async function handleSheetsClick(
     return true;
   }
   if (action === "create-filter") {
-    if (!checkCapability(slice, "formats")) return true;
     const columns = getSelectedSheetColumns(slice);
     if (columns.length === 0) {
       window.alert("Select one or more full columns to add or remove a filter.");

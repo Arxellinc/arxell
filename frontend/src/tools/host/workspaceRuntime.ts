@@ -47,7 +47,7 @@ import {
   updateNotepadBuffer
 } from "../notepad/actions";
 import { createNewDocsFile } from "../docs/actions";
-import { createNewSkillsFile } from "../skills/actions";
+
 import {
   createNewSheet,
   deleteColumns as deleteSheetsColumns,
@@ -161,7 +161,6 @@ export interface WorkspaceToolsRuntime {
   deleteRows: (index: number, count?: number) => Promise<void>;
   deleteColumns: (index: number, count?: number) => Promise<void>;
   createNewDocsFile: (path: string) => Promise<void>;
-  createNewSkillsFile: (path: string) => Promise<void>;
   createAndActivateWebTab: () => void;
   runWebSearch: () => Promise<void>;
   saveWebSearchSetup: () => Promise<void>;
@@ -362,9 +361,6 @@ export function createWorkspaceToolsRuntime(
     },
     createNewDocsFile: async (path) => {
       await createNewDocsFile(state as never, notepadDeps as never, path);
-    },
-    createNewSkillsFile: async (path) => {
-      await createNewSkillsFile(state as never, notepadDeps as never, path);
     },
     createAndActivateWebTab: () => {
       createAndActivateWebTab(state, { createWebTab: deps.createWebTab });

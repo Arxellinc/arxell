@@ -1,6 +1,6 @@
 #![cfg(feature = "tauri-runtime")]
 
-use crate::app::tasks_service::{DurableTaskRecord, DurableTaskRunRecord};
+use crate::app::tasks_service::{DurableNotificationRecord, DurableTaskRecord, DurableTaskRunRecord};
 use crate::ipc::tauri_bridge::TauriBridgeState;
 use crate::tools::invoke::build_registry;
 use crate::tools::invoke::registry::{InvokeRegistry, ToolInvokeFuture};
@@ -39,12 +39,37 @@ struct ListTaskRunsRequest {
     task_id: String,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct UpsertNotificationRequest {
+    notification: DurableNotificationRecord,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct MarkNotificationReadRequest {
+    id: String,
+    read: bool,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct DismissNotificationRequest {
+    id: String,
+}
+
 pub fn register(registry: &mut InvokeRegistry) {
     registry.register("tasks", &["list"], list_tasks_handler);
     registry.register("tasks", &["upsert"], upsert_task_handler);
     registry.register("tasks", &["delete"], delete_task_handler);
     registry.register("tasks", &["run-now", "runNow"], run_task_now_handler);
     registry.register("tasks", &["list-runs", "listRuns"], list_task_runs_handler);
+    registry.register("tasks", &["notifications-list", "notificationsList"], list_notifications_handler);
+    registry.register("tasks", &["notifications-upsert", "notificationsUpsert"], upsert_notification_handler);
+    registry.register("tasks", &["notifications-mark-read", "notificationsMarkRead"], mark_notification_read_handler);
+    registry.register("tasks", &["notifications-dismiss", "notificationsDismiss"], dismiss_notification_handler);
+    registry.register("tasks", &["scheduler-status", "schedulerStatus"], scheduler_status_handler);
+    registry.register("tasks", &["scheduler-run-due-now", "schedulerRunDueNow"], scheduler_run_due_now_handler);
 }
 
 fn list_tasks_handler(state: &TauriBridgeState, payload: Value) -> ToolInvokeFuture<'_> {
@@ -65,6 +90,30 @@ fn run_task_now_handler(state: &TauriBridgeState, payload: Value) -> ToolInvokeF
 
 fn list_task_runs_handler(state: &TauriBridgeState, payload: Value) -> ToolInvokeFuture<'_> {
     Box::pin(list_task_runs(state, payload))
+}
+
+fn list_notifications_handler(state: &TauriBridgeState, payload: Value) -> ToolInvokeFuture<'_> {
+    Box::pin(list_notifications(state, payload))
+}
+
+fn upsert_notification_handler(state: &TauriBridgeState, payload: Value) -> ToolInvokeFuture<'_> {
+    Box::pin(upsert_notification(state, payload))
+}
+
+fn mark_notification_read_handler(state: &TauriBridgeState, payload: Value) -> ToolInvokeFuture<'_> {
+    Box::pin(mark_notification_read(state, payload))
+}
+
+fn dismiss_notification_handler(state: &TauriBridgeState, payload: Value) -> ToolInvokeFuture<'_> {
+    Box::pin(dismiss_notification(state, payload))
+}
+
+fn scheduler_status_handler(state: &TauriBridgeState, payload: Value) -> ToolInvokeFuture<'_> {
+    Box::pin(scheduler_status(state, payload))
+}
+
+fn scheduler_run_due_now_handler(state: &TauriBridgeState, payload: Value) -> ToolInvokeFuture<'_> {
+    Box::pin(scheduler_run_due_now(state, payload))
 }
 
 async fn list_tasks(state: &TauriBridgeState, payload: Value) -> Result<Value, String> {
@@ -99,9 +148,10 @@ async fn run_task_now(state: &TauriBridgeState, payload: Value) -> Result<Value,
     let now = now_ms();
     let (status, policy_decision, policy_reason, result_json, error) =
         execute_task_payload(state, &task, canonical_root.as_path()).await;
+    let task_id = req.task_id.clone();
     let run = DurableTaskRunRecord {
         id: format!("R{}", now),
-        task_id: req.task_id,
+        task_id,
         status,
         trigger_reason: "manual".to_string(),
         policy_decision,
@@ -113,7 +163,109 @@ async fn run_task_now(state: &TauriBridgeState, payload: Value) -> Result<Value,
         completed_at_ms: Some(now),
     };
     let appended = state.tasks.append_run(run)?;
+    let _ = emit_task_run_notification(state, &task, appended.status.as_str(), appended.error.as_str(), "manual", now);
+    let _ = state.tasks.advance_next_run_at(req.task_id.as_str(), now);
     Ok(json!({ "run": appended }))
+}
+
+pub async fn run_due_scheduled_tasks(state: &TauriBridgeState, limit: usize) -> Result<usize, String> {
+    let now = now_ms();
+    let due = state.tasks.list_due_scheduled_tasks(now, limit)?;
+    if due.is_empty() {
+        return Ok(0);
+    }
+    let mut executed = 0usize;
+    for task in due {
+        let canonical_root = match resolve_project_root(task.project_id.as_str()) {
+            Ok(root) => root,
+            Err(_) => {
+                let _ = state.tasks.advance_next_run_at(task.id.as_str(), now);
+                continue;
+            }
+        };
+        let (status, policy_decision, policy_reason, result_json, error) =
+            execute_task_payload(state, &task, canonical_root.as_path()).await;
+        let run = DurableTaskRunRecord {
+            id: format!("R{}{}", now, executed),
+            task_id: task.id.clone(),
+            status,
+            trigger_reason: "scheduled".to_string(),
+            policy_decision,
+            policy_reason,
+            result_json,
+            error,
+            created_at_ms: now,
+            started_at_ms: Some(now),
+            completed_at_ms: Some(now),
+        };
+        let _ = state.tasks.append_run(run.clone());
+        let _ = emit_task_run_notification(
+            state,
+            &task,
+            run.status.as_str(),
+            run.error.as_str(),
+            "scheduled",
+            now,
+        );
+        let _ = state.tasks.advance_next_run_at(task.id.as_str(), now);
+        executed += 1;
+    }
+    Ok(executed)
+}
+
+fn emit_task_run_notification(
+    state: &TauriBridgeState,
+    task: &DurableTaskRecord,
+    status: &str,
+    error: &str,
+    trigger_reason: &str,
+    now: i64,
+) -> Result<(), String> {
+    let (title, tone) = match status {
+        "succeeded" => (format!("Task complete: {}", task.name), "success"),
+        "blocked" => (format!("Task blocked: {}", task.name), "warning"),
+        _ => (format!("Task failed: {}", task.name), "error"),
+    };
+    let mut description = format!("{} run for task {}.", trigger_reason, task.id);
+    if !error.trim().is_empty() {
+        description.push(' ');
+        description.push_str(error.trim());
+    }
+    let row = DurableNotificationRecord {
+        id: format!("N{}{}", now, task.id),
+        title,
+        description,
+        tone: tone.to_string(),
+        read: false,
+        actions_json: json!([
+            { "id": format!("open-task:{}", task.id), "label": "Open Task" }
+        ]),
+        created_at_ms: now,
+        updated_at_ms: now,
+    };
+    let _ = state.tasks.upsert_notification(row)?;
+    Ok(())
+}
+
+async fn scheduler_status(state: &TauriBridgeState, _payload: Value) -> Result<Value, String> {
+    let now = now_ms();
+    let due = state.tasks.list_due_scheduled_tasks(now, 1000)?;
+    Ok(json!({
+        "nowMs": now,
+        "dueCount": due.len(),
+        "sampleTaskIds": due.iter().take(10).map(|t| t.id.clone()).collect::<Vec<String>>()
+    }))
+}
+
+async fn scheduler_run_due_now(state: &TauriBridgeState, payload: Value) -> Result<Value, String> {
+    let limit = payload
+        .get("limit")
+        .and_then(Value::as_u64)
+        .map(|v| v as usize)
+        .unwrap_or(16)
+        .clamp(1, 256);
+    let executed = run_due_scheduled_tasks(state, limit).await?;
+    Ok(json!({ "executed": executed, "limit": limit, "nowMs": now_ms() }))
 }
 
 async fn execute_task_payload(
@@ -345,7 +497,9 @@ fn resolve_project_root(raw: &str) -> Result<PathBuf, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{resolve_candidate_path, validate_files_payload_in_scope};
+    use crate::app::tasks_service::DurableTaskRecord;
+    use crate::app::AppContext;
+    use super::{now_ms, resolve_candidate_path, validate_files_payload_in_scope};
     use serde_json::json;
     use std::fs;
 
@@ -391,6 +545,63 @@ mod tests {
         let resolved = resolve_candidate_path(".");
         assert!(resolved.is_ok());
     }
+
+    #[tokio::test]
+    async fn scheduled_due_run_creates_run_and_notification() {
+        let tmp = std::env::temp_dir().join(format!(
+            "arxell-scheduler-integration-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        fs::create_dir_all(&tmp).expect("create test dir");
+        let db_path = tmp.join("tasks.sqlite3");
+        std::env::set_var("ARXELL_TASKS_DB_PATH", db_path.to_string_lossy().to_string());
+
+        let app = AppContext::new().expect("app context");
+        let state = app.tauri_bridge_state();
+        let now = now_ms();
+        let task = DurableTaskRecord {
+            id: "T-SCHED-INT-1".to_string(),
+            project_id: std::env::current_dir()
+                .expect("cwd")
+                .canonicalize()
+                .expect("canonical cwd")
+                .to_string_lossy()
+                .to_string(),
+            name: "Integration scheduled reminder".to_string(),
+            description: "test".to_string(),
+            task_type: "write".to_string(),
+            agent_owner: "agent".to_string(),
+            state: "approved".to_string(),
+            risk_level: "low".to_string(),
+            payload_kind: "agent_prompt".to_string(),
+            payload_json: json!({}),
+            estimate_json: json!({}),
+            scheduled_at_ms: Some(now - 10_000),
+            repeat: "none".to_string(),
+            repeat_time_of_day_ms: None,
+            repeat_timezone: "UTC".to_string(),
+            is_schedule_enabled: true,
+            next_run_at_ms: None,
+            created_at_ms: 0,
+            updated_at_ms: 0,
+        };
+        let saved = state.tasks.upsert_task(task).expect("upsert task");
+        let executed = super::run_due_scheduled_tasks(&state, 16)
+            .await
+            .expect("run due tasks");
+        assert_eq!(executed, 1);
+        let runs = state.tasks.list_runs(saved.id.as_str()).expect("list runs");
+        assert!(runs.iter().any(|row| row.trigger_reason == "scheduled"));
+        let notifs = state.tasks.list_notifications().expect("list notifications");
+        assert!(notifs.iter().any(|n| n.title.contains("Task complete") || n.title.contains("Task failed") || n.title.contains("Task blocked")));
+
+        std::env::remove_var("ARXELL_TASKS_DB_PATH");
+        let _ = fs::remove_file(db_path);
+        let _ = fs::remove_dir_all(tmp);
+    }
 }
 
 async fn list_task_runs(state: &TauriBridgeState, payload: Value) -> Result<Value, String> {
@@ -422,4 +633,27 @@ fn now_ms() -> i64 {
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_millis() as i64)
         .unwrap_or(0)
+}
+
+async fn list_notifications(state: &TauriBridgeState, _payload: Value) -> Result<Value, String> {
+    let rows = state.tasks.list_notifications()?;
+    Ok(json!({ "notifications": rows }))
+}
+
+async fn upsert_notification(state: &TauriBridgeState, payload: Value) -> Result<Value, String> {
+    let req: UpsertNotificationRequest = decode_payload(payload)?;
+    let row = state.tasks.upsert_notification(req.notification)?;
+    Ok(json!({ "notification": row }))
+}
+
+async fn mark_notification_read(state: &TauriBridgeState, payload: Value) -> Result<Value, String> {
+    let req: MarkNotificationReadRequest = decode_payload(payload)?;
+    let changed = state.tasks.mark_notification_read(req.id.as_str(), req.read)?;
+    Ok(json!({ "updated": changed }))
+}
+
+async fn dismiss_notification(state: &TauriBridgeState, payload: Value) -> Result<Value, String> {
+    let req: DismissNotificationRequest = decode_payload(payload)?;
+    let deleted = state.tasks.dismiss_notification(req.id.as_str())?;
+    Ok(json!({ "deleted": deleted }))
 }

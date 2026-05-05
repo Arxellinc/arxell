@@ -15,7 +15,7 @@ export function renderSheetsToolActions(view: SheetsToolState): string {
   const canRedo = view.canRedo;
   const canFormat = can?.formats === true;
   const canStyle = can?.styles === true;
-  const canFilter = can?.formats === true;
+  const canFilter = true;
   const canFreeze = can?.frozenPanes === true;
   const canHyperlink = can?.styles === true;
   const disabled = !view.hasWorkbook || view.pending;

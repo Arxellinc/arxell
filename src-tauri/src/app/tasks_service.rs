@@ -1,4 +1,6 @@
 use crate::app_paths;
+use chrono::{Datelike, Duration, TimeZone, Timelike, Utc};
+use chrono_tz::Tz;
 use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -21,6 +23,12 @@ pub struct DurableTaskRecord {
     pub payload_kind: String,
     pub payload_json: Value,
     pub estimate_json: Value,
+    pub scheduled_at_ms: Option<i64>,
+    pub repeat: String,
+    pub repeat_time_of_day_ms: Option<i64>,
+    pub repeat_timezone: String,
+    pub is_schedule_enabled: bool,
+    pub next_run_at_ms: Option<i64>,
     pub created_at_ms: i64,
     pub updated_at_ms: i64,
 }
@@ -39,6 +47,19 @@ pub struct DurableTaskRunRecord {
     pub created_at_ms: i64,
     pub started_at_ms: Option<i64>,
     pub completed_at_ms: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DurableNotificationRecord {
+    pub id: String,
+    pub title: String,
+    pub description: String,
+    pub tone: String,
+    pub read: bool,
+    pub actions_json: Value,
+    pub created_at_ms: i64,
+    pub updated_at_ms: i64,
 }
 
 pub struct TaskAutomationService {
@@ -68,6 +89,12 @@ impl TaskAutomationService {
                 payload_kind TEXT NOT NULL,
                 payload_json TEXT NOT NULL,
                 estimate_json TEXT NOT NULL,
+                scheduled_at_ms INTEGER,
+                repeat TEXT NOT NULL DEFAULT 'none',
+                repeat_time_of_day_ms INTEGER,
+                repeat_timezone TEXT NOT NULL DEFAULT 'UTC',
+                is_schedule_enabled INTEGER NOT NULL DEFAULT 1,
+                next_run_at_ms INTEGER,
                 created_at_ms INTEGER NOT NULL,
                 updated_at_ms INTEGER NOT NULL
             );
@@ -88,9 +115,46 @@ impl TaskAutomationService {
                 FOREIGN KEY(task_id) REFERENCES durable_tasks(id)
             );
             CREATE INDEX IF NOT EXISTS idx_durable_task_runs_task_created ON durable_task_runs(task_id, created_at_ms DESC);
+
+            CREATE TABLE IF NOT EXISTS durable_notifications (
+                id TEXT PRIMARY KEY,
+                title TEXT NOT NULL,
+                description TEXT NOT NULL,
+                tone TEXT NOT NULL,
+                read INTEGER NOT NULL,
+                actions_json TEXT NOT NULL,
+                created_at_ms INTEGER NOT NULL,
+                updated_at_ms INTEGER NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_durable_notifications_created ON durable_notifications(created_at_ms DESC);
             "#,
         )
         .map_err(|e| format!("failed initializing tasks schema: {e}"))?;
+        ensure_column(&conn, "durable_tasks", "repeat", "TEXT NOT NULL DEFAULT 'none'")?;
+        ensure_column(
+            &conn,
+            "durable_tasks",
+            "repeat_time_of_day_ms",
+            "INTEGER",
+        )?;
+        ensure_column(
+            &conn,
+            "durable_tasks",
+            "repeat_timezone",
+            "TEXT NOT NULL DEFAULT 'UTC'",
+        )?;
+        ensure_column(
+            &conn,
+            "durable_tasks",
+            "is_schedule_enabled",
+            "INTEGER NOT NULL DEFAULT 1",
+        )?;
+        ensure_column(&conn, "durable_tasks", "next_run_at_ms", "INTEGER")?;
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_durable_tasks_next_run ON durable_tasks(next_run_at_ms)",
+            [],
+        )
+        .map_err(|e| format!("failed creating tasks next-run index: {e}"))?;
         Ok(Self {
             path,
             write_lock: Mutex::new(()),
@@ -114,7 +178,7 @@ impl TaskAutomationService {
         if let Some(project) = project_id {
             let mut stmt = conn
                 .prepare(
-                    "SELECT id, project_id, name, description, task_type, agent_owner, state, risk_level, payload_kind, payload_json, estimate_json, created_at_ms, updated_at_ms FROM durable_tasks WHERE project_id = ?1 ORDER BY updated_at_ms DESC",
+                    "SELECT id, project_id, name, description, task_type, agent_owner, state, risk_level, payload_kind, payload_json, estimate_json, scheduled_at_ms, repeat, repeat_time_of_day_ms, repeat_timezone, is_schedule_enabled, next_run_at_ms, created_at_ms, updated_at_ms FROM durable_tasks WHERE project_id = ?1 ORDER BY updated_at_ms DESC",
                 )
                 .map_err(|e| format!("failed preparing list_tasks query: {e}"))?;
             let rows = stmt
@@ -127,7 +191,7 @@ impl TaskAutomationService {
         }
         let mut stmt = conn
             .prepare(
-                "SELECT id, project_id, name, description, task_type, agent_owner, state, risk_level, payload_kind, payload_json, estimate_json, created_at_ms, updated_at_ms FROM durable_tasks ORDER BY updated_at_ms DESC",
+                "SELECT id, project_id, name, description, task_type, agent_owner, state, risk_level, payload_kind, payload_json, estimate_json, scheduled_at_ms, repeat, repeat_time_of_day_ms, repeat_timezone, is_schedule_enabled, next_run_at_ms, created_at_ms, updated_at_ms FROM durable_tasks ORDER BY updated_at_ms DESC",
             )
             .map_err(|e| format!("failed preparing list_tasks query: {e}"))?;
         let rows = stmt
@@ -157,9 +221,21 @@ impl TaskAutomationService {
             .map_err(|e| format!("failed serializing task payload: {e}"))?;
         let estimate_json = serde_json::to_string(&task.estimate_json)
             .map_err(|e| format!("failed serializing task estimate: {e}"))?;
+        let mut normalized = task.clone();
+        if normalized.repeat.trim().is_empty() {
+            normalized.repeat = "none".to_string();
+        }
+        normalized.next_run_at_ms = compute_next_run_at_ms(
+            normalized.scheduled_at_ms,
+            normalized.repeat.as_str(),
+            normalized.repeat_time_of_day_ms,
+            normalized.repeat_timezone.as_str(),
+            normalized.is_schedule_enabled,
+            now,
+        );
         conn.execute(
-            "INSERT INTO durable_tasks (id, project_id, name, description, task_type, agent_owner, state, risk_level, payload_kind, payload_json, estimate_json, created_at_ms, updated_at_ms)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
+            "INSERT INTO durable_tasks (id, project_id, name, description, task_type, agent_owner, state, risk_level, payload_kind, payload_json, estimate_json, scheduled_at_ms, repeat, repeat_time_of_day_ms, repeat_timezone, is_schedule_enabled, next_run_at_ms, created_at_ms, updated_at_ms)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)
              ON CONFLICT(id) DO UPDATE SET
                project_id = excluded.project_id,
                name = excluded.name,
@@ -168,22 +244,34 @@ impl TaskAutomationService {
                agent_owner = excluded.agent_owner,
                state = excluded.state,
                risk_level = excluded.risk_level,
-               payload_kind = excluded.payload_kind,
-               payload_json = excluded.payload_json,
-               estimate_json = excluded.estimate_json,
-               updated_at_ms = excluded.updated_at_ms",
+                payload_kind = excluded.payload_kind,
+                payload_json = excluded.payload_json,
+                estimate_json = excluded.estimate_json,
+                scheduled_at_ms = excluded.scheduled_at_ms,
+                repeat = excluded.repeat,
+                repeat_time_of_day_ms = excluded.repeat_time_of_day_ms,
+                repeat_timezone = excluded.repeat_timezone,
+                is_schedule_enabled = excluded.is_schedule_enabled,
+                next_run_at_ms = excluded.next_run_at_ms,
+                updated_at_ms = excluded.updated_at_ms",
             params![
-                task.id,
-                task.project_id,
-                task.name,
-                task.description,
-                task.task_type,
-                task.agent_owner,
+                normalized.id,
+                normalized.project_id,
+                normalized.name,
+                normalized.description,
+                normalized.task_type,
+                normalized.agent_owner,
                 normalized_state,
-                task.risk_level,
-                task.payload_kind,
+                normalized.risk_level,
+                normalized.payload_kind,
                 payload_json,
                 estimate_json,
+                normalized.scheduled_at_ms,
+                normalized.repeat,
+                normalized.repeat_time_of_day_ms,
+                normalized.repeat_timezone,
+                if normalized.is_schedule_enabled { 1 } else { 0 },
+                normalized.next_run_at_ms,
                 created,
                 updated,
             ],
@@ -193,15 +281,58 @@ impl TaskAutomationService {
             created_at_ms: created,
             updated_at_ms: updated,
             state: normalized_state,
-            ..task
+            ..normalized
         })
+    }
+
+    pub fn list_due_scheduled_tasks(&self, now_ms: i64, limit: usize) -> Result<Vec<DurableTaskRecord>, String> {
+        let conn = self.open_connection()?;
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, project_id, name, description, task_type, agent_owner, state, risk_level, payload_kind, payload_json, estimate_json, scheduled_at_ms, repeat, repeat_time_of_day_ms, repeat_timezone, is_schedule_enabled, next_run_at_ms, created_at_ms, updated_at_ms
+                 FROM durable_tasks
+                 WHERE state = 'approved' AND is_schedule_enabled = 1 AND next_run_at_ms IS NOT NULL AND next_run_at_ms <= ?1
+                 ORDER BY next_run_at_ms ASC
+                 LIMIT ?2",
+            )
+            .map_err(|e| format!("failed preparing due tasks query: {e}"))?;
+        let rows = stmt
+            .query_map(params![now_ms, limit as i64], row_to_task)
+            .map_err(|e| format!("failed querying due tasks: {e}"))?;
+        let mut out = Vec::new();
+        for row in rows {
+            out.push(row.map_err(|e| format!("failed reading due task row: {e}"))?);
+        }
+        Ok(out)
+    }
+
+    pub fn advance_next_run_at(&self, task_id: &str, now_ms: i64) -> Result<(), String> {
+        let Some(task) = self.get_task(task_id)? else {
+            return Ok(());
+        };
+        let next = compute_next_run_at_ms(
+            task.scheduled_at_ms,
+            task.repeat.as_str(),
+            task.repeat_time_of_day_ms,
+            task.repeat_timezone.as_str(),
+            task.is_schedule_enabled,
+            now_ms,
+        );
+        let _guard = self.write_lock.lock().map_err(|_| "tasks write lock poisoned".to_string())?;
+        let conn = self.open_connection()?;
+        conn.execute(
+            "UPDATE durable_tasks SET next_run_at_ms = ?2, updated_at_ms = ?3 WHERE id = ?1",
+            params![task_id, next, now_ms],
+        )
+        .map_err(|e| format!("failed updating next run: {e}"))?;
+        Ok(())
     }
 
     pub fn get_task(&self, task_id: &str) -> Result<Option<DurableTaskRecord>, String> {
         let conn = self.open_connection()?;
         let mut stmt = conn
             .prepare(
-                "SELECT id, project_id, name, description, task_type, agent_owner, state, risk_level, payload_kind, payload_json, estimate_json, created_at_ms, updated_at_ms FROM durable_tasks WHERE id = ?1 LIMIT 1",
+                "SELECT id, project_id, name, description, task_type, agent_owner, state, risk_level, payload_kind, payload_json, estimate_json, scheduled_at_ms, repeat, repeat_time_of_day_ms, repeat_timezone, is_schedule_enabled, next_run_at_ms, created_at_ms, updated_at_ms FROM durable_tasks WHERE id = ?1 LIMIT 1",
             )
             .map_err(|e| format!("failed preparing get_task query: {e}"))?;
         let mut rows = stmt
@@ -293,6 +424,108 @@ impl TaskAutomationService {
         }
         Ok(out)
     }
+
+    pub fn list_notifications(&self) -> Result<Vec<DurableNotificationRecord>, String> {
+        let conn = self.open_connection()?;
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, title, description, tone, read, actions_json, created_at_ms, updated_at_ms FROM durable_notifications ORDER BY created_at_ms DESC",
+            )
+            .map_err(|e| format!("failed preparing list_notifications query: {e}"))?;
+        let rows = stmt
+            .query_map([], |row| {
+                let actions_json_raw: String = row.get(5)?;
+                let actions_json = serde_json::from_str::<Value>(&actions_json_raw)
+                    .unwrap_or_else(|_| Value::Array(Vec::new()));
+                Ok(DurableNotificationRecord {
+                    id: row.get(0)?,
+                    title: row.get(1)?,
+                    description: row.get(2)?,
+                    tone: row.get(3)?,
+                    read: row.get::<_, i64>(4)? != 0,
+                    actions_json,
+                    created_at_ms: row.get(6)?,
+                    updated_at_ms: row.get(7)?,
+                })
+            })
+            .map_err(|e| format!("failed querying notifications: {e}"))?;
+        let mut out = Vec::new();
+        for row in rows {
+            out.push(row.map_err(|e| format!("failed reading notification row: {e}"))?);
+        }
+        Ok(out)
+    }
+
+    pub fn upsert_notification(&self, mut row: DurableNotificationRecord) -> Result<DurableNotificationRecord, String> {
+        let _guard = self.write_lock.lock().map_err(|_| "tasks write lock poisoned".to_string())?;
+        let conn = self.open_connection()?;
+        let now = now_ms();
+        if row.created_at_ms <= 0 {
+            row.created_at_ms = now;
+        }
+        row.updated_at_ms = if row.updated_at_ms > 0 { row.updated_at_ms } else { now };
+        let actions_json = serde_json::to_string(&row.actions_json)
+            .map_err(|e| format!("failed serializing notification actions: {e}"))?;
+        conn.execute(
+            "INSERT INTO durable_notifications (id, title, description, tone, read, actions_json, created_at_ms, updated_at_ms)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+             ON CONFLICT(id) DO UPDATE SET
+               title = excluded.title,
+               description = excluded.description,
+               tone = excluded.tone,
+               read = excluded.read,
+               actions_json = excluded.actions_json,
+               updated_at_ms = excluded.updated_at_ms",
+            params![
+                row.id,
+                row.title,
+                row.description,
+                row.tone,
+                if row.read { 1 } else { 0 },
+                actions_json,
+                row.created_at_ms,
+                row.updated_at_ms,
+            ],
+        )
+        .map_err(|e| format!("failed upserting notification: {e}"))?;
+        Ok(row)
+    }
+
+    pub fn mark_notification_read(&self, id: &str, read: bool) -> Result<bool, String> {
+        let _guard = self.write_lock.lock().map_err(|_| "tasks write lock poisoned".to_string())?;
+        let conn = self.open_connection()?;
+        let changed = conn
+            .execute(
+                "UPDATE durable_notifications SET read = ?2, updated_at_ms = ?3 WHERE id = ?1",
+                params![id, if read { 1 } else { 0 }, now_ms()],
+            )
+            .map_err(|e| format!("failed marking notification read: {e}"))?;
+        Ok(changed > 0)
+    }
+
+    pub fn dismiss_notification(&self, id: &str) -> Result<bool, String> {
+        let _guard = self.write_lock.lock().map_err(|_| "tasks write lock poisoned".to_string())?;
+        let conn = self.open_connection()?;
+        let changed = conn
+            .execute("DELETE FROM durable_notifications WHERE id = ?1", params![id])
+            .map_err(|e| format!("failed dismissing notification: {e}"))?;
+        Ok(changed > 0)
+    }
+}
+
+fn ensure_column(conn: &Connection, table: &str, column: &str, definition: &str) -> Result<(), String> {
+    let sql = format!("ALTER TABLE {table} ADD COLUMN {column} {definition}");
+    match conn.execute(&sql, []) {
+        Ok(_) => Ok(()),
+        Err(e) => {
+            let msg = e.to_string();
+            if msg.contains("duplicate column name") {
+                Ok(())
+            } else {
+                Err(format!("failed ensuring {table}.{column}: {e}"))
+            }
+        }
+    }
 }
 
 fn row_to_task(row: &rusqlite::Row<'_>) -> Result<DurableTaskRecord, rusqlite::Error> {
@@ -314,8 +547,14 @@ fn row_to_task(row: &rusqlite::Row<'_>) -> Result<DurableTaskRecord, rusqlite::E
         payload_kind: row.get(8)?,
         payload_json,
         estimate_json,
-        created_at_ms: row.get(11)?,
-        updated_at_ms: row.get(12)?,
+        scheduled_at_ms: row.get(11)?,
+        repeat: row.get(12)?,
+        repeat_time_of_day_ms: row.get(13)?,
+        repeat_timezone: row.get(14)?,
+        is_schedule_enabled: row.get::<_, i64>(15)? != 0,
+        next_run_at_ms: row.get(16)?,
+        created_at_ms: row.get(17)?,
+        updated_at_ms: row.get(18)?,
     })
 }
 
@@ -324,6 +563,80 @@ fn now_ms() -> i64 {
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_millis() as i64)
         .unwrap_or(0)
+}
+
+fn compute_next_run_at_ms(
+    scheduled_at_ms: Option<i64>,
+    repeat: &str,
+    repeat_time_of_day_ms: Option<i64>,
+    repeat_timezone: &str,
+    is_schedule_enabled: bool,
+    now_ms: i64,
+) -> Option<i64> {
+    if !is_schedule_enabled {
+        return None;
+    }
+    let tz: Tz = repeat_timezone.parse().ok().unwrap_or(chrono_tz::UTC);
+    let anchor = scheduled_at_ms.or(repeat_time_of_day_ms.map(|tod| now_ms - (now_ms % 86_400_000) + tod));
+    let Some(mut next) = anchor else { return None; };
+    if repeat == "none" {
+        return Some(next);
+    }
+    if repeat == "hourly" {
+        while next <= now_ms {
+            next += 3_600_000;
+        }
+        return Some(next);
+    }
+
+    let anchor_dt_utc = Utc.timestamp_millis_opt(anchor?).single()?;
+    let anchor_local = anchor_dt_utc.with_timezone(&tz);
+    let mut probe = Utc.timestamp_millis_opt(now_ms).single()?.with_timezone(&tz);
+    if probe <= anchor_local {
+        return Some(anchor_local.with_timezone(&Utc).timestamp_millis());
+    }
+    let hh = anchor_local.hour();
+    let mm = anchor_local.minute();
+    let ss = anchor_local.second();
+    let ns = anchor_local.nanosecond();
+
+    loop {
+        probe = match repeat {
+            "daily" => probe + Duration::days(1),
+            "weekly" => probe + Duration::weeks(1),
+            "monthly" => {
+                let mut y = probe.year();
+                let mut m = probe.month() as i32 + 1;
+                if m > 12 { m = 1; y += 1; }
+                let d = anchor_local.day().min(days_in_month(y, m as u32));
+                tz.with_ymd_and_hms(y, m as u32, d, hh, mm, ss).single()?.with_nanosecond(ns)?
+            }
+            "yearly" => {
+                let y = probe.year() + 1;
+                let m = anchor_local.month();
+                let d = anchor_local.day().min(days_in_month(y, m));
+                tz.with_ymd_and_hms(y, m, d, hh, mm, ss).single()?.with_nanosecond(ns)?
+            }
+            _ => break,
+        };
+        let utc_ms = probe.with_timezone(&Utc).timestamp_millis();
+        if utc_ms > now_ms {
+            return Some(utc_ms);
+        }
+    }
+    Some(next)
+}
+
+fn days_in_month(year: i32, month: u32) -> u32 {
+    match month {
+        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+        4 | 6 | 9 | 11 => 30,
+        2 => {
+            let leap = (year % 4 == 0 && year % 100 != 0) || (year % 400 == 0);
+            if leap { 29 } else { 28 }
+        }
+        _ => 30,
+    }
 }
 
 #[cfg(test)]
@@ -358,6 +671,12 @@ mod tests {
             payload_kind: "agent_prompt".to_string(),
             payload_json: json!({}),
             estimate_json: json!({}),
+            scheduled_at_ms: None,
+            repeat: "none".to_string(),
+            repeat_time_of_day_ms: None,
+            repeat_timezone: "UTC".to_string(),
+            is_schedule_enabled: true,
+            next_run_at_ms: None,
             created_at_ms: 0,
             updated_at_ms: 0,
         }
@@ -380,6 +699,47 @@ mod tests {
         let task = base_task("draft", "medium");
         let saved = service.upsert_task(task).expect("upsert");
         assert_eq!(saved.state, "draft");
+        let _ = fs::remove_file(db);
+    }
+
+    #[test]
+    fn lists_due_scheduled_tasks_for_approved_items() {
+        let db = temp_db_path();
+        let service = TaskAutomationService::new(db.clone()).expect("service");
+        let mut task = base_task("approved", "low");
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as i64)
+            .unwrap_or(0);
+        task.scheduled_at_ms = Some(now - 60_000);
+        task.repeat = "none".to_string();
+        task.is_schedule_enabled = true;
+        let saved = service.upsert_task(task).expect("upsert");
+        let due = service.list_due_scheduled_tasks(now, 10).expect("due");
+        assert!(due.iter().any(|row| row.id == saved.id));
+        let _ = fs::remove_file(db);
+    }
+
+    #[test]
+    fn persists_and_lists_notifications() {
+        use super::DurableNotificationRecord;
+        use serde_json::json;
+
+        let db = temp_db_path();
+        let service = TaskAutomationService::new(db.clone()).expect("service");
+        let row = DurableNotificationRecord {
+            id: "N-test-1".to_string(),
+            title: "Task complete".to_string(),
+            description: "Scheduled run succeeded.".to_string(),
+            tone: "success".to_string(),
+            read: false,
+            actions_json: json!([{ "id": "open-task:T123", "label": "Open Task" }]),
+            created_at_ms: 0,
+            updated_at_ms: 0,
+        };
+        let _ = service.upsert_notification(row).expect("upsert notification");
+        let rows = service.list_notifications().expect("list notifications");
+        assert!(rows.iter().any(|item| item.id == "N-test-1"));
         let _ = fs::remove_file(db);
     }
 }

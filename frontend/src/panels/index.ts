@@ -539,6 +539,18 @@ export function attachPrimaryPanelInteractions(
         await bindings.onSetShowBottomTtsLatency(showBottomTtsLatencyToggle.checked);
       };
     }
+    const enableNotificationChimeToggle = document.querySelector<HTMLInputElement>("#settingsEnableNotificationChimeToggle");
+    if (enableNotificationChimeToggle) {
+      enableNotificationChimeToggle.onchange = async () => {
+        await bindings.onSetEnableNotificationChime(enableNotificationChimeToggle.checked);
+      };
+    }
+    const enableChatQuestionChimeToggle = document.querySelector<HTMLInputElement>("#settingsEnableChatQuestionChimeToggle");
+    if (enableChatQuestionChimeToggle) {
+      enableChatQuestionChimeToggle.onchange = async () => {
+        await bindings.onSetEnableChatQuestionChime(enableChatQuestionChimeToggle.checked);
+      };
+    }
     return;
   }
 }

@@ -4,6 +4,7 @@ import { resolveFileTabIcon } from "../ui/fileTabIcons";
 import { NOTEPAD_DATA_ATTR } from "../ui/constants";
 import {
   computeNotepadFindStats,
+  escapeAttr,
   escapeHtml,
   renderNotepadEditorPane,
   renderNotepadFindBar
@@ -27,6 +28,7 @@ export interface NotepadToolViewState {
   findCaseSensitive: boolean;
   lineWrap: boolean;
   error: string | null;
+  unsavedModalTabId: string | null;
 }
 
 export function renderNotepadToolActions(view: NotepadToolViewState): string {
@@ -191,5 +193,22 @@ export function renderNotepadToolBody(view: NotepadToolViewState): string {
         : ""
     }
     ${view.error ? `<div class="notepad-error">${escapeHtml(view.error)}</div>` : ""}
+    ${renderNotepadUnsavedModal(view)}
+  </div>`;
+}
+
+export function renderNotepadUnsavedModal(view: NotepadToolViewState): string {
+  if (!view.unsavedModalTabId) return "";
+  const title = view.titleByTabId[view.unsavedModalTabId] || "Untitled";
+  return `<div class="notepad-unsaved-modal-overlay">
+    <div class="notepad-unsaved-modal-box">
+      <div class="notepad-unsaved-modal-title">Unsaved Changes</div>
+      <div class="notepad-unsaved-modal-message">${escapeHtml(title)} has unsaved changes. Would you like to save before closing?</div>
+      <div class="notepad-unsaved-modal-actions">
+        <button type="button" class="mm-modal-btn" ${NOTEPAD_DATA_ATTR.action}="unsaved-discard" ${NOTEPAD_DATA_ATTR.tabId}="${escapeAttr(view.unsavedModalTabId)}">Discard Draft</button>
+        <button type="button" class="mm-modal-btn" ${NOTEPAD_DATA_ATTR.action}="unsaved-cancel">Cancel</button>
+        <button type="button" class="mm-modal-btn" style="background:var(--accent);color:var(--accent-ink);border-color:var(--accent);" ${NOTEPAD_DATA_ATTR.action}="unsaved-save-as" ${NOTEPAD_DATA_ATTR.tabId}="${escapeAttr(view.unsavedModalTabId)}">Save As</button>
+      </div>
+    </div>
   </div>`;
 }

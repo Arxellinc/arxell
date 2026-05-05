@@ -249,6 +249,8 @@ export interface PrimaryPanelRenderState {
   showBottomContext: boolean;
   showBottomSpeed: boolean;
   showBottomTtsLatency: boolean;
+  enableNotificationChime: boolean;
+  enableChatQuestionChime: boolean;
   chat: ChatPanelState;
   chatToolIntentByCorrelation: Record<string, boolean>;
   chatFirstAssistantChunkMsByCorrelation: Record<string, number>;
@@ -497,6 +499,8 @@ export interface PrimaryPanelBindings {
   onSetShowBottomContext: (value: boolean) => Promise<void>;
   onSetShowBottomSpeed: (value: boolean) => Promise<void>;
   onSetShowBottomTtsLatency: (value: boolean) => Promise<void>;
+  onSetEnableNotificationChime: (value: boolean) => Promise<void>;
+  onSetEnableChatQuestionChime: (value: boolean) => Promise<void>;
   onToggleAvatar: () => Promise<void>;
   onSetAvatarPlacement: (placement: "chat" | "tools") => Promise<void>;
   onToggleAvatarMaximized: () => Promise<void>;

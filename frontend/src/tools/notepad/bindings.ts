@@ -51,10 +51,8 @@ export async function handleNotepadClick(
   }
   if (action === "close-tab" && tabId) {
     if (slice.notepadDirtyByTabId[tabId]) {
-      const confirmed = window.confirm(
-        "This file has unsaved changes. Close this tab and discard changes?"
-      );
-      if (!confirmed) return true;
+      slice.notepadUnsavedModalTabId = tabId;
+      return true;
     }
     deps.closeNotepadTab(tabId);
     return true;
@@ -155,6 +153,25 @@ export async function handleNotepadClick(
     const path = active ? slice.notepadPathByTabId[active] : null;
     if (!path) return true;
     await copyText(path);
+    return true;
+  }
+  if (action === "unsaved-discard" && tabId) {
+    slice.notepadUnsavedModalTabId = null;
+    deps.closeNotepadTab(tabId);
+    return true;
+  }
+  if (action === "unsaved-cancel") {
+    slice.notepadUnsavedModalTabId = null;
+    return true;
+  }
+  if (action === "unsaved-save-as" && tabId) {
+    slice.notepadUnsavedModalTabId = null;
+    const title = slice.notepadTitleByTabId[tabId] || "untitled.txt";
+    const requested = await pickSaveFilePath(title);
+    if (!requested) return true;
+    slice.notepadActiveTabId = tabId;
+    await deps.saveActiveNotepadTabAs(requested);
+    deps.closeNotepadTab(tabId);
     return true;
   }
   return false;
@@ -263,10 +280,8 @@ export async function handleNotepadKeyDown(
       const active = slice.notepadActiveTabId;
       if (!active) return true;
       if (slice.notepadDirtyByTabId[active]) {
-        const confirmed = window.confirm(
-          "This file has unsaved changes. Close this tab and discard changes?"
-        );
-        if (!confirmed) return true;
+        slice.notepadUnsavedModalTabId = active;
+        return true;
       }
       deps.closeNotepadTab(active);
       return true;

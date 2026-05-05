@@ -40,6 +40,8 @@ static SILERO_VAD_DISCOVERY_LOGGED: AtomicBool = AtomicBool::new(false);
 #[cfg(feature = "tauri-runtime")]
 static STREAM_STATE: OnceLock<Mutex<StreamState>> = OnceLock::new();
 #[cfg(feature = "tauri-runtime")]
+static STREAM_CONFIG: OnceLock<Mutex<StreamConfig>> = OnceLock::new();
+#[cfg(feature = "tauri-runtime")]
 static CACHED_VAD_MODEL_PATH: OnceLock<Option<PathBuf>> = OnceLock::new();
 
 #[cfg(feature = "tauri-runtime")]
@@ -82,8 +84,38 @@ struct StreamState {
 }
 
 #[cfg(feature = "tauri-runtime")]
+#[derive(Debug, Clone, Copy)]
+struct StreamConfig {
+    start_frames: u32,
+    end_frames: u32,
+    pre_speech_samples: usize,
+    partial_threshold_samples: usize,
+    partial_step_samples: usize,
+    finalize_speech_samples: usize,
+}
+
+#[cfg(feature = "tauri-runtime")]
+impl Default for StreamConfig {
+    fn default() -> Self {
+        Self {
+            start_frames: 2,
+            end_frames: 8,
+            pre_speech_samples: 10_240,
+            partial_threshold_samples: 16_000,
+            partial_step_samples: 11_200,
+            finalize_speech_samples: 12_800,
+        }
+    }
+}
+
+#[cfg(feature = "tauri-runtime")]
 fn stream_state() -> &'static Mutex<StreamState> {
     STREAM_STATE.get_or_init(|| Mutex::new(StreamState::default()))
+}
+
+#[cfg(feature = "tauri-runtime")]
+fn stream_config() -> &'static Mutex<StreamConfig> {
+    STREAM_CONFIG.get_or_init(|| Mutex::new(StreamConfig::default()))
 }
 
 #[cfg(feature = "tauri-runtime")]
@@ -719,6 +751,27 @@ pub async fn stt_stream_reset() -> Result<(), String> {
 
 #[cfg(feature = "tauri-runtime")]
 #[tauri::command]
+pub async fn stt_stream_configure(
+    start_frames: Option<u32>,
+    end_frames: Option<u32>,
+    pre_speech_ms: Option<u32>,
+) -> Result<(), String> {
+    let mut config = stream_config().lock().await;
+    if let Some(value) = start_frames {
+        config.start_frames = value.clamp(1, 100);
+    }
+    if let Some(value) = end_frames {
+        config.end_frames = value.clamp(1, 200);
+    }
+    if let Some(value) = pre_speech_ms {
+        let clamped = value.clamp(0, 2_000);
+        config.pre_speech_samples = (clamped as usize).saturating_mul(16);
+    }
+    Ok(())
+}
+
+#[cfg(feature = "tauri-runtime")]
+#[tauri::command]
 pub async fn stt_stream_ingest(
     app: tauri::AppHandle,
     state: tauri::State<'_, STTState>,
@@ -732,6 +785,11 @@ pub async fn stt_stream_ingest(
     }
 
     let rms = (pcm_samples.iter().map(|v| v * v).sum::<f32>() / pcm_samples.len() as f32).sqrt();
+
+    let config = {
+        let cfg = stream_config().lock().await;
+        *cfg
+    };
 
     let mut s = stream_state().lock().await;
     let chunk_has_speech = match CACHED_VAD_MODEL_PATH.get_or_init(|| resolve_silero_vad_model_path(&app)) {
@@ -751,7 +809,7 @@ pub async fn stt_stream_ingest(
 
     if !s.speaking {
         s.pre_speech.extend_from_slice(&pcm_samples);
-        let max_pre = 3200usize;
+        let max_pre = config.pre_speech_samples;
         if s.pre_speech.len() > max_pre {
             let drop_n = s.pre_speech.len() - max_pre;
             s.pre_speech.drain(0..drop_n);
@@ -766,7 +824,7 @@ pub async fn stt_stream_ingest(
         s.speech_start_frames = 0;
     }
 
-    if !s.speaking && s.speech_start_frames >= 2 {
+    if !s.speaking && s.speech_start_frames >= config.start_frames {
         s.speaking = true;
         s.current_utterance_id = Some(uuid::Uuid::new_v4().to_string());
         s.utterance.clear();
@@ -781,8 +839,8 @@ pub async fn stt_stream_ingest(
     }
 
     let maybe_partial = if s.speaking {
-        let threshold = 16_000usize;
-        let step = 11_200usize;
+        let threshold = config.partial_threshold_samples;
+        let step = config.partial_step_samples;
         if s.utterance.len() >= threshold
             && s.utterance.len().saturating_sub(s.last_partial_samples) >= step
         {
@@ -799,12 +857,13 @@ pub async fn stt_stream_ingest(
         None
     };
 
-    let should_finalize = s.speaking && (s.speech_end_frames >= 8 || s.utterance.len() >= 480_000);
+    let should_finalize =
+        s.speaking && (s.speech_end_frames >= config.end_frames || s.utterance.len() >= 480_000);
     // Fast finalize path for clean silence: commit sooner when we have enough speech
     // and the tail energy drops near the adaptive noise floor.
     let fast_silence_threshold = (s.noise_floor_rms * 1.25).max(0.0009);
     let fast_silence_finalize = s.speaking
-        && s.utterance.len() >= 12_800
+        && s.utterance.len() >= config.finalize_speech_samples
         && s.speech_end_frames >= 4
         && rms <= fast_silence_threshold;
     let maybe_final = if should_finalize || fast_silence_finalize {

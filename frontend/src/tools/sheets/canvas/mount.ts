@@ -4,8 +4,8 @@ import { insertEditorText, isFormulaEditActive, mountEditorOverlay, startCellEdi
 import { columnLabel, selectedCellLabel } from "./cellLabel.js";
 import { HEADER_HEIGHT, GUTTER_WIDTH, FILL_HANDLE_PX, COL_WIDTH, ROW_HEIGHT } from "./constants.js";
 import { attachFormulaAutocomplete, type FormulaAutocompleteBinding } from "../formulaAutocomplete.js";
-import { iconHtml } from "../../../icons-all/index.js";
-import { APP_ICON } from "../../../icons-all/map.js";
+import { iconHtml } from "../../../icons/index.js";
+import { APP_ICON } from "../../../icons/map.js";
 import {
   getSheetsColumnFilter,
   isSheetsColumnFiltered,
@@ -13,7 +13,6 @@ import {
   setSheetsSelection,
   applyOptimisticCellWrites,
   revertOptimisticCellWrites,
-  removeSheetsColumnFilters,
   setSheetsColumnFilterSort,
   undoSheetsViewChange,
   type SheetsToolState,
@@ -44,7 +43,9 @@ let canvas: HTMLCanvasElement | null = null;
 let overlayContainer: HTMLDivElement | null = null;
 let formulaInput: HTMLInputElement | null = null;
 let formulaModelSelect: HTMLSelectElement | null = null;
+let formulaLabel: HTMLDivElement | null = null;
 let formulaAutocomplete: FormulaAutocompleteBinding | null = null;
+const FORMULA_SAMPLE = '   =AI("What is the capital of"&A2)';
 let contextMenuEl: HTMLDivElement | null = null;
 let resizeObserver: ResizeObserver | null = null;
 let animFrameId: number | null = null;
@@ -260,6 +261,8 @@ function attachCanvasEvents(
     const headerSelection = headerSelectionHit(px, py, state);
     if (headerSelection) {
       cvs.focus();
+      pointerDown = true;
+      cvs.setPointerCapture(e.pointerId);
       headerDragMode = py <= HEADER_HEIGHT && px > GUTTER_WIDTH
         ? "col"
         : px <= GUTTER_WIDTH && py > HEADER_HEIGHT
@@ -456,7 +459,9 @@ function attachCanvasEvents(
     }
 
     if (e.key === "Delete" || e.key === "Backspace") {
-      await commitCellValue(row, col, "", state);
+      await clearSelection(state);
+      runtimeDeps?.rerender();
+      markDirty();
       return;
     }
 
@@ -670,6 +675,25 @@ function normalizedSelection(selection: SheetsSelection): SheetsSelection {
   };
 }
 
+function isMultiCellSelection(selection: SheetsSelection | null): boolean {
+  if (!selection) return false;
+  const normalized = normalizedSelection(selection);
+  return normalized.startRow !== normalized.endRow || normalized.startCol !== normalized.endCol;
+}
+
+async function commitValueToSelection(value: string, state: SheetsToolState): Promise<void> {
+  if (!state.selection || !runtimeDeps) return;
+  const normalized = normalizedSelection(state.selection);
+  if (!isMultiCellSelection(normalized)) {
+    await runtimeDeps.fireSetCellInput(normalized.startRow, normalized.startCol, value);
+    return;
+  }
+  const values = Array.from({ length: normalized.endRow - normalized.startRow + 1 }, () =>
+    Array.from({ length: normalized.endCol - normalized.startCol + 1 }, () => value)
+  );
+  await runtimeDeps.fireWriteRange(normalized.startRow, normalized.startCol, values);
+}
+
 function selectionKind(state: SheetsToolState): "cell" | "row" | "column" | "sheet" {
   if (!state.selection) return "cell";
   const sel = normalizedSelection(state.selection);
@@ -870,9 +894,7 @@ function showFilterMenu(clientX: number, clientY: number, state: SheetsToolState
   if (!filter) return;
   const items: Array<{ label: string; disabled?: boolean; action: () => void }> = [
     { label: "Sort A to Z", action: () => { setSheetsColumnFilterSort(state, column, "asc"); } },
-    { label: "Sort Z to A", action: () => { setSheetsColumnFilterSort(state, column, "desc"); } },
-    { label: "Clear Sort", disabled: filter.sortDirection === null, action: () => { setSheetsColumnFilterSort(state, column, null); } },
-    { label: "Remove Filter", action: () => { removeSheetsColumnFilters(state, [column]); } }
+    { label: "Sort Z to A", action: () => { setSheetsColumnFilterSort(state, column, "desc"); } }
   ];
   contextMenuEl.replaceChildren(...items.map((item) => {
     const button = document.createElement("button");
@@ -931,10 +953,12 @@ function buildFormulaBar(
   const label = document.createElement("div");
   label.className = "sheets-formula-label";
   label.textContent = "--";
+  formulaLabel = label;
 
   formulaInput = document.createElement("input");
   formulaInput.className = "field-input-soft sheets-formula-input";
-  formulaInput.placeholder = "Cell input or formula";
+  formulaInput.value = FORMULA_SAMPLE;
+  formulaInput.dataset.sample = "true";
   formulaAutocomplete?.destroy();
   formulaAutocomplete = attachFormulaAutocomplete(formulaInput, () => {
     if (!formulaInput) return;
@@ -943,14 +967,21 @@ function buildFormulaBar(
   });
 
   formulaInput.addEventListener("input", () => {
+    formulaInput!.dataset.sample = "false";
     state.activeEditorValue = formulaInput!.value;
     updateFormulaBarValue(formulaInput!.value);
+  });
+  formulaInput.addEventListener("focus", () => {
+    if (formulaInput?.dataset.sample === "true") {
+      formulaInput.value = "";
+      formulaInput.dataset.sample = "false";
+    }
   });
   formulaInput.addEventListener("keydown", async (e) => {
     if (e.defaultPrevented) return;
     if (e.key === "Enter" && state.selection) {
       e.preventDefault();
-      await commitFormulaBar(formulaInput!.value);
+      await commitValueToSelection(formulaInput!.value, state);
       markDirty();
       runtimeDeps?.rerender();
       requestAnimationFrame(() => canvas?.focus());
@@ -963,13 +994,18 @@ function buildFormulaBar(
   applyBtn.textContent = "Apply";
   applyBtn.addEventListener("click", async () => {
     if (!state.selection) return;
-    await commitFormulaBar(formulaInput!.value);
+    await commitValueToSelection(formulaInput!.value, state);
     markDirty();
     runtimeDeps?.rerender();
     requestAnimationFrame(() => canvas?.focus());
   });
 
+  const formulaIconSlot = document.createElement("div");
+  formulaIconSlot.className = "sheets-formula-icon-slot";
+  formulaIconSlot.innerHTML = iconHtml("square-function", { size: 22, tone: "dark" });
+
   row.appendChild(label);
+  row.appendChild(formulaIconSlot);
   row.appendChild(formulaInput);
   row.appendChild(applyBtn);
 
@@ -1007,13 +1043,20 @@ function buildFormulaBar(
 
 function syncFormulaBar(state: SheetsToolState): void {
   if (!formulaInput) return;
-  formulaInput.value = state.activeEditorValue;
-  if (document.activeElement === formulaInput) formulaAutocomplete?.refresh();
+  const isFocused = document.activeElement === formulaInput;
+  if (!isFocused && !state.activeEditorValue) {
+    formulaInput.value = FORMULA_SAMPLE;
+    formulaInput.dataset.sample = "true";
+  } else {
+    formulaInput.value = state.activeEditorValue;
+    formulaInput.dataset.sample = "false";
+  }
+  if (isFocused) formulaAutocomplete?.refresh();
   else formulaAutocomplete?.close();
   if (formulaModelSelect && formulaModelSelect.value !== state.aiModelId) {
     formulaModelSelect.value = state.aiModelId;
   }
-  const labelEl = formulaInput.previousElementSibling as HTMLElement | null;
+  const labelEl = formulaLabel;
   if (labelEl) {
     const sel = state.selection;
     if (!sel) { labelEl.textContent = "--"; return; }
