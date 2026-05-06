@@ -1288,7 +1288,7 @@ function resolveChatPaneIdForEvent(correlationId: string, conversationId?: strin
   );
 }
 
-function createChatPanelState(panelId: string, src: typeof state): ChatPanelState {
+function createChatPanelState(panelId: string, src: any): ChatPanelState {
   return {
     panelId,
     conversationId: src.conversationId,
@@ -2269,7 +2269,9 @@ async function playTtsAudio(audioBytes: unknown, correlationId: string | null, s
         ttsActiveWebAudioStop = null;
         updateAvatarSpeechState(false, 0);
         clearAvatarPhonemeTimeline();
-        void audioContext.close().catch(() => {});
+        if (audioContext) {
+          void audioContext.close().catch(() => {});
+        }
         resolve();
       };
       const poll = () => {
@@ -2919,7 +2921,7 @@ function render(): void {
       title: session.title,
       status: session.status
     }))
-  }));
+  }) as any);
 
   const primaryChatPanel = getPrimaryChatPanelState();
 
@@ -3037,8 +3039,8 @@ function render(): void {
     avatarJawTopX: state.avatarJawTopX,
     avatarJawTopY: state.avatarJawTopY,
     avatarJawTopZ: state.avatarJawTopZ,
-    avatarJawTopValue: state.avatarJawTopValue
-          }, scopeId);
+            avatarJawTopValue: state.avatarJawTopValue
+          } as any, scopeId);
           return {
             paneTitleHtml: renderPanelTitleIcon({
               icon: splitPanelDef.icon,
@@ -3137,7 +3139,7 @@ function render(): void {
       if (!id) return;
       state.taskNotifications = state.taskNotifications.filter((row) => row.id !== id);
       void dismissNotificationInBackend(id);
-      renderAndBind(sendMessage);
+      renderAndBind(appResourceRenderSendMessageRef ?? (async () => {}));
     };
   });
   const actionButtons = app.querySelectorAll<HTMLButtonElement>("button[data-notify-action][data-notify-id]");
@@ -3157,7 +3159,7 @@ function render(): void {
         state.taskNotifications = state.taskNotifications.map((row) => row.id === notifyId ? { ...row, read: true } : row);
         void markNotificationReadInBackend(notifyId, true);
       }
-      renderAndBind(sendMessage);
+      renderAndBind(appResourceRenderSendMessageRef ?? (async () => {}));
     };
   });
   restoreAvatarPreviewAfterRender(preservedAvatarPreview);
@@ -3467,7 +3469,9 @@ function formatRuntimeEventLine(event: AppEvent): string {
 }
 
 function formatAgentEventLine(event: AppEvent): string | null {
-  return formatAgentEventLineRuntime(event, payloadAsRecord);
+  return formatAgentEventLineRuntime(event, (payload: unknown) =>
+    payloadAsRecord(payload as AppEvent["payload"])
+  );
 }
 
 function extractRuntimeProcessLine(event: AppEvent): string | null {
@@ -4499,7 +4503,8 @@ async function refreshLlamaRuntime(): Promise<void> {
 }
 
 async function browseModelPath(): Promise<string | null> {
-  return browseLlamaModelPath(state.runtimeMode, state.llamaRuntimeModelPath.trim(), pushConsoleEntry);
+  const runtimeMode = state.runtimeMode === "tauri" ? "tauri" : "web";
+  return browseLlamaModelPath(runtimeMode, state.llamaRuntimeModelPath.trim(), pushConsoleEntry);
 }
 
 async function browseTtsModelPath(currentValue: string): Promise<string | null> {
@@ -4675,6 +4680,8 @@ async function autoStartLlamaRuntimeIfConfigured(): Promise<void> {
     state.chatModelStatusMessage = null;
   }
 }
+
+let waitForLocalModelReady: () => Promise<boolean> = async () => false;
 
 function renderAndBind(sendMessage: (text: string) => Promise<void>): void {
   if (deferredWorkspaceSelectionRenderTimerId !== null) {
@@ -8625,7 +8632,7 @@ async function bootstrap(): Promise<void> {
     prewarmWhisper();
   }
 
-  const waitForLocalModelReady = async (): Promise<boolean> => {
+  waitForLocalModelReady = async (): Promise<boolean> => {
     const deadline = Date.now() + 45000;
     while (Date.now() < deadline) {
       await refreshLlamaRuntime();

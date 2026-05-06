@@ -1,5 +1,6 @@
 import type {
   ChatAttachment,
+  ChatStructuredPayload,
   ApiConnectionRecord,
   ApiConnectionType,
   ConversationSummaryRecord,
@@ -48,6 +49,7 @@ export interface UiMessage {
   role: "user" | "assistant";
   text: string;
   correlationId?: string;
+  structuredPayload?: ChatStructuredPayload | null;
 }
 
 export interface ChatToolEventRow {

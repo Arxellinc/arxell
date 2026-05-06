@@ -15,15 +15,7 @@ function makeSeedState(): TtsEngineResettableState {
     engineId: "sherpa-kokoro",
     engine: "kokoro",
     ready: true,
-    runtimeArchivePresent: true,
-    availableModelPaths: ["/tmp/bundle/model.onnx"],
     modelPath: "/tmp/model.onnx",
-    secondaryPath: "/tmp/secondary.bin",
-    voicesPath: "/tmp/voices.bin",
-    tokensPath: "/tmp/tokens.txt",
-    dataDir: "/tmp/espeak-ng-data",
-    pythonPath: "/tmp/python",
-    scriptPath: "/tmp/script.py",
     voices: ["af_heart", "af"],
     selectedVoice: "af",
     speed: 1.4,
@@ -44,20 +36,18 @@ test("default voices are engine specific", () => {
   assert.deepEqual(defaultVoicesForEngine("piper"), ["speaker_0"]);
 });
 
-test("engine UI config hides optional piper lexicon path and keeps required matcha vocoder path", () => {
+test("engine UI config provides engine labels and hints", () => {
   const piper = getTtsEngineUiConfig("piper");
-  assert.equal(piper.showSecondaryPath, false);
-  assert.equal(piper.secondaryRequired, false);
-  assert.equal(piper.secondaryLabel, "Lexicon Path");
+  assert.equal(piper.engineLabel, "Piper");
+  assert.match(piper.engineHint, /bundled/i);
 
   const matcha = getTtsEngineUiConfig("matcha");
-  assert.equal(matcha.showSecondaryPath, true);
-  assert.equal(matcha.secondaryRequired, true);
-  assert.equal(matcha.secondaryLabel, "Vocoder Path");
+  assert.equal(matcha.engineLabel, "Matcha");
+  assert.match(matcha.engineHint, /bundled/i);
 
   const pocket = getTtsEngineUiConfig("pocket");
-  assert.equal(pocket.showSecondaryPath, false);
-  assert.equal(pocket.secondaryRequired, false);
+  assert.equal(pocket.engineLabel, "PocketTTS");
+  assert.match(pocket.engineHint, /bundled/i);
 });
 
 test("resetTtsStateForEngine clears stale engine-scoped values for every engine", () => {
@@ -68,15 +58,7 @@ test("resetTtsStateForEngine clears stale engine-scoped values for every engine"
     assert.equal(reset.status, "idle");
     assert.equal(reset.message, null);
     assert.equal(reset.ready, false);
-    assert.equal(reset.runtimeArchivePresent, false);
-    assert.deepEqual(reset.availableModelPaths, []);
     assert.equal(reset.modelPath, "");
-    assert.equal(reset.secondaryPath, "");
-    assert.equal(reset.voicesPath, "");
-    assert.equal(reset.tokensPath, "");
-    assert.equal(reset.dataDir, "");
-    assert.equal(reset.pythonPath, "");
-    assert.equal(reset.scriptPath, "");
     assert.equal(reset.selectedVoice, defaultVoiceForEngine(engine));
     assert.deepEqual(reset.voices, defaultVoicesForEngine(engine));
     assert.equal(reset.speed, 1);

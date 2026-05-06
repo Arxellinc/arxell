@@ -43,6 +43,158 @@ export interface ChatSendResponse {
   assistantMessage: string;
   assistantThinking?: string;
   correlationId: string;
+  structuredPayload?: ChatStructuredPayload | null;
+}
+
+export type ChatWorkflowMode =
+  | "normal"
+  | "planning_offered"
+  | "discovery"
+  | "awaiting_plan_approval"
+  | "delegated_execution"
+  | "blocked"
+  | "completed"
+  | "failed";
+
+export interface ClarificationOption {
+  id: string;
+  label: string;
+  summary?: string | null;
+}
+
+export interface ClarificationQuestion {
+  id: string;
+  title: string;
+  prompt: string;
+  options: ClarificationOption[];
+  recommendedOptionId?: string | null;
+  allowCustom: boolean;
+  required: boolean;
+}
+
+export interface ClarificationAnswer {
+  questionId: string;
+  selectedOptionId?: string | null;
+  freeformText?: string | null;
+}
+
+export type PlanRiskTier = "low" | "medium" | "high";
+
+export type PlanDelegationMode = "none" | "looper";
+
+export interface PlanArtifact {
+  id: string;
+  version: number;
+  objective: string;
+  projectFolder: string;
+  scope: string[];
+  nonGoals: string[];
+  assumptions: string[];
+  deliverables: string[];
+  allowedTools: string[];
+  dataPolicy: string;
+  acceptanceChecks: string[];
+  riskTier: PlanRiskTier;
+  delegationMode: PlanDelegationMode;
+  createdAtMs: number;
+  sourceConversationId: string;
+  planHash: string;
+}
+
+export interface PlanApprovalRequest {
+  conversationId: string;
+  correlationId: string;
+  planId: string;
+  planVersion: number;
+  planHash: string;
+  approved: boolean;
+  revisionRequest?: string | null;
+}
+
+export interface DelegationStartRequest {
+  conversationId: string;
+  correlationId: string;
+  approvedPlan: PlanArtifact;
+  approvedPlanHash: string;
+}
+
+export type DelegationRunStatus =
+  | "starting"
+  | "planner"
+  | "executor"
+  | "validator"
+  | "critic"
+  | "blocked"
+  | "completed"
+  | "failed";
+
+export interface DelegationStatusCard {
+  conversationId: string;
+  planId: string;
+  loopId?: string | null;
+  status: DelegationRunStatus;
+  phase?: string | null;
+  checkpointSummary?: string | null;
+  updatedAtMs: number;
+}
+
+export type PlanDeltaStatus = "proposed" | "approved" | "rejected";
+
+export interface PlanDelta {
+  id: string;
+  planId: string;
+  conversationId: string;
+  reason: string;
+  requestedChanges: string[];
+  acceptanceCheckChanges: string[];
+  status: PlanDeltaStatus;
+  createdAtMs: number;
+}
+
+export type ChatStructuredPayload =
+  | ChatPlannerOfferPayload
+  | ChatClarificationPayload
+  | ChatPlanApprovalPayload
+  | ChatDelegationStatusPayload
+  | ChatPlanDeltaPayload;
+
+export interface ChatPlannerOfferPayload {
+  kind: "planner_offer";
+  title: string;
+  prompt: string;
+  reasons: string[];
+}
+
+export interface ChatClarificationPayload {
+  kind: "clarification";
+  title: string;
+  questions: ClarificationQuestion[];
+}
+
+export interface ChatPlanApprovalPayload {
+  kind: "plan_approval";
+  plan: PlanArtifact;
+}
+
+export interface ChatDelegationStatusPayload {
+  kind: "delegation_status";
+  status: DelegationStatusCard;
+}
+
+export interface ChatPlanDeltaPayload {
+  kind: "plan_delta";
+  delta: PlanDelta;
+}
+
+export interface ChatWorkflowState {
+  conversationId: string;
+  mode: ChatWorkflowMode;
+  originalUserMessage?: string | null;
+  activePlanId?: string | null;
+  activePlanHash?: string | null;
+  activeLoopId?: string | null;
+  pendingReason?: string | null;
+  updatedAtMs: number;
 }
 
 export interface ChatCancelRequest {

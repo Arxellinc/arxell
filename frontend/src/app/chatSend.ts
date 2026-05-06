@@ -1,7 +1,7 @@
-import type { AppEvent, ChatAttachment } from "../contracts.js";
+import type { AppEvent, ChatAttachment, ChatStructuredPayload } from "../contracts.js";
 
 interface ChatSendState {
-  messages: Array<{ role: string; text: string; correlationId?: string }>;
+  messages: Array<{ role: string; text: string; correlationId?: string; structuredPayload?: ChatStructuredPayload | null }>;
   chatDraft: string;
   chatStreaming: boolean;
   activeChatCorrelationId: string | null;
@@ -31,6 +31,7 @@ interface ChatSendDeps {
       correlationId: string;
       assistantMessage: string;
       assistantThinking?: string | null;
+      structuredPayload?: ChatStructuredPayload | null;
     }>;
   } | null;
   state: ChatSendState;
@@ -130,11 +131,13 @@ export function createSendMessageHandler(
       );
       if (existing) {
         existing.text = deps.normalizeChatText(response.assistantMessage);
+        existing.structuredPayload = response.structuredPayload ?? null;
       } else {
         deps.state.messages.push({
           role: "assistant",
           text: deps.normalizeChatText(response.assistantMessage),
-          correlationId: response.correlationId
+          correlationId: response.correlationId,
+          structuredPayload: response.structuredPayload ?? null
         });
       }
       if (response.assistantThinking?.trim()) {

@@ -133,7 +133,8 @@ export function renderTasksToolBody(view: TasksToolViewState): string {
       tasksSortKey: view.sortKey,
       tasksSortDirection: view.sortDirection,
       tasksDetailsCollapsed: view.detailsCollapsed,
-      tasksJsonDraft: view.jsonDraft ?? ""
+      tasksJsonDraft: view.jsonDraft ?? "",
+      taskNotifications: view.taskNotifications ?? []
     },
     view.folder
   );
@@ -145,7 +146,8 @@ export function renderTasksToolBody(view: TasksToolViewState): string {
     tasksSortKey: view.sortKey,
     tasksSortDirection: view.sortDirection,
     tasksDetailsCollapsed: view.detailsCollapsed,
-    tasksJsonDraft: view.jsonDraft ?? ""
+    tasksJsonDraft: view.jsonDraft ?? "",
+    taskNotifications: view.taskNotifications ?? []
   });
   const detailsCollapsed = view.detailsCollapsed === true;
 

@@ -31,7 +31,7 @@ export function renderLlamaCppActions(state: PrimaryPanelRenderState): string {
   const isRunning = runtimeState === "healthy" && Boolean(runtime?.pid);
   const isStarting = runtimeState === "starting";
   const hasModelPath = Boolean(state.llamaRuntimeModelPath.trim());
-  const canInstall = !isBusy && Boolean(selected) && !selected.isInstalled;
+  const canInstall = !isBusy && selected !== null && !selected.isInstalled;
   const canStart = !isBusy && !isRunning && !isStarting && Boolean(selected?.isReady) && hasModelPath;
   const canStop = !isBusy && (isRunning || isStarting);
   const refreshDisabledAttr = isBusy ? " disabled" : "";

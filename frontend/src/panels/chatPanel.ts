@@ -1,6 +1,13 @@
 import { iconHtml } from "../icons";
 import { APP_ICON } from "../icons/map";
-import type { ChatAttachment } from "../contracts";
+import type {
+  ChatAttachment,
+  ChatStructuredPayload,
+  ClarificationQuestion,
+  DelegationStatusCard,
+  PlanArtifact,
+  PlanDelta
+} from "../contracts";
 import type { PrimaryPanelRenderState } from "./types";
 import type { ChatModelCapabilities } from "../modelCapabilities";
 import { escapeHtml } from "./utils";
@@ -33,6 +40,116 @@ function parseAttachmentMessage(raw: string): ParsedAttachmentMessage {
         }
       : null
   };
+}
+
+function renderStructuredPayload(payload: ChatStructuredPayload | null | undefined): string {
+  if (!payload) return "";
+  switch (payload.kind) {
+    case "planner_offer":
+      return renderPlannerOfferPayload(payload.title, payload.prompt, payload.reasons);
+    case "clarification":
+      return renderClarificationPayload(payload.title, payload.questions);
+    case "plan_approval":
+      return renderPlanApprovalPayload(payload.plan);
+    case "delegation_status":
+      return renderDelegationStatusPayload(payload.status);
+    case "plan_delta":
+      return renderPlanDeltaPayload(payload.delta);
+    default:
+      return "";
+  }
+}
+
+function renderPlannerOfferPayload(title: string, prompt: string, reasons: string[]): string {
+  const reasonText = reasons.length ? `<div class="chat-plan-inline-note">${escapeHtml(reasons.join("; "))}</div>` : "";
+  return `<section class="chat-plan-inline" aria-label="${escapeHtml(title || "Use Planned Workflow?")}">
+    <div class="chat-plan-inline-prompt">${escapeHtml(prompt)}</div>
+    ${reasonText}
+    <div class="chat-plan-inline-actions">
+      <button type="button" class="tool-action-btn" data-chat-plan-action="use-planner">Use Planner</button>
+      <button type="button" class="tool-action-btn" data-chat-plan-action="quick-answer">Quick Answer</button>
+      <button type="button" class="tool-action-btn" data-chat-plan-action="stop-plan">Cancel</button>
+    </div>
+  </section>`;
+}
+
+function renderClarificationPayload(title: string, questions: ClarificationQuestion[]): string {
+  const questionHtml = questions.map((question) => {
+    const optionsHtml = question.options.map((option) => {
+      return `<button type="button" class="chat-plan-option" data-chat-plan-action="select-clarification-option" data-question-id="${escapeHtml(question.id)}" data-option-id="${escapeHtml(option.id)}">
+        <span class="chat-plan-option-label">${escapeHtml(option.label)}</span>
+        ${option.summary ? `<span class="chat-plan-option-summary">${escapeHtml(option.summary)}</span>` : ""}
+      </button>`;
+    }).join("");
+    return `<section class="chat-plan-question" data-question-id="${escapeHtml(question.id)}">
+      <div class="chat-plan-question-prompt">${escapeHtml(question.prompt)}</div>
+      <div class="chat-plan-options">${optionsHtml}</div>
+      ${question.allowCustom ? `<textarea class="chat-plan-custom" data-chat-plan-action="custom-clarification" data-question-id="${escapeHtml(question.id)}" placeholder="Custom answer"></textarea>` : ""}
+    </section>`;
+  }).join("");
+
+  return `<section class="chat-plan-inline is-clarification" aria-label="${escapeHtml(title || "Clarify Scope")}">
+    <div class="chat-plan-inline-body">${questionHtml}</div>
+    <div class="chat-plan-inline-actions">
+      <button type="button" class="tool-action-btn" data-chat-plan-action="submit-clarification">Submit Custom Answer</button>
+    </div>
+  </section>`;
+}
+
+function renderPlanApprovalPayload(plan: PlanArtifact): string {
+  const hasMinimumApprovalData =
+    plan.projectFolder.trim().length > 0 &&
+    plan.deliverables.length > 0 &&
+    plan.acceptanceChecks.length > 0;
+  return `<section class="chat-plan-inline is-plan" aria-label="Plan Approval">
+    <div class="chat-plan-inline-note">Project folder: ${escapeHtml(plan.projectFolder || "Missing")}</div>
+    <div class="chat-plan-inline-actions">
+      <button type="button" class="tool-action-btn" data-chat-plan-action="approve-plan" data-plan-id="${escapeHtml(plan.id)}" ${hasMinimumApprovalData ? "" : "disabled"}>Approve Plan</button>
+      <button type="button" class="tool-action-btn" data-chat-plan-action="revise-plan" data-plan-id="${escapeHtml(plan.id)}">Revise Plan</button>
+      <button type="button" class="tool-action-btn" data-chat-plan-action="stop-plan" data-plan-id="${escapeHtml(plan.id)}">Stop</button>
+    </div>
+  </section>`;
+}
+
+function renderDelegationStatusPayload(status: DelegationStatusCard): string {
+  return `<article class="chat-plan-card is-delegation">
+    <div class="chat-plan-card-header">
+      <span class="chat-plan-card-icon">${iconHtml("play", { size: 16, tone: "dark" })}</span>
+      <span class="chat-plan-card-title">Delegated Run</span>
+      <span class="chat-plan-badge">${escapeHtml(status.status)}</span>
+    </div>
+    <div class="chat-plan-summary">
+      <div class="chat-plan-field"><span>Plan</span><code>${escapeHtml(status.planId)}</code></div>
+      <div class="chat-plan-field"><span>Loop</span><code>${escapeHtml(status.loopId || "Pending")}</code></div>
+      <div class="chat-plan-field"><span>Phase</span><strong>${escapeHtml(status.phase || status.status)}</strong></div>
+    </div>
+    ${status.checkpointSummary ? `<div class="chat-plan-checkpoint">${escapeHtml(status.checkpointSummary)}</div>` : ""}
+    <div class="chat-plan-card-actions">
+      <button type="button" class="tool-action-btn" data-chat-plan-action="open-looper" ${status.loopId ? "" : "disabled"}>Open Looper</button>
+      <button type="button" class="tool-action-btn" data-chat-plan-action="stop-delegation" ${status.loopId ? "" : "disabled"}>Stop</button>
+    </div>
+  </article>`;
+}
+
+function renderPlanDeltaPayload(delta: PlanDelta): string {
+  return `<article class="chat-plan-card is-delta">
+    <div class="chat-plan-card-header">
+      <span class="chat-plan-card-icon">${iconHtml("edit", { size: 16, tone: "dark" })}</span>
+      <span class="chat-plan-card-title">Plan Delta</span>
+      <span class="chat-plan-badge">${escapeHtml(delta.status)}</span>
+    </div>
+    <div class="chat-plan-field"><span>Reason</span><strong>${escapeHtml(delta.reason)}</strong></div>
+    ${renderPlanList("Requested Changes", delta.requestedChanges)}
+    ${renderPlanList("Acceptance Check Changes", delta.acceptanceCheckChanges)}
+  </article>`;
+}
+
+function renderPlanList(label: string, values: string[]): string {
+  if (!values.length) return "";
+  return `<div class="chat-plan-list">
+    <div class="chat-plan-list-label">${escapeHtml(label)}</div>
+    <ul>${values.map((value) => `<li>${escapeHtml(value)}</li>`).join("")}</ul>
+  </div>`;
 }
 
 export function renderChatActions(state: PrimaryPanelRenderState, scopeId = ""): string {
@@ -120,6 +237,7 @@ export function renderChatBody(state: PrimaryPanelRenderState, scopeId = ""): st
 }
 
 export function renderChatMessages(state: Pick<PrimaryPanelRenderState, "chat">): string {
+  const runtimeState = state as Pick<PrimaryPanelRenderState, "chat"> & Partial<PrimaryPanelRenderState>;
   const messagesHtml = state.chat.messages
     .map(
       (m, messageIndex) => {
@@ -162,7 +280,9 @@ export function renderChatMessages(state: Pick<PrimaryPanelRenderState, "chat">)
                 })
                 .join("")}
             </section>`
-          : "";
+            : "";
+        const structuredPayloadHtml =
+          m.role === "assistant" ? renderStructuredPayload(m.structuredPayload) : "";
         const attachmentRowId = parsed.attachment
           ? `attachment-row-${messageIndex}-${parsed.attachment.fileName}`
           : "";
@@ -205,8 +325,8 @@ export function renderChatMessages(state: Pick<PrimaryPanelRenderState, "chat">)
             : "";
         const contentHtml =
           placement === "before"
-            ? `${attachmentRowsHtml}${assistantToolRowsHtml}${thinkingHtml}${textHtml}`
-            : `${attachmentRowsHtml}${assistantToolRowsHtml}${textHtml}${thinkingHtml}`;
+            ? `${attachmentRowsHtml}${assistantToolRowsHtml}${thinkingHtml}${textHtml}${structuredPayloadHtml}`
+            : `${attachmentRowsHtml}${assistantToolRowsHtml}${textHtml}${structuredPayloadHtml}${thinkingHtml}`;
         return `<div class="message ${m.role}">
           ${contentHtml}
         </div>`;
@@ -220,9 +340,9 @@ export function renderChatMessages(state: Pick<PrimaryPanelRenderState, "chat">)
     return `<div class="message assistant is-model-loading"><div class="message-text">${escapeHtml(loadingMsg)}</div></div>`;
   }
   const isLocalModel = state.chat.chatActiveModelId.startsWith("local:");
-  const runtimeHealthy = state.llamaRuntime?.state === "healthy" && state.llamaRuntimeActiveModelPath.trim();
+  const runtimeHealthy = runtimeState.llamaRuntime?.state === "healthy" && Boolean(runtimeState.llamaRuntimeActiveModelPath?.trim());
   if (isLocalModel && !runtimeHealthy) {
-    const hasConfiguredModel = state.llamaRuntimeModelPath.trim();
+    const hasConfiguredModel = Boolean(runtimeState.llamaRuntimeModelPath?.trim());
     return `<div class="message assistant is-placeholder"><div class="message-text">${hasConfiguredModel ? "No model loaded." : "No model selected."}</div></div>`;
   }
   return '<div class="message assistant is-placeholder"><div class="message-text">Ready.</div></div>';
@@ -249,6 +369,8 @@ export function bindChatPanel(
   const attachmentMeta = document.querySelector<HTMLDivElement>(`#chatAttachmentMeta${s}`);
   const attachmentName = document.querySelector<HTMLSpanElement>(`#chatAttachmentName${s}`);
   if (!form || !input) return;
+  const chatPaneRoot = form.closest<HTMLElement>(".chat-pane");
+  const messagesRoot = chatPaneRoot?.querySelector<HTMLElement>(".messages");
   const MAX_ATTACHMENT_CHARS = 12000;
   const MAX_IMAGE_BYTES = 6 * 1024 * 1024;
   let attachedFile: { name: string; content: string } | null = initialAttachment;
@@ -323,6 +445,72 @@ export function bindChatPanel(
     }
     await submitCurrentInput();
   };
+
+  const handlePlanAction = (actionEl: HTMLElement) => {
+    if (!actionEl) return;
+    const action = actionEl.dataset.chatPlanAction || "";
+
+    if (action === "select-clarification-option") {
+      const question = actionEl.closest<HTMLElement>(".chat-plan-question");
+      if (!question) return;
+      const prompt =
+        question.querySelector(".chat-plan-question-prompt")?.textContent?.trim() ||
+        "Clarification";
+      const label = actionEl.querySelector(".chat-plan-option-label")?.textContent?.trim() || "";
+      if (!label) return;
+      void onSendMessage(`Clarification answer:\n- ${prompt}: ${label}`);
+      return;
+    }
+
+    if (action === "submit-clarification") {
+      const card = actionEl.closest<HTMLElement>(".chat-plan-inline, .chat-plan-card");
+      if (!card) return;
+      const answers = Array.from(card.querySelectorAll<HTMLElement>(".chat-plan-question"))
+        .map((question, index) => {
+          const title =
+            question.querySelector(".chat-plan-question-prompt")?.textContent?.trim() ||
+            `Question ${index + 1}`;
+          const selected = question.dataset.selectedOptionLabel || "";
+          const custom =
+            question.querySelector<HTMLTextAreaElement>(".chat-plan-custom")?.value.trim() || "";
+          if (!selected && !custom) return "";
+          return `- ${title}: ${[selected, custom].filter(Boolean).join(" - ")}`;
+        })
+        .filter(Boolean);
+      if (!answers.length) return;
+      void onSendMessage(`Clarification answers:\n${answers.join("\n")}`);
+      return;
+    }
+
+    if (action === "use-planner") {
+      void onSendMessage("Use Planner");
+      return;
+    }
+    if (action === "quick-answer") {
+      void onSendMessage("Quick Answer");
+      return;
+    }
+    if (action === "approve-plan") {
+      void onSendMessage("Approve Plan");
+      return;
+    }
+    if (action === "revise-plan") {
+      void onSendMessage("Revise Plan");
+      return;
+    }
+    if (action === "stop-plan" || action === "stop-delegation") {
+      void onSendMessage("Stop Plan");
+    }
+  };
+
+  const actionRoot: ParentNode = messagesRoot ?? chatPaneRoot ?? document;
+  actionRoot.querySelectorAll<HTMLElement>("[data-chat-plan-action]").forEach((actionEl) => {
+    actionEl.onclick = (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      handlePlanAction(actionEl);
+    };
+  });
 
   const submitBtn = document.querySelector<HTMLButtonElement>(`#chatSubmitBtn${s}`);
   if (submitBtn) {

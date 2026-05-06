@@ -12,6 +12,7 @@ function makeState() {
     chatTtsLatencyMs: 123,
     chatModelOptions: [{ id: "m1", modelName: "model-1" }],
     chatActiveModelId: "m1",
+    chatModelStatusMessage: null as string | null,
     conversationId: "C123",
     chatThinkingEnabled: true,
     chatRoutePreference: "auto",
@@ -67,6 +68,8 @@ test("initializeSendMessageBinding assigns a live send handler used by submit pa
       enqueueSpeakableChunk: () => undefined,
       runChatTtsQueue: async () => undefined,
       refreshConversations: async () => undefined,
+      refreshLlamaRuntime: async () => undefined,
+      waitForLocalModelReady: async () => true,
       renderAndBind: () => undefined
     },
     (bound) => {

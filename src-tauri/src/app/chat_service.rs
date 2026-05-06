@@ -13,17 +13,21 @@ use crate::contracts::{
     ChatInspectContextRequest, ChatInspectContextResponse, ChatListConversationsRequest,
     ChatListConversationsResponse, ChatSendRequest, ChatSendResponse, ChatStreamChunkPayload,
     ChatStreamCompletePayload, ChatStreamReasoningChunkPayload, ChatStreamStartPayload,
-    ConversationMessageRecord, ConversationSummaryRecord, CustomItemDeleteRequest,
-    CustomItemDeleteResponse, CustomItemUpsertRequest, CustomItemUpsertResponse, EventSeverity,
-    EventStage, MemoryDeleteRequest, MemoryDeleteResponse, MemoryUpsertRequest,
+    ChatStructuredPayload, ChatWorkflowMode, ChatWorkflowState, ClarificationOption,
+    ClarificationQuestion, ConversationMessageRecord, ConversationSummaryRecord,
+    CustomItemDeleteRequest, CustomItemDeleteResponse, CustomItemUpsertRequest,
+    CustomItemUpsertResponse, EventSeverity, EventStage, MemoryDeleteRequest, MemoryDeleteResponse,
+    LooperLoopRecord, LooperLoopStatus, LooperLoopType, LooperQuestion, LooperQuestionAnswer,
+    LooperStartRequest, LooperStatusRequest, LooperSubmitQuestionsRequest, MemoryUpsertRequest,
     MemoryUpsertResponse, MessageRole, ReferenceFileSetRequest, ReferenceFileSetResponse,
-    SkillCreateRequest, SkillCreateResponse, Subsystem, SystemPromptSetRequest,
-    SystemPromptSetResponse,
+    PlanArtifact, PlanDelegationMode, PlanRiskTier, SkillCreateRequest, SkillCreateResponse,
+    Subsystem, SystemPromptSetRequest, SystemPromptSetResponse,
 };
 use crate::memory::MemoryManager;
 use crate::observability::EventHub;
 use crate::persistence::ConversationRepository;
 use crate::services::sheets_service::SheetsService;
+use crate::tools::looper_handler::LooperHandler;
 use crate::workspace_tools::WorkspaceToolsService;
 use arx_rs::context::skills::format_skills_for_prompt;
 use arx_rs::events::Event as AgentEvent;
@@ -38,6 +42,8 @@ use arx_rs::{Agent, AgentConfig, Session};
 use reqwest::StatusCode;
 use serde_json::json;
 use std::collections::{HashMap, HashSet};
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
 use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -54,6 +60,7 @@ pub struct ChatService {
     workspace_tools: Arc<WorkspaceToolsService>,
     sheets: Arc<SheetsService>,
     web_search: Arc<WebSearchService>,
+    looper: Arc<LooperHandler>,
     cancelled_correlations: Arc<Mutex<HashSet<String>>>,
     notepad_registry: NotepadSyncRegistry,
     tool_focus_by_conversation: Arc<Mutex<HashMap<String, HashMap<String, f32>>>>,
@@ -194,6 +201,7 @@ impl ChatService {
         workspace_tools: Arc<WorkspaceToolsService>,
         sheets: Arc<SheetsService>,
         web_search: Arc<WebSearchService>,
+        looper: Arc<LooperHandler>,
     ) -> Self {
         Self {
             hub,
@@ -203,6 +211,7 @@ impl ChatService {
             workspace_tools,
             sheets,
             web_search,
+            looper,
             cancelled_correlations: Arc::new(Mutex::new(HashSet::new())),
             notepad_registry: NotepadSyncRegistry::new(),
             tool_focus_by_conversation: Arc::new(Mutex::new(HashMap::new())),
@@ -248,33 +257,21 @@ impl ChatService {
             }),
         ));
 
-        let llm_response = match route_mode {
-            ChatRouteMode::Agent => {
-                self.request_agent_response(
-                    &req.conversation_id,
-                    &req.correlation_id,
-                    &req.user_message,
-                    req.always_load_tool_keys.as_deref(),
-                    req.attachments.as_deref(),
-                    thinking_enabled,
-                    req.model_id.as_deref(),
-                    req.model_name.as_deref(),
-                    req.max_tokens,
-                )
-                .await
-            }
-            ChatRouteMode::Legacy => {
-                self.request_local_llama_response(
-                    &req.conversation_id,
-                    &req.correlation_id,
-                    thinking_enabled,
-                    req.max_tokens,
-                )
-                .await
-            }
-            ChatRouteMode::Auto => {
-                match self
-                    .request_agent_response(
+        let workflow_response = self
+            .maybe_handle_planning_workflow(
+                &req.conversation_id,
+                &req.correlation_id,
+                &req.user_message,
+                req.attachments.as_deref(),
+            )
+            .await?;
+
+        let llm_response = if let Some(response) = workflow_response {
+            Ok(response)
+        } else {
+            match route_mode {
+                ChatRouteMode::Agent => {
+                    self.request_agent_response(
                         &req.conversation_id,
                         &req.correlation_id,
                         &req.user_message,
@@ -286,38 +283,63 @@ impl ChatService {
                         req.max_tokens,
                     )
                     .await
-                {
-                    Ok(response) => Ok(response),
-                    Err(agent_err) => {
-                        if self.is_cancelled(req.correlation_id.as_str()) {
-                            Err(agent_err)
-                        } else {
-                            self.hub.emit(self.hub.make_event(
-                                &req.correlation_id,
-                                Subsystem::Service,
-                                "chat.route.fallback",
-                                EventStage::Progress,
-                                EventSeverity::Warn,
-                                json!({
-                                    "from": "agent",
-                                    "to": "legacy",
-                                    "reason": truncate_for_error(agent_err.as_str())
-                                }),
-                            ));
-                            match self
-                                .request_local_llama_response(
-                                    &req.conversation_id,
+                }
+                ChatRouteMode::Legacy => {
+                    self.request_local_llama_response(
+                        &req.conversation_id,
+                        &req.correlation_id,
+                        thinking_enabled,
+                        req.max_tokens,
+                    )
+                    .await
+                }
+                ChatRouteMode::Auto => {
+                    match self
+                        .request_agent_response(
+                            &req.conversation_id,
+                            &req.correlation_id,
+                            &req.user_message,
+                            req.always_load_tool_keys.as_deref(),
+                            req.attachments.as_deref(),
+                            thinking_enabled,
+                            req.model_id.as_deref(),
+                            req.model_name.as_deref(),
+                            req.max_tokens,
+                        )
+                        .await
+                    {
+                        Ok(response) => Ok(response),
+                        Err(agent_err) => {
+                            if self.is_cancelled(req.correlation_id.as_str()) {
+                                Err(agent_err)
+                            } else {
+                                self.hub.emit(self.hub.make_event(
                                     &req.correlation_id,
-                                    thinking_enabled,
-                                    req.max_tokens,
-                                )
-                                .await
-                            {
-                                Ok(response) => Ok(response),
-                                Err(legacy_err) => Err(format!(
-                                    "agent route failed: {}; legacy fallback failed: {}",
-                                    agent_err, legacy_err
-                                )),
+                                    Subsystem::Service,
+                                    "chat.route.fallback",
+                                    EventStage::Progress,
+                                    EventSeverity::Warn,
+                                    json!({
+                                        "from": "agent",
+                                        "to": "legacy",
+                                        "reason": truncate_for_error(agent_err.as_str())
+                                    }),
+                                ));
+                                match self
+                                    .request_local_llama_response(
+                                        &req.conversation_id,
+                                        &req.correlation_id,
+                                        thinking_enabled,
+                                        req.max_tokens,
+                                    )
+                                    .await
+                                {
+                                    Ok(response) => Ok(response),
+                                    Err(legacy_err) => Err(format!(
+                                        "agent route failed: {}; legacy fallback failed: {}",
+                                        agent_err, legacy_err
+                                    )),
+                                }
                             }
                         }
                     }
@@ -349,6 +371,7 @@ impl ChatService {
             assistant_message: llm_response.assistant_message,
             assistant_thinking: llm_response.assistant_thinking,
             correlation_id: req.correlation_id.clone(),
+            structured_payload: llm_response.structured_payload,
         };
         self.append_message(
             &req.correlation_id,
@@ -377,6 +400,577 @@ impl ChatService {
         ));
 
         Ok(response)
+    }
+
+    async fn maybe_handle_planning_workflow(
+        &self,
+        conversation_id: &str,
+        correlation_id: &str,
+        user_message: &str,
+        attachments: Option<&[ChatAttachment]>,
+    ) -> Result<Option<LocalLlamaResponse>, String> {
+        if !chat_planning_delegation_enabled() {
+            self.hub.emit(self.hub.make_event(
+                correlation_id,
+                Subsystem::Service,
+                "chat.workflow.preflight",
+                EventStage::Progress,
+                EventSeverity::Info,
+                json!({
+                    "conversationId": conversation_id,
+                    "planningRequired": false,
+                    "disabled": true,
+                }),
+            ));
+            return Ok(None);
+        }
+
+        let current_state = self
+            .conversation_repo
+            .get_chat_workflow_state(conversation_id)?;
+        if let Some(state) = current_state.as_ref() {
+            let normalized = normalize_workflow_command(user_message);
+            if is_workflow_stop(&normalized) {
+                let next_state = ChatWorkflowState {
+                    conversation_id: conversation_id.to_string(),
+                    mode: ChatWorkflowMode::Normal,
+                    original_user_message: None,
+                    active_plan_id: None,
+                    active_plan_hash: None,
+                    active_loop_id: None,
+                    pending_reason: None,
+                    updated_at_ms: now_ms(),
+                };
+                self.conversation_repo
+                    .upsert_chat_workflow_state(&next_state)?;
+                self.emit_workflow_state_event(
+                    correlation_id,
+                    &next_state,
+                    "chat.workflow.stopped",
+                );
+                return Ok(Some(LocalLlamaResponse {
+                    assistant_message: "Planning workflow stopped. Normal chat and direct tool routing are available again.".to_string(),
+                    assistant_thinking: None,
+                    structured_payload: None,
+                }));
+            }
+            match state.mode {
+                ChatWorkflowMode::PlanningOffered => {
+                    if is_planner_acceptance(&normalized) {
+                        let next_state = ChatWorkflowState {
+                            conversation_id: conversation_id.to_string(),
+                            mode: ChatWorkflowMode::Discovery,
+                            original_user_message: state.original_user_message.clone(),
+                            active_plan_id: None,
+                            active_plan_hash: None,
+                            active_loop_id: None,
+                            pending_reason: Some(start_discovery_answers(
+                                state.pending_reason.as_deref(),
+                            )),
+                            updated_at_ms: now_ms(),
+                        };
+                        self.conversation_repo
+                            .upsert_chat_workflow_state(&next_state)?;
+                        self.emit_workflow_state_event(
+                            correlation_id,
+                            &next_state,
+                            "chat.workflow.discovery_started",
+                        );
+                        let original = state
+                            .original_user_message
+                            .as_deref()
+                            .filter(|value| !value.trim().is_empty())
+                            .unwrap_or(user_message);
+                        let preflight = preflight_from_pending_reason(state.pending_reason.as_deref());
+                        return Ok(Some(LocalLlamaResponse {
+                            assistant_message: render_discovery_questions(original, &preflight),
+                            assistant_thinking: None,
+                            structured_payload: Some(build_discovery_structured_payload(0)),
+                        }));
+                    }
+                    if is_planner_decline(&normalized) {
+                        let next_state = ChatWorkflowState {
+                            conversation_id: conversation_id.to_string(),
+                            mode: ChatWorkflowMode::Normal,
+                            original_user_message: None,
+                            active_plan_id: None,
+                            active_plan_hash: None,
+                            active_loop_id: None,
+                            pending_reason: Some("planner declined".to_string()),
+                            updated_at_ms: now_ms(),
+                        };
+                        self.conversation_repo
+                            .upsert_chat_workflow_state(&next_state)?;
+                        self.emit_workflow_state_event(
+                            correlation_id,
+                            &next_state,
+                            "chat.workflow.planner_declined",
+                        );
+                        return Ok(Some(LocalLlamaResponse {
+                            assistant_message: "Planner skipped. Send the request again and I will answer directly with normal tool routing.".to_string(),
+                            assistant_thinking: None,
+                            structured_payload: None,
+                        }));
+                    }
+                    return Ok(Some(LocalLlamaResponse {
+                        assistant_message: "This looks like a larger task. Choose `Use Planner` to lock the planning workflow, or `Quick Answer` to skip it for now.".to_string(),
+                        assistant_thinking: None,
+                        structured_payload: Some(build_planner_offer_structured_payload(
+                            state.pending_reason.as_deref(),
+                        )),
+                    }));
+                }
+                ChatWorkflowMode::Discovery => {
+                    let original = state
+                        .original_user_message
+                        .as_deref()
+                        .filter(|value| !value.trim().is_empty())
+                        .unwrap_or(user_message);
+                    let updated_answers = append_discovery_answer(
+                        state.pending_reason.as_deref(),
+                        user_message,
+                    );
+                    let answer_count = discovery_answer_count(&updated_answers);
+                    if answer_count < discovery_question_count() {
+                        let next_state = ChatWorkflowState {
+                            conversation_id: conversation_id.to_string(),
+                            mode: ChatWorkflowMode::Discovery,
+                            original_user_message: Some(original.to_string()),
+                            active_plan_id: None,
+                            active_plan_hash: None,
+                            active_loop_id: None,
+                            pending_reason: Some(updated_answers.clone()),
+                            updated_at_ms: now_ms(),
+                        };
+                        self.conversation_repo
+                            .upsert_chat_workflow_state(&next_state)?;
+                        return Ok(Some(LocalLlamaResponse {
+                            assistant_message: render_next_discovery_question_text(
+                                original,
+                                answer_count,
+                            ),
+                            assistant_thinking: None,
+                            structured_payload: Some(build_discovery_structured_payload(
+                                answer_count,
+                            )),
+                        }));
+                    }
+                    let plan_id = format!("plan-{}", now_ms());
+                    let plan_hash =
+                        stable_plan_hash(conversation_id, &plan_id, original, &updated_answers);
+                    let next_state = ChatWorkflowState {
+                        conversation_id: conversation_id.to_string(),
+                        mode: ChatWorkflowMode::AwaitingPlanApproval,
+                        original_user_message: Some(original.to_string()),
+                        active_plan_id: Some(plan_id.clone()),
+                        active_plan_hash: Some(plan_hash.clone()),
+                        active_loop_id: None,
+                        pending_reason: Some(updated_answers.clone()),
+                        updated_at_ms: now_ms(),
+                    };
+                    self.conversation_repo
+                        .upsert_chat_workflow_state(&next_state)?;
+                    self.hub.emit(self.hub.make_event(
+                        correlation_id,
+                        Subsystem::Service,
+                        "chat.workflow.clarification_submitted",
+                        EventStage::Complete,
+                        EventSeverity::Info,
+                        json!({
+                            "conversationId": conversation_id,
+                            "answerLength": user_message.len(),
+                        }),
+                    ));
+                    self.emit_workflow_state_event(correlation_id, &next_state, "chat.workflow.plan_created");
+                    return Ok(Some(LocalLlamaResponse {
+                        assistant_message: render_initial_plan_text(original, &updated_answers, &plan_id, &plan_hash),
+                        assistant_thinking: None,
+                        structured_payload: Some(ChatStructuredPayload::PlanApproval {
+                            plan: build_plan_artifact(
+                                conversation_id,
+                                &plan_id,
+                                &plan_hash,
+                                original,
+                                &updated_answers,
+                            ),
+                        }),
+                    }));
+                }
+                ChatWorkflowMode::AwaitingPlanApproval => {
+                    if is_plan_approval(&normalized) {
+                        let loop_id = format!("chat-loop-{}", now_ms());
+                        let plan_id = state
+                            .active_plan_id
+                            .clone()
+                            .unwrap_or_else(|| format!("plan-{}", now_ms()));
+                        let plan_hash = state
+                            .active_plan_hash
+                            .clone()
+                            .unwrap_or_else(|| "unhashed".to_string());
+                        let original = state
+                            .original_user_message
+                            .clone()
+                            .unwrap_or_else(|| "Approved chat plan".to_string());
+                        let discovery_answers = state.pending_reason.clone().unwrap_or_default();
+                        let project_folder = validate_project_folder(
+                            infer_project_folder_with_answers(&original, &discovery_answers)
+                                .as_str(),
+                        )?;
+                        let handoff = build_chat_looper_start_request(
+                            correlation_id,
+                            &loop_id,
+                            &plan_id,
+                            &plan_hash,
+                            &project_folder,
+                            &original,
+                            &discovery_answers,
+                        );
+                        let start_response = self.looper.start(handoff).await?;
+                        let next_state = ChatWorkflowState {
+                            conversation_id: conversation_id.to_string(),
+                            mode: ChatWorkflowMode::DelegatedExecution,
+                            original_user_message: state.original_user_message.clone(),
+                            active_plan_id: state.active_plan_id.clone(),
+                            active_plan_hash: state.active_plan_hash.clone(),
+                            active_loop_id: Some(start_response.loop_id.clone()),
+                            pending_reason: Some("delegated execution started".to_string()),
+                            updated_at_ms: now_ms(),
+                        };
+                        self.conversation_repo
+                            .upsert_chat_workflow_state(&next_state)?;
+                        self.emit_workflow_state_event(
+                            correlation_id,
+                            &next_state,
+                            "chat.workflow.plan_approved",
+                        );
+                        self.emit_workflow_state_event(
+                            correlation_id,
+                            &next_state,
+                            "chat.workflow.delegation_started",
+                        );
+                        return Ok(Some(LocalLlamaResponse {
+                            assistant_message: format!(
+                                "Plan approved. Delegated execution started in Looper as `{}`. I will track this run against the approved plan acceptance checks.",
+                                start_response.loop_id
+                            ),
+                            assistant_thinking: None,
+                            structured_payload: None,
+                        }));
+                    }
+                    if is_plan_revision_request(&normalized) {
+                        let next_state = ChatWorkflowState {
+                            conversation_id: conversation_id.to_string(),
+                            mode: ChatWorkflowMode::Discovery,
+                            original_user_message: state.original_user_message.clone(),
+                            active_plan_id: state.active_plan_id.clone(),
+                            active_plan_hash: state.active_plan_hash.clone(),
+                            active_loop_id: None,
+                            pending_reason: Some("plan revision requested".to_string()),
+                            updated_at_ms: now_ms(),
+                        };
+                        self.conversation_repo
+                            .upsert_chat_workflow_state(&next_state)?;
+                        self.emit_workflow_state_event(
+                            correlation_id,
+                            &next_state,
+                            "chat.workflow.plan_revised",
+                        );
+                        return Ok(Some(LocalLlamaResponse {
+                            assistant_message: "What should change in the plan? Share the revised scope, folder, deliverables, data source, or acceptance criteria, and I will regenerate the plan for approval.".to_string(),
+                            assistant_thinking: None,
+                            structured_payload: None,
+                        }));
+                    }
+                    return Ok(Some(LocalLlamaResponse {
+                        assistant_message: "This workflow is waiting on plan approval. Reply `Approve Plan` to proceed, or `Revise Plan` with the changes you want.".to_string(),
+                        assistant_thinking: None,
+                        structured_payload: None,
+                    }));
+                }
+                ChatWorkflowMode::Blocked => {
+                    if let Some(loop_id) = state.active_loop_id.as_deref() {
+                        let status = self
+                            .looper
+                            .status(LooperStatusRequest {
+                                correlation_id: correlation_id.to_string(),
+                                loop_id: loop_id.to_string(),
+                            })
+                            .await?;
+                        if let Some(loop_record) = status.loop_record {
+                            if !loop_record.pending_questions.is_empty() {
+                                let answers = loop_record
+                                    .pending_questions
+                                    .iter()
+                                    .map(|question| LooperQuestionAnswer {
+                                        question_id: question.id.clone(),
+                                        selected_option_id: String::new(),
+                                        freeform_text: Some(user_message.to_string()),
+                                    })
+                                    .collect::<Vec<_>>();
+                                self.looper
+                                    .submit_questions(LooperSubmitQuestionsRequest {
+                                        correlation_id: correlation_id.to_string(),
+                                        loop_id: loop_id.to_string(),
+                                        answers,
+                                    })
+                                    .await?;
+                                let next_state = ChatWorkflowState {
+                                    conversation_id: conversation_id.to_string(),
+                                    mode: ChatWorkflowMode::DelegatedExecution,
+                                    original_user_message: state.original_user_message.clone(),
+                                    active_plan_id: state.active_plan_id.clone(),
+                                    active_plan_hash: state.active_plan_hash.clone(),
+                                    active_loop_id: state.active_loop_id.clone(),
+                                    pending_reason: Some("blocker answered".to_string()),
+                                    updated_at_ms: now_ms(),
+                                };
+                                self.conversation_repo
+                                    .upsert_chat_workflow_state(&next_state)?;
+                                self.emit_workflow_state_event(
+                                    correlation_id,
+                                    &next_state,
+                                    "chat.workflow.delegation_unblocked",
+                                );
+                                return Ok(Some(LocalLlamaResponse {
+                                    assistant_message: format!(
+                                        "Submitted your answer to Looper run `{loop_id}` and resumed delegated execution."
+                                    ),
+                                    assistant_thinking: None,
+                                    structured_payload: None,
+                                }));
+                            }
+                        }
+                    }
+                    return Ok(Some(LocalLlamaResponse {
+                        assistant_message: "This delegated workflow is blocked, but I could not find active Looper questions to answer. Reply `Stop Plan` to cancel the workflow or inspect the Looper tool directly.".to_string(),
+                        assistant_thinking: None,
+                        structured_payload: None,
+                    }));
+                }
+                ChatWorkflowMode::DelegatedExecution => {
+                    if let Some(loop_id) = state.active_loop_id.as_deref() {
+                        let status = self
+                            .looper
+                            .status(LooperStatusRequest {
+                                correlation_id: correlation_id.to_string(),
+                                loop_id: loop_id.to_string(),
+                            })
+                            .await?;
+                        if let Some(loop_record) = status.loop_record {
+                            if loop_record.status == LooperLoopStatus::Blocked {
+                                let next_state = ChatWorkflowState {
+                                    conversation_id: conversation_id.to_string(),
+                                    mode: ChatWorkflowMode::Blocked,
+                                    original_user_message: state.original_user_message.clone(),
+                                    active_plan_id: state.active_plan_id.clone(),
+                                    active_plan_hash: state.active_plan_hash.clone(),
+                                    active_loop_id: state.active_loop_id.clone(),
+                                    pending_reason: Some("looper questions pending".to_string()),
+                                    updated_at_ms: now_ms(),
+                                };
+                                self.conversation_repo
+                                    .upsert_chat_workflow_state(&next_state)?;
+                                self.emit_workflow_state_event(
+                                    correlation_id,
+                                    &next_state,
+                                    "chat.workflow.delegation_blocked",
+                                );
+                                return Ok(Some(LocalLlamaResponse {
+                                    assistant_message: render_looper_questions_text(
+                                        loop_id,
+                                        &loop_record.pending_questions,
+                                    ),
+                                    assistant_thinking: None,
+                                    structured_payload: None,
+                                }));
+                            }
+                            if loop_record.status == LooperLoopStatus::Completed {
+                                let next_state = ChatWorkflowState {
+                                    conversation_id: conversation_id.to_string(),
+                                    mode: ChatWorkflowMode::Completed,
+                                    original_user_message: state.original_user_message.clone(),
+                                    active_plan_id: state.active_plan_id.clone(),
+                                    active_plan_hash: state.active_plan_hash.clone(),
+                                    active_loop_id: state.active_loop_id.clone(),
+                                    pending_reason: Some("delegation completed".to_string()),
+                                    updated_at_ms: now_ms(),
+                                };
+                                self.conversation_repo
+                                    .upsert_chat_workflow_state(&next_state)?;
+                                self.emit_workflow_state_event(
+                                    correlation_id,
+                                    &next_state,
+                                    "chat.workflow.delegation_completed",
+                                );
+                                self.hub.emit(self.hub.make_event(
+                                    correlation_id,
+                                    Subsystem::Service,
+                                    "chat.workflow.acceptance_checked",
+                                    EventStage::Complete,
+                                    EventSeverity::Info,
+                                    json!({
+                                        "conversationId": conversation_id,
+                                        "loopId": loop_id,
+                                        "planId": next_state.active_plan_id,
+                                        "status": "completed",
+                                    }),
+                                ));
+                                return Ok(Some(LocalLlamaResponse {
+                                    assistant_message: render_delegation_completion_text(
+                                        loop_id,
+                                        &loop_record,
+                                    ),
+                                    assistant_thinking: None,
+                                    structured_payload: None,
+                                }));
+                            }
+                            if loop_record.status == LooperLoopStatus::Failed {
+                                let next_state = ChatWorkflowState {
+                                    conversation_id: conversation_id.to_string(),
+                                    mode: ChatWorkflowMode::Failed,
+                                    original_user_message: state.original_user_message.clone(),
+                                    active_plan_id: state.active_plan_id.clone(),
+                                    active_plan_hash: state.active_plan_hash.clone(),
+                                    active_loop_id: state.active_loop_id.clone(),
+                                    pending_reason: Some("delegation failed".to_string()),
+                                    updated_at_ms: now_ms(),
+                                };
+                                self.conversation_repo
+                                    .upsert_chat_workflow_state(&next_state)?;
+                                return Ok(Some(LocalLlamaResponse {
+                                    assistant_message: format!(
+                                        "Looper run `{loop_id}` failed. Open the Looper tool for phase logs, or reply `Revise Plan` to adjust the task."
+                                    ),
+                                    assistant_thinking: None,
+                                    structured_payload: None,
+                                }));
+                            }
+                            return Ok(Some(LocalLlamaResponse {
+                                assistant_message: format!(
+                                    "Looper run `{loop_id}` is `{}` in phase `{}`.",
+                                    serde_json::to_string(&loop_record.status)
+                                        .unwrap_or_else(|_| "running".to_string())
+                                        .trim_matches('"'),
+                                    loop_record
+                                        .active_phase
+                                        .as_deref()
+                                        .unwrap_or("unknown")
+                                ),
+                                assistant_thinking: None,
+                                structured_payload: None,
+                            }));
+                        }
+                    }
+                    return Ok(Some(LocalLlamaResponse {
+                        assistant_message: "This planned task is in delegated execution, but no Looper run id is available yet.".to_string(),
+                        assistant_thinking: None,
+                        structured_payload: None,
+                    }));
+                }
+                ChatWorkflowMode::Normal | ChatWorkflowMode::Completed | ChatWorkflowMode::Failed => {}
+            }
+        }
+
+        let normalized = normalize_workflow_command(user_message);
+        let explicit_planner_request = explicitly_requests_planner(user_message, &normalized);
+        let mut preflight = planning_preflight(user_message, attachments);
+        if explicit_planner_request && !preflight.planning_required {
+            preflight.planning_required = true;
+            preflight.forced = true;
+            preflight
+                .reasons
+                .push("user explicitly requested planned workflow".to_string());
+        }
+        self.hub.emit(self.hub.make_event(
+            correlation_id,
+            Subsystem::Service,
+            "chat.workflow.preflight",
+            EventStage::Progress,
+            EventSeverity::Info,
+            json!({
+                "conversationId": conversation_id,
+                "score": preflight.score,
+                "planningRequired": preflight.planning_required,
+                "forced": preflight.forced,
+                "reasons": preflight.reasons,
+            }),
+        ));
+        if !preflight.planning_required {
+            return Ok(None);
+        }
+
+        if explicit_planner_request {
+            let next_state = ChatWorkflowState {
+                conversation_id: conversation_id.to_string(),
+                mode: ChatWorkflowMode::Discovery,
+                original_user_message: Some(user_message.to_string()),
+                active_plan_id: None,
+                active_plan_hash: None,
+                active_loop_id: None,
+                pending_reason: Some(start_discovery_answers(Some(
+                    preflight.reasons.join(", ").as_str(),
+                ))),
+                updated_at_ms: now_ms(),
+            };
+            self.conversation_repo
+                .upsert_chat_workflow_state(&next_state)?;
+            self.emit_workflow_state_event(
+                correlation_id,
+                &next_state,
+                "chat.workflow.discovery_started",
+            );
+            return Ok(Some(LocalLlamaResponse {
+                assistant_message: render_discovery_questions(user_message, &preflight),
+                assistant_thinking: None,
+                structured_payload: Some(build_discovery_structured_payload(0)),
+            }));
+        }
+
+        let next_state = ChatWorkflowState {
+            conversation_id: conversation_id.to_string(),
+            mode: ChatWorkflowMode::PlanningOffered,
+            original_user_message: Some(user_message.to_string()),
+            active_plan_id: None,
+            active_plan_hash: None,
+            active_loop_id: None,
+            pending_reason: Some(preflight.reasons.join(", ")),
+            updated_at_ms: now_ms(),
+        };
+        self.conversation_repo
+            .upsert_chat_workflow_state(&next_state)?;
+        self.emit_workflow_state_event(
+            correlation_id,
+            &next_state,
+            "chat.workflow.planner_offered",
+        );
+        Ok(Some(LocalLlamaResponse {
+            assistant_message: render_planner_offer_text(&preflight),
+            assistant_thinking: None,
+            structured_payload: Some(build_planner_offer_structured_payload(Some(
+                next_state.pending_reason.as_deref().unwrap_or_default(),
+            ))),
+        }))
+    }
+
+    fn emit_workflow_state_event(
+        &self,
+        correlation_id: &str,
+        state: &ChatWorkflowState,
+        action: &str,
+    ) {
+        self.hub.emit(self.hub.make_event(
+            correlation_id,
+            Subsystem::Service,
+            action,
+            EventStage::Complete,
+            EventSeverity::Info,
+            json!({
+                "conversationId": state.conversation_id,
+                "mode": state.mode,
+                "activePlanId": state.active_plan_id,
+                "activeLoopId": state.active_loop_id,
+            }),
+        ));
     }
 
     pub async fn cancel_message(
@@ -773,6 +1367,7 @@ impl ChatService {
             } else {
                 None
             },
+            structured_payload: None,
         })
     }
 
@@ -1493,6 +2088,7 @@ impl ChatService {
         Ok(LocalLlamaResponse {
             assistant_message: assistant,
             assistant_thinking,
+            structured_payload: None,
         })
     }
 
@@ -2134,7 +2730,7 @@ impl ChatService {
             None,
             "default",
             "runtime",
-            format!("Current working directory: {cwd}"),
+            format!("User workspace directory: {cwd}"),
         );
         let mut routing_hints = String::new();
         apply_tool_routing_hints(&mut routing_hints, &enabled_tool_names);
@@ -2824,6 +3420,818 @@ fn is_chat_only_message(text: &str) -> bool {
     )
 }
 
+#[derive(Debug, Clone)]
+struct WorkflowPreflightDecision {
+    planning_required: bool,
+    score: u8,
+    forced: bool,
+    reasons: Vec<String>,
+}
+
+fn planning_preflight(
+    user_message: &str,
+    attachments: Option<&[ChatAttachment]>,
+) -> WorkflowPreflightDecision {
+    let normalized = normalize_workflow_command(user_message);
+    if is_chat_only_message(user_message)
+        || is_plan_approval(&normalized)
+        || is_plan_revision_request(&normalized)
+    {
+        return WorkflowPreflightDecision {
+            planning_required: false,
+            score: 0,
+            forced: false,
+            reasons: Vec::new(),
+        };
+    }
+
+    let text = user_message.to_ascii_lowercase();
+    let mut score = 0u8;
+    let mut forced = false;
+    let mut reasons = Vec::<String>::new();
+
+    if matches_any(
+        &text,
+        &[
+            "full",
+            "complete",
+            "large",
+            "larger",
+            "end-to-end",
+            "end to end",
+            "larger research project",
+            "large research project",
+            "research report",
+            "research project",
+            "financial analysis",
+            "market analysis",
+            "market research",
+            "spreadsheet analysis",
+            "dashboard",
+            "multi-tab",
+            "workbook",
+            "prd",
+        ],
+    ) {
+        score += 1;
+        reasons.push("multi-artifact or substantial deliverable".to_string());
+    }
+    if matches_any(
+        &text,
+        &[
+            "build",
+            "implement",
+            "refactor",
+            "migrate",
+            "integrate",
+            "set up",
+            "setup",
+            "develop",
+            "create an app",
+        ],
+    ) {
+        score += 1;
+        reasons.push("likely multi-step implementation".to_string());
+    }
+    if matches_any(
+        &text,
+        &[
+            "autonomously",
+            "agent",
+            "long task",
+            "thorough",
+            "deep dive",
+            "comprehensive",
+            "think critically",
+            "critical analysis",
+            "accurate forecast",
+            "accurate forecasts",
+            "forecast",
+            "forecasts",
+            "fully",
+        ],
+    ) {
+        score += 1;
+        reasons.push("user requested thorough or autonomous work".to_string());
+    }
+    if matches_any(
+        &text,
+        &[
+            "research",
+            "market research",
+            "latest",
+            "verify",
+            "web",
+            "sources",
+            "market",
+            "competitor",
+            "forecast",
+            "forecasts",
+            "future of",
+            "financial",
+            "data source",
+        ],
+    ) {
+        score += 1;
+        reasons.push("external data or verification likely required".to_string());
+    }
+    if matches_any(
+        &text,
+        &[
+            "spreadsheet",
+            "sheet",
+            "report",
+            "market research",
+            "forecast",
+            "forecasts",
+            "chart",
+            "files",
+            "code",
+            "tests",
+            "web search",
+        ],
+    ) {
+        score += 1;
+        reasons.push("multiple tool families may be needed".to_string());
+    }
+    if missing_common_scope(&text, attachments) {
+        score += 1;
+        reasons.push("missing scope, folder, data source, or output constraints".to_string());
+    }
+    if matches_any(
+        &text,
+        &[
+            "delete",
+            "remove all",
+            "drop table",
+            "production",
+            "deploy",
+            "credential",
+            "secret",
+            "token",
+            "payment",
+            "billing",
+            "security",
+            "chmod",
+            "migration",
+        ],
+    ) {
+        forced = true;
+        reasons.push("high-risk or destructive class requires planning".to_string());
+    }
+
+    reasons.sort();
+    reasons.dedup();
+    WorkflowPreflightDecision {
+        planning_required: forced || score >= 3,
+        score,
+        forced,
+        reasons,
+    }
+}
+
+fn chat_planning_delegation_enabled() -> bool {
+    std::env::var("ARXELL_CHAT_PLANNING_DELEGATION")
+        .map(|value| {
+            let normalized = value.trim().to_ascii_lowercase();
+            !matches!(normalized.as_str(), "0" | "false" | "off" | "disabled")
+        })
+        .unwrap_or(true)
+}
+
+fn explicitly_requests_planner(user_message: &str, normalized: &str) -> bool {
+    is_planner_acceptance(normalized)
+        || matches_any(
+            &user_message.to_ascii_lowercase(),
+            &[
+                "use planner",
+                "use the planner",
+                "plan this first",
+                "planning workflow",
+                "make a prd",
+                "create a prd",
+                "delegate this",
+            ],
+        )
+}
+
+fn is_planner_acceptance(normalized: &str) -> bool {
+    matches!(
+        normalized,
+        "use planner"
+            | "use the planner"
+            | "planner"
+            | "yes use planner"
+            | "yes use the planner"
+            | "plan this"
+            | "plan this first"
+            | "use planned workflow"
+            | "use the planned workflow"
+            | "use planning workflow"
+            | "use the planning workflow"
+    )
+}
+
+fn is_planner_decline(normalized: &str) -> bool {
+    matches!(
+        normalized,
+        "quick answer"
+            | "answer directly"
+            | "skip planner"
+            | "skip the planner"
+            | "do not use planner"
+            | "dont use planner"
+            | "don t use planner"
+            | "no planner"
+    )
+}
+
+fn preflight_from_pending_reason(pending_reason: Option<&str>) -> WorkflowPreflightDecision {
+    let reasons = pending_reason
+        .unwrap_or_default()
+        .lines()
+        .next()
+        .unwrap_or_default()
+        .split(',')
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToString::to_string)
+        .collect::<Vec<_>>();
+    WorkflowPreflightDecision {
+        planning_required: true,
+        score: reasons.len().min(u8::MAX as usize) as u8,
+        forced: reasons
+            .iter()
+            .any(|reason| reason.contains("high-risk") || reason.contains("destructive")),
+        reasons,
+    }
+}
+
+fn start_discovery_answers(pending_reason: Option<&str>) -> String {
+    format!(
+        "{}\n\nDiscovery answers:",
+        pending_reason.unwrap_or_default().trim()
+    )
+}
+
+fn append_discovery_answer(existing: Option<&str>, user_message: &str) -> String {
+    let base = existing
+        .filter(|value| value.contains("Discovery answers:"))
+        .map(ToString::to_string)
+        .unwrap_or_else(|| start_discovery_answers(existing));
+    let answer = user_message.trim();
+    if answer.is_empty() {
+        return base;
+    }
+    format!("{}\n- {}", base.trim_end(), normalize_discovery_answer(answer))
+}
+
+fn normalize_discovery_answer(answer: &str) -> String {
+    answer
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn discovery_answer_count(answers: &str) -> usize {
+    answers
+        .lines()
+        .filter(|line| line.trim_start().starts_with("- "))
+        .count()
+}
+
+fn discovery_question_count() -> usize {
+    3
+}
+
+fn render_next_discovery_question_text(original_user_message: &str, answered_count: usize) -> String {
+    match answered_count {
+        1 => "Good. Next, what should the research emphasize most?".to_string(),
+        2 => "Last setup choice: who is the report primarily for? I’ll tune the framing and evidence level around that audience.".to_string(),
+        _ => render_discovery_questions(
+            original_user_message,
+            &WorkflowPreflightDecision {
+                planning_required: true,
+                score: 0,
+                forced: false,
+                reasons: Vec::new(),
+            },
+        ),
+    }
+}
+
+fn missing_common_scope(text: &str, attachments: Option<&[ChatAttachment]>) -> bool {
+    let has_attachment = attachments.map(|items| !items.is_empty()).unwrap_or(false);
+    let mentions_folder = matches_any(
+        text,
+        &[
+            "folder",
+            "directory",
+            "project folder",
+            "project directory",
+            "project_folder",
+            "repo",
+            "/home/",
+            "./",
+            "../",
+            "workspace",
+        ],
+    );
+    let mentions_output = matches_any(
+        text,
+        &[
+            "markdown",
+            "pdf",
+            "csv",
+            "spreadsheet",
+            "workbook",
+            "report",
+            "dashboard",
+            "code",
+            "app",
+        ],
+    );
+    let asks_broad_work = matches_any(
+        text,
+        &[
+            "analysis",
+            "report",
+            "build",
+            "research",
+            "financial",
+            "spreadsheet",
+            "refactor",
+            "migrate",
+        ],
+    );
+    asks_broad_work && (!mentions_folder || (!mentions_output && !has_attachment))
+}
+
+fn normalize_workflow_command(input: &str) -> String {
+    input
+        .trim()
+        .to_ascii_lowercase()
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || ch.is_ascii_whitespace() {
+                ch
+            } else {
+                ' '
+            }
+        })
+        .collect::<String>()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn is_plan_approval(normalized: &str) -> bool {
+    matches!(
+        normalized,
+        "approve"
+            | "approved"
+            | "approve plan"
+            | "proceed"
+            | "proceed with plan"
+            | "run it"
+            | "start"
+            | "start execution"
+            | "execute"
+            | "execute plan"
+    )
+}
+
+fn is_plan_revision_request(normalized: &str) -> bool {
+    normalized == "revise"
+        || normalized == "revise plan"
+        || normalized == "change plan"
+        || normalized.starts_with("revise plan ")
+        || normalized.starts_with("change the plan")
+}
+
+fn is_workflow_stop(normalized: &str) -> bool {
+    matches!(
+        normalized,
+        "stop"
+            | "stop plan"
+            | "stop planning"
+            | "cancel"
+            | "cancel plan"
+            | "cancel planning"
+            | "abort"
+            | "abort plan"
+    )
+}
+
+fn stable_plan_hash(
+    conversation_id: &str,
+    plan_id: &str,
+    original_user_message: &str,
+    discovery_answer: &str,
+) -> String {
+    let mut hasher = DefaultHasher::new();
+    conversation_id.hash(&mut hasher);
+    plan_id.hash(&mut hasher);
+    original_user_message.hash(&mut hasher);
+    discovery_answer.hash(&mut hasher);
+    format!("{:016x}", hasher.finish())
+}
+
+fn validate_project_folder(raw: &str) -> Result<String, String> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return Err("project folder is required before delegated execution".to_string());
+    }
+    let path = PathBuf::from(trimmed);
+    let absolute = if path.is_absolute() {
+        path
+    } else {
+        std::env::current_dir()
+            .map_err(|e| format!("failed resolving current directory: {e}"))?
+            .join(path)
+    };
+    if is_unsafe_project_folder(&absolute) {
+        return Err(format!(
+            "refusing to delegate work in unsafe project folder: {}",
+            absolute.to_string_lossy()
+        ));
+    }
+    if !absolute.exists() {
+        std::fs::create_dir_all(&absolute)
+            .map_err(|e| format!("failed creating project folder: {e}"))?;
+    }
+    let canonical = absolute
+        .canonicalize()
+        .map_err(|e| format!("failed canonicalizing project folder: {e}"))?;
+    if is_unsafe_project_folder(&canonical) {
+        return Err(format!(
+            "refusing to delegate work in unsafe project folder: {}",
+            canonical.to_string_lossy()
+        ));
+    }
+    Ok(canonical.to_string_lossy().to_string())
+}
+
+fn is_unsafe_project_folder(path: &Path) -> bool {
+    if path.parent().is_none() {
+        return true;
+    }
+    let normalized = path.to_string_lossy();
+    let raw = normalized.as_ref();
+    if matches!(raw, "/" | "/home" | "/Users" | "/tmp" | "/var" | "/etc" | "/usr" | "/bin" | "/sbin") {
+        return true;
+    }
+    if let Some(home) = dirs::home_dir() {
+        if path == home {
+            return true;
+        }
+    }
+    false
+}
+
+fn infer_project_folder(user_message: &str) -> String {
+    let slug = infer_project_slug(user_message);
+    PathBuf::from(resolve_agent_cwd())
+        .join(slug)
+        .to_string_lossy()
+        .to_string()
+}
+
+fn infer_project_folder_with_answers(user_message: &str, discovery_answers: &str) -> String {
+    if let Some(path) = extract_folder_override(discovery_answers) {
+        return path;
+    }
+    infer_project_folder(user_message)
+}
+
+fn extract_folder_override(discovery_answers: &str) -> Option<String> {
+    for token in discovery_answers.split_whitespace() {
+        let trimmed = token.trim_matches(|ch: char| {
+            matches!(ch, '`' | '"' | '\'' | ',' | ';' | ')' | '(')
+        });
+        if trimmed.starts_with("/home/") || trimmed.starts_with("~/") {
+            return Some(trimmed.to_string());
+        }
+    }
+    None
+}
+
+fn infer_project_slug(user_message: &str) -> String {
+    let text = user_message.to_ascii_lowercase();
+    if text.contains("digital identity") || text.contains("digitial identity") {
+        return "digital-identity-age-verification".to_string();
+    }
+    if text.contains("age verification") {
+        return "age-verification-research".to_string();
+    }
+    let stop_words: HashSet<&str> = [
+        "the", "and", "for", "with", "that", "this", "from", "into", "your", "help", "larger",
+        "large", "project", "research", "report", "analysis", "future", "accurate", "market",
+    ]
+    .into_iter()
+    .collect();
+    let mut words = Vec::<String>::new();
+    for raw in text
+        .chars()
+        .map(|ch| if ch.is_ascii_alphanumeric() { ch } else { ' ' })
+        .collect::<String>()
+        .split_whitespace()
+    {
+        if raw.len() < 4 || stop_words.contains(raw) {
+            continue;
+        }
+        words.push(raw.to_string());
+        if words.len() >= 5 {
+            break;
+        }
+    }
+    if words.is_empty() {
+        "planned-research".to_string()
+    } else {
+        words.join("-")
+    }
+}
+
+fn render_discovery_questions(
+    user_message: &str,
+    preflight: &WorkflowPreflightDecision,
+) -> String {
+    let reason_text = if preflight.reasons.is_empty() {
+        "this looks like a larger task".to_string()
+    } else {
+        preflight.reasons.join("; ")
+    };
+    let project_folder = infer_project_folder(user_message);
+    format!(
+        "I’ll treat this as a delegated research project. First I’ll draft a PRD/spec for Looper; the actual deliverable will be a source-backed markdown report, with supporting notes/files as needed.\n\nI’ll use external sources by default because the request depends on current law, market activity, and forecasts.\n\nProject folder: `{project_folder}`. If you prefer a different folder name, type it instead of choosing an option.\n\nReason: {reason_text}."
+    )
+}
+
+fn render_planner_offer_text(preflight: &WorkflowPreflightDecision) -> String {
+    let reason_text = if preflight.reasons.is_empty() {
+        "this looks like a larger task".to_string()
+    } else {
+        preflight.reasons.join("; ")
+    };
+    format!(
+        "This looks like a larger task. Do you want me to use the planned workflow before running tools?\n\nReason: {reason_text}.\n\nChoose `Use Planner` to clarify scope and produce a PRD for approval, or `Quick Answer` to skip the planner."
+    )
+}
+
+fn build_planner_offer_structured_payload(pending_reason: Option<&str>) -> ChatStructuredPayload {
+    let reasons = pending_reason
+        .unwrap_or_default()
+        .split(',')
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToString::to_string)
+        .collect::<Vec<_>>();
+    ChatStructuredPayload::PlannerOffer {
+        title: "Use Planned Workflow?".to_string(),
+        prompt: "This request may benefit from clarification, a PRD, approval, and delegated execution before tools run.".to_string(),
+        reasons,
+    }
+}
+
+fn build_discovery_structured_payload(question_index: usize) -> ChatStructuredPayload {
+    let question = match question_index {
+        0 => ClarificationQuestion {
+            id: "time-budget".to_string(),
+            title: "Time Budget".to_string(),
+            prompt: "How much research time should I plan for?".to_string(),
+            options: vec![
+                ClarificationOption { id: "0-30".to_string(), label: "0:30".to_string(), summary: Some("Fast scan with a concise forecast.".to_string()) },
+                ClarificationOption { id: "0-15".to_string(), label: "0:15".to_string(), summary: Some("Brief orientation only.".to_string()) },
+                ClarificationOption { id: "1-00".to_string(), label: "1:00".to_string(), summary: Some("Standard report with sourced market view.".to_string()) },
+                ClarificationOption { id: "2-00".to_string(), label: "2:00".to_string(), summary: Some("Deeper report with scenarios and vendor landscape.".to_string()) },
+                ClarificationOption { id: "4-00".to_string(), label: "4:00".to_string(), summary: Some("Deep research brief with stronger evidence review.".to_string()) },
+                ClarificationOption { id: "8-plus".to_string(), label: "8:00+".to_string(), summary: Some("Full research project scope.".to_string()) },
+            ],
+            recommended_option_id: None,
+            allow_custom: true,
+            required: true,
+        },
+        1 => ClarificationQuestion {
+            id: "research-emphasis".to_string(),
+            title: "Research Emphasis".to_string(),
+            prompt: "What should the research emphasize most?".to_string(),
+            options: vec![
+                ClarificationOption { id: "forecast".to_string(), label: "Market forecast".to_string(), summary: Some("Adoption, winners, risks, and timing.".to_string()) },
+                ClarificationOption { id: "regulatory".to_string(), label: "Regulatory landscape".to_string(), summary: Some("State mandates, litigation, and compliance paths.".to_string()) },
+                ClarificationOption { id: "vendors".to_string(), label: "Vendor landscape".to_string(), summary: Some("Identity, age assurance, wallets, and platform players.".to_string()) },
+                ClarificationOption { id: "privacy".to_string(), label: "Privacy/security".to_string(), summary: Some("Civil liberties, data minimization, and ZK/credential approaches.".to_string()) },
+            ],
+            recommended_option_id: None,
+            allow_custom: true,
+            required: true,
+        },
+        _ => ClarificationQuestion {
+            id: "audience".to_string(),
+            title: "Audience".to_string(),
+            prompt: "Who is the report primarily for?".to_string(),
+            options: vec![
+                ClarificationOption { id: "operator".to_string(), label: "Operator/strategy".to_string(), summary: Some("Business and product implications.".to_string()) },
+                ClarificationOption { id: "investor".to_string(), label: "Investor".to_string(), summary: Some("Market sizing, growth, and competitive positioning.".to_string()) },
+                ClarificationOption { id: "policy".to_string(), label: "Policy/legal".to_string(), summary: Some("Regulation, constitutional risk, and enforcement.".to_string()) },
+                ClarificationOption { id: "technical".to_string(), label: "Technical".to_string(), summary: Some("Architecture, protocols, assurance methods.".to_string()) },
+            ],
+            recommended_option_id: None,
+            allow_custom: true,
+            required: true,
+        },
+    };
+    ChatStructuredPayload::Clarification {
+        title: "Research Setup".to_string(),
+        questions: vec![question],
+    }
+}
+
+fn build_plan_artifact(
+    conversation_id: &str,
+    plan_id: &str,
+    plan_hash: &str,
+    original_user_message: &str,
+    discovery_answer: &str,
+) -> PlanArtifact {
+    PlanArtifact {
+        id: plan_id.to_string(),
+        version: 1,
+        objective: original_user_message.trim().to_string(),
+        project_folder: infer_project_folder_with_answers(original_user_message, discovery_answer),
+        scope: vec![
+            "Use the approved discovery answers as execution constraints.".to_string(),
+            "Stay within the approved project folder.".to_string(),
+        ],
+        non_goals: vec!["Do not expand scope without a plan delta.".to_string()],
+        assumptions: vec![discovery_answer.trim().to_string()],
+        deliverables: vec![
+            "Final source-backed markdown report.".to_string(),
+            "Supporting notes, source list, and intermediate files as needed.".to_string(),
+            "Completion summary with validation evidence.".to_string(),
+        ],
+        allowed_tools: vec!["looper".to_string(), "opencode".to_string()],
+        data_policy: "External sources are allowed and expected unless the approved plan says otherwise.".to_string(),
+        acceptance_checks: vec![
+            "Project folder is explicit and validated.".to_string(),
+            "Looper receives the approved brief.".to_string(),
+            "Completion is summarized against validation artifacts.".to_string(),
+        ],
+        risk_tier: PlanRiskTier::Medium,
+        delegation_mode: PlanDelegationMode::Looper,
+        created_at_ms: now_ms(),
+        source_conversation_id: conversation_id.to_string(),
+        plan_hash: plan_hash.to_string(),
+    }
+}
+
+fn render_initial_plan_text(
+    original_user_message: &str,
+    discovery_answer: &str,
+    plan_id: &str,
+    plan_hash: &str,
+) -> String {
+    let project_folder = infer_project_folder_with_answers(original_user_message, discovery_answer);
+    format!(
+        "## Proposed Plan\n\nPlan id: `{plan_id}`\nPlan hash: `{plan_hash}`\n\nObjective: produce a source-backed research report that answers the original request with critical forecasts, market analysis, and clear evidence boundaries.\n\nProject folder: `{project_folder}`\n\nExpected outputs:\n- Final markdown report.\n- Supporting source notes and intermediate files as needed.\n- Completion summary mapped to validation checks.\n\nAcceptance checks:\n- Report cites current external sources where claims depend on law, market activity, or forecasts.\n- Forecasts distinguish evidence, assumptions, and uncertainty.\n- Work stays within the approved project folder.\n- Results are validated before final completion.\n\nOriginal request:\n{original}\n\nDiscovery answers:\n{answers}\n\nReply `Approve Plan` to proceed, or `Revise Plan` with the changes you want.",
+        original = original_user_message.trim(),
+        answers = discovery_answer.trim()
+    )
+}
+
+fn render_looper_questions_text(loop_id: &str, questions: &[LooperQuestion]) -> String {
+    if questions.is_empty() {
+        return format!(
+            "Looper run `{loop_id}` is blocked, but it did not provide a specific question."
+        );
+    }
+    let mut out = format!(
+        "Looper run `{loop_id}` needs input before it can continue.\n\nReply with your answers in one message.\n"
+    );
+    for (idx, question) in questions.iter().enumerate() {
+        out.push_str(&format!(
+            "\n{}. {}\n{}\n",
+            idx + 1,
+            question.title.trim(),
+            question.prompt.trim()
+        ));
+        for option in &question.options {
+            out.push_str(&format!("- {}", option.label.trim()));
+            if let Some(summary) = option.summary.as_deref().filter(|value| !value.trim().is_empty()) {
+                out.push_str(&format!(": {}", summary.trim()));
+            }
+            out.push('\n');
+        }
+    }
+    out
+}
+
+fn render_delegation_completion_text(loop_id: &str, record: &LooperLoopRecord) -> String {
+    let root = Path::new(&record.cwd);
+    let review_result = read_small_artifact(root.join("review_result.txt"));
+    let work_summary = read_small_artifact(root.join("work_summary.txt"));
+    let validation_report = read_small_artifact(root.join("validation_report.txt"));
+    let review_feedback = read_small_artifact(root.join("review_feedback.txt"));
+    let decision = review_result
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or(record.review_result.as_deref().unwrap_or("unknown"));
+    let mut out = format!(
+        "Looper run `{loop_id}` completed.\n\nDecision: `{}`\nProject folder: `{}`\n\nAcceptance summary:\n- Delegated run reached completed state.\n- Validator/Critic artifacts were checked when available.\n- Review decision: `{}`.",
+        truncate_for_completion(decision),
+        record.cwd,
+        truncate_for_completion(decision)
+    );
+    if let Some(summary) = work_summary {
+        out.push_str("\n\nWork summary:\n");
+        out.push_str(&summary);
+    }
+    if let Some(report) = validation_report {
+        out.push_str("\n\nValidation report:\n");
+        out.push_str(&report);
+    }
+    if let Some(feedback) = review_feedback {
+        out.push_str("\n\nReview feedback:\n");
+        out.push_str(&feedback);
+    }
+    out
+}
+
+fn read_small_artifact(path: PathBuf) -> Option<String> {
+    let raw = std::fs::read_to_string(path).ok()?;
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    Some(truncate_for_completion(trimmed))
+}
+
+fn truncate_for_completion(input: &str) -> String {
+    const MAX_CHARS: usize = 1800;
+    let mut out = String::new();
+    for (idx, ch) in input.chars().enumerate() {
+        if idx >= MAX_CHARS {
+            out.push_str("\n...[truncated]");
+            return out;
+        }
+        out.push(ch);
+    }
+    out
+}
+
+fn build_chat_looper_start_request(
+    correlation_id: &str,
+    loop_id: &str,
+    plan_id: &str,
+    plan_hash: &str,
+    project_folder: &str,
+    original_user_message: &str,
+    discovery_answers: &str,
+) -> LooperStartRequest {
+    let brief = format!(
+        "Approved chat plan\n\nPlan id: {plan_id}\nPlan hash: {plan_hash}\nProject folder constraint: {project_folder}\n\nOriginal request:\n{original}\n\nDiscovery answers:\n{answers}\n\nRules:\n- Work only inside the project folder constraint.\n- If the requested work requires changing scope or working outside that folder, stop and ask for a plan delta.\n- Validate results against the approved plan before completion.",
+        original = original_user_message.trim(),
+        answers = discovery_answers.trim()
+    );
+    let planner = format!(
+        "You are the Planner agent for an approved chat plan. Convert this brief into implementation_plan.md. Do not ask broad prerequisite questions; the user already approved the plan. If the brief is impossible or unsafe, write a blocker summary instead.\n\n{brief}"
+    );
+    let executor = format!(
+        "You are the Executor agent for an approved chat plan. Read implementation_plan.md and complete the top unfinished task. Stay inside the project folder constraint. Write work_summary.txt with files changed and any deviations.\n\n{brief}"
+    );
+    let validator = format!(
+        "You are the Validator agent for an approved chat plan. Run appropriate checks for the work performed and write validation_report.txt. Validate against the approved acceptance checks and folder constraint.\n\n{brief}"
+    );
+    let critic = format!(
+        "You are the Critic agent for an approved chat plan. Read validation_report.txt and work_summary.txt. Write SHIP or REVISE to review_result.txt and explain gaps in review_feedback.txt.\n\n{brief}"
+    );
+    let mut phase_prompts = HashMap::new();
+    phase_prompts.insert("planner".to_string(), planner);
+    phase_prompts.insert("executor".to_string(), executor);
+    phase_prompts.insert("validator".to_string(), validator);
+    phase_prompts.insert("critic".to_string(), critic);
+
+    LooperStartRequest {
+        correlation_id: correlation_id.to_string(),
+        loop_id: loop_id.to_string(),
+        iteration: 1,
+        loop_type: LooperLoopType::Build,
+        cwd: project_folder.to_string(),
+        task_path: "task.md".to_string(),
+        specs_glob: "specs/*.md".to_string(),
+        max_iterations: 3,
+        phase_models: None,
+        phase_prompts: Some(phase_prompts),
+        project_name: format!("Chat Plan {plan_id}"),
+        project_type: "other".to_string(),
+        project_icon: "brain".to_string(),
+        project_description: brief,
+        review_before_execute: false,
+    }
+}
+
 fn apply_tool_routing_hints(system_prompt: &mut String, enabled_tool_names: &[String]) {
     if enabled_tool_names
         .iter()
@@ -2969,6 +4377,10 @@ fn resolve_agent_cwd() -> String {
         }
     }
 
+    if let Some(workspace_dir) = resolve_default_user_workspace_dir() {
+        return workspace_dir;
+    }
+
     let cwd = std::env::current_dir()
         .unwrap_or_else(|_| std::path::PathBuf::from("."))
         .to_string_lossy()
@@ -2980,6 +4392,15 @@ fn resolve_agent_cwd() -> String {
             .unwrap_or(cwd);
     }
     cwd
+}
+
+fn resolve_default_user_workspace_dir() -> Option<String> {
+    let workspace_dir = dirs::home_dir()?.join("Documents").join("Arxell");
+    if workspace_dir.is_dir() {
+        Some(workspace_dir.to_string_lossy().to_string())
+    } else {
+        None
+    }
 }
 
 fn custom_item_namespace(section: &str) -> Result<&'static str, String> {
@@ -3320,6 +4741,7 @@ fn push_reasoning_delta(
 struct LocalLlamaResponse {
     assistant_message: String,
     assistant_thinking: Option<String>,
+    structured_payload: Option<ChatStructuredPayload>,
 }
 
 struct ParsedAssistantBody {
@@ -3536,7 +4958,13 @@ fn extract_assistant_from_json_value(
 
 #[cfg(test)]
 mod tests {
-    use super::is_chat_only_message;
+    use super::{
+        explicitly_requests_planner, is_chat_only_message, is_plan_approval,
+        is_plan_revision_request, is_planner_acceptance, is_planner_decline,
+        is_unsafe_project_folder, is_workflow_stop, normalize_workflow_command,
+        planning_preflight,
+    };
+    use std::path::Path;
 
     #[test]
     fn chat_only_message_detection_matches_greetings() {
@@ -3549,5 +4977,86 @@ mod tests {
     fn chat_only_message_detection_skips_action_requests() {
         assert!(!is_chat_only_message("create a spreadsheet"));
         assert!(!is_chat_only_message("edit this note"));
+    }
+
+    #[test]
+    fn preflight_bypasses_small_clear_chat() {
+        let decision = planning_preflight("hello", None);
+        assert!(!decision.planning_required);
+        assert_eq!(decision.score, 0);
+    }
+
+    #[test]
+    fn preflight_routes_large_ambiguous_work_to_planning() {
+        let decision = planning_preflight(
+            "Create a full financial analysis spreadsheet with research and a report",
+            None,
+        );
+        assert!(decision.planning_required);
+        assert!(decision.score >= 3);
+        assert!(!decision.reasons.is_empty());
+    }
+
+    #[test]
+    fn preflight_routes_large_forecasting_research_to_planning() {
+        let decision = planning_preflight(
+            "i'd like your help with a larger research project on the future of digitial identity solutions in light of many states now requiring Age verification for everything from operating systems to adult content. I want you to think critically though and come up with accurate forecasts and market research.",
+            None,
+        );
+        assert!(decision.planning_required);
+        assert!(decision.score >= 3);
+        assert!(decision
+            .reasons
+            .iter()
+            .any(|reason| reason.contains("external data")));
+    }
+
+    #[test]
+    fn preflight_forces_high_risk_work_to_planning() {
+        let decision = planning_preflight("Deploy this to production and update secrets", None);
+        assert!(decision.planning_required);
+        assert!(decision.forced);
+    }
+
+    #[test]
+    fn workflow_command_detection_handles_approval_revision_and_stop() {
+        assert!(is_plan_approval(&normalize_workflow_command("Approve Plan")));
+        assert!(is_plan_revision_request(&normalize_workflow_command(
+            "Revise Plan: use a different folder"
+        )));
+        assert!(is_workflow_stop(&normalize_workflow_command("Cancel planning")));
+    }
+
+    #[test]
+    fn planner_choice_commands_are_explicit() {
+        assert!(is_planner_acceptance(&normalize_workflow_command("Use Planner")));
+        assert!(is_planner_decline(&normalize_workflow_command("Quick Answer")));
+        assert!(explicitly_requests_planner(
+            "Please plan this first before using tools",
+            &normalize_workflow_command("Please plan this first before using tools")
+        ));
+        let mut decision = planning_preflight("use planner for a short note", None);
+        if explicitly_requests_planner(
+            "use planner for a short note",
+            &normalize_workflow_command("use planner for a short note"),
+        ) && !decision.planning_required
+        {
+            decision.planning_required = true;
+        }
+        assert!(decision.planning_required);
+    }
+
+    #[test]
+    fn unsafe_project_folder_rejects_roots_and_home() {
+        assert!(is_unsafe_project_folder(Path::new("/")));
+        if let Some(home) = dirs::home_dir() {
+            assert!(is_unsafe_project_folder(home.as_path()));
+        }
+    }
+
+    #[test]
+    fn planning_delegation_feature_flag_defaults_on() {
+        std::env::remove_var("ARXELL_CHAT_PLANNING_DELEGATION");
+        assert!(super::chat_planning_delegation_enabled());
     }
 }

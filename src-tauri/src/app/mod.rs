@@ -55,15 +55,6 @@ impl AppContext {
             Arc::clone(&api_registry),
         ));
 
-        let service = Arc::new(chat_service::ChatService::new(
-            hub.clone(),
-            memory,
-            conversation_repo,
-            Arc::clone(&api_registry),
-            Arc::clone(&workspace_tools),
-            Arc::clone(&sheets),
-            Arc::clone(&web_search),
-        ));
         let terminal = Arc::new(terminal_service::TerminalService::new(hub.clone()));
         let runtime = Arc::new(runtime_service::LlamaRuntimeService::new(hub.clone()));
         let user_projects = Arc::new(user_projects_service::UserProjectsService::new());
@@ -86,6 +77,16 @@ impl AppContext {
         looper.load_from_disk();
         #[cfg(feature = "tauri-runtime")]
         looper.start_event_listener();
+        let service = Arc::new(chat_service::ChatService::new(
+            hub.clone(),
+            memory,
+            conversation_repo,
+            Arc::clone(&api_registry),
+            Arc::clone(&workspace_tools),
+            Arc::clone(&sheets),
+            Arc::clone(&web_search),
+            Arc::clone(&looper),
+        ));
         let voice = Arc::new(voice_runtime_service::VoiceRuntimeService::new(hub.clone()));
 
         let ipc = IpcLayer::new(

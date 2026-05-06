@@ -5,7 +5,7 @@ import {
   type LlamaRuntimeStartArgs,
   shouldVerifyEngineBeforeStart
 } from "./llamaCppRuntime";
-import type { LlamaRuntimeStatusResponse } from "../contracts";
+import type { LlamaRuntimeStartRequest, LlamaRuntimeStatusResponse } from "../contracts";
 
 export interface LlamaCppControllerDeps {
   nextCorrelationId: () => string;
@@ -53,7 +53,7 @@ export async function startRuntime(
   state: LlamaStateSlice,
   clientRef: {
     installLlamaRuntimeEngine: (req: { correlationId: string; engineId: string }) => Promise<unknown>;
-    startLlamaRuntime: (req: Record<string, unknown>) => Promise<unknown>;
+    startLlamaRuntime: (req: LlamaRuntimeStartRequest) => Promise<unknown>;
   } | null,
   args: LlamaRuntimeStartArgs,
   deps: Pick<LlamaCppControllerDeps, "nextCorrelationId" | "refreshLlamaRuntime" | "persistLlamaModelPath" | "persistLlamaEngineId" | "pushConsoleEntry">
@@ -103,10 +103,11 @@ export async function startRuntime(
     if (!refreshedEngine?.isReady) {
       const canProceedWithGpu = canProceedWithUnreadyGpuEngine(refreshedEngine);
       if (canProceedWithGpu) {
+        const engineLabel = refreshedEngine?.label ?? args.engineId;
         deps.pushConsoleEntry(
           "warn",
           "browser",
-          `Proceeding with ${refreshedEngine.label} even though prerequisite probes are inconclusive.`
+          `Proceeding with ${engineLabel} even though prerequisite probes are inconclusive.`
         );
       } else {
         throw buildEngineNotReadyError(refreshedEngine, args.engineId);

@@ -566,7 +566,27 @@ jobs:
 
       - name: Build Tauri app bundle
         working-directory: src-tauri
-        run: cargo tauri build -- --features tauri-runtime
+        shell: bash
+        env:
+          XDG_CACHE_HOME: ${{ runner.temp }}/xdg-cache
+        run: |
+          set -euo pipefail
+          mkdir -p "${XDG_CACHE_HOME}"
+          case "${{ matrix.platform.os }}" in
+            ubuntu-latest)
+              cargo tauri build --bundles deb appimage -- --features tauri-runtime
+              ;;
+            windows-latest)
+              cargo tauri build --bundles msi -- --features tauri-runtime
+              ;;
+            macos-13)
+              cargo tauri build --bundles dmg -- --features tauri-runtime
+              ;;
+            *)
+              echo "Unsupported platform: ${{ matrix.platform.os }}" >&2
+              exit 1
+              ;;
+          esac
 
       - name: Verify Tauri bundle output
         shell: bash

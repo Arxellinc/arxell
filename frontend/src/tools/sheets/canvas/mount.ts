@@ -1002,7 +1002,7 @@ function buildFormulaBar(
 
   const formulaIconSlot = document.createElement("div");
   formulaIconSlot.className = "sheets-formula-icon-slot";
-  formulaIconSlot.innerHTML = iconHtml("square-function", { size: 22, tone: "dark" });
+  formulaIconSlot.innerHTML = iconHtml("square-function", { size: 24, tone: "dark" });
 
   row.appendChild(label);
   row.appendChild(formulaIconSlot);

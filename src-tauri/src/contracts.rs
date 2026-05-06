@@ -33,6 +33,187 @@ pub struct ChatSendResponse {
     pub assistant_message: String,
     pub assistant_thinking: Option<String>,
     pub correlation_id: String,
+    pub structured_payload: Option<ChatStructuredPayload>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ChatWorkflowMode {
+    Normal,
+    PlanningOffered,
+    Discovery,
+    AwaitingPlanApproval,
+    DelegatedExecution,
+    Blocked,
+    Completed,
+    Failed,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ClarificationOption {
+    pub id: String,
+    pub label: String,
+    pub summary: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ClarificationQuestion {
+    pub id: String,
+    pub title: String,
+    pub prompt: String,
+    pub options: Vec<ClarificationOption>,
+    pub recommended_option_id: Option<String>,
+    pub allow_custom: bool,
+    pub required: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ClarificationAnswer {
+    pub question_id: String,
+    pub selected_option_id: Option<String>,
+    pub freeform_text: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum PlanRiskTier {
+    Low,
+    Medium,
+    High,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum PlanDelegationMode {
+    None,
+    Looper,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct PlanArtifact {
+    pub id: String,
+    pub version: u32,
+    pub objective: String,
+    pub project_folder: String,
+    pub scope: Vec<String>,
+    pub non_goals: Vec<String>,
+    pub assumptions: Vec<String>,
+    pub deliverables: Vec<String>,
+    pub allowed_tools: Vec<String>,
+    pub data_policy: String,
+    pub acceptance_checks: Vec<String>,
+    pub risk_tier: PlanRiskTier,
+    pub delegation_mode: PlanDelegationMode,
+    pub created_at_ms: i64,
+    pub source_conversation_id: String,
+    pub plan_hash: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct PlanApprovalRequest {
+    pub conversation_id: String,
+    pub correlation_id: String,
+    pub plan_id: String,
+    pub plan_version: u32,
+    pub plan_hash: String,
+    pub approved: bool,
+    pub revision_request: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct DelegationStartRequest {
+    pub conversation_id: String,
+    pub correlation_id: String,
+    pub approved_plan: PlanArtifact,
+    pub approved_plan_hash: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum DelegationRunStatus {
+    Starting,
+    Planner,
+    Executor,
+    Validator,
+    Critic,
+    Blocked,
+    Completed,
+    Failed,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct DelegationStatusCard {
+    pub conversation_id: String,
+    pub plan_id: String,
+    pub loop_id: Option<String>,
+    pub status: DelegationRunStatus,
+    pub phase: Option<String>,
+    pub checkpoint_summary: Option<String>,
+    pub updated_at_ms: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum PlanDeltaStatus {
+    Proposed,
+    Approved,
+    Rejected,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct PlanDelta {
+    pub id: String,
+    pub plan_id: String,
+    pub conversation_id: String,
+    pub reason: String,
+    pub requested_changes: Vec<String>,
+    pub acceptance_check_changes: Vec<String>,
+    pub status: PlanDeltaStatus,
+    pub created_at_ms: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ChatStructuredPayload {
+    PlannerOffer {
+        title: String,
+        prompt: String,
+        reasons: Vec<String>,
+    },
+    Clarification {
+        title: String,
+        questions: Vec<ClarificationQuestion>,
+    },
+    PlanApproval {
+        plan: PlanArtifact,
+    },
+    DelegationStatus {
+        status: DelegationStatusCard,
+    },
+    PlanDelta {
+        delta: PlanDelta,
+    },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ChatWorkflowState {
+    pub conversation_id: String,
+    pub mode: ChatWorkflowMode,
+    pub original_user_message: Option<String>,
+    pub active_plan_id: Option<String>,
+    pub active_plan_hash: Option<String>,
+    pub active_loop_id: Option<String>,
+    pub pending_reason: Option<String>,
+    pub updated_at_ms: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

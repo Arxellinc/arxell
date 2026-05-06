@@ -215,14 +215,14 @@ export function createWorkspaceToolsRuntime(
     stopFlowRun: async () => {},
     setFlowPaused: async (_paused) => {},
     nudgeFlowRun: async (_message) => {},
-    getActiveWebTab: () => getActiveWebTab(state),
+    getActiveWebTab: () => getActiveWebTab(state as any),
     withActiveWebTab: (mutator) => {
-      withActiveWebTab(state, mutator);
+      withActiveWebTab(state as any, mutator);
     },
     ensureWebTabs: () => {
-      ensureWebTabs(state, { createWebTab: deps.createWebTab });
+      ensureWebTabs(state as any, { createWebTab: deps.createWebTab });
     },
-    hasVerifiedSearchConnection: () => hasVerifiedSearchConnection(state),
+    hasVerifiedSearchConnection: () => hasVerifiedSearchConnection(state as any),
     listFilesDirectory: async (path) => {
       await listFilesDirectory(state, filesDeps, path);
     },
@@ -363,13 +363,13 @@ export function createWorkspaceToolsRuntime(
       await createNewDocsFile(state as never, notepadDeps as never, path);
     },
     createAndActivateWebTab: () => {
-      createAndActivateWebTab(state, { createWebTab: deps.createWebTab });
+      createAndActivateWebTab(state as any, { createWebTab: deps.createWebTab });
     },
     runWebSearch: async () => {
-      await runWebSearch(state, webDeps);
+      await runWebSearch(state as any, webDeps);
     },
     saveWebSearchSetup: async () => {
-      await saveWebSearchSetup(state, webDeps);
+      await saveWebSearchSetup(state as any, webDeps);
     }
   };
 }

@@ -19,7 +19,8 @@ function createSlice(): TasksRuntimeSlice {
     tasksSortKey: "createdAt",
     tasksSortDirection: "desc",
     tasksDetailsCollapsed: false,
-    tasksJsonDraft: ""
+    tasksJsonDraft: "",
+    taskNotifications: []
   };
 }
 

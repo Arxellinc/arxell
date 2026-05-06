@@ -1,4 +1,4 @@
-import type { LlamaRuntimeEngine, LlamaRuntimeStatusResponse } from "../contracts";
+import type { LlamaRuntimeEngine, LlamaRuntimeStartRequest, LlamaRuntimeStatusResponse } from "../contracts";
 
 export interface LlamaRuntimeStartArgs {
   engineId: string;
@@ -116,7 +116,7 @@ export function buildEngineNotReadyError(engine: LlamaRuntimeEngine | null | und
   );
 }
 
-export function buildLlamaRuntimeStartRequest(args: LlamaRuntimeStartArgs, correlationId: string): Record<string, unknown> {
+export function buildLlamaRuntimeStartRequest(args: LlamaRuntimeStartArgs, correlationId: string): LlamaRuntimeStartRequest {
   return {
     correlationId,
     engineId: args.engineId,

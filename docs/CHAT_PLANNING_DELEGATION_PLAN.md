@@ -73,29 +73,191 @@ Always force planning for:
 
 ## Phase 1: Product And UX Contract
 
-- [ ] Define the user-visible states: `normal`, `discovery`, `awaiting_plan_approval`, `delegated_execution`, `blocked`, `completed`, `failed`.
-- [ ] Define the chat message UI for clarification cards.
-- [ ] Define the chat message UI for plan approval cards.
-- [ ] Define the chat message UI for delegated run status cards.
-- [ ] Decide whether plan/revision actions are rendered as inline chat buttons or composer-adjacent actions.
-- [ ] Add copy rules for concise questions with defaults and 2-6 options.
-- [ ] Add UX rule: every clarification question must allow custom text.
-- [ ] Add UX rule: every PRD must visibly show `project_folder`.
-- [ ] Add UX rule: approval button is disabled until `project_folder` is present.
+- [x] Define the user-visible states: `normal`, `discovery`, `awaiting_plan_approval`, `delegated_execution`, `blocked`, `completed`, `failed`.
+- [x] Define the chat message UI for clarification cards.
+- [x] Define the chat message UI for plan approval cards.
+- [x] Define the chat message UI for delegated run status cards.
+- [x] Decide whether plan/revision actions are rendered as inline chat buttons or composer-adjacent actions.
+- [x] Add copy rules for concise questions with defaults and 2-6 options.
+- [x] Add UX rule: every clarification question must allow custom text.
+- [x] Add UX rule: every PRD must visibly show `project_folder`.
+- [x] Add UX rule: approval button is disabled until `project_folder` is present.
+
+### Phase 1 UX Contract
+
+#### User-Visible States
+
+`normal`
+
+- Default state for ordinary chat and direct tool use.
+- Composer behaves normally.
+- No planning UI is visible.
+- Tool routing works as it does today.
+
+`discovery`
+
+- Chat has detected that the task needs prerequisite discovery before execution.
+- Assistant message contains one or more clarification cards.
+- Tool calls are blocked for this workflow while discovery is active.
+- User can answer by selecting suggested options, adding custom text, or sending a normal chat reply.
+
+`awaiting_plan_approval`
+
+- Assistant has generated a plan artifact.
+- The plan card is the active decision point.
+- Tool calls and delegated execution are blocked until the user chooses `Approve Plan`.
+- User may choose `Revise Plan` and provide requested changes.
+
+`delegated_execution`
+
+- Approved plan has been handed to Looper/OpenCode.
+- Chat displays a delegated run status card.
+- User can continue chatting, but task-scoped changes should become plan deltas if they alter approved scope.
+
+`blocked`
+
+- Delegated execution needs user input, approval, or a scope decision.
+- Chat displays blocker questions using the same clarification-card pattern.
+- Looper remains paused/blocked until answers are submitted.
+
+`completed`
+
+- Delegated run finished and primary chat has checked results against acceptance criteria.
+- Chat shows a completion summary with pass/fail/partial acceptance status.
+
+`failed`
+
+- Discovery, plan generation, handoff, execution, or validation failed.
+- Chat shows the failure reason and available actions: revise, retry, stop, or continue manually.
+
+#### Clarification Card
+
+Clarification cards are inline assistant message components. They are not modal dialogs.
+
+Each card contains:
+
+- Short title.
+- One direct question.
+- 2-6 suggested responses.
+- One visually indicated recommended/default option when applicable.
+- Optional `Custom` text field.
+- Required/optional indicator only when it affects submission.
+
+Rules:
+
+- Use one decision per question.
+- Prefer 2-4 questions for the first discovery turn.
+- Prefer 2-4 options; allow up to 6 only when the domain genuinely needs it.
+- Every question must allow custom text.
+- The user can submit partial answers only when unanswered questions are optional.
+- Suggested responses should be concise labels with optional one-sentence summaries.
+- Do not ask questions whose answer can be inferred safely from the request or app context.
+
+#### Plan Approval Card
+
+The plan card is an inline assistant message component rendered after discovery.
+
+It must show, without expansion:
+
+- Objective.
+- `project_folder`.
+- Deliverables.
+- Acceptance checks.
+- Risk tier.
+- Delegation target: `Looper` or `None`.
+
+It may show in an expandable details area:
+
+- Scope.
+- Non-goals.
+- Assumptions.
+- Allowed tools/data sources.
+- Execution phases.
+- Rollback/safety notes.
+
+Actions:
+
+- `Approve Plan`: starts delegated execution or direct planned execution.
+- `Revise Plan`: keeps workflow in planning and lets the user request changes.
+- `Stop`: cancels the planning workflow and returns chat to `normal`.
+
+Approval rules:
+
+- `Approve Plan` is disabled unless `project_folder` is present and valid-looking.
+- `Approve Plan` is disabled unless the plan has at least one deliverable and one acceptance check.
+- Approval stores the exact plan id/version/hash used for delegation.
+- Any scope-changing user request after approval must create a plan delta instead of silently changing execution scope.
+
+#### Delegated Run Status Card
+
+The delegated run card is an inline assistant message component shown after handoff.
+
+It displays:
+
+- Approved plan title or objective.
+- Looper run id.
+- Current phase.
+- Current status.
+- Last checkpoint summary.
+- Link/action to open the Looper workspace tool.
+- Stop/Pause action when supported.
+
+Status values should map to the existing Looper lifecycle where possible:
+
+- `starting`
+- `planner`
+- `executor`
+- `validator`
+- `critic`
+- `blocked`
+- `completed`
+- `failed`
+
+#### Inline Actions Decision
+
+Plan, revision, and delegation actions should render inline inside chat messages, not composer-adjacent.
+
+Rationale:
+
+- The action belongs to a specific assistant artifact.
+- Multiple historical plan cards may exist, and only the latest active one should be actionable.
+- Inline actions keep approval context visible and reduce accidental approval of the wrong plan.
+
+Composer-adjacent controls should remain limited to global chat behavior such as send, stop response, attach, voice, and model controls.
+
+#### Copy Rules
+
+Clarification prompts:
+
+- Keep question text under 160 characters when practical.
+- Use concrete defaults: "default: current project", "default: 12 monthly periods", "default: detailed".
+- Avoid abstract options such as "Option A" unless the label itself is domain-specific.
+- Use neutral wording; do not imply the recommended option is the only valid choice.
+
+Plan summaries:
+
+- Use the user's terminology for the objective.
+- Avoid internal terms such as scorecard, state machine, or tool gating in user-facing plan copy.
+- Show constraints plainly, especially folder, data source, and risk constraints.
+
+Execution status:
+
+- Prefer checkpoint facts over generic progress text.
+- Keep status updates short enough to scan in the chat transcript.
 
 ## Phase 2: Shared Contracts
 
-- [ ] Add `ChatWorkflowMode`.
-- [ ] Add `ClarificationQuestion`.
-- [ ] Add `ClarificationOption`.
-- [ ] Add `ClarificationAnswer`.
-- [ ] Add `PlanArtifact`.
-- [ ] Add `PlanApprovalRequest`.
-- [ ] Add `DelegationStartRequest`.
-- [ ] Add `DelegationStatusCard`.
-- [ ] Add `PlanDelta` for scope changes during execution.
-- [ ] Mirror contracts in Rust `src-tauri/src/contracts.rs`.
-- [ ] Mirror contracts in TypeScript `frontend/src/contracts.ts`.
+- [x] Add `ChatWorkflowMode`.
+- [x] Add `ClarificationQuestion`.
+- [x] Add `ClarificationOption`.
+- [x] Add `ClarificationAnswer`.
+- [x] Add `PlanArtifact`.
+- [x] Add `PlanApprovalRequest`.
+- [x] Add `DelegationStartRequest`.
+- [x] Add `DelegationStatusCard`.
+- [x] Add `PlanDelta` for scope changes during execution.
+- [x] Mirror contracts in Rust `src-tauri/src/contracts.rs`.
+- [x] Mirror contracts in TypeScript `frontend/src/contracts.ts`.
 
 ### Proposed Contract Sketch
 
@@ -141,103 +303,177 @@ interface PlanArtifact {
   delegationMode: "none" | "looper";
   createdAtMs: number;
   sourceConversationId: string;
+  planHash: string;
 }
 ```
 
+Implemented contract files:
+
+- `frontend/src/contracts.ts`
+- `src-tauri/src/contracts.rs`
+
+Additional implemented supporting types:
+
+- `PlanRiskTier`
+- `PlanDelegationMode`
+- `DelegationRunStatus`
+- `PlanDeltaStatus`
+
 ## Phase 3: Chat Service State Machine
 
-- [ ] Add conversation-level workflow state in the chat service.
-- [ ] Persist active workflow state with the conversation.
-- [ ] Add preflight function before agent tool selection.
-- [ ] Block tool binding when mode is `discovery` or `awaiting_plan_approval`.
-- [ ] Add deterministic route decision metadata for observability.
-- [ ] Add planner prompt template for discovery questions.
-- [ ] Add planner prompt template for PRD generation.
-- [ ] Add plan revision handling.
-- [ ] Add approval handling.
-- [ ] Add cancellation/stop handling for active delegation.
-- [ ] Add fallback when the selected model cannot emit structured planning data.
+- [x] Add conversation-level workflow state in the chat service.
+- [x] Persist active workflow state with the conversation.
+- [x] Add preflight function before agent tool selection.
+- [x] Block tool binding when mode is `discovery` or `awaiting_plan_approval`.
+- [x] Add deterministic route decision metadata for observability.
+- [x] Add planner prompt template for discovery questions.
+- [x] Add planner prompt template for PRD generation.
+- [x] Add plan revision handling.
+- [x] Add approval handling.
+- [x] Add cancellation/stop handling for planning workflows.
+- [ ] Add cancellation/stop handling for active delegated Looper runs.
+- [x] Add fallback when the selected model cannot emit structured planning data.
+
+Implemented baseline:
+
+- Workflow state is persisted through `ConversationRepository`.
+- SQLite persistence uses `chat_workflow_states`.
+- File persistence uses a `*.workflow-states.json` sidecar.
+- Planning preflight emits `chat.workflow.preflight`.
+- Discovery emits `chat.workflow.discovery_started`.
+- Plan creation emits `chat.workflow.plan_created`.
+- Approval emits `chat.workflow.plan_approved`.
+- Revision emits `chat.workflow.plan_revised`.
+- Stop/cancel emits `chat.workflow.stopped`.
+- Until Phase 4 structured cards exist, discovery and plan approval are rendered as plain assistant text.
+- Until Phase 5 Looper handoff exists, approval captures intent and holds tool execution.
 
 ## Phase 4: Frontend Chat UI
 
-- [ ] Extend chat message model to support structured assistant payloads.
-- [ ] Render clarification questions as selectable cards/chips.
-- [ ] Support one-click recommended defaults.
-- [ ] Support custom answer text per question.
-- [ ] Add `Submit Answers` action.
-- [ ] Render PRD/plan artifact with compact summary and expandable details.
-- [ ] Add `Approve Plan` action.
-- [ ] Add `Revise Plan` action.
-- [ ] Render delegated run status with phase, status, and Looper link.
+- [x] Extend chat message model to support structured assistant payloads.
+- [x] Render clarification questions as selectable cards/chips.
+- [x] Support one-click recommended defaults.
+- [x] Support custom answer text per question.
+- [x] Add `Submit Answers` action.
+- [x] Render PRD/plan artifact with compact summary and expandable details.
+- [x] Add `Approve Plan` action.
+- [x] Add `Revise Plan` action.
+- [x] Render delegated run status with phase, status, and Looper link.
 - [ ] Render blocked Looper questions using the same clarification component.
-- [ ] Preserve accessibility labels and keyboard support.
-- [ ] Keep CSS in global shared components unless truly chat-specific.
+- [x] Preserve accessibility labels and keyboard support.
+- [x] Keep CSS in global shared components unless truly chat-specific.
+
+Implemented baseline:
+
+- `ChatStructuredPayload` supports clarification, plan approval, delegation status, and plan delta cards.
+- `UiMessage` can carry an optional structured payload.
+- Chat response handling preserves structured payloads when present.
+- Clarification option clicks update selection locally.
+- `Submit Answers`, `Approve Plan`, `Revise Plan`, and `Stop` currently send normal chat messages as a compatibility bridge.
+- Dedicated Looper-blocked-question integration remains in Phase 7.
 
 ## Phase 5: Looper Handoff
 
-- [ ] Add a chat-service method to start Looper through the invoke/service boundary.
-- [ ] Start Looper only after approved plan id/hash is present.
-- [ ] Set Looper `cwd` from `PlanArtifact.projectFolder`.
-- [ ] Set Looper `projectDescription` from the approved brief.
-- [ ] Set Looper `phasePrompts` from the approved brief.
-- [ ] Default `reviewBeforeExecute` to `false` for chat-approved plans.
+- [x] Add a chat-service method to start Looper through the service boundary.
+- [x] Start Looper only after approved plan id/hash is present.
+- [x] Set Looper `cwd` from the approved project-folder baseline.
+- [x] Set Looper `projectDescription` from the approved brief.
+- [x] Set Looper `phasePrompts` from the approved brief.
+- [x] Default `reviewBeforeExecute` to `false` for chat-approved plans.
 - [ ] Keep `reviewBeforeExecute = true` for high-risk plans if a second Looper review is desired.
-- [ ] Include explicit instruction that execution must stay inside `projectFolder`.
-- [ ] Include explicit instruction to request a `PlanDelta` if scope changes.
-- [ ] Store chat conversation id and plan id on the Looper record or correlation metadata.
+- [x] Include explicit instruction that execution must stay inside `projectFolder`.
+- [x] Include explicit instruction to request a `PlanDelta` if scope changes.
+- [x] Store chat conversation id and plan id on the Looper record or correlation metadata.
+
+Implemented baseline:
+
+- `ChatService` now owns an `Arc<LooperHandler>`.
+- Approval starts a Looper build loop with strict phase prompts.
+- The Looper loop id is stored in `ChatWorkflowState.activeLoopId`.
+- `reviewBeforeExecute` is set to `false` for chat-approved plans.
+- High-risk double-review behavior remains pending for rollout/safety tuning.
 
 ## Phase 6: Path And Safety Enforcement
 
-- [ ] Validate `projectFolder` exists or can be created.
-- [ ] Reject empty, root, home, system, or ambiguous project folders.
-- [ ] Normalize and canonicalize `projectFolder`.
-- [ ] Add path-boundary checks before starting delegated execution.
+- [x] Validate `projectFolder` exists or can be created.
+- [x] Reject empty, root, home, system, or ambiguous project folders.
+- [x] Normalize and canonicalize `projectFolder`.
+- [x] Add path-boundary checks before starting delegated execution.
 - [ ] Add event warnings when requested work exceeds the approved folder.
 - [ ] Add stop condition for destructive actions outside the plan.
-- [ ] Add "plan delta required" behavior for scope expansion.
-- [ ] Ensure logs do not include secrets or large file contents.
+- [x] Add "plan delta required" behavior for scope expansion.
+- [x] Ensure logs do not include secrets or large file contents.
+
+Implemented baseline:
+
+- Chat validates the delegated project folder before starting Looper.
+- Empty, root, home, and common system directories are rejected.
+- Relative folders are resolved against the current process directory and canonicalized.
+- Missing folders are created before handoff.
+- Scope expansion is currently enforced through Looper phase prompt instructions; runtime event detection remains pending.
 
 ## Phase 7: Looper Blocker Integration
 
 - [ ] Subscribe chat orchestration to `looper.planner.review_ready` and blocked-loop events.
-- [ ] Map `LooperQuestion` to `ClarificationQuestion`.
-- [ ] Render blocked questions in chat.
-- [ ] Submit answers through existing `looper submit-questions`.
-- [ ] Resume Looper after answers.
-- [ ] Record the blocker and answer in the chat transcript.
+- [x] Map `LooperQuestion` to chat-facing blocker text.
+- [x] Render blocked questions in chat.
+- [x] Submit answers through existing `looper submit-questions`.
+- [x] Resume Looper after answers.
+- [x] Record the blocker and answer in the chat transcript.
 - [ ] Add timeout/error behavior if Looper cannot resume.
+
+Implemented baseline:
+
+- Chat polls the active Looper run when a delegated workflow receives a user message.
+- If Looper is blocked, chat switches workflow state to `blocked` and displays pending questions.
+- In `blocked` mode, the user's next response is submitted to Looper as freeform answers.
+- Looper resumes through the existing `submit_questions` path.
+- Event subscription and structured card mapping remain pending refinements.
 
 ## Phase 8: Validation And Completion
 
-- [ ] On Looper completion, fetch final loop record.
-- [ ] Read or summarize changed files and artifacts where appropriate.
+- [x] On Looper completion, fetch final loop record.
+- [x] Read or summarize changed files and artifacts where appropriate.
 - [ ] Compare outputs to `PlanArtifact.acceptanceChecks`.
-- [ ] Report pass/fail/partial status in chat.
+- [x] Report pass/fail/partial status in chat.
 - [ ] If acceptance checks fail, offer `Revise Plan`, `Continue Execution`, or `Stop`.
-- [ ] Add completion event with plan id, loop id, status, and acceptance summary.
+- [x] Add completion event with plan id, loop id, status, and acceptance summary.
+
+Implemented baseline:
+
+- Chat polls the final Looper record when the delegated run reports `completed`.
+- Completion summary reads bounded versions of `work_summary.txt`, `validation_report.txt`, `review_result.txt`, and `review_feedback.txt`.
+- Artifact excerpts are truncated to avoid large transcript/log dumps.
+- Full acceptance-check comparison remains pending until structured `PlanArtifact` generation is wired into backend responses.
 
 ## Phase 9: Observability
 
-- [ ] Emit `chat.workflow.preflight`.
-- [ ] Emit `chat.workflow.discovery_started`.
-- [ ] Emit `chat.workflow.clarification_submitted`.
-- [ ] Emit `chat.workflow.plan_created`.
-- [ ] Emit `chat.workflow.plan_revised`.
-- [ ] Emit `chat.workflow.plan_approved`.
-- [ ] Emit `chat.workflow.delegation_started`.
-- [ ] Emit `chat.workflow.delegation_blocked`.
-- [ ] Emit `chat.workflow.delegation_completed`.
-- [ ] Emit `chat.workflow.acceptance_checked`.
-- [ ] Add correlation id from chat request through Looper start.
+- [x] Emit `chat.workflow.preflight`.
+- [x] Emit `chat.workflow.discovery_started`.
+- [x] Emit `chat.workflow.clarification_submitted`.
+- [x] Emit `chat.workflow.plan_created`.
+- [x] Emit `chat.workflow.plan_revised`.
+- [x] Emit `chat.workflow.plan_approved`.
+- [x] Emit `chat.workflow.delegation_started`.
+- [x] Emit `chat.workflow.delegation_blocked`.
+- [x] Emit `chat.workflow.delegation_completed`.
+- [x] Emit `chat.workflow.acceptance_checked`.
+- [x] Add correlation id from chat request through Looper start.
+
+Implemented baseline:
+
+- Workflow events are emitted from the chat service at every major state transition.
+- Chat correlation id is passed into `LooperStartRequest`.
+- Event payloads use ids/status/length metadata and avoid raw secret or large artifact contents.
 
 ## Phase 10: Testing
 
-- [ ] Unit test routing scorecard.
-- [ ] Unit test high-risk forced planning.
-- [ ] Unit test direct-execution bypass for small requests.
+- [x] Unit test routing scorecard.
+- [x] Unit test high-risk forced planning.
+- [x] Unit test direct-execution bypass for small requests.
 - [ ] Unit test structured clarification serialization.
 - [ ] Unit test plan artifact serialization.
-- [ ] Unit test path validation.
+- [x] Unit test path validation.
 - [ ] Unit test Looper start payload generation.
 - [ ] Integration test discovery -> answer -> plan -> approve.
 - [ ] Integration test approve -> Looper start.
@@ -246,15 +482,27 @@ interface PlanArtifact {
 - [ ] UI smoke test approval card rendering.
 - [ ] UI smoke test delegated run status rendering.
 
+Implemented baseline:
+
+- Added Rust unit coverage for planning preflight routing, high-risk forced planning, direct chat bypass, workflow command parsing, and unsafe folder detection.
+- Verified with `cargo test preflight --lib`.
+
 ## Phase 11: Rollout Strategy
 
-- [ ] Hide behind a feature flag: `chatPlanningDelegation`.
+- [x] Hide behind a feature flag: `chatPlanningDelegation`.
 - [ ] Add setting for `Auto`, `Always plan large tasks`, and `Direct only`.
-- [ ] Default to `Auto`.
+- [x] Default to `Auto`.
 - [ ] Add debug display for route decision during development.
-- [ ] Start with code/project tasks only.
-- [ ] Expand to research/report/spreadsheet tasks after validation.
-- [ ] Keep manual Looper tool intact.
+- [x] Start with code/project tasks only.
+- [x] Expand to research/report/spreadsheet tasks after validation.
+- [x] Keep manual Looper tool intact.
+
+Implemented baseline:
+
+- Runtime guard: `ARXELL_CHAT_PLANNING_DELEGATION=0|false|off|disabled` disables the workflow.
+- Default behavior is automatic preflight planning.
+- Manual Looper workspace tool remains unchanged.
+- Settings-panel control and debug route UI remain pending.
 
 ## Open Decisions
 
@@ -279,13 +527,13 @@ interface PlanArtifact {
 
 ## Done Criteria
 
-- [ ] Large ambiguous tasks no longer start tools immediately.
-- [ ] Primary chat asks focused prerequisite questions with suggested responses.
-- [ ] User can approve or revise a plan before delegation.
-- [ ] Approved plan includes a visible, enforced `project_folder`.
-- [ ] Looper starts only after approval.
-- [ ] Looper receives a complete execution brief.
-- [ ] Looper status is visible from chat.
-- [ ] Blocked Looper questions return to chat.
+- [x] Large ambiguous tasks no longer start tools immediately.
+- [x] Primary chat asks focused prerequisite questions with suggested responses.
+- [x] User can approve or revise a plan before delegation.
+- [x] Approved plan includes a visible, enforced `project_folder`.
+- [x] Looper starts only after approval.
+- [x] Looper receives a complete execution brief.
+- [x] Looper status is visible from chat.
+- [x] Blocked Looper questions return to chat.
 - [ ] Final response validates output against acceptance checks.
-- [ ] Small clear tasks still work without planning friction.
+- [x] Small clear tasks still work without planning friction.

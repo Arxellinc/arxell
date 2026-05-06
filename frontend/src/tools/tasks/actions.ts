@@ -294,7 +294,7 @@ function normalizeEstimatedCostUsd(value: unknown): number {
   return Math.round(n * 10000) / 10000;
 }
 
-function normalizeRepeat(value: unknown): TaskRecord["repeat"] {
+function normalizeRepeat(value: unknown): NonNullable<TaskRecord["repeat"]> {
   const raw = typeof value === "string" ? value.trim().toLowerCase() : "";
   if (raw === "hourly" || raw === "daily" || raw === "weekly" || raw === "monthly" || raw === "yearly") return raw;
   return "none";

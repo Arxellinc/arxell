@@ -1511,6 +1511,210 @@ body {
   font-style: italic;
 }
 
+.chat-plan-inline {
+  display: grid;
+  gap: 0.38rem;
+  margin-top: 0.35rem;
+}
+
+.chat-plan-inline-body {
+  display: grid;
+  gap: 0.45rem;
+}
+
+.chat-plan-inline-prompt,
+.chat-plan-inline-note {
+  color: var(--muted);
+  font-size: var(--text-xs);
+  line-height: 1.35;
+}
+
+.chat-plan-inline-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.chat-plan-card {
+  border: 1px solid var(--line);
+  background: var(--surface-soft);
+  color: var(--ink);
+  border-radius: 6px;
+  overflow: hidden;
+  margin-bottom: 0.4rem;
+}
+
+.chat-plan-card-header {
+  min-height: 30px;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.35rem 0.5rem;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface-strong);
+}
+
+.chat-plan-card-icon {
+  display: inline-flex;
+  align-items: center;
+}
+
+.chat-plan-card-title {
+  min-width: 0;
+  font-size: var(--text-md);
+  font-weight: 600;
+  color: var(--ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chat-plan-badge {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 0.08rem 0.36rem;
+  font-size: var(--text-2xs);
+  color: var(--muted);
+  background: var(--surface);
+  text-transform: uppercase;
+}
+
+.chat-plan-card-body,
+.chat-plan-summary,
+.chat-plan-details,
+.chat-plan-list,
+.chat-plan-field,
+.chat-plan-checkpoint {
+  padding: 0.45rem 0.5rem;
+}
+
+.chat-plan-summary {
+  display: grid;
+  gap: 0.35rem;
+}
+
+.chat-plan-question {
+  display: grid;
+  gap: 0.38rem;
+  padding: 0.45rem 0;
+}
+
+.chat-plan-question + .chat-plan-question {
+  border-top: 1px solid var(--line);
+}
+
+.chat-plan-question-title,
+.chat-plan-list-label,
+.chat-plan-field span {
+  font-size: var(--text-xs);
+  color: var(--muted);
+  text-transform: uppercase;
+}
+
+.chat-plan-question-prompt,
+.chat-plan-field strong {
+  font-size: var(--text-sm);
+  color: var(--ink);
+  font-weight: 500;
+}
+
+.chat-plan-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.chat-plan-option {
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--ink);
+  min-height: 30px;
+  max-width: 100%;
+  padding: 0.28rem 0.45rem;
+  display: inline-grid;
+  gap: 0.12rem;
+  text-align: left;
+  cursor: pointer;
+}
+
+.chat-plan-option:hover {
+  background: var(--surface-hover);
+}
+
+.chat-plan-option.is-recommended {
+  border-color: var(--active-line);
+  background: var(--active-bg);
+}
+
+.chat-plan-option-label {
+  font-size: var(--text-sm);
+  font-weight: 600;
+}
+
+.chat-plan-option-summary {
+  font-size: var(--text-xs);
+  color: var(--muted);
+}
+
+.chat-plan-custom {
+  width: 100%;
+  min-height: 58px;
+  resize: vertical;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--ink);
+  padding: 0.4rem;
+  font: inherit;
+  font-size: var(--text-sm);
+}
+
+.chat-plan-list ul {
+  margin: 0.25rem 0 0;
+  padding-left: 1rem;
+}
+
+.chat-plan-list li {
+  margin: 0.14rem 0;
+}
+
+.chat-plan-field {
+  display: grid;
+  gap: 0.18rem;
+}
+
+.chat-plan-field code {
+  color: var(--ink);
+  word-break: break-word;
+}
+
+.chat-plan-details {
+  border-top: 1px solid var(--line);
+}
+
+.chat-plan-details summary {
+  cursor: pointer;
+  color: var(--muted);
+  font-size: var(--text-sm);
+}
+
+.chat-plan-checkpoint {
+  border-top: 1px solid var(--line);
+  color: var(--muted);
+  white-space: pre-wrap;
+}
+
+.chat-plan-card-actions {
+  border-top: 1px solid var(--line);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  padding: 0.4rem 0.5rem;
+  background: var(--surface);
+}
+
 .message-thinking {
   margin-top: 0.22rem;
   border: 1px solid var(--line);
