@@ -1,4 +1,5 @@
 import type { AppEvent } from "../contracts";
+import { appendAppEvent } from "./events.js";
 
 interface SttStatusPayload {
   status: string;
@@ -58,7 +59,7 @@ export async function installTauriSttListeners(deps: {
           details: details || null
         }
       };
-      deps.state.events.push(syntheticEvent);
+      appendAppEvent(deps.state.events, syntheticEvent);
       if (source === "stt") {
         deps.state.stt.status = "error";
         deps.state.stt.message = message;

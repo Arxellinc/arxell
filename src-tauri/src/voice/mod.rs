@@ -1,4 +1,5 @@
 pub mod audio_bus;
+pub mod benchmark;
 pub mod control_bus;
 pub mod handoff;
 pub mod interruption_interface;

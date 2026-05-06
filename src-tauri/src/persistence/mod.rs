@@ -1,7 +1,7 @@
 use crate::app_paths;
+use crate::contracts::ChatWorkflowState;
 use crate::contracts::MessageRole;
 use crate::contracts::{ConversationMessageRecord, ConversationSummaryRecord};
-use crate::contracts::ChatWorkflowState;
 use rusqlite::{params, Connection};
 use serde_json::Deserializer;
 use std::collections::HashMap;
@@ -649,9 +649,7 @@ fn workflow_state_path(path: &Path) -> PathBuf {
     path.with_extension("workflow-states.json")
 }
 
-fn read_file_workflow_states(
-    path: &Path,
-) -> Result<HashMap<String, ChatWorkflowState>, String> {
+fn read_file_workflow_states(path: &Path) -> Result<HashMap<String, ChatWorkflowState>, String> {
     let state_path = workflow_state_path(path);
     if !state_path.exists() {
         return Ok(HashMap::new());
@@ -676,8 +674,7 @@ fn write_file_workflow_states(
     }
     let raw = serde_json::to_string_pretty(states)
         .map_err(|e| format!("failed serializing chat workflow state file: {e}"))?;
-    fs::write(&state_path, raw)
-        .map_err(|e| format!("failed writing chat workflow state file: {e}"))
+    fs::write(&state_path, raw).map_err(|e| format!("failed writing chat workflow state file: {e}"))
 }
 
 fn truncate_preview(input: &str, max_chars: usize) -> String {

@@ -1,4 +1,3 @@
-import { iconHtml } from "../../icons";
 import { renderToolToolbar } from "../ui/toolbar";
 import { resolveFileTabIcon } from "../ui/fileTabIcons";
 import { NOTEPAD_DATA_ATTR } from "../ui/constants";

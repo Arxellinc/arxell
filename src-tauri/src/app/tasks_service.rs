@@ -130,13 +130,13 @@ impl TaskAutomationService {
             "#,
         )
         .map_err(|e| format!("failed initializing tasks schema: {e}"))?;
-        ensure_column(&conn, "durable_tasks", "repeat", "TEXT NOT NULL DEFAULT 'none'")?;
         ensure_column(
             &conn,
             "durable_tasks",
-            "repeat_time_of_day_ms",
-            "INTEGER",
+            "repeat",
+            "TEXT NOT NULL DEFAULT 'none'",
         )?;
+        ensure_column(&conn, "durable_tasks", "repeat_time_of_day_ms", "INTEGER")?;
         ensure_column(
             &conn,
             "durable_tasks",
@@ -210,8 +210,16 @@ impl TaskAutomationService {
             .map_err(|_| "tasks write lock poisoned".to_string())?;
         let conn = self.open_connection()?;
         let now = now_ms();
-        let created = if task.created_at_ms > 0 { task.created_at_ms } else { now };
-        let updated = if task.updated_at_ms > 0 { task.updated_at_ms } else { now };
+        let created = if task.created_at_ms > 0 {
+            task.created_at_ms
+        } else {
+            now
+        };
+        let updated = if task.updated_at_ms > 0 {
+            task.updated_at_ms
+        } else {
+            now
+        };
         let normalized_state = if task.state == "draft" && task.risk_level == "low" {
             "approved".to_string()
         } else {
@@ -285,7 +293,11 @@ impl TaskAutomationService {
         })
     }
 
-    pub fn list_due_scheduled_tasks(&self, now_ms: i64, limit: usize) -> Result<Vec<DurableTaskRecord>, String> {
+    pub fn list_due_scheduled_tasks(
+        &self,
+        now_ms: i64,
+        limit: usize,
+    ) -> Result<Vec<DurableTaskRecord>, String> {
         let conn = self.open_connection()?;
         let mut stmt = conn
             .prepare(
@@ -318,7 +330,10 @@ impl TaskAutomationService {
             task.is_schedule_enabled,
             now_ms,
         );
-        let _guard = self.write_lock.lock().map_err(|_| "tasks write lock poisoned".to_string())?;
+        let _guard = self
+            .write_lock
+            .lock()
+            .map_err(|_| "tasks write lock poisoned".to_string())?;
         let conn = self.open_connection()?;
         conn.execute(
             "UPDATE durable_tasks SET next_run_at_ms = ?2, updated_at_ms = ?3 WHERE id = ?1",
@@ -338,7 +353,10 @@ impl TaskAutomationService {
         let mut rows = stmt
             .query(params![task_id])
             .map_err(|e| format!("failed querying task: {e}"))?;
-        let Some(row) = rows.next().map_err(|e| format!("failed reading task row: {e}"))? else {
+        let Some(row) = rows
+            .next()
+            .map_err(|e| format!("failed reading task row: {e}"))?
+        else {
             return Ok(None);
         };
         let task = row_to_task(row).map_err(|e| format!("failed mapping task row: {e}"))?;
@@ -351,8 +369,11 @@ impl TaskAutomationService {
             .lock()
             .map_err(|_| "tasks write lock poisoned".to_string())?;
         let conn = self.open_connection()?;
-        conn.execute("DELETE FROM durable_task_runs WHERE task_id = ?1", params![task_id])
-            .map_err(|e| format!("failed deleting task runs: {e}"))?;
+        conn.execute(
+            "DELETE FROM durable_task_runs WHERE task_id = ?1",
+            params![task_id],
+        )
+        .map_err(|e| format!("failed deleting task runs: {e}"))?;
         let changed = conn
             .execute("DELETE FROM durable_tasks WHERE id = ?1", params![task_id])
             .map_err(|e| format!("failed deleting task: {e}"))?;
@@ -456,14 +477,24 @@ impl TaskAutomationService {
         Ok(out)
     }
 
-    pub fn upsert_notification(&self, mut row: DurableNotificationRecord) -> Result<DurableNotificationRecord, String> {
-        let _guard = self.write_lock.lock().map_err(|_| "tasks write lock poisoned".to_string())?;
+    pub fn upsert_notification(
+        &self,
+        mut row: DurableNotificationRecord,
+    ) -> Result<DurableNotificationRecord, String> {
+        let _guard = self
+            .write_lock
+            .lock()
+            .map_err(|_| "tasks write lock poisoned".to_string())?;
         let conn = self.open_connection()?;
         let now = now_ms();
         if row.created_at_ms <= 0 {
             row.created_at_ms = now;
         }
-        row.updated_at_ms = if row.updated_at_ms > 0 { row.updated_at_ms } else { now };
+        row.updated_at_ms = if row.updated_at_ms > 0 {
+            row.updated_at_ms
+        } else {
+            now
+        };
         let actions_json = serde_json::to_string(&row.actions_json)
             .map_err(|e| format!("failed serializing notification actions: {e}"))?;
         conn.execute(
@@ -492,7 +523,10 @@ impl TaskAutomationService {
     }
 
     pub fn mark_notification_read(&self, id: &str, read: bool) -> Result<bool, String> {
-        let _guard = self.write_lock.lock().map_err(|_| "tasks write lock poisoned".to_string())?;
+        let _guard = self
+            .write_lock
+            .lock()
+            .map_err(|_| "tasks write lock poisoned".to_string())?;
         let conn = self.open_connection()?;
         let changed = conn
             .execute(
@@ -504,16 +538,27 @@ impl TaskAutomationService {
     }
 
     pub fn dismiss_notification(&self, id: &str) -> Result<bool, String> {
-        let _guard = self.write_lock.lock().map_err(|_| "tasks write lock poisoned".to_string())?;
+        let _guard = self
+            .write_lock
+            .lock()
+            .map_err(|_| "tasks write lock poisoned".to_string())?;
         let conn = self.open_connection()?;
         let changed = conn
-            .execute("DELETE FROM durable_notifications WHERE id = ?1", params![id])
+            .execute(
+                "DELETE FROM durable_notifications WHERE id = ?1",
+                params![id],
+            )
             .map_err(|e| format!("failed dismissing notification: {e}"))?;
         Ok(changed > 0)
     }
 }
 
-fn ensure_column(conn: &Connection, table: &str, column: &str, definition: &str) -> Result<(), String> {
+fn ensure_column(
+    conn: &Connection,
+    table: &str,
+    column: &str,
+    definition: &str,
+) -> Result<(), String> {
     let sql = format!("ALTER TABLE {table} ADD COLUMN {column} {definition}");
     match conn.execute(&sql, []) {
         Ok(_) => Ok(()),
@@ -577,8 +622,11 @@ fn compute_next_run_at_ms(
         return None;
     }
     let tz: Tz = repeat_timezone.parse().ok().unwrap_or(chrono_tz::UTC);
-    let anchor = scheduled_at_ms.or(repeat_time_of_day_ms.map(|tod| now_ms - (now_ms % 86_400_000) + tod));
-    let Some(mut next) = anchor else { return None; };
+    let anchor =
+        scheduled_at_ms.or(repeat_time_of_day_ms.map(|tod| now_ms - (now_ms % 86_400_000) + tod));
+    let Some(mut next) = anchor else {
+        return None;
+    };
     if repeat == "none" {
         return Some(next);
     }
@@ -591,7 +639,10 @@ fn compute_next_run_at_ms(
 
     let anchor_dt_utc = Utc.timestamp_millis_opt(anchor?).single()?;
     let anchor_local = anchor_dt_utc.with_timezone(&tz);
-    let mut probe = Utc.timestamp_millis_opt(now_ms).single()?.with_timezone(&tz);
+    let mut probe = Utc
+        .timestamp_millis_opt(now_ms)
+        .single()?
+        .with_timezone(&tz);
     if probe <= anchor_local {
         return Some(anchor_local.with_timezone(&Utc).timestamp_millis());
     }
@@ -607,15 +658,22 @@ fn compute_next_run_at_ms(
             "monthly" => {
                 let mut y = probe.year();
                 let mut m = probe.month() as i32 + 1;
-                if m > 12 { m = 1; y += 1; }
+                if m > 12 {
+                    m = 1;
+                    y += 1;
+                }
                 let d = anchor_local.day().min(days_in_month(y, m as u32));
-                tz.with_ymd_and_hms(y, m as u32, d, hh, mm, ss).single()?.with_nanosecond(ns)?
+                tz.with_ymd_and_hms(y, m as u32, d, hh, mm, ss)
+                    .single()?
+                    .with_nanosecond(ns)?
             }
             "yearly" => {
                 let y = probe.year() + 1;
                 let m = anchor_local.month();
                 let d = anchor_local.day().min(days_in_month(y, m));
-                tz.with_ymd_and_hms(y, m, d, hh, mm, ss).single()?.with_nanosecond(ns)?
+                tz.with_ymd_and_hms(y, m, d, hh, mm, ss)
+                    .single()?
+                    .with_nanosecond(ns)?
             }
             _ => break,
         };
@@ -633,7 +691,11 @@ fn days_in_month(year: i32, month: u32) -> u32 {
         4 | 6 | 9 | 11 => 30,
         2 => {
             let leap = (year % 4 == 0 && year % 100 != 0) || (year % 400 == 0);
-            if leap { 29 } else { 28 }
+            if leap {
+                29
+            } else {
+                28
+            }
         }
         _ => 30,
     }
@@ -737,7 +799,9 @@ mod tests {
             created_at_ms: 0,
             updated_at_ms: 0,
         };
-        let _ = service.upsert_notification(row).expect("upsert notification");
+        let _ = service
+            .upsert_notification(row)
+            .expect("upsert notification");
         let rows = service.list_notifications().expect("list notifications");
         assert!(rows.iter().any(|item| item.id == "N-test-1"));
         let _ = fs::remove_file(db);

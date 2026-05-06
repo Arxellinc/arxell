@@ -1,9 +1,9 @@
 #![cfg(feature = "tauri-runtime")]
 
+use std::collections::HashMap;
 use std::fs;
 use std::io::Read;
 use std::path::Path;
-use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
 
 static VOICE_DATA_CACHE: OnceLock<Mutex<HashMap<String, Vec<f32>>>> = OnceLock::new();
@@ -16,7 +16,11 @@ pub fn load_voice_style(path: &Path, token_len: usize) -> Result<Vec<f32>, Strin
     load_voice_style_named(path, None, token_len)
 }
 
-pub fn load_voice_style_named(path: &Path, voice_name: Option<&str>, token_len: usize) -> Result<Vec<f32>, String> {
+pub fn load_voice_style_named(
+    path: &Path,
+    voice_name: Option<&str>,
+    token_len: usize,
+) -> Result<Vec<f32>, String> {
     let cache_key = format!("{}::{}", path.display(), voice_name.unwrap_or(""));
     if let Ok(guard) = voice_cache().lock() {
         if let Some(values) = guard.get(&cache_key) {
@@ -68,7 +72,8 @@ fn load_voice_data_from_zip(data: &[u8], voice_name: Option<&str>) -> Result<Vec
         .unwrap_or_else(|| "af_heart.npy".to_string());
     let mut npy_bytes = Vec::new();
     {
-        let mut file = archive.by_name(&target)
+        let mut file = archive
+            .by_name(&target)
             .map_err(|e| format!("voice '{target}' not found in pack: {e}"))?;
         file.read_to_end(&mut npy_bytes)
             .map_err(|e| format!("failed reading npy: {e}"))?;
@@ -109,8 +114,7 @@ fn find_data_offset(_data: &[u8]) -> usize {
 }
 
 pub fn list_voices_in_pack(path: &Path) -> Result<Vec<String>, String> {
-    let bytes = fs::read(path)
-        .map_err(|e| format!("failed reading voices pack: {e}"))?;
+    let bytes = fs::read(path).map_err(|e| format!("failed reading voices pack: {e}"))?;
     if !bytes.starts_with(b"PK") {
         return Ok(vec![]);
     }
@@ -157,12 +161,17 @@ mod tests {
             eprintln!("skipping: voices-v1.0.bin not found");
             return;
         }
-        let style = load_voice_style_named(&path, Some("af_heart"), 10).expect("should load af_heart from pack");
+        let style = load_voice_style_named(&path, Some("af_heart"), 10)
+            .expect("should load af_heart from pack");
         assert_eq!(style.len(), 256);
 
-        let style2 = load_voice_style_named(&path, Some("am_adam"), 10).expect("should load am_adam from pack");
+        let style2 = load_voice_style_named(&path, Some("am_adam"), 10)
+            .expect("should load am_adam from pack");
         assert_eq!(style2.len(), 256);
-        assert_ne!(style, style2, "different voices should have different embeddings");
+        assert_ne!(
+            style, style2,
+            "different voices should have different embeddings"
+        );
     }
 
     #[test]
@@ -173,7 +182,11 @@ mod tests {
             return;
         }
         let voices = list_voices_in_pack(&path).expect("should list voices");
-        assert!(voices.len() > 10, "v1.0 pack should have many voices, got {}", voices.len());
+        assert!(
+            voices.len() > 10,
+            "v1.0 pack should have many voices, got {}",
+            voices.len()
+        );
         assert!(voices.contains(&"af_heart".to_string()));
         assert!(voices.contains(&"am_adam".to_string()));
         eprintln!("v1.0 pack has {} voices", voices.len());
@@ -187,7 +200,11 @@ mod tests {
                 continue;
             }
             let style = load_voice_style(&path, 5).expect("should load voice");
-            assert_eq!(style.len(), 256, "voice {name} should return 256-wide style");
+            assert_eq!(
+                style.len(),
+                256,
+                "voice {name} should return 256-wide style"
+            );
         }
     }
 

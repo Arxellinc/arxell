@@ -16,11 +16,11 @@ use crate::contracts::{
     ChatStructuredPayload, ChatWorkflowMode, ChatWorkflowState, ClarificationOption,
     ClarificationQuestion, ConversationMessageRecord, ConversationSummaryRecord,
     CustomItemDeleteRequest, CustomItemDeleteResponse, CustomItemUpsertRequest,
-    CustomItemUpsertResponse, EventSeverity, EventStage, MemoryDeleteRequest, MemoryDeleteResponse,
-    LooperLoopRecord, LooperLoopStatus, LooperLoopType, LooperQuestion, LooperQuestionAnswer,
-    LooperStartRequest, LooperStatusRequest, LooperSubmitQuestionsRequest, MemoryUpsertRequest,
-    MemoryUpsertResponse, MessageRole, ReferenceFileSetRequest, ReferenceFileSetResponse,
-    PlanArtifact, PlanDelegationMode, PlanRiskTier, SkillCreateRequest, SkillCreateResponse,
+    CustomItemUpsertResponse, EventSeverity, EventStage, LooperLoopRecord, LooperLoopStatus,
+    LooperLoopType, LooperQuestion, LooperQuestionAnswer, LooperStartRequest, LooperStatusRequest,
+    LooperSubmitQuestionsRequest, MemoryDeleteRequest, MemoryDeleteResponse, MemoryUpsertRequest,
+    MemoryUpsertResponse, MessageRole, PlanArtifact, PlanDelegationMode, PlanRiskTier,
+    ReferenceFileSetRequest, ReferenceFileSetResponse, SkillCreateRequest, SkillCreateResponse,
     Subsystem, SystemPromptSetRequest, SystemPromptSetResponse,
 };
 use crate::memory::MemoryManager;
@@ -41,8 +41,8 @@ use arx_rs::types::{
 use arx_rs::{Agent, AgentConfig, Session};
 use reqwest::StatusCode;
 use serde_json::json;
-use std::collections::{HashMap, HashSet};
 use std::collections::hash_map::DefaultHasher;
+use std::collections::{HashMap, HashSet};
 use std::hash::{Hash, Hasher};
 use std::path::Path;
 use std::path::PathBuf;
@@ -481,7 +481,8 @@ impl ChatService {
                             .as_deref()
                             .filter(|value| !value.trim().is_empty())
                             .unwrap_or(user_message);
-                        let preflight = preflight_from_pending_reason(state.pending_reason.as_deref());
+                        let preflight =
+                            preflight_from_pending_reason(state.pending_reason.as_deref());
                         return Ok(Some(LocalLlamaResponse {
                             assistant_message: render_discovery_questions(original, &preflight),
                             assistant_thinking: None,
@@ -526,10 +527,8 @@ impl ChatService {
                         .as_deref()
                         .filter(|value| !value.trim().is_empty())
                         .unwrap_or(user_message);
-                    let updated_answers = append_discovery_answer(
-                        state.pending_reason.as_deref(),
-                        user_message,
-                    );
+                    let updated_answers =
+                        append_discovery_answer(state.pending_reason.as_deref(), user_message);
                     let answer_count = discovery_answer_count(&updated_answers);
                     if answer_count < discovery_question_count() {
                         let next_state = ChatWorkflowState {
@@ -581,9 +580,18 @@ impl ChatService {
                             "answerLength": user_message.len(),
                         }),
                     ));
-                    self.emit_workflow_state_event(correlation_id, &next_state, "chat.workflow.plan_created");
+                    self.emit_workflow_state_event(
+                        correlation_id,
+                        &next_state,
+                        "chat.workflow.plan_created",
+                    );
                     return Ok(Some(LocalLlamaResponse {
-                        assistant_message: render_initial_plan_text(original, &updated_answers, &plan_id, &plan_hash),
+                        assistant_message: render_initial_plan_text(
+                            original,
+                            &updated_answers,
+                            &plan_id,
+                            &plan_hash,
+                        ),
                         assistant_thinking: None,
                         structured_payload: Some(ChatStructuredPayload::PlanApproval {
                             plan: build_plan_artifact(
@@ -851,10 +859,7 @@ impl ChatService {
                                     serde_json::to_string(&loop_record.status)
                                         .unwrap_or_else(|_| "running".to_string())
                                         .trim_matches('"'),
-                                    loop_record
-                                        .active_phase
-                                        .as_deref()
-                                        .unwrap_or("unknown")
+                                    loop_record.active_phase.as_deref().unwrap_or("unknown")
                                 ),
                                 assistant_thinking: None,
                                 structured_payload: None,
@@ -867,7 +872,9 @@ impl ChatService {
                         structured_payload: None,
                     }));
                 }
-                ChatWorkflowMode::Normal | ChatWorkflowMode::Completed | ChatWorkflowMode::Failed => {}
+                ChatWorkflowMode::Normal
+                | ChatWorkflowMode::Completed
+                | ChatWorkflowMode::Failed => {}
             }
         }
 
@@ -3094,7 +3101,10 @@ fn extend_history_items<'a>(
         items,
         "history",
         "history-conversation",
-        format!("Conversation ({count} message{})", if count == 1 { "" } else { "s" }),
+        format!(
+            "Conversation ({count} message{})",
+            if count == 1 { "" } else { "s" }
+        ),
         None,
         load_method,
         "runtime",
@@ -3179,14 +3189,19 @@ fn select_agent_tool_names(
     if matches_any(
         &text,
         &[
-            "document", "notepad", "draft", "spec", "markdown", "write-up", "notes",
-            "write a", "create a", "compose", "note", "memo",
+            "document", "notepad", "draft", "spec", "markdown", "write-up", "notes", "write a",
+            "create a", "compose", "note", "memo",
         ],
     ) {
         selected.extend(
-            ["notepad_inspect", "notepad_read", "notepad_write", "notepad_edit_lines"]
-                .iter()
-                .map(|item| item.to_string()),
+            [
+                "notepad_inspect",
+                "notepad_read",
+                "notepad_write",
+                "notepad_edit_lines",
+            ]
+            .iter()
+            .map(|item| item.to_string()),
         );
     }
     if matches_any(
@@ -3243,22 +3258,43 @@ fn select_agent_tool_names(
 
     if matches_any(
         &text,
-        &["that doc", "this doc", "that document", "this document", "add a line", "append", "update that note"],
-    ) && recent_user_text
-        .iter()
-        .any(|msg| matches_any(&msg.to_ascii_lowercase(), &["notepad", "document", "note", "draft", "memo"]))
-    {
+        &[
+            "that doc",
+            "this doc",
+            "that document",
+            "this document",
+            "add a line",
+            "append",
+            "update that note",
+        ],
+    ) && recent_user_text.iter().any(|msg| {
+        matches_any(
+            &msg.to_ascii_lowercase(),
+            &["notepad", "document", "note", "draft", "memo"],
+        )
+    }) {
         selected.extend(
             ["notepad_inspect", "notepad_read", "notepad_edit_lines"]
                 .iter()
                 .map(|item| item.to_string()),
         );
     }
-    if matches_any(&text, &["that sheet", "this sheet", "that spreadsheet", "this spreadsheet", "add a row", "update cell"]) 
-        && recent_user_text
-            .iter()
-            .any(|msg| matches_any(&msg.to_ascii_lowercase(), &["sheet", "spreadsheet", "cell", "row", "column"]))
-    {
+    if matches_any(
+        &text,
+        &[
+            "that sheet",
+            "this sheet",
+            "that spreadsheet",
+            "this spreadsheet",
+            "add a row",
+            "update cell",
+        ],
+    ) && recent_user_text.iter().any(|msg| {
+        matches_any(
+            &msg.to_ascii_lowercase(),
+            &["sheet", "spreadsheet", "cell", "row", "column"],
+        )
+    }) {
         selected.insert("sheets".to_string());
     }
 
@@ -3339,7 +3375,11 @@ fn tool_family_for_name(tool_name: &str) -> Option<&'static str> {
     if tool_name == "chart_set" {
         return Some("chart");
     }
-    if ["read", "edit", "write", "ls", "mkdir", "move", "grep", "find", "chmod"].contains(&tool_name) {
+    if [
+        "read", "edit", "write", "ls", "mkdir", "move", "grep", "find", "chmod",
+    ]
+    .contains(&tool_name)
+    {
         return Some("files");
     }
     None
@@ -3349,11 +3389,17 @@ fn is_ambiguous_followup(user_message: &str) -> bool {
     let text = user_message.to_ascii_lowercase();
     matches_any(
         &text,
-        &["this", "that", "it", "there", "update", "edit", "add", "append"],
+        &[
+            "this", "that", "it", "there", "update", "edit", "add", "append",
+        ],
     )
 }
 
-fn top_focus_family<'a>(focus: &'a HashMap<String, f32>, min_score: f32, min_margin: f32) -> Option<&'a str> {
+fn top_focus_family<'a>(
+    focus: &'a HashMap<String, f32>,
+    min_score: f32,
+    min_margin: f32,
+) -> Option<&'a str> {
     let mut scores: Vec<(&str, f32)> = focus.iter().map(|(k, v)| (k.as_str(), *v)).collect();
     scores.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
     let (top_family, top_score) = *scores.first()?;
@@ -3370,13 +3416,23 @@ fn top_focus_family<'a>(focus: &'a HashMap<String, f32>, min_score: f32, min_mar
 fn select_tools_for_family(family: &str, selected: &mut HashSet<String>) {
     match family {
         "notepad" => {
-            selected.extend(["notepad_inspect", "notepad_read", "notepad_edit_lines"].iter().map(|v| v.to_string()));
+            selected.extend(
+                ["notepad_inspect", "notepad_read", "notepad_edit_lines"]
+                    .iter()
+                    .map(|v| v.to_string()),
+            );
         }
         "sheets" => {
             selected.insert("sheets".to_string());
         }
         "files" => {
-            selected.extend(["read", "edit", "write", "ls", "mkdir", "move", "grep", "find"].iter().map(|v| v.to_string()));
+            selected.extend(
+                [
+                    "read", "edit", "write", "ls", "mkdir", "move", "grep", "find",
+                ]
+                .iter()
+                .map(|v| v.to_string()),
+            );
         }
         "terminal" => {
             selected.insert("bash".to_string());
@@ -3403,8 +3459,7 @@ fn is_chat_only_message(text: &str) -> bool {
     let compact = compact.split_whitespace().collect::<Vec<_>>().join(" ");
     matches!(
         compact.as_str(),
-        "hi"
-            | "hello"
+        "hi" | "hello"
             | "hey"
             | "good morning"
             | "good afternoon"
@@ -3683,7 +3738,11 @@ fn append_discovery_answer(existing: Option<&str>, user_message: &str) -> String
     if answer.is_empty() {
         return base;
     }
-    format!("{}\n- {}", base.trim_end(), normalize_discovery_answer(answer))
+    format!(
+        "{}\n- {}",
+        base.trim_end(),
+        normalize_discovery_answer(answer)
+    )
 }
 
 fn normalize_discovery_answer(answer: &str) -> String {
@@ -3706,7 +3765,10 @@ fn discovery_question_count() -> usize {
     3
 }
 
-fn render_next_discovery_question_text(original_user_message: &str, answered_count: usize) -> String {
+fn render_next_discovery_question_text(
+    original_user_message: &str,
+    answered_count: usize,
+) -> String {
     match answered_count {
         1 => "Good. Next, what should the research emphasize most?".to_string(),
         2 => "Last setup choice: who is the report primarily for? I’ll tune the framing and evidence level around that audience.".to_string(),
@@ -3880,7 +3942,10 @@ fn is_unsafe_project_folder(path: &Path) -> bool {
     }
     let normalized = path.to_string_lossy();
     let raw = normalized.as_ref();
-    if matches!(raw, "/" | "/home" | "/Users" | "/tmp" | "/var" | "/etc" | "/usr" | "/bin" | "/sbin") {
+    if matches!(
+        raw,
+        "/" | "/home" | "/Users" | "/tmp" | "/var" | "/etc" | "/usr" | "/bin" | "/sbin"
+    ) {
         return true;
     }
     if let Some(home) = dirs::home_dir() {
@@ -3908,9 +3973,8 @@ fn infer_project_folder_with_answers(user_message: &str, discovery_answers: &str
 
 fn extract_folder_override(discovery_answers: &str) -> Option<String> {
     for token in discovery_answers.split_whitespace() {
-        let trimmed = token.trim_matches(|ch: char| {
-            matches!(ch, '`' | '"' | '\'' | ',' | ';' | ')' | '(')
-        });
+        let trimmed =
+            token.trim_matches(|ch: char| matches!(ch, '`' | '"' | '\'' | ',' | ';' | ')' | '('));
         if trimmed.starts_with("/home/") || trimmed.starts_with("~/") {
             return Some(trimmed.to_string());
         }
@@ -3954,10 +4018,7 @@ fn infer_project_slug(user_message: &str) -> String {
     }
 }
 
-fn render_discovery_questions(
-    user_message: &str,
-    preflight: &WorkflowPreflightDecision,
-) -> String {
+fn render_discovery_questions(user_message: &str, preflight: &WorkflowPreflightDecision) -> String {
     let reason_text = if preflight.reasons.is_empty() {
         "this looks like a larger task".to_string()
     } else {
@@ -4002,12 +4063,36 @@ fn build_discovery_structured_payload(question_index: usize) -> ChatStructuredPa
             title: "Time Budget".to_string(),
             prompt: "How much research time should I plan for?".to_string(),
             options: vec![
-                ClarificationOption { id: "0-30".to_string(), label: "0:30".to_string(), summary: Some("Fast scan with a concise forecast.".to_string()) },
-                ClarificationOption { id: "0-15".to_string(), label: "0:15".to_string(), summary: Some("Brief orientation only.".to_string()) },
-                ClarificationOption { id: "1-00".to_string(), label: "1:00".to_string(), summary: Some("Standard report with sourced market view.".to_string()) },
-                ClarificationOption { id: "2-00".to_string(), label: "2:00".to_string(), summary: Some("Deeper report with scenarios and vendor landscape.".to_string()) },
-                ClarificationOption { id: "4-00".to_string(), label: "4:00".to_string(), summary: Some("Deep research brief with stronger evidence review.".to_string()) },
-                ClarificationOption { id: "8-plus".to_string(), label: "8:00+".to_string(), summary: Some("Full research project scope.".to_string()) },
+                ClarificationOption {
+                    id: "0-30".to_string(),
+                    label: "0:30".to_string(),
+                    summary: Some("Fast scan with a concise forecast.".to_string()),
+                },
+                ClarificationOption {
+                    id: "0-15".to_string(),
+                    label: "0:15".to_string(),
+                    summary: Some("Brief orientation only.".to_string()),
+                },
+                ClarificationOption {
+                    id: "1-00".to_string(),
+                    label: "1:00".to_string(),
+                    summary: Some("Standard report with sourced market view.".to_string()),
+                },
+                ClarificationOption {
+                    id: "2-00".to_string(),
+                    label: "2:00".to_string(),
+                    summary: Some("Deeper report with scenarios and vendor landscape.".to_string()),
+                },
+                ClarificationOption {
+                    id: "4-00".to_string(),
+                    label: "4:00".to_string(),
+                    summary: Some("Deep research brief with stronger evidence review.".to_string()),
+                },
+                ClarificationOption {
+                    id: "8-plus".to_string(),
+                    label: "8:00+".to_string(),
+                    summary: Some("Full research project scope.".to_string()),
+                },
             ],
             recommended_option_id: None,
             allow_custom: true,
@@ -4018,10 +4103,31 @@ fn build_discovery_structured_payload(question_index: usize) -> ChatStructuredPa
             title: "Research Emphasis".to_string(),
             prompt: "What should the research emphasize most?".to_string(),
             options: vec![
-                ClarificationOption { id: "forecast".to_string(), label: "Market forecast".to_string(), summary: Some("Adoption, winners, risks, and timing.".to_string()) },
-                ClarificationOption { id: "regulatory".to_string(), label: "Regulatory landscape".to_string(), summary: Some("State mandates, litigation, and compliance paths.".to_string()) },
-                ClarificationOption { id: "vendors".to_string(), label: "Vendor landscape".to_string(), summary: Some("Identity, age assurance, wallets, and platform players.".to_string()) },
-                ClarificationOption { id: "privacy".to_string(), label: "Privacy/security".to_string(), summary: Some("Civil liberties, data minimization, and ZK/credential approaches.".to_string()) },
+                ClarificationOption {
+                    id: "forecast".to_string(),
+                    label: "Market forecast".to_string(),
+                    summary: Some("Adoption, winners, risks, and timing.".to_string()),
+                },
+                ClarificationOption {
+                    id: "regulatory".to_string(),
+                    label: "Regulatory landscape".to_string(),
+                    summary: Some("State mandates, litigation, and compliance paths.".to_string()),
+                },
+                ClarificationOption {
+                    id: "vendors".to_string(),
+                    label: "Vendor landscape".to_string(),
+                    summary: Some(
+                        "Identity, age assurance, wallets, and platform players.".to_string(),
+                    ),
+                },
+                ClarificationOption {
+                    id: "privacy".to_string(),
+                    label: "Privacy/security".to_string(),
+                    summary: Some(
+                        "Civil liberties, data minimization, and ZK/credential approaches."
+                            .to_string(),
+                    ),
+                },
             ],
             recommended_option_id: None,
             allow_custom: true,
@@ -4032,10 +4138,28 @@ fn build_discovery_structured_payload(question_index: usize) -> ChatStructuredPa
             title: "Audience".to_string(),
             prompt: "Who is the report primarily for?".to_string(),
             options: vec![
-                ClarificationOption { id: "operator".to_string(), label: "Operator/strategy".to_string(), summary: Some("Business and product implications.".to_string()) },
-                ClarificationOption { id: "investor".to_string(), label: "Investor".to_string(), summary: Some("Market sizing, growth, and competitive positioning.".to_string()) },
-                ClarificationOption { id: "policy".to_string(), label: "Policy/legal".to_string(), summary: Some("Regulation, constitutional risk, and enforcement.".to_string()) },
-                ClarificationOption { id: "technical".to_string(), label: "Technical".to_string(), summary: Some("Architecture, protocols, assurance methods.".to_string()) },
+                ClarificationOption {
+                    id: "operator".to_string(),
+                    label: "Operator/strategy".to_string(),
+                    summary: Some("Business and product implications.".to_string()),
+                },
+                ClarificationOption {
+                    id: "investor".to_string(),
+                    label: "Investor".to_string(),
+                    summary: Some(
+                        "Market sizing, growth, and competitive positioning.".to_string(),
+                    ),
+                },
+                ClarificationOption {
+                    id: "policy".to_string(),
+                    label: "Policy/legal".to_string(),
+                    summary: Some("Regulation, constitutional risk, and enforcement.".to_string()),
+                },
+                ClarificationOption {
+                    id: "technical".to_string(),
+                    label: "Technical".to_string(),
+                    summary: Some("Architecture, protocols, assurance methods.".to_string()),
+                },
             ],
             recommended_option_id: None,
             allow_custom: true,
@@ -4072,7 +4196,9 @@ fn build_plan_artifact(
             "Completion summary with validation evidence.".to_string(),
         ],
         allowed_tools: vec!["looper".to_string(), "opencode".to_string()],
-        data_policy: "External sources are allowed and expected unless the approved plan says otherwise.".to_string(),
+        data_policy:
+            "External sources are allowed and expected unless the approved plan says otherwise."
+                .to_string(),
         acceptance_checks: vec![
             "Project folder is explicit and validated.".to_string(),
             "Looper receives the approved brief.".to_string(),
@@ -4118,7 +4244,11 @@ fn render_looper_questions_text(loop_id: &str, questions: &[LooperQuestion]) -> 
         ));
         for option in &question.options {
             out.push_str(&format!("- {}", option.label.trim()));
-            if let Some(summary) = option.summary.as_deref().filter(|value| !value.trim().is_empty()) {
+            if let Some(summary) = option
+                .summary
+                .as_deref()
+                .filter(|value| !value.trim().is_empty())
+            {
                 out.push_str(&format!(": {}", summary.trim()));
             }
             out.push('\n');
@@ -4233,10 +4363,9 @@ fn build_chat_looper_start_request(
 }
 
 fn apply_tool_routing_hints(system_prompt: &mut String, enabled_tool_names: &[String]) {
-    if enabled_tool_names
-        .iter()
-        .any(|name| name == "notepad_write" || name == "notepad_edit_lines" || name == "notepad_inspect")
-    {
+    if enabled_tool_names.iter().any(|name| {
+        name == "notepad_write" || name == "notepad_edit_lines" || name == "notepad_inspect"
+    }) {
         system_prompt.push_str(
             "\n\nNotepad tool workflow:\n\
             1. Call notepad_inspect to see which documents are open and find the active path and line count.\n\
@@ -4961,8 +5090,7 @@ mod tests {
     use super::{
         explicitly_requests_planner, is_chat_only_message, is_plan_approval,
         is_plan_revision_request, is_planner_acceptance, is_planner_decline,
-        is_unsafe_project_folder, is_workflow_stop, normalize_workflow_command,
-        planning_preflight,
+        is_unsafe_project_folder, is_workflow_stop, normalize_workflow_command, planning_preflight,
     };
     use std::path::Path;
 
@@ -5020,17 +5148,25 @@ mod tests {
 
     #[test]
     fn workflow_command_detection_handles_approval_revision_and_stop() {
-        assert!(is_plan_approval(&normalize_workflow_command("Approve Plan")));
+        assert!(is_plan_approval(&normalize_workflow_command(
+            "Approve Plan"
+        )));
         assert!(is_plan_revision_request(&normalize_workflow_command(
             "Revise Plan: use a different folder"
         )));
-        assert!(is_workflow_stop(&normalize_workflow_command("Cancel planning")));
+        assert!(is_workflow_stop(&normalize_workflow_command(
+            "Cancel planning"
+        )));
     }
 
     #[test]
     fn planner_choice_commands_are_explicit() {
-        assert!(is_planner_acceptance(&normalize_workflow_command("Use Planner")));
-        assert!(is_planner_decline(&normalize_workflow_command("Quick Answer")));
+        assert!(is_planner_acceptance(&normalize_workflow_command(
+            "Use Planner"
+        )));
+        assert!(is_planner_decline(&normalize_workflow_command(
+            "Quick Answer"
+        )));
         assert!(explicitly_requests_planner(
             "Please plan this first before using tools",
             &normalize_workflow_command("Please plan this first before using tools")

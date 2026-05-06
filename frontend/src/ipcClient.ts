@@ -306,7 +306,6 @@ function toPluginCapabilityInvokeResponse(
 
 class TauriChatIpcClient implements ChatIpcClient {
   private listeners: Array<(event: AppEvent) => void> = [];
-  private unlisten: null | (() => void) = null;
 
   constructor(
     private readonly invokeFn: <T>(command: string, args?: Record<string, unknown>) => Promise<T>,
@@ -317,7 +316,7 @@ class TauriChatIpcClient implements ChatIpcClient {
   ) {}
 
   async initialize(): Promise<void> {
-    this.unlisten = await this.listenFn("app:event", (payload) => {
+    await this.listenFn("app:event", (payload) => {
       const event = asAppEvent(payload);
       if (!event) return;
       for (const listener of this.listeners) {
@@ -485,19 +484,6 @@ class TauriChatIpcClient implements ChatIpcClient {
       capability: request.capability,
       payload: request.payload
     }).then((response) => toPluginCapabilityInvokeResponse(response));
-  }
-
-  private async invokeToolTyped<TResponse>(
-    request: Omit<ToolInvokeRequest, "mode">
-  ): Promise<TResponse> {
-    const response = await this.toolInvoke({
-      ...request,
-      mode: "sandbox"
-    });
-    if (!response.ok) {
-      throw new Error(response.error || `Tool invoke failed: ${request.toolId}.${request.action}`);
-    }
-    return response.data as unknown as TResponse;
   }
 
   exportWorkspaceTools(
@@ -761,7 +747,7 @@ export class MockChatIpcClient implements ChatIpcClient {
   private readonly apiConnections = new Map<string, ApiConnectionRecord>();
   private readonly apiConnectionSecrets = new Map<string, string>();
   private mockTts: {
-    engine: "kokoro" | "piper" | "matcha" | "kitten" | "pocket";
+    engine: "kokoro" | "pocket";
     voice: string;
     speed: number;
     modelPath: string;
@@ -772,15 +758,15 @@ export class MockChatIpcClient implements ChatIpcClient {
     modelPath: ""
   };
 
-  private normalizeMockTtsEngine(value: string | undefined | null): "kokoro" | "piper" | "matcha" | "kitten" | "pocket" {
+  private normalizeMockTtsEngine(value: string | undefined | null): "kokoro" | "pocket" {
     const normalized = (value || "").trim().toLowerCase();
-    if (normalized === "piper" || normalized === "matcha" || normalized === "kitten" || normalized === "pocket") {
+    if (normalized === "pocket") {
       return normalized;
     }
     return "kokoro";
   }
 
-  private mockVoicesForEngine(engine: "kokoro" | "piper" | "matcha" | "kitten" | "pocket"): string[] {
+  private mockVoicesForEngine(engine: "kokoro" | "pocket"): string[] {
     return engine === "kokoro" ? ["af_heart"] : ["speaker_0"];
   }
 
@@ -2023,10 +2009,10 @@ export class MockChatIpcClient implements ChatIpcClient {
         defaultConfig: { threshold: 0.0012, minSpeechMs: 120, minSilenceMs: 240, hangoverMs: 80 }
       },
       {
-        id: "sherpa-silero",
-        displayName: "Sherpa Silero",
+        id: "onnx-silero",
+        displayName: "ONNX Silero",
         status: "stable" as const,
-        description: "Production-compatible endpointing adapter.",
+        description: "Direct ONNX Runtime Silero VAD with production-compatible endpointing.",
         capabilities: {
           supportsEndpointing: true,
           supportsInterruptionSignals: true,
@@ -2038,15 +2024,15 @@ export class MockChatIpcClient implements ChatIpcClient {
           supportsSpeculativeOnset: false
         },
         defaultConfig: {
+          modelPath: null,
+          probabilityThreshold: 0.35,
           baseThreshold: 0.0012,
           startFrames: 2,
           endFrames: 8,
           dynamicMultiplier: 2.4,
           noiseAdaptationAlpha: 0.03,
-          preSpeechMs: 200,
           minUtteranceMs: 200,
-          maxUtteranceS: 30,
-          forceFlushS: 3
+          maxUtteranceS: 30
         }
       },
       {
@@ -2094,7 +2080,7 @@ export class MockChatIpcClient implements ChatIpcClient {
     return {
       correlationId: request.correlationId,
       methods,
-      selectedVadMethod: "sherpa-silero",
+      selectedVadMethod: "onnx-silero",
       state: "idle"
     };
   }
@@ -2107,22 +2093,22 @@ export class MockChatIpcClient implements ChatIpcClient {
       state: "idle",
       settings: {
         version: 1,
-        selectedVadMethod: "sherpa-silero",
+        selectedVadMethod: "onnx-silero",
         shadowVadMethod: "microturn-v1",
         duplexMode: "single_turn",
         globalVoiceConfig: { sampleRateHz: 16000 },
         speculation: { enabled: false, maxPrefixMs: 800, cancelOnUserContinuation: true },
         vadMethods: {
-          "sherpa-silero": {
+          "onnx-silero": {
+            modelPath: null,
+            probabilityThreshold: 0.35,
             baseThreshold: 0.0012,
             startFrames: 2,
             endFrames: 8,
             dynamicMultiplier: 2.4,
             noiseAdaptationAlpha: 0.03,
-            preSpeechMs: 200,
             minUtteranceMs: 200,
-            maxUtteranceS: 30,
-            forceFlushS: 3
+            maxUtteranceS: 30
           }
         }
       }
@@ -2160,14 +2146,14 @@ export class MockChatIpcClient implements ChatIpcClient {
   ): Promise<VoiceRuntimeSnapshotResponse> {
     return {
       correlationId: request.correlationId,
-      snapshot: this.mockVoiceSnapshot("running_single", "sherpa-silero", "mock-voice")
+      snapshot: this.mockVoiceSnapshot("running_single", "onnx-silero", "mock-voice")
     };
   }
 
   async voiceStopSession(request: VoiceStopSessionRequest): Promise<VoiceRuntimeSnapshotResponse> {
     return {
       correlationId: request.correlationId,
-      snapshot: this.mockVoiceSnapshot("idle", "sherpa-silero")
+      snapshot: this.mockVoiceSnapshot("idle", "onnx-silero")
     };
   }
 
@@ -2186,7 +2172,7 @@ export class MockChatIpcClient implements ChatIpcClient {
     return {
       correlationId: request.correlationId,
       snapshot: {
-        ...this.mockVoiceSnapshot("idle", "sherpa-silero"),
+        ...this.mockVoiceSnapshot("idle", "onnx-silero"),
         shadowVadMethodId: request.methodId ?? null
       }
     };
@@ -2198,7 +2184,7 @@ export class MockChatIpcClient implements ChatIpcClient {
     return {
       correlationId: request.correlationId,
       snapshot: {
-        ...this.mockVoiceSnapshot("running_dual", "sherpa-silero", "mock-voice"),
+        ...this.mockVoiceSnapshot("running_dual", "onnx-silero", "mock-voice"),
         shadowVadMethodId: "microturn-v1"
       }
     };
@@ -2209,7 +2195,7 @@ export class MockChatIpcClient implements ChatIpcClient {
   ): Promise<VoiceRuntimeSnapshotResponse> {
     return {
       correlationId: request.correlationId,
-      snapshot: this.mockVoiceSnapshot("running_single", "sherpa-silero", "mock-voice")
+      snapshot: this.mockVoiceSnapshot("running_single", "onnx-silero", "mock-voice")
     };
   }
 
@@ -2218,7 +2204,7 @@ export class MockChatIpcClient implements ChatIpcClient {
   ): Promise<VoiceRuntimeSnapshotResponse> {
     return {
       correlationId: request.correlationId,
-      snapshot: { ...this.mockVoiceSnapshot("idle", "sherpa-silero"), duplexMode: request.duplexMode }
+      snapshot: { ...this.mockVoiceSnapshot("idle", "onnx-silero"), duplexMode: request.duplexMode }
     };
   }
 
@@ -2227,7 +2213,7 @@ export class MockChatIpcClient implements ChatIpcClient {
   ): Promise<VoiceRuntimeSnapshotResponse> {
     return {
       correlationId: request.correlationId,
-      snapshot: this.mockVoiceSnapshot("idle", "sherpa-silero")
+      snapshot: this.mockVoiceSnapshot("idle", "onnx-silero")
     };
   }
 

@@ -208,8 +208,10 @@ export interface WorkspaceToolViewInput {
   memoryError: string | null;
 }
 
-export function buildWorkspaceToolViews(input: WorkspaceToolViewInput): Record<string, ToolViewHtml> {
-  const filesBodyHtml = renderFilesToolBody({
+export function buildWorkspaceToolViews(input: WorkspaceToolViewInput, activeToolId?: string): Record<string, ToolViewHtml> {
+  const activeId = activeToolId?.replace(/-tool$/, "");
+  const shouldRender = (toolId: string): boolean => !activeId || activeId === toolId || (activeId === "web" && toolId === "webSearch");
+  const filesBodyHtml = shouldRender("files") ? renderFilesToolBody({
     rootPath: input.filesRootPath,
     scopeRootPath: input.filesScopeRootPath,
     rootSelectorOpen: input.filesRootSelectorOpen,
@@ -250,18 +252,18 @@ export function buildWorkspaceToolViews(input: WorkspaceToolViewInput): Record<s
     selectionJustDragged: input.filesSelectionJustDragged,
     selectionGesture: input.filesSelectionGesture,
     error: input.filesError
-  });
+  }) : "";
 
   return {
-    chart: {
+    ...(shouldRender("chart") ? { chart: {
       actionsHtml: renderChartToolActions(),
       bodyHtml: renderChartToolBody({
         source: input.chartSource,
         renderSource: input.chartRenderSource,
         error: input.chartError
       })
-    },
-    webSearch: {
+    } } : {}),
+    ...(shouldRender("webSearch") ? { webSearch: {
       actionsHtml: renderWebToolActions(
         input.webTabs.map((tab) => ({
           id: tab.id,
@@ -291,8 +293,8 @@ export function buildWorkspaceToolViews(input: WorkspaceToolViewInput): Record<s
         setupMessage: input.webSetupMessage,
         setupBusy: input.webSetupBusy
       })
-    },
-    files: {
+    } } : {}),
+    ...(shouldRender("files") ? { files: {
       actionsHtml: renderFilesToolActions({
         rootPath: input.filesRootPath,
         scopeRootPath: input.filesScopeRootPath,
@@ -336,8 +338,8 @@ export function buildWorkspaceToolViews(input: WorkspaceToolViewInput): Record<s
         error: input.filesError
       }),
       bodyHtml: filesBodyHtml
-    },
-    tasks: {
+    } } : {}),
+    ...(shouldRender("tasks") ? { tasks: {
       actionsHtml: renderTasksToolActions({
         tasksById: input.tasksById,
         selectedId: input.tasksSelectedId,
@@ -363,8 +365,8 @@ export function buildWorkspaceToolViews(input: WorkspaceToolViewInput): Record<s
         taskNotifications: input.taskNotifications,
         modelOptions: input.chatModelOptions
       })
-    },
-    memory: {
+    } } : {}),
+    ...(shouldRender("memory") ? { memory: {
       actionsHtml: renderMemoryToolActions(input.memoryActiveTab),
       bodyHtml: renderMemoryToolBody({
         contextItems: input.memoryContextItems,
@@ -394,18 +396,18 @@ export function buildWorkspaceToolViews(input: WorkspaceToolViewInput): Record<s
         loading: input.memoryLoading,
         error: input.memoryError
       })
-    },
-    opencode: {
+    } } : {}),
+    ...(shouldRender("opencode") ? { opencode: {
       actionsHtml: renderOpenCodeToolActions(input.opencodeState),
       bodyHtml: renderOpenCodeToolBody(input.opencodeState) +
         renderOpenCodeInstallModal(input.opencodeState) +
         renderOpenCodeSpawnModal(input.opencodeState)
-    },
-    looper: {
+    } } : {}),
+    ...(shouldRender("looper") ? { looper: {
       actionsHtml: renderLooperToolActions(input.looperState),
       bodyHtml: renderLooperToolBody(input.looperState, input.projectsById)
-    },
-    notepad: {
+    } } : {}),
+    ...(shouldRender("notepad") ? { notepad: {
       actionsHtml: renderNotepadToolActions({
         openTabs: input.notepadOpenTabs,
         activeTabId: input.notepadActiveTabId,
@@ -444,12 +446,12 @@ export function buildWorkspaceToolViews(input: WorkspaceToolViewInput): Record<s
         error: input.notepadError,
         unsavedModalTabId: input.notepadUnsavedModalTabId
       })
-    },
-    sheets: {
+    } } : {}),
+    ...(shouldRender("sheets") ? { sheets: {
       actionsHtml: renderSheetsToolActions(input.sheetsState),
       bodyHtml: renderSheetsToolBody(input.sheetsState)
-    },
-    docs: {
+    } } : {}),
+    ...(shouldRender("docs") ? { docs: {
       actionsHtml: renderDocsToolActions({
         docsRootPath: input.docsRootPath,
         docsSelectedPath: input.docsSelectedPath,
@@ -500,6 +502,6 @@ export function buildWorkspaceToolViews(input: WorkspaceToolViewInput): Record<s
         docsLineWrap: input.docsLineWrap,
         docsError: input.docsError
       })
-    }
+    } } : {})
   };
 }

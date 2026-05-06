@@ -16,7 +16,6 @@ import {
   pickOpenFilePath,
   pickSaveFilePath,
   scheduleNotepadEditorRefresh,
-  refreshNotepadEditorDecorations,
   replaceAllInNotepad,
   replaceOneInNotepad,
   type NotepadDataAttrs
@@ -71,7 +70,6 @@ interface FilesDeps {
   openPathInTerminal: (path: string) => Promise<void>;
 }
 
-type FilesConflictChoice = "replace" | "copy" | "cancel";
 let pendingConflictResolver: ((resolution: FilesConflictResolution) => void) | null = null;
 const FILES_EDITOR_ATTRS: NotepadDataAttrs = {
   action: FILES_DATA_ATTR.action,

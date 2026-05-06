@@ -126,21 +126,12 @@ export function renderChatHeaderModelSelect(input: {
 export function resolveTtsLoadedHeaderSuffix(input: {
   sidebarTab: string;
   ttsReady: boolean;
-  ttsEngine: "kokoro" | "piper" | "matcha" | "kitten" | "pocket";
+  ttsEngine: "kokoro" | "pocket";
 }): string {
   if (input.sidebarTab !== "tts" || !input.ttsReady) {
     return "";
   }
-  const engineLabel =
-    input.ttsEngine === "piper"
-      ? "Piper"
-      : input.ttsEngine === "matcha"
-        ? "Matcha"
-        : input.ttsEngine === "kitten"
-          ? "KittenTTS"
-          : input.ttsEngine === "pocket"
-            ? "PocketTTS"
-            : "Kokoro";
+  const engineLabel = input.ttsEngine === "pocket" ? "PocketTTS" : "Kokoro";
   return `<span class="pane-title-note">(${escapeHtml(engineLabel)} Ready ✓)</span>`;
 }
 
@@ -153,7 +144,7 @@ export function renderPanelTitleIcon(input: {
   chatPaneId: string;
   scopeId?: string;
   ttsReady: boolean;
-  ttsEngine: "kokoro" | "piper" | "matcha" | "kitten" | "pocket";
+  ttsEngine: "kokoro" | "pocket";
 }): string {
   const ttsSuffix = resolveTtsLoadedHeaderSuffix({
     sidebarTab: input.sidebarTab,

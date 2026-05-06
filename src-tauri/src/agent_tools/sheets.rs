@@ -176,7 +176,7 @@ impl Tool for SheetsTool {
                     }),
                     "Listed supported Sheets formula functions",
                 )
-            },
+            }
             "list_formula_signatures" => {
                 let signatures = self.service.list_supported_formula_signatures();
                 tool_ok_json(
@@ -186,28 +186,30 @@ impl Tool for SheetsTool {
                     }),
                     "Listed supported Sheets formula signatures",
                 )
-            },
+            }
             "read_range" => {
-                let Some(start_row) = read_usize_arg(&params, &["startRow", "start_row", "rowStart"])
+                let Some(start_row) =
+                    read_usize_arg(&params, &["startRow", "start_row", "rowStart"])
                 else {
                     return tool_error("read_range requires startRow (or start_row)");
                 };
-                let Some(start_col) = read_usize_arg(&params, &["startCol", "start_col", "colStart"])
+                let Some(start_col) =
+                    read_usize_arg(&params, &["startCol", "start_col", "colStart"])
                 else {
                     return tool_error("read_range requires startCol (or start_col)");
                 };
-                let Some(end_row) = read_usize_arg(&params, &["endRow", "end_row", "rowEnd"]) else {
+                let Some(end_row) = read_usize_arg(&params, &["endRow", "end_row", "rowEnd"])
+                else {
                     return tool_error("read_range requires endRow (or end_row)");
                 };
-                let Some(end_col) = read_usize_arg(&params, &["endCol", "end_col", "colEnd"]) else {
+                let Some(end_col) = read_usize_arg(&params, &["endCol", "end_col", "colEnd"])
+                else {
                     return tool_error("read_range requires endCol (or end_col)");
                 };
-                match self.service.read_range(
-                    start_row,
-                    start_col,
-                    end_row,
-                    end_col,
-                ) {
+                match self
+                    .service
+                    .read_range(start_row, start_col, end_row, end_col)
+                {
                     Ok(result) => tool_ok_json(&result, "Read sheet range"),
                     Err(error) => tool_error(error.message()),
                 }
@@ -234,11 +236,13 @@ impl Tool for SheetsTool {
                 }
             }
             "write_range" => {
-                let Some(start_row) = read_usize_arg(&params, &["startRow", "start_row", "row", "rowStart"])
+                let Some(start_row) =
+                    read_usize_arg(&params, &["startRow", "start_row", "row", "rowStart"])
                 else {
                     return tool_error("write_range requires startRow (or start_row)");
                 };
-                let Some(start_col) = read_usize_arg(&params, &["startCol", "start_col", "col", "colStart"])
+                let Some(start_col) =
+                    read_usize_arg(&params, &["startCol", "start_col", "col", "colStart"])
                 else {
                     return tool_error("write_range requires startCol (or start_col)");
                 };
@@ -257,7 +261,9 @@ impl Tool for SheetsTool {
                 }
             }
             "insert_rows" => {
-                let Some(index) = read_usize_arg(&params, &["index", "row", "startRow", "start_row"]) else {
+                let Some(index) =
+                    read_usize_arg(&params, &["index", "row", "startRow", "start_row"])
+                else {
                     return tool_error("insert_rows requires index");
                 };
                 let Some(count) = read_usize_arg(&params, &["count"]) else {
@@ -274,7 +280,9 @@ impl Tool for SheetsTool {
                 }
             }
             "insert_columns" => {
-                let Some(index) = read_usize_arg(&params, &["index", "col", "startCol", "start_col"]) else {
+                let Some(index) =
+                    read_usize_arg(&params, &["index", "col", "startCol", "start_col"])
+                else {
                     return tool_error("insert_columns requires index");
                 };
                 let Some(count) = read_usize_arg(&params, &["count"]) else {
@@ -291,7 +299,9 @@ impl Tool for SheetsTool {
                 }
             }
             "delete_rows" => {
-                let Some(index) = read_usize_arg(&params, &["index", "row", "startRow", "start_row"]) else {
+                let Some(index) =
+                    read_usize_arg(&params, &["index", "row", "startRow", "start_row"])
+                else {
                     return tool_error("delete_rows requires index");
                 };
                 let Some(count) = read_usize_arg(&params, &["count"]) else {
@@ -308,7 +318,9 @@ impl Tool for SheetsTool {
                 }
             }
             "delete_columns" => {
-                let Some(index) = read_usize_arg(&params, &["index", "col", "startCol", "start_col"]) else {
+                let Some(index) =
+                    read_usize_arg(&params, &["index", "col", "startCol", "start_col"])
+                else {
                     return tool_error("delete_columns requires index");
                 };
                 let Some(count) = read_usize_arg(&params, &["count"]) else {
@@ -400,8 +412,7 @@ fn tool_error(message: impl Into<String>) -> ToolResult {
 
 fn looks_like_missing_path_error(message: &str) -> bool {
     let lower = message.to_ascii_lowercase();
-    lower.contains("failed resolving path")
-        || lower.contains("no such file or directory")
+    lower.contains("failed resolving path") || lower.contains("no such file or directory")
 }
 
 fn resolve_sheet_path(path: &str) -> PathBuf {
@@ -510,9 +521,7 @@ mod tests {
     async fn create_sheet_action_creates_workbook_when_missing() {
         let service = Arc::new(SheetsService::default());
         let tool = SheetsTool::new(Arc::clone(&service), "corr-agent".to_string());
-        let result = tool
-            .execute(json!({"action": "create_sheet"}), None)
-            .await;
+        let result = tool.execute(json!({"action": "create_sheet"}), None).await;
         assert!(result.success);
         let inspected = service.inspect_sheet().unwrap();
         assert!(inspected.row_count >= 1);
@@ -544,10 +553,7 @@ mod tests {
         let _ = fs::remove_file(&expected);
 
         let result = tool
-            .execute(
-                json!({"action": "open_sheet", "path": relative_path}),
-                None,
-            )
+            .execute(json!({"action": "open_sheet", "path": relative_path}), None)
             .await;
         assert!(result.success);
         assert!(expected.exists());

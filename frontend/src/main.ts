@@ -16,7 +16,6 @@ import type {
   ModelManagerHfCandidate,
   ModelManagerInstalledModel,
   PersistedVoiceSettings,
-  TtsSpeakResponse,
   DuplexMode,
   HandoffState,
   SpeculationState,
@@ -60,11 +59,9 @@ import type { TerminalShellProfile } from "./tools/terminal/types";
 import {
   CONSOLE_DATA_ATTR,
   MANAGER_DATA_ATTR,
-  TERMINAL_UI_ID,
-  WEB_UI_ID
+  TERMINAL_UI_ID
 } from "./tools/ui/constants";
 import { renderWorkspaceToolsActions, renderWorkspaceToolsBody } from "./tools/manager/index";
-import { renderToolToolbar } from "./tools/ui/toolbar";
 import { DEFAULT_CHART_SOURCE } from "./tools/chart/bindings";
 import { renderMermaidInto } from "./tools/chart/runtime";
 import { applyLooperRuntimeEvent } from "./tools/host/looperEvents";
@@ -125,10 +122,8 @@ import {
   createProject,
   deleteProject,
   updateProjectField,
-  persistProjectsById,
   loadChatProjectMap,
   setChatProjectId,
-  getChatProjectId,
   persistChatProjectMap,
   type ProjectRecord
 } from "./projectsStore";
@@ -146,6 +141,7 @@ import { renderAvatarPreview } from "./panels/avatarPanel";
 import { buildPhonemeTimeline } from "./avatar/phonemeUtils";
 import { ChatTtsPipeline } from "./voice/chatTtsPipeline";
 import type { ChatTtsQueueItem } from "./voice/chatTtsPipeline";
+import { normalizeUserFacingWhisperModels } from "./stt/models";
 import { APP_BUILD_VERSION, normalizeVersionLabel } from "./version";
 import { createNotificationRecord } from "./notifications";
 import {
@@ -160,6 +156,7 @@ import {
 import { destroyOverlayScrollbars, syncOverlayScrollbars } from "./scrollbars";
 import {
   BOTTOM_BAR_PREF_KEYS,
+  consumeSttBackendMigrationNotice,
   loadMicBubbleDismissed,
   loadPersistedBottomItem,
   loadPersistedChatModelId,
@@ -278,7 +275,6 @@ import {
   composeAppFrameHtml,
   composePrimaryPaneHtml,
   conversationMarkdownFilename,
-  formatBytesShort,
   formatConsoleEntryLine,
   getVisibleConsoleEntries,
   modelNameFromPath,
@@ -289,11 +285,7 @@ import {
 import {
   handleChatStreamEvent,
   handleCoreAppEvent,
-  isNoisyChatStreamEvent,
-  isNoisyRuntimeStatusEvent,
-  isNoisyTerminalControlEvent,
-  parseTerminalExit,
-  parseTerminalOutput,
+  appendAppEvent,
   payloadAsRecord
 } from "./app/events";
 import { createSendMessageHandler } from "./app/chatSend";
@@ -501,11 +493,13 @@ function updateAvatarSpeechState(active: boolean, amplitude: number): void {
 function updateAvatarPhonemeTimeline(
   text: string | null,
   durationMs: number,
+  ipaPhonemes?: string | null,
+  startMs?: number,
 ): void {
   if (!text || !avatarRuntimeModule) return;
-  const timeline = buildPhonemeTimeline(text, durationMs);
+  const timeline = buildPhonemeTimeline(text, durationMs, ipaPhonemes ?? undefined);
   if (timeline.length > 0) {
-    avatarRuntimeModule.setAvatarPhonemeTimeline(timeline);
+    avatarRuntimeModule.setAvatarPhonemeTimeline(timeline, startMs);
   }
 }
 
@@ -982,7 +976,7 @@ const state: {
     status: "idle" | "ready" | "busy" | "error";
     message: string | null;
     engineId: string;
-    engine: "kokoro" | "piper" | "matcha" | "kitten" | "pocket";
+    engine: "kokoro" | "pocket";
     ready: boolean;
     modelPath: string;
     voices: string[];
@@ -1225,7 +1219,7 @@ const state: {
   },
   vadMethods: [],
   vadIncludeExperimental: false,
-  vadSelectedMethod: "sherpa-silero",
+  vadSelectedMethod: "onnx-silero",
   vadShadowMethod: null,
   vadStandbyMethod: null,
   vadSettings: null,
@@ -1508,7 +1502,6 @@ function resolveSplitPanelModel(): { id: string; label: string } {
   return { id: "", label: "Select a model..." };
 }
 
-type AppState = typeof state;
 type VoicePipelineState = "idle" | "user_speaking" | "processing" | "agent_speaking" | "interrupted";
 let voicePipelineState: VoicePipelineState = "idle";
 let lastTranscriptDispatch = { text: "", atMs: 0 };
@@ -1547,6 +1540,10 @@ let chatTtsStreamChunkSeq = 0;
 const DEFAULT_NOTIFICATION_CHIME_PATH = "/home/user/Projects/arxell/src-tauri/resources/sounds/default-chime.wav";
 let cachedNotificationChimeUrl: string | null = null;
 let chatTtsActiveStreamText: string | null = null;
+let chatTtsStreamReceivedSamples = 0;
+let chatTtsStreamSampleRate = 0;
+let chatTtsStreamPhonemes = "";
+let chatTtsStreamTimelineStartMs: number | null = null;
 const chatTtsStreamStatsByRequest = new Map<string, { chunks: number; bytes: number; finalSeen: boolean; firstMs: number; lastMs: number }>();
 let chatTtsWarmSignature = "";
 let chatTtsPrewarmPromise: Promise<void> | null = null;
@@ -1622,6 +1619,12 @@ function updateBottomBarResourceNodesInPlace(): void {
   setResourceNode(memoryNode, status.appResourceMemoryText);
   setResourceNode(networkNode, status.appResourceNetworkText);
   containerNode.hidden = cpuNode.hidden && memoryNode.hidden && networkNode.hidden;
+}
+
+function updateBottomBarInPlace(): void {
+  const bottomBar = document.querySelector<HTMLElement>(".global-bottombar");
+  if (!bottomBar) return;
+  bottomBar.outerHTML = renderGlobalBottombar(currentBottomStatus());
 }
 
 function isEditableElementActive(active: HTMLElement | null): boolean {
@@ -1826,6 +1829,10 @@ function stopTtsPlaybackLocal(): void {
   chatTtsActiveStreamRequestId = null;
   chatTtsActiveStreamText = null;
   chatTtsStreamChunkSeq = 0;
+  chatTtsStreamReceivedSamples = 0;
+  chatTtsStreamSampleRate = 0;
+  chatTtsStreamPhonemes = "";
+  chatTtsStreamTimelineStartMs = null;
   state.chatTtsPlaying = false;
   updateAvatarSpeechState(false, 0);
   chatTtsSpeakingSinceMs = 0;
@@ -1934,16 +1941,18 @@ function onChatTtsStreamChunkEvent(event: AppEvent): void {
   if (!payload) return;
   const pcm16Base64 = typeof payload.pcm16Base64 === "string" ? payload.pcm16Base64 : "";
   const sampleRate = Number(payload.sampleRate);
+  const phonemes = typeof payload.phonemes === "string" ? payload.phonemes : null;
   const sawFinal = payload?.final === true;
   noteChatTtsStreamChunk(event.correlationId, pcm16Base64, sawFinal);
   if (pcm16Base64 && Number.isFinite(sampleRate) && sampleRate > 0) {
-    playChatTtsStreamChunk(event.correlationId, pcm16Base64, Math.round(sampleRate));
+    playChatTtsStreamChunk(event.correlationId, pcm16Base64, Math.round(sampleRate), phonemes);
   }
   if (sawFinal) {
     if (event.correlationId === chatTtsActiveStreamRequestId) {
       chatTtsActiveStreamRequestId = null;
       chatTtsActiveStreamText = null;
     }
+    chatTtsStreamTimelineStartMs = null;
     scheduleChatTtsStreamFinalize();
     resolveChatTtsStreamWaiters(event.correlationId);
     flushChatTtsStreamStats(event.correlationId, "final");
@@ -1963,7 +1972,12 @@ function decodeBase64ToUint8Array(input: string): Uint8Array {
   }
 }
 
-function playChatTtsStreamChunk(requestCorrelationId: string, pcm16Base64: string, sampleRate: number): void {
+function playChatTtsStreamChunk(
+  requestCorrelationId: string,
+  pcm16Base64: string,
+  sampleRate: number,
+  phonemesFromChunk?: string | null,
+): void {
   try {
   const bytes = decodeBase64ToUint8Array(pcm16Base64);
   if (!bytes.length || bytes.length % 2 !== 0) return;
@@ -2006,9 +2020,30 @@ function playChatTtsStreamChunk(requestCorrelationId: string, pcm16Base64: strin
     chatTtsStreamFinalizeTimerId = null;
   }
   chatTtsStreamChunkSeq++;
-  if (chatTtsStreamChunkSeq === 1 && chatTtsActiveStreamText) {
+  chatTtsStreamSampleRate = sampleRate;
+  chatTtsStreamReceivedSamples += frameCount;
+  if (phonemesFromChunk?.trim()) {
+    chatTtsStreamPhonemes = chatTtsStreamPhonemes
+      ? `${chatTtsStreamPhonemes} ${phonemesFromChunk.trim()}`
+      : phonemesFromChunk.trim();
+  }
+  if (chatTtsActiveStreamText) {
+    if (chatTtsStreamTimelineStartMs === null) {
+      chatTtsStreamTimelineStartMs = performance.now();
+    }
+    const pcmDurationMs = chatTtsStreamSampleRate > 0
+      ? (chatTtsStreamReceivedSamples / chatTtsStreamSampleRate) * 1000
+      : 0;
     const estimatedDurationMs = (chatTtsActiveStreamText.length / 15) * 1000;
-    updateAvatarPhonemeTimeline(chatTtsActiveStreamText, Math.max(500, estimatedDurationMs));
+    const durationMs = Math.max(500, pcmDurationMs || estimatedDurationMs);
+    if (chatTtsStreamChunkSeq === 1 || phonemesFromChunk?.trim()) {
+      updateAvatarPhonemeTimeline(
+        chatTtsActiveStreamText,
+        durationMs,
+        chatTtsStreamPhonemes || null,
+        chatTtsStreamTimelineStartMs,
+      );
+    }
   }
   if (chatTtsStreamChunkSeq % 20 === 1) {
     pushConsoleEntry(
@@ -2137,6 +2172,10 @@ function resetChatTtsQueue(): void {
   chatTtsActiveStreamRequestId = null;
   chatTtsActiveStreamText = null;
   chatTtsStreamChunkSeq = 0;
+  chatTtsStreamReceivedSamples = 0;
+  chatTtsStreamSampleRate = 0;
+  chatTtsStreamPhonemes = "";
+  chatTtsStreamTimelineStartMs = null;
 }
 
 function waitForStreamDone(requestCorrelationId: string, timeoutMs = 30_000): Promise<void> {
@@ -2182,6 +2221,10 @@ async function synthesizeChatTtsChunkStream(text: string): Promise<string> {
   chatTtsActiveStreamRequestId = requestCorrelationId;
   chatTtsStreamChunkSeq = 0;
   chatTtsActiveStreamText = text;
+  chatTtsStreamReceivedSamples = 0;
+  chatTtsStreamSampleRate = 0;
+  chatTtsStreamPhonemes = "";
+  chatTtsStreamTimelineStartMs = null;
   const response = await clientRef.ttsSpeakStream({
     correlationId: requestCorrelationId,
     text,
@@ -2233,7 +2276,12 @@ function enqueueSpeakableChunk(
   );
 }
 
-async function playTtsAudio(audioBytes: unknown, correlationId: string | null, spokenText?: string | null): Promise<void> {
+async function playTtsAudio(
+  audioBytes: unknown,
+  correlationId: string | null,
+  spokenText?: string | null,
+  spokenPhonemes?: string | null,
+): Promise<void> {
   const bytes = decodeTtsAudioBytes(audioBytes);
   if (!bytes.length) {
     throw new Error("No audio bytes returned from TTS.");
@@ -2249,7 +2297,7 @@ async function playTtsAudio(audioBytes: unknown, correlationId: string | null, s
     const audioBuffer = await audioContext.decodeAudioData(arrayBuffer.slice(0));
     const durationMs = audioBuffer.duration * 1000;
     if (spokenText) {
-      updateAvatarPhonemeTimeline(spokenText, durationMs);
+      updateAvatarPhonemeTimeline(spokenText, durationMs, spokenPhonemes);
     }
     const source = audioContext.createBufferSource();
     source.buffer = audioBuffer;
@@ -2359,40 +2407,6 @@ function shiftChatTtsQueueText(): ChatTtsQueueItem | null {
 
 async function waitForChatTtsQueueText(timeoutMs: number): Promise<ChatTtsQueueItem | null> {
   return chatTtsPipeline.waitForQueueText(timeoutMs, CHAT_TTS_MERGE_TARGET, CHAT_TTS_FIRST_CHUNK_TARGET);
-}
-
-type ChatTtsSynthResult = {
-  response: TtsSpeakResponse;
-};
-
-async function synthesizeChatTtsChunk(text: string): Promise<ChatTtsSynthResult> {
-  if (!clientRef) {
-    throw new Error("TTS backend unavailable.");
-  }
-  const requestCorrelationId = nextCorrelationId();
-  const startedAt = performance.now();
-  const requestedSpeed = state.tts.speed;
-  const response = await clientRef.ttsSpeak({
-    correlationId: requestCorrelationId,
-    text,
-    voice: state.tts.selectedVoice,
-    speed: requestedSpeed
-  });
-  const elapsedMs = Math.round(performance.now() - startedAt);
-  pushConsoleEntry(
-    "debug",
-    "browser",
-    `Chat TTS synth ${elapsedMs}ms for ${text.length} chars -> ${response.durationMs}ms audio`
-  );
-  state.tts.status = "ready";
-  state.tts.message = `Reading with ${response.voice}`;
-  state.tts.selectedVoice = response.voice;
-  state.tts.lastBytes = response.audioBytes.length;
-  state.tts.lastDurationMs = response.durationMs;
-  state.tts.lastSampleRate = response.sampleRate;
-  return {
-    response
-  };
 }
 
 function currentChatTtsSignature(): string {
@@ -2921,7 +2935,7 @@ function render(): void {
       title: session.title,
       status: session.status
     }))
-  }) as any);
+  }) as any, state.workspaceTab);
 
   const primaryChatPanel = getPrimaryChatPanelState();
 
@@ -3399,6 +3413,8 @@ function syncSecondaryThinkingPlacement(cp: ChatPanelState, correlationId: strin
 
 function resetCurrentConversationUiState(): void {
   resetCurrentConversationUiStateDomain(state, chatTtsLatencyCapturedByCorrelation);
+  chatPaneIdByCorrelation.clear();
+  chatTtsSawStreamDeltaByCorrelation.clear();
 }
 
 function normalizeChatText(input: string): string {
@@ -3435,13 +3451,6 @@ function ensureAssistantMessageForCorrelation(correlationId: string): void {
 
 function ensureAssistantMessageForPanel(cp: ChatPanelState, correlationId: string): void {
   ensureAssistantMessageForPanelState(cp, correlationId);
-}
-
-function isCurrentChatCorrelation(correlationId: string): boolean {
-  if (state.activeChatCorrelationId === correlationId) return true;
-  return state.messages.some(
-    (message) => message.role === "assistant" && message.correlationId === correlationId
-  );
 }
 
 function appendChatToolRow(
@@ -3645,7 +3654,9 @@ async function loadConversation(conversationId: string): Promise<void> {
   state.chatFirstAssistantChunkMsByCorrelation = {};
   state.chatFirstReasoningChunkMsByCorrelation = {};
   state.chatTtsLatencyMs = null;
+  chatPaneIdByCorrelation.clear();
   chatTtsLatencyCapturedByCorrelation.clear();
+  chatTtsSawStreamDeltaByCorrelation.clear();
   if (state.workspaceTab === "memory-tool") {
     await loadMemoryContext();
   }
@@ -4068,10 +4079,10 @@ async function refreshTtsState(): Promise<void> {
 }
 
 function applyVadSettingsToLegacyStt(): void {
-  const sherpa = state.vadSettings?.vadMethods["sherpa-silero"];
-  if (!sherpa) return;
+  const modelVad = state.vadSettings?.vadMethods["onnx-silero"];
+  if (!modelVad) return;
   const readNumber = (key: string, fallback: number) => {
-    const value = Number(sherpa[key]);
+    const value = Number(modelVad[key]);
     return Number.isFinite(value) ? value : fallback;
   };
   state.stt.vadBaseThreshold = readNumber("baseThreshold", state.stt.vadBaseThreshold);
@@ -4791,7 +4802,8 @@ function renderAndBind(sendMessage: (text: string) => Promise<void>): void {
         }
         // Start STT only after permission is confirmed
         state.stt.status = "starting";
-        state.stt.message = state.stt.backend === "sherpa_onnx" ? "Starting sherpa-onnx..." : state.stt.serverWarmed ? "Connecting to whisper server..." : "Starting whisper server...";
+        state.stt.backend = "whisper_cpp";
+        state.stt.message = state.stt.serverWarmed ? "Connecting to whisper server..." : "Starting whisper server...";
         state.stt.isListening = false;
         renderAndBind(sendMessage);
         await invoke("stt_set_backend", { backend: state.stt.backend });
@@ -4801,7 +4813,7 @@ function renderAndBind(sendMessage: (text: string) => Promise<void>): void {
         }
         state.stt.serverWarmed = false;
         state.stt.status = "running";
-        state.stt.message = state.stt.backend === "sherpa_onnx" ? "Sherpa backend ready" : "Server started";
+        state.stt.message = "Whisper backend ready";
         await setupSttTranscriptListener(async (text) => {
           if (!(await ensureVoiceChatModelReady())) return;
           await sendMessage(text);
@@ -5980,7 +5992,7 @@ syncOverlayScrollbars();
     }),
     onToggleStt: toggleSttRuntime,
     onSetSttBackend: async (backend) => {
-      if (backend !== "whisper_cpp" && backend !== "sherpa_onnx") return;
+      if (backend !== "whisper_cpp") return;
       if (state.stt.isListening || state.stt.status === "starting" || state.stt.status === "running") {
         state.stt.message = "Stop STT before switching backend.";
         renderAndBind(sendMessage);
@@ -5990,9 +6002,7 @@ syncOverlayScrollbars();
       await invoke("stt_set_backend", { backend });
       state.stt.backend = backend;
       persistSttBackend(backend);
-      state.stt.message = backend === "sherpa_onnx"
-        ? "Sherpa backend selected. Requires local sherpa model files."
-        : "Whisper backend selected.";
+      state.stt.message = "Whisper backend selected.";
       renderAndBind(sendMessage);
     },
     onSetSttModel: async (model) => {
@@ -6028,7 +6038,7 @@ syncOverlayScrollbars();
         const { invoke } = await import("@tauri-apps/api/core");
         const result = await invoke<string>("stt_download_model", { fileName });
         const models = await invoke<string[]>("stt_list_models");
-        state.stt.availableModels = Array.isArray(models) && models.length > 0 ? models : ["auto"];
+        state.stt.availableModels = normalizeUserFacingWhisperModels(Array.isArray(models) ? models : []);
         if (!state.stt.availableModels.includes(state.stt.selectedModel)) {
           state.stt.selectedModel = state.stt.availableModels[0] ?? "auto";
           persistSttModel(state.stt.selectedModel);
@@ -6205,44 +6215,44 @@ syncOverlayScrollbars();
       state.showAppResourceCpu = value;
       persistShowAppResourcesCpu(value);
       appResourcePolling.restart(1000);
-      renderAndBind(sendMessage);
+      updateBottomBarResourceNodesInPlace();
     },
     onSetShowAppResourceMemory: async (value) => {
       state.showAppResourceMemory = value;
       persistShowAppResourcesMemory(value);
       appResourcePolling.restart(1000);
-      renderAndBind(sendMessage);
+      updateBottomBarResourceNodesInPlace();
     },
     onSetShowAppResourceNetwork: async (value) => {
       state.showAppResourceNetwork = value;
       persistShowAppResourcesNetwork(value);
       appResourcePolling.restart(1000);
-      renderAndBind(sendMessage);
+      updateBottomBarResourceNodesInPlace();
     },
     onSetShowBottomEngine: async (value) => {
       state.showBottomEngine = value;
       persistBottomItem(BOTTOM_BAR_PREF_KEYS.showBottomEngine, value);
-      renderAndBind(sendMessage);
+      updateBottomBarInPlace();
     },
     onSetShowBottomModel: async (value) => {
       state.showBottomModel = value;
       persistBottomItem(BOTTOM_BAR_PREF_KEYS.showBottomModel, value);
-      renderAndBind(sendMessage);
+      updateBottomBarInPlace();
     },
     onSetShowBottomContext: async (value) => {
       state.showBottomContext = value;
       persistBottomItem(BOTTOM_BAR_PREF_KEYS.showBottomContext, value);
-      renderAndBind(sendMessage);
+      updateBottomBarInPlace();
     },
     onSetShowBottomSpeed: async (value) => {
       state.showBottomSpeed = value;
       persistBottomItem(BOTTOM_BAR_PREF_KEYS.showBottomSpeed, value);
-      renderAndBind(sendMessage);
+      updateBottomBarInPlace();
     },
     onSetShowBottomTtsLatency: async (value) => {
       state.showBottomTtsLatency = value;
       persistBottomItem(BOTTOM_BAR_PREF_KEYS.showBottomTtsLatency, value);
-      renderAndBind(sendMessage);
+      updateBottomBarInPlace();
     },
     onSetEnableNotificationChime: async (value) => {
       state.enableNotificationChime = value;
@@ -8374,6 +8384,10 @@ async function bootstrap(): Promise<void> {
     persistSttBackend,
     persistSttModel
   });
+  if (consumeSttBackendMigrationNotice()) {
+    state.stt.message = "STT now uses whisper.cpp. Your previous Sherpa recognizer preference was migrated.";
+    pushConsoleEntry("info", "browser", state.stt.message);
+  }
   terminalManager.setClient(client);
   terminalManager.setDisplayMode(state.displayMode);
 
@@ -8807,7 +8821,7 @@ function safePayloadPreview(payload: AppEvent["payload"]): string {
 }
 
 bootstrap().catch((error) => {
-  state.events.push({
+  appendAppEvent(state.events, {
     timestampMs: Date.now(),
     correlationId: "bootstrap",
     subsystem: "frontend",

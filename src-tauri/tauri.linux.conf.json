@@ -1,0 +1,18 @@
+{
+  "bundle": {
+    "resources": [
+      "resources/llama-runtime/*",
+      "resources/llama-runtime/**/*",
+      "resources/kokoro-runtime/*",
+      "resources/kokoro-runtime/**/*",
+      "resources/kokoro/*",
+      "resources/espeak-ng/**/*",
+      "resources/onnxruntime/linux-x64/**/*",
+      "resources/voice/*",
+      "resources/voice/**/*",
+      "resources/whisper/*",
+      "resources/whisper/**/*",
+      "resources/whisper-server/**/*"
+    ]
+  }
+}

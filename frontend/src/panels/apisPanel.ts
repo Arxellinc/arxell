@@ -338,12 +338,6 @@ function isExhaustedLimitWarning(status: ApiConnectionStatus, statusMessage: str
   return hasLimitContext && hasExhaustedContext;
 }
 
-function statusLabel(status: ApiConnectionStatus): string {
-  if (status === "verified") return "Verified";
-  if (status === "warning") return "Warning";
-  return "Pending";
-}
-
 function buildVerificationCommand(draft: PrimaryPanelRenderState["apiDraft"]): string {
   const endpoint = resolveVerifyEndpoint(draft);
   if (!endpoint) {

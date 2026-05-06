@@ -21,7 +21,12 @@ export function createTtsPanelBindings(deps: {
   nextCorrelationId: () => string;
   refreshTtsState: () => Promise<void>;
   browseTtsModelPath: (currentValue: string) => Promise<string | null>;
-  playTtsAudio: (audioBytes: number[], correlationId: string | null, originalText: string) => Promise<void>;
+  playTtsAudio: (
+    audioBytes: number[],
+    correlationId: string | null,
+    originalText: string,
+    phonemes?: string | null,
+  ) => Promise<void>;
   stopTtsPlaybackLocal: () => void;
   formatTtsError: (error: unknown) => string;
   render: () => void;
@@ -182,7 +187,7 @@ export function createTtsPanelBindings(deps: {
         state.tts.lastBytes = response.audioBytes.length;
         state.tts.lastDurationMs = response.durationMs;
         state.tts.lastSampleRate = response.sampleRate;
-        await deps.playTtsAudio(response.audioBytes, null, text);
+        await deps.playTtsAudio(response.audioBytes, null, text, response.phonemes);
       } catch (error) {
         state.tts.status = "error";
         state.tts.message = `Speak failed: ${deps.formatTtsError(error)}`;

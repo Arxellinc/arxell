@@ -12,7 +12,7 @@ const MAX_LINES_PER_READ: usize = 2000;
 const MAX_INSPECT_DOCS: usize = 20;
 
 #[derive(Debug, Clone)]
-struct SyncedDocument {
+pub struct SyncedDocument {
     path: String,
     title: String,
     lines: usize,
@@ -205,7 +205,9 @@ impl Tool for NotepadReadTool {
         _cancel: Option<tokio::sync::watch::Receiver<bool>>,
     ) -> ToolResult {
         let Some(path) = params.get("path").and_then(|value| value.as_str()) else {
-            return tool_error("missing path. Use notepad_inspect to discover available documents.");
+            return tool_error(
+                "missing path. Use notepad_inspect to discover available documents.",
+            );
         };
         let resolved = PathBuf::from(path);
         if !resolved.exists() {
@@ -600,18 +602,11 @@ mod tests {
         let registry = NotepadSyncRegistry::new();
         let hub = EventHub::new();
         let tool = NotepadWriteTool::new(hub, "test-corr".to_string(), registry);
-        let result = tool
-            .execute(json!({"content": "hello world"}), None)
-            .await;
+        let result = tool.execute(json!({"content": "hello world"}), None).await;
         assert!(result.success);
         let path_str = result.result.unwrap();
         assert!(path_str.contains("draft"));
-        let path = PathBuf::from(
-            path_str
-                .split_whitespace()
-                .nth(1)
-                .unwrap_or(""),
-        );
+        let path = PathBuf::from(path_str.split_whitespace().nth(1).unwrap_or(""));
         if path.exists() {
             let _ = std::fs::remove_file(&path);
         }

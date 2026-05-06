@@ -6,6 +6,7 @@ import {
   canStopShadowEval,
   isVoiceRuntimeIdle
 } from "../app/vadRuntimeRules";
+import { isUserFacingWhisperModel } from "../stt/models";
 
 export function renderSttActions(): string {
   return `
@@ -41,7 +42,7 @@ function renderVadRow(args: {
 
 export function renderSttBody(state: PrimaryPanelRenderState): string {
   const stt = state.stt;
-  const backendLabel = stt.backend === "sherpa_onnx" ? "sherpa-onnx" : "whisper.cpp";
+  const backendLabel = "whisper.cpp";
   const statusClass = stt.status === "error" ? "stt-status-error" : stt.status === "running" ? "stt-status-running" : stt.status === "starting" ? "stt-status-starting" : "stt-status-idle";
   const statusText = stt.status === "idle" ? "Not started" : stt.status === "starting" ? "Starting..." : stt.status === "running" ? "Listening" : `Error: ${stt.message || "Unknown"}`;
 
@@ -60,17 +61,20 @@ export function renderSttBody(state: PrimaryPanelRenderState): string {
         .join("")
     : `<div class="stt-console-empty">No STT console output yet.</div>`;
 
-  const availableModels = stt.availableModels.length > 0 ? stt.availableModels : ["auto"];
+  const availableModels = stt.availableModels.filter(isUserFacingWhisperModel);
+  const modelOptions = availableModels.length > 0 ? availableModels : ["auto"];
   const languages = ["auto", "en", "es", "fr", "de", "it", "pt", "ru", "zh", "ja", "ko", "ar"];
   const threadOptions = [1, 2, 4, 6, 8];
-  const sttModels: Array<{name: string; fileName: string}> = [
+  const sttModels: Array<{name: string; fileName: string; note: string}> = [
     {
-      name: "Sherpa Streaming Zipformer (English)",
-      fileName: "sherpa-onnx-rk3588-streaming-zipformer-en-2023-06-26.tar.bz2"
+      name: "Whisper Base English (Default bundled model)",
+      fileName: "ggml-base.en-q8_0.bin",
+      note: "Higher accuracy, larger model"
     },
     {
-      name: "Sherpa Moonshine Base (Quantized)",
-      fileName: "sherpa-onnx-moonshine-base-en-quantized-2026-02-27.tar.bz2"
+      name: "Whisper Tiny English",
+      fileName: "ggml-tiny.en-q8_0.bin",
+      note: "Smaller, faster fallback"
     }
   ];
 
@@ -96,20 +100,15 @@ export function renderSttBody(state: PrimaryPanelRenderState): string {
           <span class="config-meta">Ready</span>
         </div>
         <div class="config-row">
-          <span class="config-key">Backend</span>
-          <span class="config-value">
-            <select id="sttBackendSelect" class="control-select">
-              <option value="whisper_cpp"${stt.backend === "whisper_cpp" ? " selected" : ""}>whisper.cpp</option>
-              <option value="sherpa_onnx"${stt.backend === "sherpa_onnx" ? " selected" : ""}>sherpa-onnx</option>
-            </select>
-          </span>
-          <span class="config-meta">${backendLabel}</span>
+          <span class="config-key">Engine</span>
+          <span class="config-value">${backendLabel}</span>
+          <span class="config-meta">Local STT</span>
         </div>
         <div class="config-row">
           <span class="config-key">Recognition Model</span>
           <span class="config-value">
             <select id="sttModelSelect" class="control-select">
-              ${availableModels.map(model => `<option value="${model}"${stt.selectedModel === model ? " selected" : ""}>${model}</option>`).join("")}
+              ${modelOptions.map(model => `<option value="${model}"${stt.selectedModel === model ? " selected" : ""}>${model}</option>`).join("")}
             </select>
           </span>
           <span class="config-meta">Local</span>
@@ -156,18 +155,25 @@ export function renderSttBody(state: PrimaryPanelRenderState): string {
             <span class="config-meta">16-bit</span>
           </div>
           <div class="config-row">
-            <span class="config-key">Backend</span>
+            <span class="config-key">Engine</span>
             <span class="config-value">${backendLabel}</span>
             <span class="config-meta">Active</span>
           </div>
         </div>
         <details class="stt-model-downloads" style="margin-top: 16px;" open>
           <summary class="stt-advanced-title">Model Downloads</summary>
+          <div class="tts-download-copy" style="margin-top: 8px;">
+            <strong>Base is the default Whisper model.</strong>
+            <span>Download smaller Whisper variants only if you want a different latency or runtime profile.</span>
+          </div>
           <table class="config-table" style="width: 100%; margin-top: 8px;">
             <tbody>
               ${sttModels.map(model => `
                 <tr class="config-row">
-                  <td class="config-key">${escapeHtml(model.name)}</td>
+                  <td class="config-key">
+                    ${escapeHtml(model.name)}
+                    <div class="config-meta">${escapeHtml(model.note)}</div>
+                  </td>
                   <td class="config-value" style="text-align: right;">
                     <button type="button" class="tool-action-btn" data-stt-model-download="${model.fileName}">
                       Download
@@ -220,26 +226,6 @@ export function renderSttBody(state: PrimaryPanelRenderState): string {
         <div class="stt-console-panel">${sttConsoleHtml}</div>
       </section>
     </div>
-  `;
-}
-
-function renderVadSettingsSection(stt: PrimaryPanelRenderState["stt"]): string {
-  return `
-    <section class="stt-vad-section" aria-label="VAD Settings">
-      <h3 class="stt-vad-title">VAD Settings</h3>
-      <p class="stt-vad-note">All settings below are active immediately for detection and chunking.</p>
-      <div class="config-table stt-vad-table">
-        ${renderVadRow({ id: "sttVadBaseThresholdInput", label: "Base Threshold", value: stt.vadBaseThreshold, step: "0.0005", min: "0", max: "0.2", hint: "RMS floor" })}
-        ${renderVadRow({ id: "sttVadDynamicMultiplierInput", label: "Dynamic Multiplier", value: stt.vadDynamicMultiplier, step: "0.1", min: "1", max: "10", hint: "noise floor factor" })}
-        ${renderVadRow({ id: "sttVadNoiseAdaptationAlphaInput", label: "Noise Adaptation Alpha", value: stt.vadNoiseAdaptationAlpha, step: "0.01", min: "0", max: "1", hint: "EMA blend" })}
-        ${renderVadRow({ id: "sttVadStartFramesInput", label: "Start Frames", value: stt.vadStartFrames, step: "1", min: "1", max: "100", hint: "speech-on hysteresis" })}
-        ${renderVadRow({ id: "sttVadEndFramesInput", label: "End Frames", value: stt.vadEndFrames, step: "1", min: "1", max: "200", hint: "speech-off hysteresis" })}
-        ${renderVadRow({ id: "sttVadPreSpeechMsInput", label: "Pre-Speech (ms)", value: stt.vadPreSpeechMs, step: "10", min: "0", max: "2000", hint: "prefix capture" })}
-        ${renderVadRow({ id: "sttVadMinUtteranceMsInput", label: "Min Utterance (ms)", value: stt.vadMinUtteranceMs, step: "10", min: "0", max: "5000", hint: "drop too-short segments" })}
-        ${renderVadRow({ id: "sttVadForceFlushSInput", label: "Force Flush (s)", value: stt.vadForceFlushS, step: "0.25", min: "0.25", max: "30", hint: "chunk while speaking" })}
-        ${renderVadRow({ id: "sttVadMaxUtteranceSInput", label: "Max Utterance (s)", value: stt.vadMaxUtteranceS, step: "1", min: "1", max: "120", hint: "hard cap" })}
-      </div>
-    </section>
   `;
 }
 

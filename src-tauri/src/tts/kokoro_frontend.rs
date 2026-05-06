@@ -96,7 +96,10 @@ mod tests {
     fn multi_char_phoneme_string() {
         let t = tokenizer();
         let tokens = t.tokenize_phonemes("hɛˈloʊ wɜːld");
-        assert_eq!(tokens, vec![50, 86, 156, 54, 57, 135, 16, 65, 87, 158, 54, 46]);
+        assert_eq!(
+            tokens,
+            vec![50, 86, 156, 54, 57, 135, 16, 65, 87, 158, 54, 46]
+        );
     }
 
     #[test]

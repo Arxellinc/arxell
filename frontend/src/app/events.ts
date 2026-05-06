@@ -1,5 +1,14 @@
 import type { AppEvent } from "../contracts";
 
+export const MAX_APP_EVENTS = 3000;
+
+export function appendAppEvent(events: AppEvent[], event: AppEvent): void {
+  events.push(event);
+  if (events.length > MAX_APP_EVENTS) {
+    events.splice(0, events.length - MAX_APP_EVENTS);
+  }
+}
+
 export function parseTerminalOutput(payload: AppEvent["payload"]): { sessionId: string; data: string } | null {
   if (!payload || typeof payload !== "object") return null;
   const value = payload as Record<string, unknown>;
@@ -263,7 +272,7 @@ export function handleCoreAppEvent(
     }
   }
 
-  deps.state.events.push(event);
+  appendAppEvent(deps.state.events, event);
   deps.applyFlowRuntimeEvent(event);
   deps.applyLooperRuntimeEvent(event);
   void deps.maybeHandleFlowPhaseTerminalEvent(event);

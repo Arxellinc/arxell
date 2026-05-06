@@ -17,10 +17,7 @@ pub struct EspeakPhonemizer {
 impl EspeakPhonemizer {
     pub fn new(resources_dir: &Path) -> Result<Self, String> {
         let base = resources_dir.join("espeak-ng");
-        let bin_candidates = [
-            base.join("espeak-ng"),
-            base.join("bin").join("espeak-ng"),
-        ];
+        let bin_candidates = [base.join("espeak-ng"), base.join("bin").join("espeak-ng")];
         if let Some(bin_path) = bin_candidates.iter().find(|p| p.is_file()).cloned() {
             let data_candidates = [
                 base.join("espeak-ng-data"),
@@ -30,15 +27,28 @@ impl EspeakPhonemizer {
                 .iter()
                 .find(|p| p.is_dir())
                 .cloned()
-                .ok_or_else(|| "bundled espeak-ng-data not found in resources/espeak-ng".to_string())?;
+                .ok_or_else(|| {
+                    "bundled espeak-ng-data not found in resources/espeak-ng".to_string()
+                })?;
             log::info!("[tts] using bundled espeak-ng: {:?}", bin_path);
-            return Ok(Self { bin_path, data_path: Some(data_path), is_system: false });
+            return Ok(Self {
+                bin_path,
+                data_path: Some(data_path),
+                is_system: false,
+            });
         }
 
         let system_bin = which_espeak_ng();
         if let Some(bin_path) = system_bin {
-            log::warn!("[tts] bundled espeak-ng not found, falling back to system binary: {:?}", bin_path);
-            return Ok(Self { bin_path, data_path: None, is_system: true });
+            log::warn!(
+                "[tts] bundled espeak-ng not found, falling back to system binary: {:?}",
+                bin_path
+            );
+            return Ok(Self {
+                bin_path,
+                data_path: None,
+                is_system: true,
+            });
         }
 
         Err("espeak-ng not found: neither bundled binary nor system binary available".to_string())
@@ -56,10 +66,7 @@ impl EspeakPhonemizer {
 fn which_espeak_ng() -> Option<PathBuf> {
     let candidates = ["espeak-ng", "espeak"];
     for name in &candidates {
-        if let Ok(output) = std::process::Command::new("which")
-            .arg(name)
-            .output()
-        {
+        if let Ok(output) = std::process::Command::new("which").arg(name).output() {
             if output.status.success() {
                 let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
                 if !path.is_empty() {

@@ -1,6 +1,6 @@
 [package]
 name = "arxell"
-version = "0.2.3"
+version = "0.2.4"
 edition = "2021"
 
 [lib]
@@ -33,7 +33,6 @@ uuid = { version = "1", features = ["v4"] }
 log = "0.4"
 num_cpus = "1"
 libc = "0.2"
-sherpa-onnx = "1.12.34"
 arx_rs = { path = "../agent" }
 sysinfo = "0.37"
 git2 = { version = "0.20", features = ["vendored-libgit2"] }

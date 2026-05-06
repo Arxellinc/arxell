@@ -1,7 +1,7 @@
 import { iconHtml } from "../icons";
 import { APP_ICON } from "../icons/map";
 import type { AvatarMeshSetting } from "./types";
-import { AVATAR_MESH_GROUPS, AVATAR_MORPHS, AVATAR_ARM_BONES } from "./types";
+import { AVATAR_MESH_GROUPS } from "./types";
 import type { AvatarState, PrimaryPanelBindings, PrimaryPanelRenderState } from "./types";
 import { escapeHtml } from "./utils";
 

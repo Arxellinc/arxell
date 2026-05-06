@@ -1,16 +1,16 @@
 use crate::voice::vad::contracts::{VadError, VadManifest, VadStatus, VadStrategy};
 use crate::voice::vad::settings::{
-    ENERGY_BASIC_ID, HYBRID_INTERRUPT_ID, MICROTURN_V1_ID, SHERPA_SILERO_ID,
+    ENERGY_BASIC_ID, HYBRID_INTERRUPT_ID, MICROTURN_V1_ID, ONNX_SILERO_ID,
 };
 use crate::voice::vad::strategies::energy_basic::EnergyBasicStrategy;
 use crate::voice::vad::strategies::hybrid_interrupt::HybridInterruptStrategy;
 use crate::voice::vad::strategies::microturn_v1::MicroturnV1Strategy;
-use crate::voice::vad::strategies::sherpa_silero::SherpaSileroStrategy;
+use crate::voice::vad::strategies::onnx_silero::OnnxSileroStrategy;
 
 pub fn list_methods(include_experimental: bool) -> Vec<VadManifest> {
     [
         energy_manifest(),
-        sherpa_manifest(),
+        onnx_silero_manifest(),
         microturn_manifest(),
         hybrid_interrupt_manifest(),
     ]
@@ -42,7 +42,7 @@ pub fn manifest(method_id: &str) -> Result<VadManifest, VadError> {
 pub fn instantiate(method_id: &str) -> Result<Box<dyn VadStrategy>, VadError> {
     match method_id {
         ENERGY_BASIC_ID => Ok(Box::<EnergyBasicStrategy>::default()),
-        SHERPA_SILERO_ID => Ok(Box::<SherpaSileroStrategy>::default()),
+        ONNX_SILERO_ID => Ok(Box::<OnnxSileroStrategy>::default()),
         MICROTURN_V1_ID => Ok(Box::<MicroturnV1Strategy>::default()),
         HYBRID_INTERRUPT_ID => Ok(Box::<HybridInterruptStrategy>::default()),
         _ => Err(VadError::UnknownMethod(format!(
@@ -54,7 +54,7 @@ pub fn instantiate(method_id: &str) -> Result<Box<dyn VadStrategy>, VadError> {
 fn all_manifests() -> Vec<VadManifest> {
     vec![
         energy_manifest(),
-        sherpa_manifest(),
+        onnx_silero_manifest(),
         microturn_manifest(),
         hybrid_interrupt_manifest(),
     ]
@@ -72,8 +72,8 @@ fn energy_manifest() -> VadManifest {
     EnergyBasicStrategy::manifest_static()
 }
 
-fn sherpa_manifest() -> VadManifest {
-    SherpaSileroStrategy::manifest_static()
+fn onnx_silero_manifest() -> VadManifest {
+    OnnxSileroStrategy::manifest_static()
 }
 
 fn microturn_manifest() -> VadManifest {
@@ -92,7 +92,7 @@ mod tests {
     fn stable_list_excludes_experimental_by_default() {
         let methods = list_methods(false);
         assert!(methods.iter().any(|method| method.id == ENERGY_BASIC_ID));
-        assert!(methods.iter().any(|method| method.id == SHERPA_SILERO_ID));
+        assert!(methods.iter().any(|method| method.id == ONNX_SILERO_ID));
         assert!(!methods.iter().any(|method| method.id == MICROTURN_V1_ID));
     }
 

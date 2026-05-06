@@ -2193,7 +2193,7 @@ mod tests {
             sheet.cells[&CellCoord { row: 0, col: 2 }].input,
             "=A1&B1".to_string()
         );
-        let original_computed = sheet.cells[&CellCoord { row: 0, col: 2 }].computed.clone();
+        let _original_computed = sheet.cells[&CellCoord { row: 0, col: 2 }].computed.clone();
         drop(workbook);
         service
             .copy_paste_range(

@@ -91,10 +91,6 @@ export function renderLlamaCppBody(state: PrimaryPanelRenderState): string {
       </div>
     `
     : `<div class="model-manager-installed-row is-empty"><span>No active model selected</span><span>-</span><span>-</span><span>-</span></div>`;
-  const selected =
-    runtime?.engines.find((e) => e.engineId === state.llamaRuntimeSelectedEngineId) ??
-    runtime?.engines[0] ??
-    null;
   const detectGpuEngine = () => {
     if (!runtime) return { label: "None detected", meta: "CPU only" };
     const activeGpu = runtime.engines.find(

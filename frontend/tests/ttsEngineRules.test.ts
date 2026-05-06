@@ -12,7 +12,7 @@ function makeSeedState(): TtsEngineResettableState {
   return {
     status: "error",
     message: "stale error",
-    engineId: "sherpa-kokoro",
+    engineId: "kokoro",
     engine: "kokoro",
     ready: true,
     modelPath: "/tmp/model.onnx",
@@ -28,22 +28,15 @@ function makeSeedState(): TtsEngineResettableState {
 
 test("default voices are engine specific", () => {
   assert.equal(defaultVoiceForEngine("kokoro"), "af_heart");
-  assert.equal(defaultVoiceForEngine("piper"), "speaker_0");
-  assert.equal(defaultVoiceForEngine("matcha"), "speaker_0");
-  assert.equal(defaultVoiceForEngine("kitten"), "speaker_0");
   assert.equal(defaultVoiceForEngine("pocket"), "speaker_0");
   assert.deepEqual(defaultVoicesForEngine("kokoro"), ["af_heart"]);
-  assert.deepEqual(defaultVoicesForEngine("piper"), ["speaker_0"]);
+  assert.deepEqual(defaultVoicesForEngine("pocket"), ["speaker_0"]);
 });
 
 test("engine UI config provides engine labels and hints", () => {
-  const piper = getTtsEngineUiConfig("piper");
-  assert.equal(piper.engineLabel, "Piper");
-  assert.match(piper.engineHint, /bundled/i);
-
-  const matcha = getTtsEngineUiConfig("matcha");
-  assert.equal(matcha.engineLabel, "Matcha");
-  assert.match(matcha.engineHint, /bundled/i);
+  const kokoro = getTtsEngineUiConfig("kokoro");
+  assert.equal(kokoro.engineLabel, "Kokoro");
+  assert.match(kokoro.engineHint, /bundled/i);
 
   const pocket = getTtsEngineUiConfig("pocket");
   assert.equal(pocket.engineLabel, "PocketTTS");
@@ -51,7 +44,7 @@ test("engine UI config provides engine labels and hints", () => {
 });
 
 test("resetTtsStateForEngine clears stale engine-scoped values for every engine", () => {
-  const engines = ["kokoro", "piper", "matcha", "kitten", "pocket"] as const;
+  const engines = ["kokoro", "pocket"] as const;
   for (const engine of engines) {
     const reset = resetTtsStateForEngine(makeSeedState(), engine);
     assert.equal(reset.engine, engine);

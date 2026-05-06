@@ -565,7 +565,6 @@ pub fn sheet_state_to_jsonl(
 mod tests {
     use super::*;
     use crate::services::sheets_service::SheetsService;
-    use crate::services::sheets_types::ComputedValue;
     use std::fs;
 
     fn make_header(name: &str, rows: usize, cols: usize) -> SheetHeader {

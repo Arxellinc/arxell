@@ -24,7 +24,7 @@ jobs:
           - name: linux-x64
             os: ubuntu-latest
           - name: macos-x64
-            os: macos-13
+            os: macos-latest
           - name: windows-x64
             os: windows-latest
 
@@ -579,7 +579,7 @@ jobs:
             windows-latest)
               cargo tauri build --bundles msi -- --features tauri-runtime
               ;;
-            macos-13)
+            macos-latest)
               cargo tauri build --bundles dmg -- --features tauri-runtime
               ;;
             *)

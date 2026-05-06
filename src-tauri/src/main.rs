@@ -39,18 +39,17 @@ use arxell_lite::contracts::{
     SystemPromptSetResponse, TerminalCloseSessionRequest, TerminalCloseSessionResponse,
     TerminalInputRequest, TerminalInputResponse, TerminalOpenSessionRequest,
     TerminalOpenSessionResponse, TerminalResizeRequest, TerminalResizeResponse, ToolInvokeRequest,
-    ToolInvokeResponse, TtsListVoicesRequest,
-    TtsListVoicesResponse, TtsSelfTestRequest, TtsSelfTestResponse, TtsSettingsGetRequest,
-    TtsSettingsGetResponse, TtsSettingsSetRequest, TtsSettingsSetResponse, TtsSpeakRequest,
-    TtsSpeakResponse, TtsSpeakStreamResponse, TtsStatusRequest, TtsStatusResponse, TtsStopRequest,
-    TtsStopResponse,
-    UserProjectEnsureRequest, UserProjectEnsureResponse, UserProjectsRootsRequest,
-    UserProjectsRootsResponse, VoiceGetRuntimeDiagnosticsRequest, VoiceGetVadSettingsRequest,
-    VoiceGetVadSettingsResponse, VoiceListVadMethodsRequest, VoiceListVadMethodsResponse,
-    VoiceRequestHandoffRequest, VoiceRuntimeSnapshotResponse, VoiceSetDuplexModeRequest,
-    VoiceSetShadowMethodRequest, VoiceSetVadMethodRequest, VoiceStartSessionRequest,
-    VoiceStartShadowEvalRequest, VoiceStopSessionRequest, VoiceStopShadowEvalRequest,
-    VoiceUpdateVadConfigRequest, VoiceUpdateVadConfigResponse, WebSearchRequest, WebSearchResponse,
+    ToolInvokeResponse, TtsListVoicesRequest, TtsListVoicesResponse, TtsSelfTestRequest,
+    TtsSelfTestResponse, TtsSettingsGetRequest, TtsSettingsGetResponse, TtsSettingsSetRequest,
+    TtsSettingsSetResponse, TtsSpeakRequest, TtsSpeakResponse, TtsSpeakStreamResponse,
+    TtsStatusRequest, TtsStatusResponse, TtsStopRequest, TtsStopResponse, UserProjectEnsureRequest,
+    UserProjectEnsureResponse, UserProjectsRootsRequest, UserProjectsRootsResponse,
+    VoiceGetRuntimeDiagnosticsRequest, VoiceGetVadSettingsRequest, VoiceGetVadSettingsResponse,
+    VoiceListVadMethodsRequest, VoiceListVadMethodsResponse, VoiceRequestHandoffRequest,
+    VoiceRuntimeSnapshotResponse, VoiceSetDuplexModeRequest, VoiceSetShadowMethodRequest,
+    VoiceSetVadMethodRequest, VoiceStartSessionRequest, VoiceStartShadowEvalRequest,
+    VoiceStopSessionRequest, VoiceStopShadowEvalRequest, VoiceUpdateVadConfigRequest,
+    VoiceUpdateVadConfigResponse, WebSearchRequest, WebSearchResponse,
     WorkspaceToolCreateAppPluginRequest, WorkspaceToolCreateAppPluginResponse,
     WorkspaceToolForgetRequest, WorkspaceToolForgetResponse, WorkspaceToolSetEnabledRequest,
     WorkspaceToolSetEnabledResponse, WorkspaceToolSetIconRequest, WorkspaceToolSetIconResponse,
@@ -62,9 +61,9 @@ use arxell_lite::ipc::tauri_bridge::{attach_event_forwarder, TauriBridgeState};
 #[cfg(feature = "tauri-runtime")]
 use arxell_lite::ipc::tool_runtime::{invoke_legacy_tool_command, invoke_tool};
 #[cfg(feature = "tauri-runtime")]
-use arxell_lite::tools::invoke::tasks::run_due_scheduled_tasks;
-#[cfg(feature = "tauri-runtime")]
 use arxell_lite::stt::STTState;
+#[cfg(feature = "tauri-runtime")]
+use arxell_lite::tools::invoke::tasks::run_due_scheduled_tasks;
 #[cfg(feature = "tauri-runtime")]
 use arxell_lite::tts::TTSState;
 #[cfg(feature = "tauri-runtime")]

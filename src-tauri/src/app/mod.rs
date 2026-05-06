@@ -3,8 +3,8 @@ pub mod files_service;
 pub mod model_manager_service;
 pub mod permission_service;
 pub mod runtime_service;
-pub mod terminal_service;
 pub mod tasks_service;
+pub mod terminal_service;
 pub mod user_projects_service;
 pub mod voice_handoff_service;
 pub mod voice_runtime_service;
@@ -63,8 +63,10 @@ impl AppContext {
         let model_manager = Arc::new(model_manager_service::ModelManagerService::new(hub.clone()));
         let files = Arc::new(files_service::FilesService::new());
         let tasks = Arc::new(
-            tasks_service::TaskAutomationService::new(tasks_service::TaskAutomationService::default_path())
-                .map_err(|err| format!("failed to initialize tasks service: {err}"))?,
+            tasks_service::TaskAutomationService::new(
+                tasks_service::TaskAutomationService::default_path(),
+            )
+            .map_err(|err| format!("failed to initialize tasks service: {err}"))?,
         );
         let looper = Arc::new(LooperHandler::new(
             hub.clone(),

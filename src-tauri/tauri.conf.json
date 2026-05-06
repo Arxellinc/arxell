@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Arxell",
-  "version": "0.2.3",
+  "version": "0.2.4",
   "identifier": "com.arxell.app",
   "build": {
     "frontendDist": "../frontend/dist",
@@ -33,16 +33,14 @@
       "msi",
       "dmg"
     ],
-    "resources": [
-      "resources/llama-runtime/*",
-      "resources/llama-runtime/**/*",
-      "resources/kokoro-runtime/*",
-      "resources/kokoro-runtime/**/*",
-      "resources/kokoro/*",
-      "resources/espeak-ng/**/*",
-      "resources/onnxruntime/**/*",
-      "resources/whisper/*",
-      "resources/whisper/**/*"
-    ]
+    "icon": [
+      "icons/icon-32.png",
+      "icons/icon-128.png",
+      "icons/icon-256.png",
+      "icons/icon-512.png",
+      "icons/icon-32l.ico",
+      "icons/icon-32l.svg"
+    ],
+    "useLocalToolsDir": true
   }
 }

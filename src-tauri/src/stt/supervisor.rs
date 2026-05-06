@@ -492,11 +492,9 @@ fn resolve_model_path(app: &AppHandle) -> Result<PathBuf, String> {
             .join("ggml-base.en-q8_0.bin"),
         app_data_dir.join("models").join("ggml-base-q8_0.bin"),
         app_data_dir.join("models").join("ggml-base.en-q8_0.bin"),
+        app_data_dir.join("models").join("ggml-tiny.en-q8_0.bin"),
         resource_dir.join("whisper").join("ggml-base-q8_0.bin"),
-        resource_dir.join("whisper").join("ggml-tiny.en-q8_0.bin"),
-        resource_dir.join("whisper").join("ggml-base.en-q8_0.bin"),
         resource_dir.join("models").join("ggml-base-q8_0.bin"),
-        resource_dir.join("models").join("ggml-tiny.en-q8_0.bin"),
         resource_dir
             .join("resources")
             .join("whisper")
@@ -507,20 +505,6 @@ fn resolve_model_path(app: &AppHandle) -> Result<PathBuf, String> {
                 .join("resources")
                 .join("whisper")
                 .join("ggml-base-q8_0.bin")
-        },
-        {
-            let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap_or_default();
-            PathBuf::from(manifest_dir)
-                .join("resources")
-                .join("whisper")
-                .join("ggml-tiny.en-q8_0.bin")
-        },
-        {
-            let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap_or_default();
-            PathBuf::from(manifest_dir)
-                .join("resources")
-                .join("whisper")
-                .join("ggml-base.en-q8_0.bin")
         },
     ];
 

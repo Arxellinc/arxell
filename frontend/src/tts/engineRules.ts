@@ -1,4 +1,4 @@
-export type TtsEngine = "kokoro" | "piper" | "matcha" | "kitten" | "pocket";
+export type TtsEngine = "kokoro" | "pocket";
 
 export interface TtsEngineOption {
   value: TtsEngine;
@@ -29,9 +29,6 @@ export interface TtsEngineResettableState {
 
 export const TTS_ENGINE_OPTIONS: readonly TtsEngineOption[] = [
   { value: "kokoro", label: "Kokoro" },
-  { value: "piper", label: "Piper (VITS)" },
-  { value: "matcha", label: "Matcha" },
-  { value: "kitten", label: "KittenTTS" },
   { value: "pocket", label: "PocketTTS" }
 ] as const;
 
@@ -44,24 +41,6 @@ export function defaultVoicesForEngine(engine: TtsEngine): string[] {
 }
 
 export function getTtsEngineUiConfig(engine: TtsEngine): TtsEngineUiConfig {
-  if (engine === "piper") {
-    return {
-      engineLabel: "Piper",
-      engineHint: "Piper voice output is bundled with the app."
-    };
-  }
-  if (engine === "matcha") {
-    return {
-      engineLabel: "Matcha",
-      engineHint: "Matcha voice output is bundled with the app."
-    };
-  }
-  if (engine === "kitten") {
-    return {
-      engineLabel: "KittenTTS",
-      engineHint: "Kitten voice output is bundled with the app."
-    };
-  }
   if (engine === "pocket") {
     return {
       engineLabel: "PocketTTS",

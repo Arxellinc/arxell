@@ -1951,6 +1951,7 @@ pub struct TtsSpeakResponse {
     pub sample_rate: u32,
     pub duration_ms: u32,
     pub audio_bytes: Vec<u8>,
+    pub phonemes: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

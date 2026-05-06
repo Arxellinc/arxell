@@ -1,4 +1,5 @@
 import type { AppEvent, ChatAttachment, ChatStructuredPayload } from "../contracts.js";
+import { appendAppEvent } from "./events.js";
 
 interface ChatSendState {
   messages: Array<{ role: string; text: string; correlationId?: string; structuredPayload?: ChatStructuredPayload | null }>;
@@ -197,7 +198,7 @@ export function createSendMessageHandler(
           correlationId
         });
       }
-      deps.state.events.push({
+      appendAppEvent(deps.state.events, {
         timestampMs: Date.now(),
         correlationId,
         subsystem: "frontend",

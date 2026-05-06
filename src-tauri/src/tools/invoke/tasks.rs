@@ -1,6 +1,8 @@
 #![cfg(feature = "tauri-runtime")]
 
-use crate::app::tasks_service::{DurableNotificationRecord, DurableTaskRecord, DurableTaskRunRecord};
+use crate::app::tasks_service::{
+    DurableNotificationRecord, DurableTaskRecord, DurableTaskRunRecord,
+};
 use crate::ipc::tauri_bridge::TauriBridgeState;
 use crate::tools::invoke::build_registry;
 use crate::tools::invoke::registry::{InvokeRegistry, ToolInvokeFuture};
@@ -64,12 +66,36 @@ pub fn register(registry: &mut InvokeRegistry) {
     registry.register("tasks", &["delete"], delete_task_handler);
     registry.register("tasks", &["run-now", "runNow"], run_task_now_handler);
     registry.register("tasks", &["list-runs", "listRuns"], list_task_runs_handler);
-    registry.register("tasks", &["notifications-list", "notificationsList"], list_notifications_handler);
-    registry.register("tasks", &["notifications-upsert", "notificationsUpsert"], upsert_notification_handler);
-    registry.register("tasks", &["notifications-mark-read", "notificationsMarkRead"], mark_notification_read_handler);
-    registry.register("tasks", &["notifications-dismiss", "notificationsDismiss"], dismiss_notification_handler);
-    registry.register("tasks", &["scheduler-status", "schedulerStatus"], scheduler_status_handler);
-    registry.register("tasks", &["scheduler-run-due-now", "schedulerRunDueNow"], scheduler_run_due_now_handler);
+    registry.register(
+        "tasks",
+        &["notifications-list", "notificationsList"],
+        list_notifications_handler,
+    );
+    registry.register(
+        "tasks",
+        &["notifications-upsert", "notificationsUpsert"],
+        upsert_notification_handler,
+    );
+    registry.register(
+        "tasks",
+        &["notifications-mark-read", "notificationsMarkRead"],
+        mark_notification_read_handler,
+    );
+    registry.register(
+        "tasks",
+        &["notifications-dismiss", "notificationsDismiss"],
+        dismiss_notification_handler,
+    );
+    registry.register(
+        "tasks",
+        &["scheduler-status", "schedulerStatus"],
+        scheduler_status_handler,
+    );
+    registry.register(
+        "tasks",
+        &["scheduler-run-due-now", "schedulerRunDueNow"],
+        scheduler_run_due_now_handler,
+    );
 }
 
 fn list_tasks_handler(state: &TauriBridgeState, payload: Value) -> ToolInvokeFuture<'_> {
@@ -100,7 +126,10 @@ fn upsert_notification_handler(state: &TauriBridgeState, payload: Value) -> Tool
     Box::pin(upsert_notification(state, payload))
 }
 
-fn mark_notification_read_handler(state: &TauriBridgeState, payload: Value) -> ToolInvokeFuture<'_> {
+fn mark_notification_read_handler(
+    state: &TauriBridgeState,
+    payload: Value,
+) -> ToolInvokeFuture<'_> {
     Box::pin(mark_notification_read(state, payload))
 }
 
@@ -163,12 +192,22 @@ async fn run_task_now(state: &TauriBridgeState, payload: Value) -> Result<Value,
         completed_at_ms: Some(now),
     };
     let appended = state.tasks.append_run(run)?;
-    let _ = emit_task_run_notification(state, &task, appended.status.as_str(), appended.error.as_str(), "manual", now);
+    let _ = emit_task_run_notification(
+        state,
+        &task,
+        appended.status.as_str(),
+        appended.error.as_str(),
+        "manual",
+        now,
+    );
     let _ = state.tasks.advance_next_run_at(req.task_id.as_str(), now);
     Ok(json!({ "run": appended }))
 }
 
-pub async fn run_due_scheduled_tasks(state: &TauriBridgeState, limit: usize) -> Result<usize, String> {
+pub async fn run_due_scheduled_tasks(
+    state: &TauriBridgeState,
+    limit: usize,
+) -> Result<usize, String> {
     let now = now_ms();
     let due = state.tasks.list_due_scheduled_tasks(now, limit)?;
     if due.is_empty() {
@@ -497,9 +536,9 @@ fn resolve_project_root(raw: &str) -> Result<PathBuf, String> {
 
 #[cfg(test)]
 mod tests {
+    use super::{now_ms, resolve_candidate_path, validate_files_payload_in_scope};
     use crate::app::tasks_service::DurableTaskRecord;
     use crate::app::AppContext;
-    use super::{now_ms, resolve_candidate_path, validate_files_payload_in_scope};
     use serde_json::json;
     use std::fs;
 
@@ -557,7 +596,10 @@ mod tests {
         ));
         fs::create_dir_all(&tmp).expect("create test dir");
         let db_path = tmp.join("tasks.sqlite3");
-        std::env::set_var("ARXELL_TASKS_DB_PATH", db_path.to_string_lossy().to_string());
+        std::env::set_var(
+            "ARXELL_TASKS_DB_PATH",
+            db_path.to_string_lossy().to_string(),
+        );
 
         let app = AppContext::new().expect("app context");
         let state = app.tauri_bridge_state();
@@ -595,8 +637,13 @@ mod tests {
         assert_eq!(executed, 1);
         let runs = state.tasks.list_runs(saved.id.as_str()).expect("list runs");
         assert!(runs.iter().any(|row| row.trigger_reason == "scheduled"));
-        let notifs = state.tasks.list_notifications().expect("list notifications");
-        assert!(notifs.iter().any(|n| n.title.contains("Task complete") || n.title.contains("Task failed") || n.title.contains("Task blocked")));
+        let notifs = state
+            .tasks
+            .list_notifications()
+            .expect("list notifications");
+        assert!(notifs.iter().any(|n| n.title.contains("Task complete")
+            || n.title.contains("Task failed")
+            || n.title.contains("Task blocked")));
 
         std::env::remove_var("ARXELL_TASKS_DB_PATH");
         let _ = fs::remove_file(db_path);
@@ -648,7 +695,9 @@ async fn upsert_notification(state: &TauriBridgeState, payload: Value) -> Result
 
 async fn mark_notification_read(state: &TauriBridgeState, payload: Value) -> Result<Value, String> {
     let req: MarkNotificationReadRequest = decode_payload(payload)?;
-    let changed = state.tasks.mark_notification_read(req.id.as_str(), req.read)?;
+    let changed = state
+        .tasks
+        .mark_notification_read(req.id.as_str(), req.read)?;
     Ok(json!({ "updated": changed }))
 }
 

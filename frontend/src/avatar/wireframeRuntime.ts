@@ -86,7 +86,8 @@ let jawTopValue = 0;
 let phonemeTimeline: PhonemeEvent[] | null = null;
 let phonemeTimelineStartMs = 0;
 let phonemeTimelineIndex = 0;
-const AVATAR_TARGET_FPS = 24;
+const AVATAR_IDLE_TARGET_FPS = 24;
+const AVATAR_SPEECH_TARGET_FPS = 30;
 
 export function setAvatarSpeechState(input: { active: boolean; amplitude: number }): void {
   speechActive = input.active;
@@ -449,7 +450,8 @@ function mountGlb(stage: HTMLElement, config: AvatarStageConfig): () => void {
     if (disposed) return;
     frame = requestAnimationFrame(animate);
     const nowMs = performance.now();
-    if (nowMs - lastRenderMs < 1000 / AVATAR_TARGET_FPS) {
+    const targetFps = speechActive ? AVATAR_SPEECH_TARGET_FPS : AVATAR_IDLE_TARGET_FPS;
+    if (nowMs - lastRenderMs < 1000 / targetFps) {
       return;
     }
     lastRenderMs = nowMs;
@@ -510,7 +512,7 @@ function mountGlb(stage: HTMLElement, config: AvatarStageConfig): () => void {
       const currentBlend = PHONEME_BLENDS[currentPhoneme] ?? {};
       const nextBlend = next ? (PHONEME_BLENDS[next.phoneme] ?? {}) : {};
 
-      const effectiveAmp = Math.max(jaw * lipSyncJawBlend, isSilence ? 0 : jaw);
+      const phonemeDrive = isSilence ? 0 : Math.max(0.35, Math.min(1, jaw + lipSyncJawBlend));
 
       for (const morphName of LIP_MORPHS) {
         const isPhonemeMorph = MORPH_BLEND_KEYS.includes(morphName as typeof MORPH_BLEND_KEYS[number]);
@@ -530,7 +532,7 @@ function mountGlb(stage: HTMLElement, config: AvatarStageConfig): () => void {
               entry.values[morphName] = next2;
               entry.mesh.morphTargetInfluences[idx] = next2;
             } else {
-              const target = Math.min(1, weight * effectiveAmp * lipSyncStrength * lipSyncPhonemeBoost);
+              const target = Math.min(1, weight * phonemeDrive * lipSyncStrength * lipSyncPhonemeBoost);
               const rate = target > current ? lipSyncOpenRate : lipSyncCloseRate;
               const next2 = THREE.MathUtils.lerp(current, target, rate);
               entry.values[morphName] = next2;
@@ -570,7 +572,18 @@ function mountGlb(stage: HTMLElement, config: AvatarStageConfig): () => void {
       if (!entry.mesh.morphTargetInfluences) continue;
       for (const ms of config.morphs) {
         const idx = entry.dict[ms.name];
-        if (idx !== undefined && ms.value > 0) entry.mesh.morphTargetInfluences[idx] = ms.value;
+        if (idx === undefined || ms.value <= 0) continue;
+        const isLipSyncMorph =
+          LIP_MORPHS.includes(ms.name) ||
+          MORPH_BLEND_KEYS.includes(ms.name as typeof MORPH_BLEND_KEYS[number]);
+        if (speechActive && isLipSyncMorph) {
+          entry.mesh.morphTargetInfluences[idx] = Math.max(
+            entry.mesh.morphTargetInfluences[idx] ?? 0,
+            ms.value * 0.35,
+          );
+        } else {
+          entry.mesh.morphTargetInfluences[idx] = ms.value;
+        }
       }
     }
 

@@ -14,12 +14,7 @@ export function renderTtsBody(state: PrimaryPanelRenderState): string {
   const tts = state.tts;
   const engineUi = getTtsEngineUiConfig(tts.engine);
   const voices = tts.voices.length ? tts.voices : [tts.engine === "kokoro" ? "af_heart" : "speaker_0"];
-  const voiceMeta =
-    tts.engine === "piper" && voices.length <= 1
-      ? "Single-speaker model"
-      : tts.engine === "piper"
-      ? `${voices.length} speakers`
-      : "Selected";
+  const voiceMeta = "Selected";
   const busy = tts.status === "busy";
   const engineLabel = engineUi.engineLabel;
   const engineHint = engineUi.engineHint;

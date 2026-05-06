@@ -4,13 +4,11 @@ import {
   computeNotepadFindStats,
   copyText,
   duplicatePathWithCopySuffix,
-  escapeAttr,
   focusNotepadMatch,
   getSelectedNotepadText,
   pickOpenFilePath,
   pickSaveFilePath,
   scheduleNotepadEditorRefresh,
-  refreshNotepadEditorDecorations,
   replaceAllInNotepad,
   replaceOneInNotepad,
   type NotepadDataAttrs

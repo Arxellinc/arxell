@@ -275,7 +275,7 @@ export function attachPrimaryPanelInteractions(
     if (engineSelect) {
       engineSelect.onchange = async () => {
         const engine = engineSelect.value;
-        if (engine !== "kokoro" && engine !== "piper" && engine !== "matcha" && engine !== "kitten" && engine !== "pocket") {
+        if (engine !== "kokoro" && engine !== "pocket") {
           return;
         }
         await bindings.onTtsSetEngine(engine);
@@ -349,7 +349,7 @@ export function attachPrimaryPanelInteractions(
     if (backendSelect) {
       backendSelect.onchange = async () => {
         const next = backendSelect.value;
-        if (next !== "whisper_cpp" && next !== "sherpa_onnx") return;
+        if (next !== "whisper_cpp") return;
         await bindings.onSetSttBackend(next);
       };
     }

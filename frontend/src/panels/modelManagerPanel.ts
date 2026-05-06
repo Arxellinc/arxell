@@ -196,7 +196,6 @@ function renderAllModelsTable(state: PrimaryPanelRenderState): string {
       const params = estimateParameterCount(opt.modelName);
       const isDisabled = state.modelManagerDisabledModelIds.includes(opt.id);
       const dimClass = isDisabled ? " is-dimmed" : "";
-      const checkedAttr = isDisabled ? "" : " checked";
       const checkIcon = isDisabled
         ? iconHtml("square", { size: 16, tone: "dark" })
         : iconHtml("square-check-big", { size: 16, tone: "dark" });

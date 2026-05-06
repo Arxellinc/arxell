@@ -16,6 +16,7 @@ const CHAT_MODEL_ID_STORAGE_KEY = "arxell.chat.modelId";
 const MEMORY_ALWAYS_LOAD_TOOLS_STORAGE_KEY = "arxell.memory.alwaysLoadTools";
 const MEMORY_ALWAYS_LOAD_SKILLS_STORAGE_KEY = "arxell.memory.alwaysLoadSkills";
 const STT_BACKEND_STORAGE_KEY = "arxell.stt.backend";
+const STT_BACKEND_MIGRATION_NOTICE_KEY = "arxell.stt.backendMigratedToWhisper";
 const MIC_PERMISSION_BUBBLE_DISMISSED_KEY = "arxell.micPermissionBubbleDismissed";
 const FLOW_ADVANCED_OPEN_STORAGE_KEY = "arxell.flow.advancedOpen";
 const FLOW_BOTTOM_PANEL_STORAGE_KEY = "arxell.flow.bottomPanel";
@@ -47,7 +48,7 @@ export const FLOW_TERMINAL_PHASES = [
 ] as const;
 
 export type ChatRoutePreference = "auto" | "agent" | "legacy";
-export type SttBackend = "whisper_cpp" | "sherpa_onnx";
+export type SttBackend = "whisper_cpp";
 
 export function loadPersistedLlamaModelPath(): string {
   try {
@@ -277,7 +278,12 @@ export function persistMemoryAlwaysLoadSkills(skillKeys: string[]): void {
 export function loadPersistedSttBackend(): SttBackend {
   try {
     const raw = window.localStorage.getItem(STT_BACKEND_STORAGE_KEY);
-    if (raw === "whisper_cpp" || raw === "sherpa_onnx") return raw;
+    if (raw === "sherpa_onnx") {
+      window.localStorage.setItem(STT_BACKEND_STORAGE_KEY, "whisper_cpp");
+      window.localStorage.setItem(STT_BACKEND_MIGRATION_NOTICE_KEY, "1");
+      return "whisper_cpp";
+    }
+    if (raw === "whisper_cpp") return raw;
   } catch {}
   return "whisper_cpp";
 }
@@ -286,6 +292,18 @@ export function persistSttBackend(backend: SttBackend): void {
   try {
     window.localStorage.setItem(STT_BACKEND_STORAGE_KEY, backend);
   } catch {}
+}
+
+export function consumeSttBackendMigrationNotice(): boolean {
+  try {
+    const shouldShow = window.localStorage.getItem(STT_BACKEND_MIGRATION_NOTICE_KEY) === "1";
+    if (shouldShow) {
+      window.localStorage.removeItem(STT_BACKEND_MIGRATION_NOTICE_KEY);
+    }
+    return shouldShow;
+  } catch {
+    return false;
+  }
 }
 
 export function persistSttModel(model: string): void {

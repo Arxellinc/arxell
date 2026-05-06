@@ -15,22 +15,24 @@ pub mod supervisor;
 #[cfg(feature = "tauri-runtime")]
 use crate::app_paths;
 #[cfg(feature = "tauri-runtime")]
-use bzip2::read::BzDecoder;
+use crate::voice::audio_bus::AudioFrame;
+#[cfg(feature = "tauri-runtime")]
+use crate::voice::vad::contracts::{VadConfig, VadEvent, VadStrategy};
+#[cfg(feature = "tauri-runtime")]
+use crate::voice::vad::settings::{OnnxSileroConfig, ONNX_SILERO_ID};
+#[cfg(feature = "tauri-runtime")]
+use crate::voice::vad::strategies::onnx_silero::OnnxSileroStrategy;
 #[cfg(feature = "tauri-runtime")]
 use reqwest::blocking::Client;
 #[cfg(feature = "tauri-runtime")]
-use sherpa_onnx::{SileroVadModelConfig, VadModelConfig, VoiceActivityDetector};
-#[cfg(feature = "tauri-runtime")]
 use std::fs;
 #[cfg(feature = "tauri-runtime")]
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 #[cfg(feature = "tauri-runtime")]
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 #[cfg(feature = "tauri-runtime")]
 use std::sync::OnceLock;
-#[cfg(feature = "tauri-runtime")]
-use tar::Archive;
 #[cfg(feature = "tauri-runtime")]
 use tauri::Manager;
 use tokio::sync::Mutex;
@@ -48,7 +50,6 @@ static CACHED_VAD_MODEL_PATH: OnceLock<Option<PathBuf>> = OnceLock::new();
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum STTBackend {
     WhisperCpp,
-    SherpaOnnx,
 }
 
 #[cfg(feature = "tauri-runtime")]
@@ -56,15 +57,14 @@ impl STTBackend {
     fn as_str(self) -> &'static str {
         match self {
             Self::WhisperCpp => "whisper_cpp",
-            Self::SherpaOnnx => "sherpa_onnx",
         }
     }
 
     fn from_str(value: &str) -> Option<Self> {
         let normalized = value.trim().to_lowercase();
         match normalized.as_str() {
-            "whisper_cpp" | "whisper" | "whisper.cpp" => Some(Self::WhisperCpp),
-            "sherpa_onnx" | "sherpa-onnx" | "sherpa" => Some(Self::SherpaOnnx),
+            "whisper_cpp" | "whisper" | "whisper.cpp" | "sherpa_onnx" | "sherpa-onnx"
+            | "sherpa" => Some(Self::WhisperCpp),
             _ => None,
         }
     }
@@ -137,200 +137,82 @@ async fn transcribe_with_supervisor(
 }
 
 #[cfg(feature = "tauri-runtime")]
-enum SherpaOfflineModel {
-    SenseVoice {
-        model: PathBuf,
-        tokens: PathBuf,
-    },
-    MoonshineV2 {
-        encoder: PathBuf,
-        merged_decoder: PathBuf,
-        tokens: PathBuf,
-    },
-}
-
-#[cfg(feature = "tauri-runtime")]
-fn resolve_sherpa_model(app: &tauri::AppHandle) -> Option<SherpaOfflineModel> {
-    fn first_model_pair_under(root: &Path) -> Option<SherpaOfflineModel> {
-        if !root.is_dir() {
-            return None;
-        }
-        let model_names = ["model.int8.onnx", "model.onnx", "sense-voice.onnx"];
-        let mut stack = vec![root.to_path_buf()];
-        while let Some(dir) = stack.pop() {
-            let tokens = dir.join("tokens.txt");
-            if tokens.is_file() {
-                let moonshine_encoder = dir.join("encoder_model.ort");
-                let moonshine_decoder = dir.join("decoder_model_merged.ort");
-                if moonshine_encoder.is_file() && moonshine_decoder.is_file() {
-                    return Some(SherpaOfflineModel::MoonshineV2 {
-                        encoder: moonshine_encoder,
-                        merged_decoder: moonshine_decoder,
-                        tokens: tokens.clone(),
-                    });
-                }
-                for model_name in model_names {
-                    let model = dir.join(model_name);
-                    if model.is_file() {
-                        return Some(SherpaOfflineModel::SenseVoice {
-                            model,
-                            tokens: tokens.clone(),
-                        });
-                    }
-                }
-            }
-            let Ok(entries) = fs::read_dir(&dir) else {
-                continue;
-            };
-            for entry in entries.flatten() {
-                let path = entry.path();
-                if path.is_dir() {
-                    stack.push(path);
-                }
-            }
-        }
-        None
-    }
-
+fn list_installed_whisper_model_names(app: &tauri::AppHandle) -> Vec<String> {
+    let mut names = Vec::new();
     let app_data_dir = app_paths::app_data_dir();
-    let resource_dir = app.path().resource_dir().ok()?;
-    let roots = [
-        app_data_dir.join("STT").join("sherpa"),
-        app_data_dir.join("stt").join("sherpa"),
-        app_data_dir.join("STT").join("models").join("sherpa"),
-        app_data_dir.join("stt").join("models").join("sherpa"),
-        resource_dir.join("stt").join("sherpa"),
-        resource_dir.join("voice").join("sherpa"),
-        resource_dir.join("sherpa"),
+    let resource_dir = match app.path().resource_dir() {
+        Ok(path) => path,
+        Err(_) => PathBuf::new(),
+    };
+    let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap_or_default();
+    let candidates: Vec<(&str, Vec<PathBuf>)> = vec![
+        (
+            "ggml-base-q8_0.bin",
+            vec![
+                app_data_dir
+                    .join("STT")
+                    .join("models")
+                    .join("ggml-base-q8_0.bin"),
+                app_data_dir
+                    .join("stt")
+                    .join("models")
+                    .join("ggml-base-q8_0.bin"),
+                app_data_dir.join("models").join("ggml-base-q8_0.bin"),
+                resource_dir.join("whisper").join("ggml-base-q8_0.bin"),
+                resource_dir.join("models").join("ggml-base-q8_0.bin"),
+                PathBuf::from(&manifest_dir)
+                    .join("resources")
+                    .join("whisper")
+                    .join("ggml-base-q8_0.bin"),
+            ],
+        ),
+        (
+            "ggml-base.en-q8_0.bin",
+            vec![
+                app_data_dir
+                    .join("STT")
+                    .join("models")
+                    .join("ggml-base.en-q8_0.bin"),
+                app_data_dir
+                    .join("stt")
+                    .join("models")
+                    .join("ggml-base.en-q8_0.bin"),
+                app_data_dir.join("models").join("ggml-base.en-q8_0.bin"),
+            ],
+        ),
+        (
+            "ggml-tiny.en-q8_0.bin",
+            vec![
+                app_data_dir
+                    .join("STT")
+                    .join("models")
+                    .join("ggml-tiny.en-q8_0.bin"),
+                app_data_dir
+                    .join("stt")
+                    .join("models")
+                    .join("ggml-tiny.en-q8_0.bin"),
+                app_data_dir.join("models").join("ggml-tiny.en-q8_0.bin"),
+            ],
+        ),
     ];
-    for root in roots {
-        if let Some(found) = first_model_pair_under(&root) {
-            return Some(found);
-        }
-    }
-    None
-}
 
-#[cfg(feature = "tauri-runtime")]
-fn list_installed_sherpa_model_names(_app: &tauri::AppHandle) -> Vec<String> {
-    fn collect_model_names_under(root: &Path, out: &mut Vec<String>) {
-        if !root.is_dir() {
-            return;
-        }
-        let model_names = ["model.int8.onnx", "model.onnx", "sense-voice.onnx"];
-        let mut stack = vec![root.to_path_buf()];
-        while let Some(dir) = stack.pop() {
-            let tokens = dir.join("tokens.txt");
-            if tokens.is_file() {
-                let moonshine_encoder = dir.join("encoder_model.ort");
-                let moonshine_decoder = dir.join("decoder_model_merged.ort");
-                if moonshine_encoder.is_file() && moonshine_decoder.is_file() {
-                    if let Some(parent) = dir.file_name().and_then(|s| s.to_str()) {
-                        out.push(parent.to_string());
-                    } else {
-                        out.push("moonshine".to_string());
-                    }
-                    continue;
-                }
-                for model_name in model_names {
-                    let model = dir.join(model_name);
-                    if model.is_file() {
-                        if let Some(parent) = dir.file_name().and_then(|s| s.to_str()) {
-                            out.push(parent.to_string());
-                        } else if let Some(file) = model.file_name().and_then(|s| s.to_str()) {
-                            out.push(file.to_string());
-                        }
-                        break;
-                    }
-                }
-            }
-            let Ok(entries) = fs::read_dir(&dir) else {
-                continue;
-            };
-            for entry in entries.flatten() {
-                let path = entry.path();
-                if path.is_dir() {
-                    stack.push(path);
-                }
-            }
+    for (name, paths) in candidates {
+        if paths.iter().any(|path| path.is_file()) {
+            names.push(name.to_string());
         }
     }
 
-    let mut names = vec!["auto".to_string()];
-    let mut discovered = Vec::new();
-    let app_data_dir = app_paths::app_data_dir();
-    let roots = [
-        app_data_dir.join("STT").join("sherpa"),
-        app_data_dir.join("stt").join("sherpa"),
-        app_data_dir.join("STT").join("models").join("sherpa"),
-        app_data_dir.join("stt").join("models").join("sherpa"),
-    ];
-    for root in roots {
-        collect_model_names_under(&root, &mut discovered);
-    }
-    discovered.sort();
-    discovered.dedup();
-    names.extend(discovered);
     names
 }
 
 #[cfg(feature = "tauri-runtime")]
-fn transcribe_with_sherpa(app: &tauri::AppHandle, pcm_samples: &[f32]) -> Result<String, String> {
-    use sherpa_onnx::{
-        OfflineMoonshineModelConfig, OfflineRecognizer, OfflineRecognizerConfig,
-        OfflineSenseVoiceModelConfig,
-    };
-    let model = resolve_sherpa_model(app).ok_or_else(|| {
-        "Sherpa STT model not found. Expected either SenseVoice files (model.int8.onnx or model.onnx + tokens.txt) or Moonshine files (encoder_model.ort + decoder_model_merged.ort + tokens.txt).".to_string()
-    })?;
-
-    let mut config = OfflineRecognizerConfig::default();
-    match model {
-        SherpaOfflineModel::SenseVoice { model, tokens } => {
-            config.model_config.sense_voice = OfflineSenseVoiceModelConfig {
-                model: Some(model.to_string_lossy().to_string()),
-                language: Some("auto".to_string()),
-                use_itn: true,
-            };
-            config.model_config.tokens = Some(tokens.to_string_lossy().to_string());
-        }
-        SherpaOfflineModel::MoonshineV2 {
-            encoder,
-            merged_decoder,
-            tokens,
-        } => {
-            config.model_config.moonshine = OfflineMoonshineModelConfig {
-                encoder: Some(encoder.to_string_lossy().to_string()),
-                merged_decoder: Some(merged_decoder.to_string_lossy().to_string()),
-                ..OfflineMoonshineModelConfig::default()
-            };
-            config.model_config.tokens = Some(tokens.to_string_lossy().to_string());
-        }
-    }
-    config.model_config.provider = Some("cpu".to_string());
-    config.model_config.num_threads = 1;
-
-    let recognizer = OfflineRecognizer::create(&config)
-        .ok_or_else(|| "Failed to create Sherpa offline recognizer".to_string())?;
-    let stream = recognizer.create_stream();
-    stream.accept_waveform(16_000, pcm_samples);
-    recognizer.decode(&stream);
-    let result = stream
-        .get_result()
-        .ok_or_else(|| "Sherpa recognition returned no result".to_string())?;
-    Ok(result.text)
-}
-
-#[cfg(feature = "tauri-runtime")]
 async fn transcribe_backend(
-    app: &tauri::AppHandle,
     state: &tauri::State<'_, STTState>,
     pcm_samples: &[f32],
 ) -> Result<String, String> {
     let backend = *state.backend.lock().await;
     match backend {
         STTBackend::WhisperCpp => transcribe_with_supervisor(&state.supervisor, pcm_samples).await,
-        STTBackend::SherpaOnnx => transcribe_with_sherpa(app, pcm_samples),
     }
 }
 
@@ -392,49 +274,37 @@ fn resolve_silero_vad_model_path(app: &tauri::AppHandle) -> Option<PathBuf> {
 }
 
 #[cfg(feature = "tauri-runtime")]
-fn sherpa_silero_has_speech(samples: &[f32], model_path: &Path) -> Result<bool, String> {
-    let config = VadModelConfig {
-        silero_vad: SileroVadModelConfig {
-            model: Some(model_path.to_string_lossy().to_string()),
-            threshold: 0.35,
-            min_silence_duration: 0.25,
-            min_speech_duration: 0.10,
-            window_size: 512,
-            max_speech_duration: 30.0,
-        },
-        sample_rate: 16_000,
-        num_threads: 1,
-        provider: Some("cpu".to_string()),
-        debug: false,
-        ..VadModelConfig::default()
-    };
-
-    let vad = VoiceActivityDetector::create(&config, 30.0)
-        .ok_or_else(|| "failed creating sherpa silero VAD".to_string())?;
-    vad.accept_waveform(samples);
-    vad.flush();
-
-    let mut has_speech = false;
-    while let Some(segment) = vad.front() {
-        if segment.n() > 0 {
-            has_speech = true;
-            break;
-        }
-        vad.pop();
-    }
-    Ok(has_speech)
-}
-
-#[cfg(feature = "tauri-runtime")]
-fn sherpa_silero_has_speech_cached(
-    app: &tauri::AppHandle,
-    samples: &[f32],
-) -> Result<bool, String> {
+fn onnx_silero_has_speech_cached(app: &tauri::AppHandle, samples: &[f32]) -> Result<bool, String> {
     let model_path = CACHED_VAD_MODEL_PATH.get_or_init(|| resolve_silero_vad_model_path(app));
     let Some(model_path) = model_path else {
         return Ok(false);
     };
-    sherpa_silero_has_speech(samples, model_path)
+    let config = OnnxSileroConfig {
+        model_path: Some(model_path.to_string_lossy().to_string()),
+        ..OnnxSileroConfig::default()
+    };
+    let mut strategy = OnnxSileroStrategy::default();
+    strategy
+        .start_session(VadConfig {
+            method_id: ONNX_SILERO_ID.to_string(),
+            version: 2,
+            settings: serde_json::to_value(config)
+                .map_err(|err| format!("failed serializing ONNX Silero config: {err}"))?,
+        })
+        .map_err(|err| err.to_string())?;
+    let events = strategy
+        .process_frame(AudioFrame {
+            samples: samples.to_vec(),
+            sample_rate_hz: 16_000,
+            timestamp_ms: 0,
+        })
+        .map_err(|err| err.to_string())?;
+    Ok(events.iter().any(|event| {
+        matches!(
+            event,
+            VadEvent::SpeechStart | VadEvent::SegmentOpened { .. }
+        )
+    }))
 }
 #[cfg(feature = "tauri-runtime")]
 #[tauri::command]
@@ -451,13 +321,6 @@ pub async fn start_stt(
             let supervisor = state.supervisor.lock().await;
             supervisor.start(&app).await
         }
-        STTBackend::SherpaOnnx => {
-            info!(
-                "Starting STT service backend={} (local recognizer, no daemon)",
-                backend.as_str()
-            );
-            Ok(())
-        }
     }
 }
 
@@ -473,13 +336,6 @@ pub async fn stop_stt(state: tauri::State<'_, STTState>) -> Result<(), String> {
             info!("Stopping STT service backend={}", backend.as_str());
             let supervisor = state.supervisor.lock().await;
             supervisor.stop().await
-        }
-        STTBackend::SherpaOnnx => {
-            info!(
-                "Stopping STT service backend={} (no daemon)",
-                backend.as_str()
-            );
-            Ok(())
         }
     }
 }
@@ -549,21 +405,24 @@ pub async fn stt_download_model(
 
     info!("Starting STT model download: {}", file_name);
 
-    // Available models
-    let models = [
-        ("sherpa-onnx-rk3588-streaming-zipformer-en-2023-06-26.tar.bz2", "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-rk3588-streaming-zipformer-en-2023-06-26.tar.bz2"),
-        ("sherpa-onnx-moonshine-base-en-quantized-2026-02-27.tar.bz2", "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-moonshine-base-en-quantized-2026-02-27.tar.bz2"),
+    let app_data_dir = app_paths::app_data_dir();
+    let whisper_models = [
+        (
+            "ggml-base.en-q8_0.bin",
+            "https://huggingface.co/datasets/ggerganov/whisper.cpp/resolve/main/ggml-base.en-q8_0.bin",
+        ),
+        (
+            "ggml-tiny.en-q8_0.bin",
+            "https://huggingface.co/datasets/ggerganov/whisper.cpp/resolve/main/ggml-tiny.en-q8_0.bin",
+        ),
     ];
 
-    let (_model_name, url) = models
-        .iter()
-        .find(|(name, _)| name == &file_name)
-        .ok_or_else(|| format!("Model not found: {}", file_name))?;
-
-    // Determine download directory
-    let app_data_dir = app_paths::app_data_dir();
-
-    let download_dir = app_data_dir.join("STT").join("sherpa");
+    let (download_dir, target_url) =
+        if let Some((_, url)) = whisper_models.iter().find(|(name, _)| name == &file_name) {
+            (app_data_dir.join("STT").join("models"), (*url).to_string())
+        } else {
+            return Err(format!("Whisper model not found: {}", file_name));
+        };
 
     // Create download directory if needed
     fs::create_dir_all(&download_dir)
@@ -573,7 +432,6 @@ pub async fn stt_download_model(
 
     info!("Downloading model to: {}", download_path.display());
 
-    let target_url = (*url).to_string();
     tokio::task::spawn_blocking(move || -> Result<(), String> {
         let mut response = Client::builder()
             .build()
@@ -589,39 +447,30 @@ pub async fn stt_download_model(
             .map_err(|e| format!("failed creating archive path: {e}"))?;
         std::io::copy(&mut response, &mut out)
             .map_err(|e| format!("failed writing downloaded archive: {e}"))?;
-
-        let archive_file = fs::File::open(&download_path)
-            .map_err(|e| format!("failed opening downloaded archive: {e}"))?;
-        let decompressed = BzDecoder::new(archive_file);
-        let mut archive = Archive::new(decompressed);
-        archive
-            .unpack(&download_dir)
-            .map_err(|e| format!("failed extracting model archive: {e}"))?;
-
-        let _ = fs::remove_file(&download_path);
         Ok(())
     })
     .await
     .map_err(|e| format!("download worker join error: {e}"))??;
 
-    let installed = list_installed_sherpa_model_names(&app);
-    if installed.len() <= 1 {
-        return Ok(format!(
-            "Downloaded and extracted {} but no compatible offline model files were detected. This bundle may target a different runtime/provider.",
-            file_name
-        ));
-    }
+    let installed = list_installed_whisper_model_names(&app);
     Ok(format!(
-        "Downloaded and extracted {}. Installed models: {}",
+        "Downloaded {}. Available Whisper models: {}",
         file_name,
-        installed.join(", ")
+        if installed.is_empty() {
+            "none detected".to_string()
+        } else {
+            installed.join(", ")
+        }
     ))
 }
 
 #[cfg(feature = "tauri-runtime")]
 #[tauri::command]
 pub async fn stt_list_models(app: tauri::AppHandle) -> Result<Vec<String>, String> {
-    Ok(list_installed_sherpa_model_names(&app))
+    let mut models = vec!["auto".to_string()];
+    models.extend(list_installed_whisper_model_names(&app));
+    models.dedup();
+    Ok(models)
 }
 
 /// Transcribe a chunk of PCM audio
@@ -642,7 +491,7 @@ pub async fn transcribe_chunk(
         utterance_id
     );
 
-    // Optional backend speech gate via sherpa-onnx Silero VAD.
+    // Optional backend speech gate via direct ONNX Silero VAD.
     // If a silero_vad.onnx model is present, skip non-speech chunks before Whisper.
     let vad_model_opt = CACHED_VAD_MODEL_PATH.get_or_init(|| resolve_silero_vad_model_path(&app));
     if !SILERO_VAD_DISCOVERY_LOGGED.swap(true, Ordering::SeqCst) {
@@ -653,7 +502,7 @@ pub async fn transcribe_chunk(
         }
     }
     if let Some(_vad_model) = vad_model_opt {
-        match sherpa_silero_has_speech_cached(&app, &pcm_samples) {
+        match onnx_silero_has_speech_cached(&app, &pcm_samples) {
             Ok(false) => {
                 info!(
                     "Silero VAD rejected non-speech chunk: {} samples, utterance_id: {}",
@@ -672,7 +521,7 @@ pub async fn transcribe_chunk(
         }
     }
 
-    match transcribe_backend(&app, &state, &pcm_samples).await {
+    match transcribe_backend(&state, &pcm_samples).await {
         Ok(transcript) => {
             info!("Transcription complete: {} chars", transcript.len());
 
@@ -721,7 +570,7 @@ pub async fn transcribe_partial_chunk(
     use log::{error, info};
     use tauri::Emitter;
 
-    match transcribe_backend(&app, &state, &pcm_samples).await {
+    match transcribe_backend(&state, &pcm_samples).await {
         Ok(transcript) => {
             let text = transcript.trim().to_string();
             if text.is_empty() {
@@ -792,11 +641,13 @@ pub async fn stt_stream_ingest(
     };
 
     let mut s = stream_state().lock().await;
-    let chunk_has_speech = match CACHED_VAD_MODEL_PATH.get_or_init(|| resolve_silero_vad_model_path(&app)) {
-        Some(_) => sherpa_silero_has_speech_cached(&app, &pcm_samples)
-            .unwrap_or_else(|_| rms > 0.0012),
-        None => rms > 0.0012,
-    };
+    let chunk_has_speech =
+        match CACHED_VAD_MODEL_PATH.get_or_init(|| resolve_silero_vad_model_path(&app)) {
+            Some(_) => {
+                onnx_silero_has_speech_cached(&app, &pcm_samples).unwrap_or_else(|_| rms > 0.0012)
+            }
+            None => rms > 0.0012,
+        };
 
     if !s.speaking {
         let alpha = 0.03f32;
@@ -886,7 +737,7 @@ pub async fn stt_stream_ingest(
     drop(s);
 
     if let Some((chunk, uid)) = maybe_partial {
-        if let Ok(transcript) = transcribe_backend(&app, &state, &chunk).await {
+        if let Ok(transcript) = transcribe_backend(&state, &chunk).await {
             let text = transcript.trim().to_string();
             if !text.is_empty() {
                 let _ = app.emit(
@@ -901,7 +752,7 @@ pub async fn stt_stream_ingest(
     }
 
     if let Some((chunk, uid)) = maybe_final {
-        match transcribe_backend(&app, &state, &chunk).await {
+        match transcribe_backend(&state, &chunk).await {
             Ok(transcript) => {
                 let _ = app.emit(
                     "stt://transcript",
@@ -959,10 +810,6 @@ pub async fn stt_status(
                 }),
             }
         }
-        STTBackend::SherpaOnnx => Ok(events::STTStatusPayload {
-            status: "running".to_string(),
-            message: Some("backend=sherpa_onnx".to_string()),
-        }),
     }
 }
 

@@ -1,10 +1,10 @@
 #![cfg(feature = "tauri-runtime")]
 
+use std::collections::HashMap;
 use std::ffi::CString;
 use std::os::raw::c_void;
 use std::path::Path;
 use std::ptr;
-use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
 
 use crate::tts::kokoro_frontend::KokoroTokenizer;
@@ -28,29 +28,40 @@ pub fn init_onnxruntime(lib_path: &Path) -> Result<(), String> {
     if ORT_LIB.get().is_some() {
         return Ok(());
     }
-    let library = unsafe { libloading::Library::new(lib_path) }
-        .map_err(|e| format!("failed loading ONNX Runtime from {}: {e}", lib_path.display()))?;
+    let library = unsafe { libloading::Library::new(lib_path) }.map_err(|e| {
+        format!(
+            "failed loading ONNX Runtime from {}: {e}",
+            lib_path.display()
+        )
+    })?;
     let _ = ORT_LIB.set(library);
     Ok(())
 }
 
 unsafe fn ort_api() -> Result<&'static ort_sys::OrtApi, String> {
-    let base = if let Some(lib) = ORT_LIB.get() {
-        let base_getter: libloading::Symbol<unsafe extern "C" fn() -> *const ort_sys::OrtApiBase> =
-            unsafe { lib.get(b"OrtGetApiBase") }
-                .map_err(|_| "expected `OrtGetApiBase` to be present in libonnxruntime".to_string())?;
-        unsafe { base_getter() }
-    } else {
-        ort_sys::OrtGetApiBase()
-    };
+    let lib = ORT_LIB
+        .get()
+        .ok_or_else(|| "ONNX Runtime not initialized; call init_onnxruntime() first".to_string())?;
+    let base_getter: libloading::Symbol<unsafe extern "C" fn() -> *const ort_sys::OrtApiBase> =
+        unsafe { lib.get(b"OrtGetApiBase") }
+            .map_err(|_| "expected `OrtGetApiBase` to be present in libonnxruntime".to_string())?;
+    let base = unsafe { base_getter() };
     if base.is_null() {
-        return Err("ORT: OrtGetApiBase returned null (is onnxruntime shared library available?)".to_string());
+        return Err(
+            "ORT: OrtGetApiBase returned null (is onnxruntime shared library available?)"
+                .to_string(),
+        );
     }
     let base_ref = &*base;
-    let get_api = base_ref.GetApi.ok_or_else(|| "ORT: GetApi function missing from OrtApiBase".to_string())?;
+    let get_api = base_ref
+        .GetApi
+        .ok_or_else(|| "ORT: GetApi function missing from OrtApiBase".to_string())?;
     let api_ptr = get_api(19);
     if api_ptr.is_null() {
-        return Err("ORT: GetApi(19) returned null (onnxruntime version mismatch, expected ORT API v19+)".to_string());
+        return Err(
+            "ORT: GetApi(19) returned null (onnxruntime version mismatch, expected ORT API v19+)"
+                .to_string(),
+        );
     }
     Ok(&*api_ptr)
 }
@@ -60,7 +71,9 @@ unsafe fn check_status(status: *mut ort_sys::OrtStatus) -> Result<(), String> {
         return Ok(());
     }
     let api = ort_api()?;
-    let msg_ptr = api.GetErrorMessage.ok_or_else(|| "ORT: GetErrorMessage missing".to_string())?(status);
+    let msg_ptr = api
+        .GetErrorMessage
+        .ok_or_else(|| "ORT: GetErrorMessage missing".to_string())?(status);
     let msg = std::ffi::CStr::from_ptr(msg_ptr)
         .to_string_lossy()
         .into_owned();
@@ -72,7 +85,9 @@ unsafe fn check_status(status: *mut ort_sys::OrtStatus) -> Result<(), String> {
 
 unsafe fn create_memory_info() -> Result<*mut ort_sys::OrtMemoryInfo, String> {
     let api = ort_api()?;
-    let create = api.CreateCpuMemoryInfo.ok_or_else(|| "ORT: CreateCpuMemoryInfo missing".to_string())?;
+    let create = api
+        .CreateCpuMemoryInfo
+        .ok_or_else(|| "ORT: CreateCpuMemoryInfo missing".to_string())?;
     let mut mem_info: *mut ort_sys::OrtMemoryInfo = ptr::null_mut();
     let status = create(
         ort_sys::OrtAllocatorType::OrtArenaAllocator,
@@ -89,7 +104,9 @@ unsafe fn create_f32_tensor(
     mem_info: *mut ort_sys::OrtMemoryInfo,
 ) -> Result<*mut ort_sys::OrtValue, String> {
     let api = ort_api()?;
-    let create = api.CreateTensorWithDataAsOrtValue.ok_or_else(|| "ORT: CreateTensorWithDataAsOrtValue missing".to_string())?;
+    let create = api
+        .CreateTensorWithDataAsOrtValue
+        .ok_or_else(|| "ORT: CreateTensorWithDataAsOrtValue missing".to_string())?;
     let shape_i64: Vec<i64> = shape.iter().map(|&s| s as i64).collect();
     let mut ort_value: *mut ort_sys::OrtValue = ptr::null_mut();
     let status = create(
@@ -111,7 +128,9 @@ unsafe fn create_i64_tensor(
     mem_info: *mut ort_sys::OrtMemoryInfo,
 ) -> Result<*mut ort_sys::OrtValue, String> {
     let api = ort_api()?;
-    let create = api.CreateTensorWithDataAsOrtValue.ok_or_else(|| "ORT: CreateTensorWithDataAsOrtValue missing".to_string())?;
+    let create = api
+        .CreateTensorWithDataAsOrtValue
+        .ok_or_else(|| "ORT: CreateTensorWithDataAsOrtValue missing".to_string())?;
     let shape_i64: Vec<i64> = shape.iter().map(|&s| s as i64).collect();
     let mut ort_value: *mut ort_sys::OrtValue = ptr::null_mut();
     let status = create(
@@ -131,19 +150,39 @@ unsafe fn extract_f32_data(ort_value: *mut ort_sys::OrtValue) -> Result<Vec<f32>
     let api = ort_api()?;
 
     let mut data_ptr: *mut c_void = ptr::null_mut();
-    let status = api.GetTensorMutableData.ok_or_else(|| "ORT: GetTensorMutableData missing".to_string())?(ort_value, &mut data_ptr);
+    let status = api
+        .GetTensorMutableData
+        .ok_or_else(|| "ORT: GetTensorMutableData missing".to_string())?(
+        ort_value, &mut data_ptr
+    );
     check_status(status)?;
 
     let mut tensor_info: *mut ort_sys::OrtTensorTypeAndShapeInfo = ptr::null_mut();
-    let status = api.GetTensorTypeAndShape.ok_or_else(|| "ORT: GetTensorTypeAndShape missing".to_string())?(ort_value, &mut tensor_info);
+    let status = api
+        .GetTensorTypeAndShape
+        .ok_or_else(|| "ORT: GetTensorTypeAndShape missing".to_string())?(
+        ort_value,
+        &mut tensor_info,
+    );
     check_status(status)?;
 
     let mut dims_count: usize = 0;
-    let status = api.GetDimensionsCount.ok_or_else(|| "ORT: GetDimensionsCount missing".to_string())?(tensor_info, &mut dims_count);
+    let status = api
+        .GetDimensionsCount
+        .ok_or_else(|| "ORT: GetDimensionsCount missing".to_string())?(
+        tensor_info,
+        &mut dims_count,
+    );
     check_status(status)?;
 
     let mut dims: Vec<i64> = vec![0; dims_count];
-    let status = api.GetDimensions.ok_or_else(|| "ORT: GetDimensions missing".to_string())?(tensor_info, dims.as_mut_ptr(), dims_count);
+    let status = api
+        .GetDimensions
+        .ok_or_else(|| "ORT: GetDimensions missing".to_string())?(
+        tensor_info,
+        dims.as_mut_ptr(),
+        dims_count,
+    );
     check_status(status)?;
 
     if let Some(release) = api.ReleaseTensorTypeAndShapeInfo {
@@ -204,17 +243,23 @@ unsafe fn query_session_names(
 ) -> Result<(Vec<String>, Vec<String>), String> {
     let api = ort_api()?;
 
-    let get_input_count = api.SessionGetInputCount
+    let get_input_count = api
+        .SessionGetInputCount
         .ok_or_else(|| "ORT: SessionGetInputCount missing".to_string())?;
-    let get_output_count = api.SessionGetOutputCount
+    let get_output_count = api
+        .SessionGetOutputCount
         .ok_or_else(|| "ORT: SessionGetOutputCount missing".to_string())?;
-    let get_input_name = api.SessionGetInputName
+    let get_input_name = api
+        .SessionGetInputName
         .ok_or_else(|| "ORT: SessionGetInputName missing".to_string())?;
-    let get_output_name = api.SessionGetOutputName
+    let get_output_name = api
+        .SessionGetOutputName
         .ok_or_else(|| "ORT: SessionGetOutputName missing".to_string())?;
-    let get_allocator = api.GetAllocatorWithDefaultOptions
+    let get_allocator = api
+        .GetAllocatorWithDefaultOptions
         .ok_or_else(|| "ORT: GetAllocatorWithDefaultOptions missing".to_string())?;
-    let allocator_free = api.AllocatorFree
+    let allocator_free = api
+        .AllocatorFree
         .ok_or_else(|| "ORT: AllocatorFree missing".to_string())?;
 
     let mut allocator: *mut ort_sys::OrtAllocator = ptr::null_mut();
@@ -230,7 +275,9 @@ unsafe fn query_session_names(
     for i in 0..input_count {
         let mut name_ptr: *mut std::os::raw::c_char = ptr::null_mut();
         check_status(get_input_name(session, i, allocator, &mut name_ptr))?;
-        let name = std::ffi::CStr::from_ptr(name_ptr).to_string_lossy().into_owned();
+        let name = std::ffi::CStr::from_ptr(name_ptr)
+            .to_string_lossy()
+            .into_owned();
         input_names.push(name);
         allocator_free(allocator, name_ptr as *mut c_void);
     }
@@ -239,7 +286,9 @@ unsafe fn query_session_names(
     for i in 0..output_count {
         let mut name_ptr: *mut std::os::raw::c_char = ptr::null_mut();
         check_status(get_output_name(session, i, allocator, &mut name_ptr))?;
-        let name = std::ffi::CStr::from_ptr(name_ptr).to_string_lossy().into_owned();
+        let name = std::ffi::CStr::from_ptr(name_ptr)
+            .to_string_lossy()
+            .into_owned();
         output_names.push(name);
         allocator_free(allocator, name_ptr as *mut c_void);
     }
@@ -257,12 +306,20 @@ unsafe fn get_or_create_session(model_path: &Path) -> Result<CachedSession, Stri
 
     let api = ort_api()?;
     let env_name = CString::new("kokoro").map_err(|e| format!("{e}"))?;
-    let create_env = api.CreateEnv.ok_or_else(|| "ORT: CreateEnv missing".to_string())?;
+    let create_env = api
+        .CreateEnv
+        .ok_or_else(|| "ORT: CreateEnv missing".to_string())?;
     let mut env: *mut ort_sys::OrtEnv = ptr::null_mut();
-    let status = create_env(ort_sys::OrtLoggingLevel::ORT_LOGGING_LEVEL_WARNING, env_name.as_ptr(), &mut env);
+    let status = create_env(
+        ort_sys::OrtLoggingLevel::ORT_LOGGING_LEVEL_WARNING,
+        env_name.as_ptr(),
+        &mut env,
+    );
     check_status(status)?;
 
-    let create_opts = api.CreateSessionOptions.ok_or_else(|| "ORT: CreateSessionOptions missing".to_string())?;
+    let create_opts = api
+        .CreateSessionOptions
+        .ok_or_else(|| "ORT: CreateSessionOptions missing".to_string())?;
     let mut opts: *mut ort_sys::OrtSessionOptions = ptr::null_mut();
     let status = create_opts(&mut opts);
     check_status(status)?;
@@ -272,9 +329,11 @@ unsafe fn get_or_create_session(model_path: &Path) -> Result<CachedSession, Stri
         check_status(status).unwrap_or(());
     }
 
-    let model_cstr = CString::new(cache_key.clone())
-        .map_err(|e| format!("model path null: {e}"))?;
-    let create_session = api.CreateSession.ok_or_else(|| "ORT: CreateSession missing".to_string())?;
+    let model_cstr =
+        CString::new(cache_key.clone()).map_err(|e| format!("model path null: {e}"))?;
+    let create_session = api
+        .CreateSession
+        .ok_or_else(|| "ORT: CreateSession missing".to_string())?;
     let mut session: *mut ort_sys::OrtSession = ptr::null_mut();
     let status = create_session(env, model_cstr.as_ptr() as *const _, opts, &mut session);
     release_session_options(opts);
@@ -285,7 +344,12 @@ unsafe fn get_or_create_session(model_path: &Path) -> Result<CachedSession, Stri
 
     let (input_names, output_names) = query_session_names(session)?;
 
-    let cached = CachedSession { env, session, input_names, output_names };
+    let cached = CachedSession {
+        env,
+        session,
+        input_names,
+        output_names,
+    };
     let mut guard = session_cache()
         .lock()
         .map_err(|_| "ORT session cache lock poisoned".to_string())?;
@@ -329,7 +393,10 @@ pub fn synthesize_phonemes(
                 let lower = name.to_lowercase();
                 if lower.contains("id") || lower.contains("token") {
                     m.insert(name.as_str(), input_ids_val as *const _);
-                } else if lower.contains("style") || lower.contains("voice") || lower.contains("embedding") {
+                } else if lower.contains("style")
+                    || lower.contains("voice")
+                    || lower.contains("embedding")
+                {
                     m.insert(name.as_str(), style_val as *const _);
                 } else if lower.contains("speed") || lower.contains("rate") {
                     m.insert(name.as_str(), speed_val as *const _);
@@ -338,23 +405,33 @@ pub fn synthesize_phonemes(
             m
         };
 
-        let input_values: Vec<*const ort_sys::OrtValue> = cached.input_names.iter()
-            .map(|n| *tensor_by_name.get(n.as_str()).unwrap_or(&(input_ids_val as *const _)))
+        let input_values: Vec<*const ort_sys::OrtValue> = cached
+            .input_names
+            .iter()
+            .map(|n| {
+                *tensor_by_name
+                    .get(n.as_str())
+                    .unwrap_or(&(input_ids_val as *const _))
+            })
             .collect();
 
-        let input_c_names: Vec<CString> = cached.input_names.iter()
-            .map(|n| CString::new(n.as_str()).map_err(|e| format!("ORT input name has null byte: {e}")))
+        let input_c_names: Vec<CString> = cached
+            .input_names
+            .iter()
+            .map(|n| {
+                CString::new(n.as_str()).map_err(|e| format!("ORT input name has null byte: {e}"))
+            })
             .collect::<Result<Vec<_>, String>>()?;
-        let output_c_names: Vec<CString> = cached.output_names.iter()
-            .map(|n| CString::new(n.as_str()).map_err(|e| format!("ORT output name has null byte: {e}")))
+        let output_c_names: Vec<CString> = cached
+            .output_names
+            .iter()
+            .map(|n| {
+                CString::new(n.as_str()).map_err(|e| format!("ORT output name has null byte: {e}"))
+            })
             .collect::<Result<Vec<_>, String>>()?;
 
-        let input_name_ptrs: Vec<*const i8> = input_c_names.iter()
-            .map(|n| n.as_ptr())
-            .collect();
-        let output_name_ptrs: Vec<*const i8> = output_c_names.iter()
-            .map(|n| n.as_ptr())
-            .collect();
+        let input_name_ptrs: Vec<*const i8> = input_c_names.iter().map(|n| n.as_ptr()).collect();
+        let output_name_ptrs: Vec<*const i8> = output_c_names.iter().map(|n| n.as_ptr()).collect();
 
         let mut output_tensor: *mut ort_sys::OrtValue = ptr::null_mut();
 
@@ -427,7 +504,11 @@ mod tests {
             Ok((samples, sample_rate)) => {
                 assert_eq!(*sample_rate, 24_000);
                 assert!(!samples.is_empty(), "should produce audio samples");
-                eprintln!("smoke test OK: {} samples, {:.1}ms audio", samples.len(), samples.len() as f64 / *sample_rate as f64 * 1000.0);
+                eprintln!(
+                    "smoke test OK: {} samples, {:.1}ms audio",
+                    samples.len(),
+                    samples.len() as f64 / *sample_rate as f64 * 1000.0
+                );
             }
             Err(e) => {
                 eprintln!("smoke test failed (ORT not available?): {e}");
@@ -437,7 +518,10 @@ mod tests {
 
     #[test]
     fn e2e_phonemize_tokenize_synthesize() {
-        if !has_assets() { eprintln!("skipping: no assets"); return; }
+        if !has_assets() {
+            eprintln!("skipping: no assets");
+            return;
+        }
         init_test_ort();
 
         let phonemizer = crate::tts::phonemizer::EspeakPhonemizer::new(&resources_dir())
@@ -458,7 +542,10 @@ mod tests {
                 assert_eq!(*sample_rate, 24_000);
                 assert!(!samples.is_empty());
                 let duration_ms = (samples.len() as f64 / *sample_rate as f64 * 1000.0) as u32;
-                assert!(duration_ms > 100, "should produce at least 100ms of audio for this text, got {duration_ms}ms");
+                assert!(
+                    duration_ms > 100,
+                    "should produce at least 100ms of audio for this text, got {duration_ms}ms"
+                );
                 eprintln!("e2e OK: {} samples, {}ms audio", samples.len(), duration_ms);
             }
             Err(e) => {
@@ -469,7 +556,10 @@ mod tests {
 
     #[test]
     fn e2e_stream_chunked_synthesis() {
-        if !has_assets() { eprintln!("skipping: no assets"); return; }
+        if !has_assets() {
+            eprintln!("skipping: no assets");
+            return;
+        }
         init_test_ort();
 
         let phonemizer = crate::tts::phonemizer::EspeakPhonemizer::new(&resources_dir())
@@ -479,7 +569,11 @@ mod tests {
         let phonemes = phonemizer.phonemize(text).expect("phonemize");
 
         let sentences = crate::tts::split_into_sentences(&phonemes);
-        assert!(sentences.len() >= 2, "should split into at least 2 sentences, got {}", sentences.len());
+        assert!(
+            sentences.len() >= 2,
+            "should split into at least 2 sentences, got {}",
+            sentences.len()
+        );
         eprintln!("sentences: {:?}", sentences);
 
         let model_path = Path::new("resources/kokoro/model_quantized.onnx");
@@ -489,7 +583,8 @@ mod tests {
         let mut total_samples: usize = 0;
         let mut chunk_count: u32 = 0;
         for sentence in &sentences {
-            let result = synthesize_phonemes(model_path, config_path, voice_path, None, sentence, 1.0);
+            let result =
+                synthesize_phonemes(model_path, config_path, voice_path, None, sentence, 1.0);
             match result {
                 Ok((samples, sr)) => {
                     assert_eq!(sr, 24_000);
@@ -504,15 +599,28 @@ mod tests {
             }
         }
 
-        assert_eq!(chunk_count, sentences.len() as u32, "all chunks should succeed");
+        assert_eq!(
+            chunk_count,
+            sentences.len() as u32,
+            "all chunks should succeed"
+        );
         let total_ms = (total_samples as f64 / 24_000.0 * 1000.0) as u32;
-        assert!(total_ms > 50, "total audio should be at least 50ms, got {total_ms}ms");
-        eprintln!("stream e2e OK: {} chunks, {} total samples, {}ms audio", chunk_count, total_samples, total_ms);
+        assert!(
+            total_ms > 50,
+            "total audio should be at least 50ms, got {total_ms}ms"
+        );
+        eprintln!(
+            "stream e2e OK: {} chunks, {} total samples, {}ms audio",
+            chunk_count, total_samples, total_ms
+        );
     }
 
     #[test]
     fn e2e_wav_encoding() {
-        if !has_assets() { eprintln!("skipping: no assets"); return; }
+        if !has_assets() {
+            eprintln!("skipping: no assets");
+            return;
+        }
         init_test_ort();
 
         let phonemizer = crate::tts::phonemizer::EspeakPhonemizer::new(&resources_dir())
@@ -522,15 +630,24 @@ mod tests {
         let model_path = Path::new("resources/kokoro/model_quantized.onnx");
         let config_path = Path::new("resources/kokoro/config.json");
         let voice_path = Path::new("resources/kokoro/af_heart.bin");
-        let (samples, sample_rate) = synthesize_phonemes(model_path, config_path, voice_path, None, &phonemes, 1.0)
-            .expect("synthesize");
+        let (samples, sample_rate) =
+            synthesize_phonemes(model_path, config_path, voice_path, None, &phonemes, 1.0)
+                .expect("synthesize");
 
         let wav_bytes = crate::tts::wav_from_f32_samples(&samples, sample_rate);
 
         assert!(wav_bytes.starts_with(b"RIFF"), "should be a valid WAV file");
         assert!(wav_bytes.len() > 44, "WAV should have data beyond header");
         let expected_data_len = samples.len() * 2;
-        assert!(wav_bytes.len() >= 44 + expected_data_len, "WAV data section should contain all PCM samples");
-        eprintln!("WAV OK: {} bytes, {} samples at {}Hz", wav_bytes.len(), samples.len(), sample_rate);
+        assert!(
+            wav_bytes.len() >= 44 + expected_data_len,
+            "WAV data section should contain all PCM samples"
+        );
+        eprintln!(
+            "WAV OK: {} bytes, {} samples at {}Hz",
+            wav_bytes.len(),
+            samples.len(),
+            sample_rate
+        );
     }
 }

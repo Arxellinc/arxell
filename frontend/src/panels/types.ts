@@ -175,7 +175,7 @@ export interface AvatarState {
 export interface SttState {
   status: "idle" | "starting" | "running" | "error";
   message: string | null;
-  backend: "whisper_cpp" | "sherpa_onnx";
+  backend: "whisper_cpp";
   isListening: boolean;
   isSpeaking: boolean;
   lastTranscript: string | null;
@@ -209,7 +209,7 @@ export interface TtsState {
   status: "idle" | "ready" | "busy" | "error";
   message: string | null;
   engineId: string;
-  engine: "kokoro" | "piper" | "matcha" | "kitten" | "pocket";
+  engine: "kokoro" | "pocket";
   ready: boolean;
   modelPath: string;
   voices: string[];
@@ -455,7 +455,7 @@ export interface PrimaryPanelBindings {
   onModelManagerEjectActive: () => Promise<void>;
   onModelManagerDeleteInstalled: (modelId: string) => Promise<void>;
   onToggleStt: () => Promise<void>;
-  onSetSttBackend: (backend: "whisper_cpp" | "sherpa_onnx") => Promise<void>;
+  onSetSttBackend: (backend: "whisper_cpp") => Promise<void>;
   onSetSttModel: (model: string) => Promise<void>;
   onSetSttLanguage: (language: string) => Promise<void>;
   onSetSttThreads: (threads: number) => Promise<void>;
@@ -464,7 +464,7 @@ export interface PrimaryPanelBindings {
   onTtsStart: () => Promise<void>;
   onTtsRefresh: () => Promise<void>;
   onTtsSetVoice: (voice: string) => Promise<void>;
-  onTtsSetEngine: (engine: "kokoro" | "piper" | "matcha" | "kitten" | "pocket") => Promise<void>;
+  onTtsSetEngine: (engine: "kokoro" | "pocket") => Promise<void>;
   onTtsSetSpeed: (speed: number) => Promise<void>;
   onTtsSetTestText: (text: string) => Promise<void>;
   onTtsBrowseModelPath: () => Promise<void>;

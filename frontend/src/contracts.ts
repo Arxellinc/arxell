@@ -1193,6 +1193,7 @@ export interface TtsSpeakResponse {
   sampleRate: number;
   durationMs: number;
   audioBytes: number[];
+  phonemes?: string | null;
 }
 
 export interface TtsSpeakStreamResponse {

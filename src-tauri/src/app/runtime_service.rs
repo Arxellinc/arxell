@@ -784,10 +784,7 @@ fn terminate_process(mut child: Child) -> Result<(), String> {
 }
 
 fn kill_orphaned_llama_server(port: u16) {
-    let output = match Command::new("ss")
-        .args(["-tlnp"])
-        .output()
-    {
+    let output = match Command::new("ss").args(["-tlnp"]).output() {
         Ok(o) => o,
         Err(_) => return,
     };

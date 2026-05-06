@@ -92,8 +92,7 @@ impl VoiceRuntimeService {
     pub fn new_with_store(hub: EventHub, settings_store: VoiceSettingsStore) -> Self {
         let mut settings = settings_store.load();
         if registry::validate_method(&settings.selected_vad_method).is_err() {
-            settings.selected_vad_method =
-                crate::voice::vad::settings::SHERPA_SILERO_ID.to_string();
+            settings.selected_vad_method = crate::voice::vad::settings::ONNX_SILERO_ID.to_string();
         }
         Self {
             hub,
@@ -725,7 +724,7 @@ impl VoiceRuntimeService {
 mod tests {
     use super::*;
     use crate::voice::settings::VoiceSettingsStore;
-    use crate::voice::vad::settings::{ENERGY_BASIC_ID, MICROTURN_V1_ID, SHERPA_SILERO_ID};
+    use crate::voice::vad::settings::{ENERGY_BASIC_ID, MICROTURN_V1_ID, ONNX_SILERO_ID};
 
     fn service() -> VoiceRuntimeService {
         let path = std::env::temp_dir().join(format!(
@@ -742,7 +741,7 @@ mod tests {
         service.set_vad_method("corr-1", ENERGY_BASIC_ID).unwrap();
         service.start_session("corr-2").unwrap();
         let err = service
-            .set_vad_method("corr-3", SHERPA_SILERO_ID)
+            .set_vad_method("corr-3", ONNX_SILERO_ID)
             .unwrap_err();
         assert_eq!(err, VoiceRuntimeError::VoiceSessionActive);
     }
@@ -752,8 +751,8 @@ mod tests {
         let service = service();
         service.set_vad_method("corr-1", ENERGY_BASIC_ID).unwrap();
         service.start_session("corr-2").unwrap();
-        let snapshot = service.request_handoff("corr-3", SHERPA_SILERO_ID).unwrap();
-        assert_eq!(snapshot.active_vad_method_id, SHERPA_SILERO_ID);
+        let snapshot = service.request_handoff("corr-3", ONNX_SILERO_ID).unwrap();
+        assert_eq!(snapshot.active_vad_method_id, ONNX_SILERO_ID);
         assert_eq!(snapshot.handoff_state, HandoffState::Completed);
         assert_eq!(snapshot.state, VoiceRuntimeState::RunningSingle);
     }
