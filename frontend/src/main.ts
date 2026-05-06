@@ -1659,6 +1659,12 @@ interface PreservedEditableFocus {
   value: string | null;
 }
 
+function scrollAllChatPanesToBottom(): void {
+  document.querySelectorAll<HTMLElement>(".messages[data-chat-pane-id]").forEach((el) => {
+    el.scrollTop = el.scrollHeight;
+  });
+}
+
 function preserveEditableFocusBeforeRender(): PreservedEditableFocus | null {
   const active = document.activeElement as HTMLElement | null;
   if (!isEditableElementActive(active) || !active?.id) return null;
@@ -3128,6 +3134,7 @@ function render(): void {
 
   const preservedAvatarPreview = preserveAvatarPreviewBeforeRender();
   const preservedEditableFocus = preserveEditableFocusBeforeRender();
+  const isChatStreaming = state.chatStreaming;
   app.innerHTML = composeAppFrameHtml({
     chatPanePercent: state.chatPanePercent,
     portraitWorkspacePercent: state.portraitWorkspacePercent,
@@ -3178,6 +3185,11 @@ function render(): void {
   });
   restoreAvatarPreviewAfterRender(preservedAvatarPreview);
   restoreEditableFocusAfterRender(preservedEditableFocus);
+  if (isChatStreaming) {
+    requestAnimationFrame(() => {
+      scrollAllChatPanesToBottom();
+    });
+  }
 }
 
 function pushConsoleEntry(
@@ -7265,10 +7277,10 @@ function renderChatMessagesOnly(panelId = PRIMARY_CHAT_PANE_ID): void {
   if (!messagesHost) return;
   const panel = getChatPanelById(panelId);
   if (!panel) return;
-  const isNearBottom =
-    messagesHost.scrollHeight - messagesHost.scrollTop - messagesHost.clientHeight < 36;
+  const wasNearBottom =
+    messagesHost.scrollHeight - messagesHost.scrollTop - messagesHost.clientHeight < 60;
   messagesHost.innerHTML = renderChatMessages({ chat: panel });
-  if (isNearBottom) {
+  if (wasNearBottom || panel.chatStreaming) {
     messagesHost.scrollTop = messagesHost.scrollHeight;
   }
 }

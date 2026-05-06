@@ -570,6 +570,7 @@ jobs:
         shell: bash
         env:
           XDG_CACHE_HOME: ${{ runner.temp }}/xdg-cache
+          APPIMAGE_EXTRACT_AND_RUN: 1
         run: |
           set -euo pipefail
           mkdir -p "${XDG_CACHE_HOME}"
