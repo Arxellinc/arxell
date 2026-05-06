@@ -713,15 +713,15 @@ impl Drop for LlamaRuntimeService {
     }
 }
 
-fn set_executable_if_needed(path: &Path) -> Result<(), String> {
+fn set_executable_if_needed(_path: &Path) -> Result<(), String> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        let mut perms = std::fs::metadata(path)
+        let mut perms = std::fs::metadata(_path)
             .map_err(|e| format!("failed reading runtime binary metadata: {e}"))?
             .permissions();
         perms.set_mode(0o755);
-        std::fs::set_permissions(path, perms)
+        std::fs::set_permissions(_path, perms)
             .map_err(|e| format!("failed setting runtime binary executable bit: {e}"))?;
     }
     Ok(())
@@ -783,6 +783,7 @@ fn terminate_process(mut child: Child) -> Result<(), String> {
     Ok(())
 }
 
+#[cfg(unix)]
 fn kill_orphaned_llama_server(port: u16) {
     let output = match Command::new("ss").args(["-tlnp"]).output() {
         Ok(o) => o,
@@ -815,6 +816,9 @@ fn kill_orphaned_llama_server(port: u16) {
         }
     }
 }
+
+#[cfg(not(unix))]
+fn kill_orphaned_llama_server(_port: u16) {}
 
 fn spawn_output_forwarder<R>(
     hub: EventHub,

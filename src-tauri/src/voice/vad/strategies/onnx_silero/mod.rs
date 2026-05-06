@@ -367,9 +367,9 @@ impl DirectSileroRunner {
             ptr::null(),
             input_name_ptrs.as_ptr(),
             input_values.as_ptr(),
-            input_name_ptrs.len(),
+            ort_size(input_name_ptrs.len(), "run input count")?,
             output_name_ptrs.as_ptr(),
-            output_name_ptrs.len(),
+            ort_size(output_name_ptrs.len(), "run output count")?,
             output_values.as_mut_ptr(),
         );
         let run_result = check_status(status).and_then(|_| {
@@ -504,6 +504,18 @@ unsafe fn check_status(status: *mut ort_sys::OrtStatus) -> Result<(), String> {
     Err(msg)
 }
 
+fn ort_size(value: usize, label: &str) -> Result<ort_sys::size_t, String> {
+    value
+        .try_into()
+        .map_err(|_| format!("ORT: {label} exceeds size_t"))
+}
+
+fn usize_from_ort_size(value: ort_sys::size_t, label: &str) -> Result<usize, String> {
+    value
+        .try_into()
+        .map_err(|_| format!("ORT: {label} exceeds usize"))
+}
+
 unsafe fn create_memory_info() -> Result<*mut ort_sys::OrtMemoryInfo, String> {
     let api = ort_api()?;
     let create = api
@@ -532,9 +544,9 @@ unsafe fn create_f32_tensor(
     check_status(create(
         mem_info,
         data.as_ptr() as *mut c_void,
-        std::mem::size_of_val(data),
+        ort_size(std::mem::size_of_val(data), "f32 tensor byte length")?,
         shape_i64.as_ptr(),
-        shape_i64.len(),
+        ort_size(shape_i64.len(), "f32 tensor rank")?,
         ort_sys::ONNXTensorElementDataType::ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT,
         &mut ort_value,
     ))?;
@@ -555,9 +567,9 @@ unsafe fn create_i64_tensor(
     check_status(create(
         mem_info,
         data.as_ptr() as *mut c_void,
-        std::mem::size_of_val(data),
+        ort_size(std::mem::size_of_val(data), "i64 tensor byte length")?,
         shape_i64.as_ptr(),
-        shape_i64.len(),
+        ort_size(shape_i64.len(), "i64 tensor rank")?,
         ort_sys::ONNXTensorElementDataType::ONNX_TENSOR_ELEMENT_DATA_TYPE_INT64,
         &mut ort_value,
     ))?;
@@ -581,14 +593,15 @@ unsafe fn extract_f32_data(ort_value: *mut ort_sys::OrtValue) -> Result<Vec<f32>
         ort_value,
         &mut tensor_info,
     ))?;
-    let mut dims_count: usize = 0;
+    let mut dims_count: ort_sys::size_t = 0;
     check_status(api
         .GetDimensionsCount
         .ok_or_else(|| "ORT: GetDimensionsCount missing".to_string())?(
         tensor_info,
         &mut dims_count,
     ))?;
-    let mut dims = vec![0i64; dims_count];
+    let dims_len = usize_from_ort_size(dims_count, "tensor dimension count")?;
+    let mut dims = vec![0i64; dims_len];
     check_status(api
         .GetDimensions
         .ok_or_else(|| "ORT: GetDimensions missing".to_string())?(
@@ -632,12 +645,15 @@ unsafe fn query_session_names(
 
     let mut allocator: *mut ort_sys::OrtAllocator = ptr::null_mut();
     check_status(get_allocator(&mut allocator))?;
-    let mut input_count = 0usize;
+    let mut input_count: ort_sys::size_t = 0;
     check_status(get_input_count(session, &mut input_count))?;
-    let mut output_count = 0usize;
+    let mut output_count: ort_sys::size_t = 0;
     check_status(get_output_count(session, &mut output_count))?;
 
-    let mut input_names = Vec::with_capacity(input_count);
+    let input_count_usize = usize_from_ort_size(input_count, "session input count")?;
+    let output_count_usize = usize_from_ort_size(output_count, "session output count")?;
+
+    let mut input_names = Vec::with_capacity(input_count_usize);
     for index in 0..input_count {
         let mut name_ptr: *mut std::os::raw::c_char = ptr::null_mut();
         check_status(get_input_name(session, index, allocator, &mut name_ptr))?;
@@ -645,7 +661,7 @@ unsafe fn query_session_names(
         allocator_free(allocator, name_ptr as *mut c_void);
     }
 
-    let mut output_names = Vec::with_capacity(output_count);
+    let mut output_names = Vec::with_capacity(output_count_usize);
     for index in 0..output_count {
         let mut name_ptr: *mut std::os::raw::c_char = ptr::null_mut();
         check_status(get_output_name(session, index, allocator, &mut name_ptr))?;
