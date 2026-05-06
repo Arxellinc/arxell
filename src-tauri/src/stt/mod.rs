@@ -32,7 +32,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 #[cfg(feature = "tauri-runtime")]
-use std::sync::OnceLock;
+use std::sync::{Mutex as StdMutex, OnceLock};
 #[cfg(feature = "tauri-runtime")]
 use tauri::Manager;
 use tokio::sync::Mutex;
@@ -45,6 +45,8 @@ static STREAM_STATE: OnceLock<Mutex<StreamState>> = OnceLock::new();
 static STREAM_CONFIG: OnceLock<Mutex<StreamConfig>> = OnceLock::new();
 #[cfg(feature = "tauri-runtime")]
 static CACHED_VAD_MODEL_PATH: OnceLock<Option<PathBuf>> = OnceLock::new();
+#[cfg(feature = "tauri-runtime")]
+static CACHED_ONNX_VAD_GATE: OnceLock<StdMutex<Option<CachedOnnxVadGate>>> = OnceLock::new();
 
 #[cfg(feature = "tauri-runtime")]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -92,6 +94,12 @@ struct StreamConfig {
     partial_threshold_samples: usize,
     partial_step_samples: usize,
     finalize_speech_samples: usize,
+}
+
+#[cfg(feature = "tauri-runtime")]
+struct CachedOnnxVadGate {
+    model_path: PathBuf,
+    strategy: OnnxSileroStrategy,
 }
 
 #[cfg(feature = "tauri-runtime")]
@@ -279,20 +287,39 @@ fn onnx_silero_has_speech_cached(app: &tauri::AppHandle, samples: &[f32]) -> Res
     let Some(model_path) = model_path else {
         return Ok(false);
     };
-    let config = OnnxSileroConfig {
-        model_path: Some(model_path.to_string_lossy().to_string()),
-        ..OnnxSileroConfig::default()
+    let gate = CACHED_ONNX_VAD_GATE.get_or_init(|| StdMutex::new(None));
+    let mut gate = gate
+        .lock()
+        .map_err(|_| "ONNX Silero VAD gate lock poisoned".to_string())?;
+    let needs_init = gate
+        .as_ref()
+        .map(|cached| cached.model_path != *model_path)
+        .unwrap_or(true);
+    if needs_init {
+        let config = OnnxSileroConfig {
+            model_path: Some(model_path.to_string_lossy().to_string()),
+            start_frames: 1,
+            ..OnnxSileroConfig::default()
+        };
+        let mut strategy = OnnxSileroStrategy::default();
+        strategy
+            .start_session(VadConfig {
+                method_id: ONNX_SILERO_ID.to_string(),
+                version: 2,
+                settings: serde_json::to_value(config)
+                    .map_err(|err| format!("failed serializing ONNX Silero config: {err}"))?,
+            })
+            .map_err(|err| err.to_string())?;
+        *gate = Some(CachedOnnxVadGate {
+            model_path: model_path.clone(),
+            strategy,
+        });
+    }
+    let Some(cached) = gate.as_mut() else {
+        return Ok(false);
     };
-    let mut strategy = OnnxSileroStrategy::default();
-    strategy
-        .start_session(VadConfig {
-            method_id: ONNX_SILERO_ID.to_string(),
-            version: 2,
-            settings: serde_json::to_value(config)
-                .map_err(|err| format!("failed serializing ONNX Silero config: {err}"))?,
-        })
-        .map_err(|err| err.to_string())?;
-    let events = strategy
+    let events = cached
+        .strategy
         .process_frame(AudioFrame {
             samples: samples.to_vec(),
             sample_rate_hz: 16_000,
@@ -302,7 +329,10 @@ fn onnx_silero_has_speech_cached(app: &tauri::AppHandle, samples: &[f32]) -> Res
     Ok(events.iter().any(|event| {
         matches!(
             event,
-            VadEvent::SpeechStart | VadEvent::SegmentOpened { .. }
+            VadEvent::SpeechStart
+                | VadEvent::SegmentOpened { .. }
+                | VadEvent::SegmentExtended { .. }
+                | VadEvent::InterruptionDetected { .. }
         )
     }))
 }
@@ -595,6 +625,13 @@ pub async fn transcribe_partial_chunk(
 pub async fn stt_stream_reset() -> Result<(), String> {
     let mut s = stream_state().lock().await;
     *s = StreamState::default();
+    if let Some(gate) = CACHED_ONNX_VAD_GATE.get() {
+        if let Ok(mut gate) = gate.lock() {
+            if let Some(cached) = gate.as_mut() {
+                let _ = cached.strategy.reset();
+            }
+        }
+    }
     Ok(())
 }
 

@@ -6858,6 +6858,9 @@ async function setupSttTranscriptListener(onTranscript: (text: string) => Promis
       const transcript = event.payload.text?.trim();
       if (!transcript) {
         pushConsoleEntry("debug", "browser", "STT event: received empty transcript payload");
+        if (voicePipelineState === "processing") {
+          setVoicePipelineState("idle");
+        }
         return;
       }
       if (isIgnorableSttTranscript(transcript)) {
@@ -8638,6 +8641,16 @@ async function bootstrap(): Promise<void> {
     rerender: () => renderAndBind(sendMessage),
     onVadSpeakingChanged: (isSpeaking) => {
       sttLastWasSpeaking = isSpeaking;
+      if (isSpeaking) {
+        if (state.chatTtsPlaying) {
+          requestVoiceBargeInInterrupt();
+        }
+        if (voicePipelineState !== "interrupted") {
+          setVoicePipelineState("user_speaking");
+        }
+      } else if (voicePipelineState === "user_speaking") {
+        setVoicePipelineState("processing");
+      }
       updateChatVoiceInputIcons();
     }
   });

@@ -446,10 +446,14 @@ mod tests {
 
     fn make_service_with_open_sheet() -> (Arc<SheetsService>, std::path::PathBuf) {
         let service = Arc::new(SheetsService::default());
+        let thread_slug = std::thread::current()
+            .name()
+            .unwrap_or("test")
+            .replace([':', '<', '>', '"', '|', '?', '*'], "_");
         let path = std::env::temp_dir().join(format!(
             "arxell-agent-sheets-{}-{}-{}.csv",
             std::process::id(),
-            std::thread::current().name().unwrap_or("test"),
+            thread_slug,
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .map(|value| value.as_nanos())
