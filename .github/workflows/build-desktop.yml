@@ -109,7 +109,7 @@ jobs:
           overlay_dir="${RUNNER_TEMP}/pkgconfig"
           mkdir -p "${overlay_dir}"
 
-          pc_path="$(dpkg -L librsvg2-dev | grep '/librsvg-2\.0\.pc$' | head -n 1)"
+          pc_path="$(dpkg -L librsvg2-dev | awk '/\/librsvg-2\.0\.pc$/ { print; exit }')"
           if [[ -z "${pc_path}" ]]; then
             echo "Could not locate librsvg-2.0.pc from librsvg2-dev" >&2
             exit 1
