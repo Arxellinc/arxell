@@ -22,7 +22,8 @@ use arxell_lite::contracts::{
     CustomItemDeleteResponse, CustomItemUpsertRequest, CustomItemUpsertResponse,
     CustomToolCapabilityInvokeRequest, CustomToolCapabilityInvokeResponse,
     DevicesProbeMicrophoneRequest, DevicesProbeMicrophoneResponse, EventSeverity, EventStage,
-    FilesListDirectoryRequest, FilesListDirectoryResponse, ImageGenerationGenerateRequest,
+    FilesListDirectoryRequest, FilesListDirectoryResponse, ImageGenerationCancelInstallRequest,
+    ImageGenerationCancelInstallResponse, ImageGenerationGenerateRequest,
     ImageGenerationGenerateResponse, ImageGenerationInstallRequest, ImageGenerationInstallResponse,
     ImageGenerationRemovePackagesRequest, ImageGenerationRemovePackagesResponse,
     ImageGenerationSetDisabledRequest, ImageGenerationSetDisabledResponse,
@@ -301,6 +302,7 @@ fn main() {
             cmd_model_manager_refresh_unsloth_catalog,
             cmd_image_generation_status,
             cmd_image_generation_install,
+            cmd_image_generation_cancel_install,
             cmd_image_generation_set_disabled,
             cmd_image_generation_remove_packages,
             cmd_image_generation_generate,
@@ -1530,6 +1532,22 @@ async fn cmd_image_generation_install(
 
 #[cfg(feature = "tauri-runtime")]
 #[tauri::command]
+async fn cmd_image_generation_cancel_install(
+    _app: tauri::AppHandle,
+    state: State<'_, TauriBridgeState>,
+    request: ImageGenerationCancelInstallRequest,
+) -> Result<ImageGenerationCancelInstallResponse, String> {
+    let service = std::sync::Arc::clone(&state.image_generation);
+    let cancelled = service.cancel_install(request.target_correlation_id.as_str());
+    Ok(ImageGenerationCancelInstallResponse {
+        correlation_id: request.correlation_id,
+        target_correlation_id: request.target_correlation_id,
+        cancelled,
+    })
+}
+
+#[cfg(feature = "tauri-runtime")]
+#[tauri::command]
 async fn cmd_image_generation_set_disabled(
     _app: tauri::AppHandle,
     state: State<'_, TauriBridgeState>,
@@ -1539,7 +1557,11 @@ async fn cmd_image_generation_set_disabled(
     let service = std::sync::Arc::clone(&state.image_generation);
     let correlation_id = request.correlation_id.clone();
     tokio::task::spawn_blocking(move || {
-        service.set_disabled(correlation_id.as_str(), app_data.as_path(), request.disabled)
+        service.set_disabled(
+            correlation_id.as_str(),
+            app_data.as_path(),
+            request.disabled,
+        )
     })
     .await
     .map_err(|e| format!("image generation settings task failed: {e}"))?

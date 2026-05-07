@@ -947,6 +947,8 @@ const state: {
     installPercent: number | null;
     installSpeedBytesPerSec: number | null;
     installPhase: string | null;
+    installCurrentFileName: string | null;
+    installCorrelationId: string | null;
   };
   stt: {
     status: "idle" | "starting" | "running" | "error";
@@ -1228,7 +1230,9 @@ const state: {
     installTotalBytes: null,
     installPercent: null,
     installSpeedBytesPerSec: null,
-    installPhase: null
+    installPhase: null,
+    installCurrentFileName: null,
+    installCorrelationId: null
   },
   stt: {
     status: "idle",
@@ -4246,9 +4250,13 @@ function handleImageGenerationInstallProgressEvent(event: AppEvent, rerender: ()
   if (event.action !== "image.generation.install") return false;
   const payload = payloadAsRecord(event.payload);
   const phase = typeof payload?.phase === "string" ? payload.phase : null;
+  const fileName = typeof payload?.fileName === "string" ? payload.fileName : null;
+  const message = typeof payload?.message === "string" ? payload.message : null;
   if (event.stage === "start") {
     state.images.installBusy = true;
     state.images.installPhase = phase || "preflight";
+    state.images.installCorrelationId = event.correlationId || state.images.installCorrelationId;
+    state.images.installCurrentFileName = fileName;
     state.images.installReceivedBytes = 0;
     state.images.installTotalBytes = null;
     state.images.installPercent = null;
@@ -4261,6 +4269,10 @@ function handleImageGenerationInstallProgressEvent(event: AppEvent, rerender: ()
   if (event.stage === "progress") {
     state.images.installBusy = true;
     state.images.installPhase = phase || state.images.installPhase;
+    state.images.installCorrelationId = event.correlationId || state.images.installCorrelationId;
+    if (fileName) {
+      state.images.installCurrentFileName = fileName;
+    }
     const receivedBytes = Number(payload?.receivedBytes);
     const totalBytes = Number(payload?.totalBytes);
     const percent = Number(payload?.percent);
@@ -4284,9 +4296,24 @@ function handleImageGenerationInstallProgressEvent(event: AppEvent, rerender: ()
     rerender();
     return false;
   }
-  if (event.stage === "complete" || event.stage === "error") {
+  if (event.stage === "complete") {
     state.images.installBusy = false;
     state.images.installPhase = null;
+    state.images.installCurrentFileName = null;
+    state.images.installCorrelationId = null;
+    imageInstallLastSampleAtMs = null;
+    imageInstallLastSampleBytes = null;
+    rerender();
+    return false;
+  }
+  if (event.stage === "error") {
+    state.images.installBusy = false;
+    state.images.installPhase = null;
+    state.images.installCurrentFileName = null;
+    state.images.installCorrelationId = null;
+    if (message) {
+      state.images.message = `Image package install failed${phase ? ` during ${phase}` : ""}: ${message}`;
+    }
     imageInstallLastSampleAtMs = null;
     imageInstallLastSampleBytes = null;
     rerender();
@@ -4548,6 +4575,16 @@ async function refreshImageGenerationStatus(): Promise<void> {
   });
   state.images.status = response;
   state.images.message = response.message;
+}
+
+function ensureImagesClient(sendMessage: (text: string) => Promise<void>): boolean {
+  if (clientRef) {
+    return true;
+  }
+  state.images.message = "Image generation IPC is unavailable in the current runtime.";
+  pushConsoleEntry("warn", "browser", state.images.message);
+  renderAndBind(sendMessage);
+  return false;
 }
 
 async function refreshModelManagerUnslothUdCatalog(): Promise<void> {
@@ -6148,6 +6185,7 @@ syncOverlayScrollbars();
       renderAndBind(sendMessage);
     },
     onImagesRefresh: async () => {
+      if (!ensureImagesClient(sendMessage)) return;
       state.images.message = "Refreshing image generation status...";
       try {
         await refreshImageGenerationStatus();
@@ -6157,32 +6195,69 @@ syncOverlayScrollbars();
       renderAndBind(sendMessage);
     },
     onImagesInstall: async () => {
-      if (!clientRef || state.images.installBusy) return;
+      if (!ensureImagesClient(sendMessage) || state.images.installBusy) return;
+      const client = clientRef;
+      if (!client) return;
       const correlationId = nextCorrelationId();
       state.images.installBusy = true;
+      state.images.installCorrelationId = correlationId;
+      state.images.installCurrentFileName = null;
       state.images.installPhase = "preflight";
       state.images.installReceivedBytes = 0;
       state.images.installTotalBytes = null;
       state.images.installPercent = null;
       state.images.installSpeedBytesPerSec = null;
-      state.images.message = "Downloading and installing the curated FLUX ONNX package...";
+      state.images.message = "Downloading and installing the curated FLUX ONNX FP4 package...";
       renderAndBind(sendMessage);
       try {
-        await clientRef.imageGenerationInstall({ correlationId });
+        await client.imageGenerationInstall({ correlationId });
         await refreshImageGenerationStatus();
-        state.images.message = "Image package installed. Runtime is held behind the FLUX ONNX probe gate until generation is verified.";
+        if (state.images.status?.runtimeState === "error") {
+          state.images.message =
+            state.images.status.message ||
+            "Image package installed, but the runtime probe failed.";
+        } else {
+          state.images.message =
+            state.images.status?.message ||
+            "Image package installed. Runtime is held behind the FLUX ONNX probe gate until generation is verified.";
+        }
       } catch (error) {
         state.images.message = `Image package install failed: ${String(error)}`;
       } finally {
         state.images.installBusy = false;
         state.images.installPhase = null;
+        state.images.installCurrentFileName = null;
+        state.images.installCorrelationId = null;
+      }
+      renderAndBind(sendMessage);
+    },
+    onImagesCancelInstall: async () => {
+      if (!ensureImagesClient(sendMessage) || !state.images.installBusy) return;
+      const client = clientRef;
+      if (!client) return;
+      const targetCorrelationId = state.images.installCorrelationId;
+      if (!targetCorrelationId) return;
+      state.images.message = "Cancelling image package install...";
+      renderAndBind(sendMessage);
+      try {
+        const response = await client.imageGenerationCancelInstall({
+          correlationId: nextCorrelationId(),
+          targetCorrelationId
+        });
+        state.images.message = response.cancelled
+          ? "Image package install cancelled."
+          : "No active image package install was cancelled.";
+      } catch (error) {
+        state.images.message = `Cancel image package install failed: ${String(error)}`;
       }
       renderAndBind(sendMessage);
     },
     onImagesSetDisabled: async (disabled: boolean) => {
-      if (!clientRef) return;
+      if (!ensureImagesClient(sendMessage)) return;
+      const client = clientRef;
+      if (!client) return;
       try {
-        const response = await clientRef.imageGenerationSetDisabled({
+        const response = await client.imageGenerationSetDisabled({
           correlationId: nextCorrelationId(),
           disabled
         });
@@ -6198,14 +6273,16 @@ syncOverlayScrollbars();
       renderAndBind(sendMessage);
     },
     onImagesRemovePackages: async () => {
-      if (!clientRef || state.images.removing) return;
+      if (!ensureImagesClient(sendMessage) || state.images.removing) return;
+      const client = clientRef;
+      if (!client) return;
       const confirmed = window.confirm("Remove installed image packages? This deletes local model package files.");
       if (!confirmed) return;
       state.images.removing = true;
       state.images.message = "Removing image packages...";
       renderAndBind(sendMessage);
       try {
-        await clientRef.imageGenerationRemovePackages({ correlationId: nextCorrelationId() });
+        await client.imageGenerationRemovePackages({ correlationId: nextCorrelationId() });
         await refreshImageGenerationStatus();
         state.images.message = "Image packages removed.";
       } catch (error) {
@@ -6216,7 +6293,9 @@ syncOverlayScrollbars();
       renderAndBind(sendMessage);
     },
     onImagesGenerate: async () => {
-      if (!clientRef || state.images.generateBusy) return;
+      if (!ensureImagesClient(sendMessage) || state.images.generateBusy) return;
+      const client = clientRef;
+      if (!client) return;
       const prompt = state.images.prompt.trim();
       if (!prompt) {
         state.images.message = "Enter a prompt first.";
@@ -6236,7 +6315,7 @@ syncOverlayScrollbars();
           steps: state.images.steps,
           guidance: state.images.guidance
         };
-        await clientRef.imageGenerationGenerate(
+        await client.imageGenerationGenerate(
           Number.isFinite(seed) && seed !== null ? { ...request, seed } : request
         );
       } catch (error) {
@@ -8902,6 +8981,12 @@ async function bootstrap(): Promise<void> {
     autoStartLlamaRuntimeIfConfigured,
     loadConversation: () => loadConversation(state.conversationId)
   });
+
+  try {
+    await refreshImageGenerationStatus();
+  } catch (error) {
+    state.images.message = `Images bootstrap failed: ${String(error)}`;
+  }
 
   await syncNotificationsFromBackend();
 

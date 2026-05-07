@@ -243,6 +243,8 @@ export interface ImagesPanelState {
   installPercent: number | null;
   installSpeedBytesPerSec: number | null;
   installPhase: string | null;
+  installCurrentFileName: string | null;
+  installCorrelationId: string | null;
 }
 
 export interface ConsoleEntry {
@@ -482,6 +484,7 @@ export interface PrimaryPanelBindings {
   onModelManagerDeleteInstalled: (modelId: string) => Promise<void>;
   onImagesRefresh: () => Promise<void>;
   onImagesInstall: () => Promise<void>;
+  onImagesCancelInstall: () => Promise<void>;
   onImagesSetDisabled: (disabled: boolean) => Promise<void>;
   onImagesRemovePackages: () => Promise<void>;
   onImagesGenerate: () => Promise<void>;

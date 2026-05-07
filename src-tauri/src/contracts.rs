@@ -1344,12 +1344,16 @@ pub struct ImagePackageMetadata {
     pub repo_id: String,
     pub license: String,
     pub source_url: String,
-    pub approximate_size_gb: f32,
+    pub upstream_url: Option<String>,
+    pub precision_label: String,
+    pub core_model_bytes: u64,
+    pub auxiliary_bytes: u64,
+    pub total_install_bytes: u64,
     pub recommended_steps: u32,
     pub recommended_guidance: f32,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum ImageGenerationInstallState {
     NotInstalled,
@@ -1358,7 +1362,7 @@ pub enum ImageGenerationInstallState {
     Error,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum ImageGenerationRuntimeState {
     NotReady,
@@ -1399,6 +1403,21 @@ pub struct ImageGenerationInstallResponse {
     pub correlation_id: String,
     pub installed_path: String,
     pub enabled: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImageGenerationCancelInstallRequest {
+    pub correlation_id: String,
+    pub target_correlation_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImageGenerationCancelInstallResponse {
+    pub correlation_id: String,
+    pub target_correlation_id: String,
+    pub cancelled: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

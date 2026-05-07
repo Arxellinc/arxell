@@ -7,17 +7,39 @@ function formatBytes(bytes: number | null): string {
   const units = ["B", "KB", "MB", "GB", "TB"];
   let value = bytes;
   let idx = 0;
-  while (value >= 1024 && idx < units.length - 1) {
-    value /= 1024;
+  while (value >= 1000 && idx < units.length - 1) {
+    value /= 1000;
     idx += 1;
   }
   return `${value.toFixed(value >= 100 ? 0 : value >= 10 ? 1 : 2)} ${units[idx]}`;
+}
+
+function formatInstallPhaseLabel(phase: string | null, currentFileName: string | null): string {
+  const base =
+    phase === "preflight"
+      ? "Preflight"
+      : phase === "download"
+        ? "Downloading"
+        : phase === "validate"
+          ? "Validating"
+          : phase === "activating"
+            ? "Activating"
+            : phase === "complete"
+              ? "Complete"
+              : "Installing";
+  if (base === "Downloading" && currentFileName) {
+    return `${base} ${currentFileName}`;
+  }
+  return base;
 }
 
 function statusLabel(state: PrimaryPanelRenderState): { label: string; tone: string } {
   const status = state.images.status;
   if (!status) return { label: "Checking", tone: "info" };
   if (status.disabled) return { label: "Disabled", tone: "warn" };
+  if (status.installState === "installed" && status.runtimeState === "error") {
+    return { label: "Runtime Error", tone: "error" };
+  }
   if (status.installState === "installed" && status.runtimeState === "ready") {
     return { label: "Ready", tone: "success" };
   }
@@ -47,16 +69,20 @@ export function renderImagesBody(state: PrimaryPanelRenderState): string {
   const installBusy = images.installBusy;
   const generateDisabled = !status?.generationReady || disabled || images.generateBusy;
   const percent = images.installPercent !== null ? `${Math.max(0, Math.min(100, images.installPercent)).toFixed(1)}%` : "n/a";
+  const progressLabel = formatInstallPhaseLabel(images.installPhase, images.installCurrentFileName);
   const progressHtml = installBusy
-    ? `<div class="images-progress">
-        <div class="images-progress-row">
-          <span>${escapeHtml(images.installPhase || "Installing")}</span>
+    ? `<div class="tts-download-progress images-progress" role="status" aria-live="polite">
+        <div class="tts-download-progress-top">
+          <span>${escapeHtml(progressLabel)}</span>
           <span>${escapeHtml(percent)}</span>
         </div>
-        <div class="images-progress-track"><span style="width: ${escapeHtml(images.installPercent !== null ? String(Math.max(0, Math.min(100, images.installPercent))) : "0")}%"></span></div>
-        <div class="images-progress-row is-muted">
-          <span>${escapeHtml(formatBytes(images.installReceivedBytes))} / ${escapeHtml(formatBytes(images.installTotalBytes))}</span>
-          <span>${escapeHtml(formatBytes(images.installSpeedBytesPerSec))}/s</span>
+        <progress ${images.installPercent !== null ? `value="${escapeHtml(String(Math.max(0, Math.min(100, images.installPercent))))}" max="100"` : ""}></progress>
+        <div class="mm-download-progress-bottom">
+          <div class="tts-download-progress-detail">
+            ${escapeHtml(formatBytes(images.installReceivedBytes))} / ${escapeHtml(formatBytes(images.installTotalBytes))}
+            ${images.installSpeedBytesPerSec !== null ? ` (${escapeHtml(formatBytes(images.installSpeedBytesPerSec))}/s)` : ""}
+          </div>
+          <button type="button" class="tool-action-btn mm-download-cancel-btn" id="imagesCancelInstallBtn">Cancel</button>
         </div>
       </div>`
     : "";
@@ -80,10 +106,13 @@ export function renderImagesBody(state: PrimaryPanelRenderState): string {
       <section class="images-section">
         <div class="images-section-title">Package</div>
         <div class="images-meta-grid">
-          <span>Model</span><strong>${escapeHtml(pkg?.name || "FLUX.1 Schnell ONNX")}</strong>
-          <span>Source</span><a href="${escapeHtml(pkg?.sourceUrl || "https://huggingface.co/amd/FLUX.1-schnell-onnx")}" target="_blank" rel="noreferrer">${escapeHtml(pkg?.repoId || "amd/FLUX.1-schnell-onnx")}</a>
+          <span>Model</span><strong>${escapeHtml(pkg?.name || "FLUX.1 Schnell ONNX FP4")}</strong>
+          <span>Source</span><a href="${escapeHtml(pkg?.sourceUrl || "https://huggingface.co/Futuremark/FLUX.1-schnell-onnx")}" target="_blank" rel="noreferrer">${escapeHtml(pkg?.repoId || "Futuremark/FLUX.1-schnell-onnx")}</a>
+          ${pkg?.upstreamUrl ? `<span>Upstream</span><a href="${escapeHtml(pkg.upstreamUrl)}" target="_blank" rel="noreferrer">black-forest-labs/FLUX.1-schnell-onnx</a>` : ""}
           <span>License</span><strong>${escapeHtml(pkg?.license || "Apache-2.0")}</strong>
-          <span>Size</span><strong>${escapeHtml(pkg ? `${pkg.approximateSizeGb.toFixed(0)} GB` : "36 GB")}</strong>
+          <span>Precision</span><strong>${escapeHtml(pkg?.precisionLabel || "FP4 transformer")}</strong>
+          <span>Core model</span><strong>${escapeHtml(formatBytes(pkg?.coreModelBytes ?? null))}</strong>
+          <span>Total install</span><strong>${escapeHtml(formatBytes(pkg?.totalInstallBytes ?? null))}</strong>
           <span>Location</span><code title="${escapeHtml(status?.installedPath || "")}">${escapeHtml(status?.installedPath || "Not installed")}</code>
         </div>
         ${message ? `<div class="images-message">${escapeHtml(message)}</div>` : ""}
@@ -139,22 +168,43 @@ function renderSizeButton(currentW: number, currentH: number, width: number, hei
 }
 
 export function bindImagesPanel(bindings: PrimaryPanelBindings): void {
-  document.querySelector<HTMLButtonElement>("#imagesRefreshBtn")?.addEventListener("click", () => {
-    void bindings.onImagesRefresh();
-  });
-  document.querySelector<HTMLButtonElement>("#imagesInstallBtn")?.addEventListener("click", () => {
-    void bindings.onImagesInstall();
-  });
-  document.querySelector<HTMLInputElement>("#imagesDisableToggle")?.addEventListener("change", (event) => {
-    const input = event.currentTarget as HTMLInputElement;
-    void bindings.onImagesSetDisabled(input.checked);
-  });
-  document.querySelector<HTMLButtonElement>("#imagesRemovePackagesBtn")?.addEventListener("click", () => {
-    void bindings.onImagesRemovePackages();
-  });
-  document.querySelector<HTMLButtonElement>("#imagesGenerateBtn")?.addEventListener("click", () => {
-    void bindings.onImagesGenerate();
-  });
+  const refreshBtn = document.querySelector<HTMLButtonElement>("#imagesRefreshBtn");
+  if (refreshBtn) {
+    refreshBtn.onclick = () => {
+      void bindings.onImagesRefresh();
+    };
+  }
+  const installBtn = document.querySelector<HTMLButtonElement>("#imagesInstallBtn");
+  if (installBtn) {
+    installBtn.onclick = () => {
+      void bindings.onImagesInstall();
+    };
+  }
+  const cancelInstallBtn = document.querySelector<HTMLButtonElement>("#imagesCancelInstallBtn");
+  if (cancelInstallBtn) {
+    cancelInstallBtn.onclick = () => {
+      void bindings.onImagesCancelInstall();
+    };
+  }
+  const disableToggle = document.querySelector<HTMLInputElement>("#imagesDisableToggle");
+  if (disableToggle) {
+    disableToggle.onchange = (event) => {
+      const input = event.currentTarget as HTMLInputElement;
+      void bindings.onImagesSetDisabled(input.checked);
+    };
+  }
+  const removeBtn = document.querySelector<HTMLButtonElement>("#imagesRemovePackagesBtn");
+  if (removeBtn) {
+    removeBtn.onclick = () => {
+      void bindings.onImagesRemovePackages();
+    };
+  }
+  const generateBtn = document.querySelector<HTMLButtonElement>("#imagesGenerateBtn");
+  if (generateBtn) {
+    generateBtn.onclick = () => {
+      void bindings.onImagesGenerate();
+    };
+  }
   document.querySelector<HTMLTextAreaElement>("#imagesPromptInput")?.addEventListener("input", (event) => {
     const input = event.currentTarget as HTMLTextAreaElement;
     void bindings.onImagesSetPrompt(input.value);
@@ -170,9 +220,12 @@ export function bindImagesPanel(bindings: PrimaryPanelBindings): void {
   document.querySelector<HTMLInputElement>("#imagesSeedInput")?.addEventListener("change", (event) => {
     void bindings.onImagesSetSeed((event.currentTarget as HTMLInputElement).value);
   });
-  document.querySelector<HTMLButtonElement>("#imagesAdvancedToggleBtn")?.addEventListener("click", () => {
-    void bindings.onImagesToggleAdvanced();
-  });
+  const advancedBtn = document.querySelector<HTMLButtonElement>("#imagesAdvancedToggleBtn");
+  if (advancedBtn) {
+    advancedBtn.onclick = () => {
+      void bindings.onImagesToggleAdvanced();
+    };
+  }
   document.querySelectorAll<HTMLButtonElement>("[data-images-size]").forEach((button) => {
     button.onclick = () => {
       const raw = button.dataset.imagesSize || "";

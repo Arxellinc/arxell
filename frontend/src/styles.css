@@ -1456,36 +1456,8 @@ body {
 }
 
 .images-progress {
-  display: grid;
-  gap: 5px;
-  max-width: 520px;
-}
-
-.images-progress-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  font-size: var(--text-xs);
-  color: var(--ink);
-}
-
-.images-progress-row.is-muted {
-  color: var(--muted);
-}
-
-.images-progress-track {
-  height: 6px;
-  overflow: hidden;
-  border: 1px solid var(--line);
-  border-radius: 4px;
-  background: var(--surface);
-}
-
-.images-progress-track span {
-  display: block;
-  height: 100%;
-  background: var(--accent);
+  width: min(100%, 620px);
+  margin-top: 2px;
 }
 
 .images-meta-grid {

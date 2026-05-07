@@ -87,6 +87,8 @@ import type {
   LlamaRuntimeStopResponse,
   ImageGenerationGenerateRequest,
   ImageGenerationGenerateResponse,
+  ImageGenerationCancelInstallRequest,
+  ImageGenerationCancelInstallResponse,
   ImageGenerationInstallRequest,
   ImageGenerationInstallResponse,
   ImageGenerationRemovePackagesRequest,
@@ -258,6 +260,9 @@ export interface ChatIpcClient {
   imageGenerationInstall(
     request: ImageGenerationInstallRequest
   ): Promise<ImageGenerationInstallResponse>;
+  imageGenerationCancelInstall(
+    request: ImageGenerationCancelInstallRequest
+  ): Promise<ImageGenerationCancelInstallResponse>;
   imageGenerationSetDisabled(
     request: ImageGenerationSetDisabledRequest
   ): Promise<ImageGenerationSetDisabledResponse>;
@@ -660,6 +665,12 @@ class TauriChatIpcClient implements ChatIpcClient {
     return this.invokeFn<ImageGenerationInstallResponse>("cmd_image_generation_install", { request });
   }
 
+  imageGenerationCancelInstall(
+    request: ImageGenerationCancelInstallRequest
+  ): Promise<ImageGenerationCancelInstallResponse> {
+    return this.invokeFn<ImageGenerationCancelInstallResponse>("cmd_image_generation_cancel_install", { request });
+  }
+
   imageGenerationSetDisabled(
     request: ImageGenerationSetDisabledRequest
   ): Promise<ImageGenerationSetDisabledResponse> {
@@ -781,6 +792,30 @@ class TauriChatIpcClient implements ChatIpcClient {
 export class MockChatIpcClient implements ChatIpcClient {
   private listeners: Array<(event: AppEvent) => void> = [];
   private readonly flowRuns: FlowListRunsResponse["runs"] = [];
+  private mockImageStatus: ImageGenerationStatusResponse = {
+    correlationId: "mock-image-status",
+      package: {
+        id: "flux-1-schnell-onnx-fp4-curated",
+        name: "FLUX.1 Schnell ONNX FP4",
+        repoId: "Futuremark/FLUX.1-schnell-onnx",
+        license: "Apache-2.0",
+        sourceUrl: "https://huggingface.co/Futuremark/FLUX.1-schnell-onnx",
+        upstreamUrl: "https://huggingface.co/black-forest-labs/FLUX.1-schnell-onnx",
+        precisionLabel: "FP4 transformer",
+        coreModelBytes: 6777600000,
+        auxiliaryBytes: 9865749000,
+        totalInstallBytes: 16643349000,
+        recommendedSteps: 4,
+        recommendedGuidance: 1
+      },
+    installState: "not_installed",
+    runtimeState: "not_ready",
+    disabled: false,
+    installedPath: null,
+    message: "Mock runtime: package is not installed.",
+    requiredPathsPresent: false,
+    generationReady: false
+  };
   private readonly tools = new Map<string, WorkspaceToolRecord>(
     getAllToolManifests().map((manifest) => [
       manifest.id,
@@ -1981,30 +2016,25 @@ export class MockChatIpcClient implements ChatIpcClient {
     request: ImageGenerationStatusRequest
   ): Promise<ImageGenerationStatusResponse> {
     return {
-      correlationId: request.correlationId,
-      package: {
-        id: "flux-1-schnell-onnx-amd",
-        name: "FLUX.1 Schnell ONNX",
-        repoId: "amd/FLUX.1-schnell-onnx",
-        license: "Apache-2.0",
-        sourceUrl: "https://huggingface.co/amd/FLUX.1-schnell-onnx",
-        approximateSizeGb: 36,
-        recommendedSteps: 4,
-        recommendedGuidance: 1
-      },
-      installState: "not_installed",
-      runtimeState: "not_ready",
-      disabled: false,
-      installedPath: null,
-      message: "Mock runtime: package is not installed.",
-      requiredPathsPresent: false,
-      generationReady: false
+      ...this.mockImageStatus,
+      correlationId: request.correlationId
     };
   }
 
   async imageGenerationInstall(
     request: ImageGenerationInstallRequest
   ): Promise<ImageGenerationInstallResponse> {
+    this.mockImageStatus = {
+      ...this.mockImageStatus,
+      installState: "installed",
+      runtimeState: "probe_only",
+      disabled: false,
+      installedPath: "/tmp/arxell/image-packages/flux-1-schnell-onnx-fp4-curated",
+      message:
+        "Mock runtime: package installed and validated. Generation remains blocked behind the runtime probe gate.",
+      requiredPathsPresent: true,
+      generationReady: false
+    };
     this.emit({
       timestampMs: Date.now(),
       correlationId: request.correlationId,
@@ -2012,18 +2042,50 @@ export class MockChatIpcClient implements ChatIpcClient {
       action: "image.generation.install",
       stage: "complete",
       severity: "info",
-      payload: { packageId: "flux-1-schnell-onnx-amd", phase: "complete" }
+      payload: { packageId: "flux-1-schnell-onnx-fp4-curated", phase: "complete" }
     });
     return {
       correlationId: request.correlationId,
-      installedPath: "/tmp/arxell/image-packages/flux-1-schnell-onnx-amd",
+      installedPath: "/tmp/arxell/image-packages/flux-1-schnell-onnx-fp4-curated",
       enabled: true
+    };
+  }
+
+  async imageGenerationCancelInstall(
+    request: ImageGenerationCancelInstallRequest
+  ): Promise<ImageGenerationCancelInstallResponse> {
+    this.mockImageStatus = {
+      ...this.mockImageStatus,
+      message: "Mock runtime: image package install cancelled."
+    };
+    this.emit({
+      timestampMs: Date.now(),
+      correlationId: request.targetCorrelationId,
+      subsystem: "service",
+      action: "image.generation.install",
+      stage: "error",
+      severity: "warn",
+      payload: { phase: "download", message: "image package install cancelled by user" }
+    });
+    return {
+      correlationId: request.correlationId,
+      targetCorrelationId: request.targetCorrelationId,
+      cancelled: true
     };
   }
 
   async imageGenerationSetDisabled(
     request: ImageGenerationSetDisabledRequest
   ): Promise<ImageGenerationSetDisabledResponse> {
+    this.mockImageStatus = {
+      ...this.mockImageStatus,
+      disabled: request.disabled,
+      message: request.disabled
+        ? "Mock runtime: image generation disabled."
+        : this.mockImageStatus.installState === "installed"
+          ? "Mock runtime: package installed and enabled."
+          : "Mock runtime: package is not installed."
+    };
     return {
       correlationId: request.correlationId,
       disabled: request.disabled
@@ -2033,6 +2095,16 @@ export class MockChatIpcClient implements ChatIpcClient {
   async imageGenerationRemovePackages(
     request: ImageGenerationRemovePackagesRequest
   ): Promise<ImageGenerationRemovePackagesResponse> {
+    this.mockImageStatus = {
+      ...this.mockImageStatus,
+      installState: "not_installed",
+      runtimeState: "not_ready",
+      disabled: true,
+      installedPath: null,
+      message: "Mock runtime: package removed.",
+      requiredPathsPresent: false,
+      generationReady: false
+    };
     return {
       correlationId: request.correlationId,
       removed: true

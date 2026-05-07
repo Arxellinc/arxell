@@ -1,407 +1,343 @@
-# Image Generation Panel + Chat Integration Final Plan
+# Image Generation Implementation Plan
 
 ## Goal
 
-Add an optional local image generation feature to Arxell with a dedicated left-sidebar panel and chat integration. The app should ship the engine and UI only. Model weights are never bundled; users install the curated model package from the Images panel when they want the feature.
+Ship a local image generation feature that is simple to install, reliable on first use, and integrated into both the Images panel and chat.
 
-The first-run setup must be simple: the user opens the Images panel, clicks one `Download and Install` button, waits for install/validation, and image generation is enabled automatically when the package is ready.
+The user flow must be:
 
-## Recommended V1 Model Package
+1. Open the Images panel.
+2. Click one `Download and Install` button.
+3. Wait for a real byte-based progress bar to complete.
+4. Generate images from the panel or request them in chat.
 
-Use `amd/FLUX.1-schnell-onnx` as the first curated package target.
+The feature must remain optional. No image model weights are bundled with the app.
 
-Reasons:
+## Product Constraints
 
-- High-quality FLUX.1 Schnell image generation.
-- Apache-2.0 model license.
-- ONNX/Diffusers-style package layout that maps cleanly to a local runtime.
-- Includes the expected components for a full text-to-image pipeline:
-  - `scheduler`
-  - `text_encoder`
-  - `text_encoder_2`
-  - `tokenizer`
-  - `tokenizer_2`
-  - `unet`
-  - `vae_decoder`
-  - `vae_encoder`
+- Use the existing ONNX Runtime path for V1.
+- The curated install target is the official FLUX Schnell ONNX bundle, not the oversized AMD mirror metadata currently shown in the UI.
+- The main transformer model may be under `8 GB`, but the full runnable ONNX package is larger and must be reported honestly.
+- The Images panel must show both:
+  - `Core model size`
+  - `Total install size`
+- The top of the Images panel must have an accurate download progress bar, matching the LLM model manager behavior as closely as possible.
+
+## Current Facts
+
+As of May 7, 2026:
+
+- Official ONNX repo: `black-forest-labs/FLUX.1-schnell-onnx`
+- Quantized ONNX variants exist, including `FP4`
+- Verified official component sizes indicate:
+  - FP4 transformer data is about `6.77 GB`
+  - Full runnable ONNX package is about `16.6+ GB`
+
+This means:
+
+- The current `36 GB` UI number is misleading for the curated path.
+- The curated ONNX path is acceptable only if the UI reports the real total install size and progress accurately.
+
+## Package Audit Findings
+
+Audit result as of May 7, 2026:
+
+- The curated ONNX mirror `Futuremark/FLUX.1-schnell-onnx` matches the official `black-forest-labs/FLUX.1-schnell-onnx` ONNX export tree.
+- That export tree contains:
+  - `clip.opt`
+  - `t5.opt`
+  - `t5-fp8.opt`
+  - `transformer.opt`
+  - `vae.opt`
+- It does **not** contain the diffusers-style pipeline assets required for full FLUX generation:
   - `model_index.json`
-- Known inference settings from the package card:
-  - `InferenceSteps = 4`
-  - `GuidanceScale = 1.0`
-  - `FlowMatchEulerDiscrete`
+  - `scheduler/scheduler_config.json`
+  - `text_encoder/config.json`
+  - `text_encoder_2/config.json`
+  - `tokenizer/*`
+  - `tokenizer_2/*`
+  - `unet/config.json`
+  - `vae_decoder/config.json`
+  - `vae_encoder/config.json`
 
-The package is large, roughly tens of GB, so the install path must be explicitly optional and user-controlled. The panel must show the expected size before download starts.
+This means the current curated ONNX mirror is sufficient for:
 
-## Core Architecture
+- file validation
+- byte-accurate download/install
+- ONNX session probing
 
-Use the existing Tauri/Rust backend and the existing ONNX Runtime dependency already present in the project. The first implementation should avoid adding a Python sidecar.
+It is **not** sufficient by itself for end-to-end image generation.
 
-The feature should be split into four main surfaces:
+Therefore V1 generation must use a supplemented curated bundle:
 
-- Images panel: model status, one-click install, enable/disable control, settings, generation queue, package removal, gallery.
-- Media service: shared local image import, storage, thumbnailing, safe file resolution, metadata.
-- Chat rendering: inline uploaded images and generated image outputs.
-- Agent tool: optional `image.generate` tool exposed only when image generation is installed, valid, and enabled.
+1. primary ONNX weights from `Futuremark/FLUX.1-schnell-onnx`
+2. supplemental tokenizer, scheduler, and config assets from `amd/FLUX.1-schnell-onnx`
 
-## First-Run UX Contract
+Phase 5 is to assemble and validate that combined manifest in one managed install layout.
 
-The first test should work without manual file setup.
+## V1 Package Strategy
 
-Required behavior:
+Use one blessed curated package definition:
 
-- If no image package is installed, the top of the Images panel shows a clear `Download and Install` button.
-- Clicking `Download and Install` downloads the curated package, installs it into the app-managed model directory, validates it, and marks the engine ready.
-- After a successful install, image generation is enabled by default for both the Images panel and chat.
-- The top of the Images panel includes a `Disable image generation` checkbox.
-- When the checkbox is checked, the Images panel remains visible but generation controls and the chat `image.generate` tool are disabled.
-- When the checkbox is unchecked and a valid package is installed, generation is available again without reinstalling.
-- The bottom of the Images panel includes a `Remove image packages` button.
-- `Remove image packages` asks for confirmation, stops any active generation, deletes installed image model packages from the app-managed model directory, clears the ready state, and disables chat image generation.
-- Manual model folder selection is an advanced recovery/developer option, not the default setup path.
+- Primary repo: `Futuremark/FLUX.1-schnell-onnx`
+- Supplemental repo: `amd/FLUX.1-schnell-onnx`
+- Upstream reference: `black-forest-labs/FLUX.1-schnell-onnx`
+- Precision target: `FP4` transformer where supported by the package layout
+- Auxiliary components:
+  - T5
+  - CLIP
+  - VAE
+  - tokenizers
+  - scheduler/config files
 
-Reliability requirements:
+The manifest must explicitly define:
 
-- The installer must run preflight checks before download:
-  - network availability
-  - available disk space for download plus unpack/install staging
-  - write access to the app-managed image package directory
-  - supported OS/runtime architecture
+- package id
+- repo id
+- source URL
+- license
+- core model bytes
+- auxiliary bytes
+- total install bytes
+- required files/folders
+- recommended settings:
+  - steps `4`
+  - guidance `1.0`
+
+## Reliability Standard
+
+The feature is not considered ready until these are all true:
+
+- `Download and Install` always triggers a visible action.
+- Download progress is based on real bytes received.
+- Install state survives panel close/reopen and app restart.
+- Activation happens only after full validation.
+- Generation remains disabled until a real runtime probe succeeds.
+- The first generation after a successful install works without manual setup.
+
+## Phase 1: Curated Package Manifest
+
+### Tasks
+
+- Replace the current hardcoded AMD package metadata.
+- Add a curated package manifest for the official ONNX bundle.
+- Track:
+  - `coreModelBytes`
+  - `auxiliaryBytes`
+  - `totalInstallBytes`
+- Update the Images panel package section to show:
+  - model name
+  - source link
+  - license
+  - `Core model: ...`
+  - `Total install: ...`
+- Remove the misleading default `36 GB` display.
+
+### Exit Criteria
+
+- The panel reports the correct curated package.
+- The displayed size numbers match the actual install manifest.
+
+## Phase 2: Shared Downloader and Accurate Progress
+
+### Tasks
+
+- Reuse the model manager download/progress pattern instead of a separate ad hoc flow.
+- Pre-compute `totalBytes` from package file metadata before download starts.
+- Emit progress events for:
+  - `preflight`
+  - `downloading`
+  - `validating`
+  - `activating`
+  - `complete`
+  - `error`
+- Track:
+  - current file
+  - received bytes
+  - total bytes
+  - percent
+  - transfer speed
+- Keep the progress bar pinned at the top of the Images panel.
+- Preserve progress state across rerenders and panel reopen.
+- Add cancel support.
+
+### Exit Criteria
+
+- The Images panel shows a real byte-accurate progress bar.
+- Progress behavior matches the LLM model manager closely enough to feel native.
+
+## Phase 3: Installer Hardening
+
+### Tasks
+
+- Run preflight checks before download:
+  - network reachability
+  - write access
+  - free disk space with staging headroom
+  - manifest completeness
   - ONNX Runtime availability
-- Downloaded files must go into a staging directory first, never directly into the active package directory.
-- The app must validate the complete package before switching the installed state to ready.
-- The installed package state and the enabled/disabled user preference must be stored separately.
-- Failed, canceled, or partial installs must leave the panel in a clean `Not installed` or previous-working-package state.
-- User-facing install errors must include the failed phase: preflight, download, unpack, validate, activate, or runtime check.
+- Download only into staging.
+- Validate staged files before activation:
+  - required paths exist
+  - expected sizes are present when known
+  - ONNX bundle structure is intact
+- Activate atomically.
+- Preserve the previous working install on failure.
+- Clean partial staging on cancel or failure.
+- Store install state and disabled preference separately.
 
-## Phase 0: Technical Spike
+### Exit Criteria
 
-- Validate `amd/FLUX.1-schnell-onnx` folder structure locally.
-- Confirm ONNX Runtime can load the required model files through the existing Rust runtime setup.
-- Confirm which execution providers are available in our packaged app.
-- Run one minimal generation outside the UI without Python.
-- Record the exact pipeline steps:
-  - Tokenization.
-  - Text encoder inputs and outputs.
-  - Latent initialization.
-  - Scheduler loop.
-  - UNet invocation.
-  - VAE decode.
-  - PNG encode.
-- Decide whether V1 can implement the full pipeline directly in Rust or needs a small dedicated runtime helper.
+- Interrupted or failed installs do not corrupt the active package.
+- User-visible errors name the failed phase.
 
-Exit criteria:
+## Phase 4: Runtime Probe Gate
 
-- One image can be generated from a prompt on a developer machine.
-- Missing provider/model errors are understandable and recoverable.
-- The final runtime choice is documented before UI work depends on it.
+### Tasks
 
-## Phase 1: Shared Media Layer
+- Implement a real ONNX runtime probe, not just folder validation.
+- Verify:
+  - tokenizer load
+  - text encoder load
+  - transformer session load
+  - VAE load
+  - one verified probe image written to disk
+- Set `generationReady = true` only after that succeeds.
+- Keep generation disabled with a clear error if the probe fails.
 
-Add a backend media service that is not specific to image generation.
+### Exit Criteria
 
-Tasks:
+- Installed package status can distinguish:
+  - `not installed`
+  - `installed, not validated`
+  - `installed, probe failed`
+  - `ready`
 
-- Create a safe app-managed media directory.
-- Define `MediaAssetRecord` with:
-  - `id`
-  - `kind`
-  - `mime`
-  - `filename`
-  - `path`
-  - `width`
-  - `height`
-  - `sizeBytes`
-  - `createdAt`
-  - optional generation metadata
-- Support import of `.png`, `.jpg`, `.jpeg`, and `.webp`.
-- Generate thumbnails for gallery and chat previews.
-- Add safe path resolution so the frontend never receives arbitrary filesystem paths.
-- Add commands for import, list, delete, and open/reveal.
-- Store metadata in the existing app data model or a small local metadata file.
+Note:
 
-Exit criteria:
+- Passing the runtime probe only proves ONNX sessions load.
+- It does not prove that tokenizer, scheduler, config, and latent-to-image pipeline assets are complete.
 
-- A user can attach an image and see a stable preview record.
-- Media paths are confined to approved app/project storage.
+## Phase 5: Images Panel Completion
 
-## Phase 2: Chat Image Rendering
+### Tasks
 
-Extend chat messages to support structured image attachments.
+- Keep the existing `image` sidebar icon.
+- Top controls:
+  - status pill
+  - refresh button
+  - progress bar
+  - `Download and Install`
+  - `Disable image generation` checkbox
+- Package section:
+  - model name
+  - source link
+  - license
+  - core model size
+  - total install size
+  - install location
+- Generation section:
+  - prompt
+  - size presets
+  - steps
+  - guidance
+  - seed
+  - generate button
+- Advanced section:
+  - negative prompt
+  - numeric width/height
+  - manual package folder selection for recovery only
+  - provider diagnostics
+- Bottom action:
+  - `Remove image packages`
 
-Tasks:
+### Exit Criteria
 
-- Add image attachment metadata to user and assistant messages.
-- Render uploaded user images inline inside chat.
-- Render generated assistant images inline as image cards.
-- Size inline chat images to fill about 85% of the chat panel width, with responsive max-width handling on narrow panels.
-- Add very small `Save` and `Copy` actions under each inline image, aligned to the right.
-- Add missing-file and failed-load states.
-- Persist references to media records, not base64 image payloads.
-- Keep scroll behavior stable while images load or stream responses continue.
-- Ensure thumbnails reserve layout space before images finish loading.
+- The panel is fully usable without hidden setup steps.
+- Buttons always produce visible status changes.
 
-Exit criteria:
+## Phase 6: Chat Integration
 
-- Uploaded images display inline in chat.
-- Inline chat images use a stable 85% panel-width layout and expose compact right-aligned save/copy actions.
-- Generated image placeholders do not cause message disappearance or scroll jumps.
-- Existing text-only chat behavior is unchanged.
+### Tasks
 
-## Phase 3: Images Panel Shell
+- Allow image requests in chat only when:
+  - package installed
+  - runtime probe passed
+  - feature not disabled
+- Render generated images inline in chat.
+- Keep inline image width at about `85%` of the chat panel width.
+- Show very small right-aligned `Save` and `Copy` actions below each image.
+- Support image uploads in standard formats:
+  - `.png`
+  - `.jpg`
+  - `.jpeg`
+  - `.webp`
+- Ensure images do not destabilize chat scroll behavior while streaming.
 
-Add a new left-sidebar icon and panel for image generation. Use the existing `image` icon for the Images panel.
+### Exit Criteria
 
-Tasks:
+- Uploaded and generated images display reliably inline.
+- Chat remains stable during streaming and image load.
 
-- Add the sidebar `image` icon and panel registration.
-- Create the panel state, renderer, bindings, and scoped CSS.
-- Match existing sidebar and panel styling conventions.
-- Add engine status:
-  - Not installed.
-  - Model missing.
-  - Ready.
-  - Generating.
-  - Error.
-- Add settings:
-  - Model status: `Not installed`, `Ready`, `Generating`, or `Error`.
-  - `Download and Install` button when the package is not installed.
-  - Install progress with downloaded size, total size, speed, and current phase.
-  - Installed package location.
-  - `Disable image generation` checkbox at the top of the panel.
-  - Source and license link for the recommended package.
-  - Prompt textarea.
-  - Size presets: `512x512`, `768x768`, and `1024x1024`.
-  - Aspect ratio presets: square, portrait, and landscape.
-  - Steps, defaulting to `4` for FLUX Schnell.
-  - Guidance scale, defaulting to `1.0` for FLUX Schnell.
-  - Seed, random by default with a lock/reuse option.
-  - Output count, limited to `1` in V1.
-  - Save location: app media library or current project.
-  - Gallery sort, defaulting to newest first.
-  - Open output folder or reveal image action.
-  - Execution provider status.
-  - Cancel current generation action.
-  - `Remove image packages` button at the bottom of the panel.
-- Keep advanced settings behind an expandable section:
-  - Negative prompt.
-  - Numeric width and height inputs.
-  - Filename pattern.
-  - Select existing local model folder.
-  - Scheduler, only if more than the curated FLUX default is supported.
-  - Precision/provider diagnostics.
-  - Max stored outputs or cleanup behavior.
-  - Prompt metadata toggle.
-- Add gallery view for generated and imported images.
+## Phase 7: Remove Placeholder States
 
-Exit criteria:
+### Tasks
 
-- The panel is navigable from the left sidebar.
-- The default panel flow is simple: click `Download and Install`, enter prompt, choose size, generate.
-- After install succeeds, image generation is enabled automatically.
-- The top `Disable image generation` checkbox disables generation without removing the installed package.
-- The bottom `Remove image packages` button fully removes installed image packages after confirmation.
-- Advanced controls are present but hidden until needed.
-- The user can configure settings and see engine readiness.
-- No model download is required just to open the panel.
+- Eliminate any `installed but not actually usable` success state in the user-facing flow.
+- If install succeeds but probe fails:
+  - keep package installed
+  - show concrete runtime error
+  - keep generation disabled
+- If the runtime is unavailable:
+  - all buttons must still respond
+  - the panel must explain why generation is unavailable
 
-## Phase 4: ONNX Image Generation Service
+### Exit Criteria
 
-Add the backend image generation runtime behind a stable command API.
+- No silent no-op buttons.
+- No false-ready states.
 
-Tasks:
+## Phase 8: QA and First-Test Reliability
 
-- Create an `ImageGenerationService`.
-- Add model package validation for the curated FLUX ONNX layout.
-- Validate required files and folders:
-  - `scheduler`
-  - `text_encoder`
-  - `text_encoder_2`
-  - `tokenizer`
-  - `tokenizer_2`
-  - `unet`
-  - `vae_decoder`
-  - `model_index.json`
-- Add provider diagnostics before generation starts.
-- Lazily load model sessions only when needed.
-- Limit V1 to one generation at a time.
-- Add cancellation if the runtime path supports it cleanly.
-- Save generated PNGs through the shared media service.
-- Emit progress events for the panel and chat.
+### Test Matrix
 
-Exit criteria:
+- clean first install
+- cancel during download
+- failed download
+- failed validation
+- failed probe
+- successful install then restart
+- disable and re-enable image generation
+- remove packages
+- first successful generation
+- chat image request after install
+- inline image save/copy actions
 
-- The backend can generate an image and return a `MediaAssetRecord`.
-- Failures are surfaced as actionable UI errors.
-- The app remains responsive while generation runs.
+### Release Gate
 
-## Phase 5: One-Click Model Install Flow
+Do not call the feature complete until:
 
-Add a user-controlled one-click install flow.
+- one-click install works
+- the top progress bar is byte-accurate
+- size reporting is honest
+- install state persists
+- first post-install generation works on the first test
+- chat image requests work when enabled
 
-Tasks:
+## Implementation Order
 
-- Make managed install the V1 default setup path.
-- Add one primary `Download and Install` button in the Images panel.
-- Run installer preflight checks before starting the download.
-- Download the curated model package into a temporary app-managed staging directory.
-- Verify the staged package before activating it.
-- Move the validated package into the app-managed image model directory atomically.
-- Run a lightweight runtime readiness check after activation.
-- Enable image generation automatically after install succeeds.
-- Persist install state and enabled/disabled state separately.
-- If install fails or is canceled, leave the previous working package untouched.
-- Resume or restart incomplete downloads cleanly.
-- Keep partial downloads out of the active model directory.
-- Show curated package metadata:
-  - Model name.
-  - Source link.
-  - License.
-  - Approximate disk size.
-  - Recommended settings.
-- Allow the user to open the model source page.
-- Allow selecting an already-downloaded local model folder only from advanced settings.
-- Show progress and resumability during managed download.
-- Verify checksums when the package source provides them.
-- Never silently download gated, licensed, or very large assets.
-- Add a `Remove image packages` action at the bottom of the Images panel.
-- Confirm removal before deleting package files.
-- Removal stops active generation, deletes installed image packages, clears package metadata, disables image generation, and returns the panel to the not-installed state.
+1. Curated package manifest and correct size reporting
+2. Shared downloader and accurate progress events
+3. Installer hardening
+4. Runtime probe gate
+5. Resolve supplemental asset manifest for full FLUX generation
+6. Implement generation pipeline
+7. Images panel completion
+8. Chat generation enablement
+9. QA pass
 
-Exit criteria:
+## Immediate Next Steps
 
-- Users can enable the feature without Arxell bundling model weights and without manually selecting files.
-- The happy path is one click: `Download and Install`.
-- A valid install enables image generation by default.
-- The user can disable generation without uninstalling.
-- The user can remove image packages completely from the Images panel.
-- Invalid model folders produce clear validation errors.
-
-## Phase 6: Chat Tool Integration
-
-Expose image generation to the agent only when it is ready and not disabled.
-
-Tasks:
-
-- Register an `image.generate` tool only when:
-  - A valid model package is installed.
-  - The image service is ready.
-  - Image generation is not disabled by the top panel checkbox.
-- Tool schema:
-  - `prompt`
-  - `width`
-  - `height`
-  - `steps`
-  - `guidance`
-  - `seed`
-- Return media metadata, not raw image bytes.
-- Render generated images inline in assistant messages.
-- Use the same chat image layout for generated images: about 85% of chat panel width, with tiny right-aligned `Save` and `Copy` actions below the image.
-- Add an `Open in Images` action for generated images.
-- If disabled or unavailable, the agent should explain that local image generation is not enabled.
-
-Exit criteria:
-
-- A user can request an image in chat and receive an inline generated result.
-- After package install, chat image generation works by default unless the user checks `Disable image generation`.
-- Text-only chat users do not see broken or unavailable tools.
-
-## Phase 7: Image Attachments to Chat Models
-
-Support user image uploads as chat input.
-
-Tasks:
-
-- Add image attachment controls to chat input.
-- Accept `.png`, `.jpg`, `.jpeg`, and `.webp`.
-- Route image attachments to image-capable chat providers/models.
-- Fall back to filename/metadata context for non-vision models.
-- Add attachment size limits and friendly validation errors.
-- Reuse the shared media service for storage and thumbnails.
-
-Exit criteria:
-
-- Users can attach images to chat messages.
-- Vision-capable models receive the image content.
-- Non-vision model behavior is graceful and predictable.
-
-## Phase 8: Safety and Reliability
-
-Tasks:
-
-- Confine all generated and imported media to approved directories.
-- Validate MIME type and extension.
-- Avoid rendering arbitrary local file paths in the frontend.
-- Store prompt, seed, dimensions, model id, and generation settings with outputs.
-- Display model license/source in the panel.
-- Provide a top-of-panel `Disable image generation` checkbox that disables both panel generation and chat generation without deleting installed packages.
-- Provide a bottom-of-panel `Remove image packages` button that removes installed packages after confirmation.
-- Add recovery states for deleted/moved model folders.
-
-Exit criteria:
-
-- The feature does not widen arbitrary file access.
-- Users can understand what model is installed and where outputs are stored.
-
-## Phase 9: QA
-
-Automated tests:
-
-- Model package validation.
-- Installer preflight success and failure cases.
-- Staged install activation only after validation succeeds.
-- Partial download/canceled install cleanup.
-- Enabled-by-default state after successful install.
-- Separate persistence of installed package state and disabled checkbox state.
-- Package removal cleanup and state reset.
-- Media import and safe path handling.
-- Chat attachment metadata persistence.
-- Inline image rendering with missing-file fallback.
-- Mocked image generation command.
-- Disabled chat tool behavior.
-- One-click install state transitions.
-- Package removal state transitions.
-
-Manual tests:
-
-- Fresh install with only the `Download and Install` button.
-- Confirm image generation is enabled by default after install.
-- Check `Disable image generation` and verify panel generation and chat tool are disabled.
-- Uncheck `Disable image generation` and verify generation works without reinstalling.
-- Use `Remove image packages` and verify package files, ready state, and chat tool are removed.
-- Select valid FLUX ONNX folder from advanced settings.
-- Select invalid folder from advanced settings and verify errors.
-- Generate from Images panel.
-- Generate from chat.
-- Upload `.png`, `.jpg`, `.jpeg`, and `.webp`.
-- Restart app and verify media records persist.
-- Delete/move model folder and verify recovery state.
-
-## V1 Deliverable
-
-The first complete milestone should include:
-
-- New Images sidebar panel.
-- Existing `image` icon used for the Images sidebar button.
-- One-click `Download and Install` setup from the Images panel.
-- Image generation enabled by default after successful install.
-- Top-of-panel `Disable image generation` checkbox.
-- Bottom-of-panel `Remove image packages` button.
-- Advanced optional local model folder selection.
-- Curated support for `amd/FLUX.1-schnell-onnx`.
-- Shared media storage and thumbnails.
-- Inline chat image rendering.
-- Chat image uploads.
-- Optional `image.generate` agent tool when enabled.
-- Single-image generation queue.
-- Clear not-installed and disabled states.
-
-## Defer Until After V1
-
-- Multiple model families.
-- Managed background model downloader.
-- GPU provider selection UI beyond diagnostics.
-- Batch generation.
-- Inpainting and image-to-image.
-- Prompt templates or style presets.
-- Cloud image generation providers.
-- Advanced gallery organization.
+1. Lock the supplemental asset manifest required for real FLUX generation.
+2. Decide whether those assets will come from the gated `FLUX.1-schnell` repo or another legally usable source.
+3. Implement the actual generation pipeline only after the asset manifest is complete.

@@ -979,7 +979,11 @@ export interface ImagePackageMetadata {
   repoId: string;
   license: string;
   sourceUrl: string;
-  approximateSizeGb: number;
+  upstreamUrl?: string | null;
+  precisionLabel: string;
+  coreModelBytes: number;
+  auxiliaryBytes: number;
+  totalInstallBytes: number;
   recommendedSteps: number;
   recommendedGuidance: number;
 }
@@ -1011,6 +1015,17 @@ export interface ImageGenerationInstallResponse {
   correlationId: string;
   installedPath: string;
   enabled: boolean;
+}
+
+export interface ImageGenerationCancelInstallRequest {
+  correlationId: string;
+  targetCorrelationId: string;
+}
+
+export interface ImageGenerationCancelInstallResponse {
+  correlationId: string;
+  targetCorrelationId: string;
+  cancelled: boolean;
 }
 
 export interface ImageGenerationSetDisabledRequest {

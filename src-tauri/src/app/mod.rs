@@ -132,7 +132,10 @@ impl AppContext {
     #[cfg(test)]
     pub fn new_for_test() -> Result<Self, String> {
         let root = test_context_root();
-        Self::new_with_paths(root.join("conversations.sqlite3"), root.join("tasks.sqlite3"))
+        Self::new_with_paths(
+            root.join("conversations.sqlite3"),
+            root.join("tasks.sqlite3"),
+        )
     }
 
     #[cfg(test)]

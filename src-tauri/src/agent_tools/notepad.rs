@@ -479,9 +479,9 @@ fn resolve_arxell_files_dir() -> PathBuf {
 
     #[cfg(not(test))]
     {
-    let documents_root = dirs::document_dir()
-        .unwrap_or_else(|| dirs::home_dir().unwrap_or_else(|| PathBuf::from(".")));
-    documents_root.join("Arxell").join("Files")
+        let documents_root = dirs::document_dir()
+            .unwrap_or_else(|| dirs::home_dir().unwrap_or_else(|| PathBuf::from(".")));
+        documents_root.join("Arxell").join("Files")
     }
 }
 
