@@ -472,7 +472,7 @@ mod tests {
 
     #[tokio::test]
     async fn invoke_open_sheet_returns_serializable_payload() {
-        let app = AppContext::default();
+        let app = AppContext::new_for_test().expect("app context");
         let state = app.tauri_bridge_state();
         let path = temp_csv_path("open");
         fs::write(&path, "a,b\n1,2\n").unwrap();
@@ -490,7 +490,7 @@ mod tests {
 
     #[tokio::test]
     async fn invoke_new_sheet_returns_default_blank_sheet() {
-        let app = AppContext::default();
+        let app = AppContext::new_for_test().expect("app context");
         let state = app.tauri_bridge_state();
 
         let value = invoke_new_sheet(&state, json!({})).await.unwrap();
@@ -502,7 +502,7 @@ mod tests {
 
     #[tokio::test]
     async fn invoke_inspect_sheet_returns_structured_error_without_workbook() {
-        let app = AppContext::default();
+        let app = AppContext::new_for_test().expect("app context");
         let state = app.tauri_bridge_state();
 
         let error = invoke_inspect_sheet(&state, json!({})).await.err().unwrap();

@@ -39,10 +39,20 @@ pub struct AppContext {
 
 impl AppContext {
     pub fn new() -> Result<Self, String> {
+        Self::new_with_paths(
+            SqliteConversationRepository::default_path(),
+            tasks_service::TaskAutomationService::default_path(),
+        )
+    }
+
+    fn new_with_paths(
+        conversation_db_path: std::path::PathBuf,
+        tasks_db_path: std::path::PathBuf,
+    ) -> Result<Self, String> {
         let hub = EventHub::new();
         let memory = Arc::new(InMemoryMemoryManager::new());
         let conversation_repo = Arc::new(
-            SqliteConversationRepository::new(SqliteConversationRepository::default_path())
+            SqliteConversationRepository::new(conversation_db_path)
                 .map_err(|err| format!("failed to initialize conversation repository: {err}"))?,
         );
         let api_registry = Arc::new(ApiRegistryService::new());
@@ -63,10 +73,8 @@ impl AppContext {
         let model_manager = Arc::new(model_manager_service::ModelManagerService::new(hub.clone()));
         let files = Arc::new(files_service::FilesService::new());
         let tasks = Arc::new(
-            tasks_service::TaskAutomationService::new(
-                tasks_service::TaskAutomationService::default_path(),
-            )
-            .map_err(|err| format!("failed to initialize tasks service: {err}"))?,
+            tasks_service::TaskAutomationService::new(tasks_db_path)
+                .map_err(|err| format!("failed to initialize tasks service: {err}"))?,
         );
         let looper = Arc::new(LooperHandler::new(
             hub.clone(),
@@ -114,6 +122,32 @@ impl AppContext {
             voice,
         })
     }
+
+    #[cfg(test)]
+    pub fn new_for_test() -> Result<Self, String> {
+        let root = test_context_root();
+        Self::new_with_paths(root.join("conversations.sqlite3"), root.join("tasks.sqlite3"))
+    }
+
+    #[cfg(test)]
+    pub fn new_for_test_with_tasks_path(tasks_db_path: std::path::PathBuf) -> Result<Self, String> {
+        let root = test_context_root();
+        Self::new_with_paths(root.join("conversations.sqlite3"), tasks_db_path)
+    }
+}
+
+#[cfg(test)]
+fn test_context_root() -> std::path::PathBuf {
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static NEXT_TEST_CONTEXT_ID: AtomicU64 = AtomicU64::new(0);
+
+    let context_id = NEXT_TEST_CONTEXT_ID.fetch_add(1, Ordering::Relaxed);
+    std::env::temp_dir().join(format!(
+        "arxell-app-context-test-{}-{}",
+        std::process::id(),
+        context_id
+    ))
 }
 
 impl Default for AppContext {

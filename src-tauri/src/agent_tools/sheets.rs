@@ -4,7 +4,9 @@ use arx_rs::tools::Tool;
 use arx_rs::types::ToolResult;
 use async_trait::async_trait;
 use serde_json::{json, Value};
-use std::path::{Path, PathBuf};
+#[cfg(not(test))]
+use std::path::Path;
+use std::path::PathBuf;
 use std::sync::Arc;
 
 pub struct SheetsTool {
@@ -434,9 +436,24 @@ fn default_sheet_save_path() -> PathBuf {
 }
 
 fn resolve_arxell_files_dir() -> PathBuf {
+    #[cfg(test)]
+    {
+        let thread_slug = std::thread::current()
+            .name()
+            .unwrap_or("test")
+            .replace([':', '<', '>', '"', '|', '?', '*', '\\', '/'], "_");
+        return std::env::temp_dir()
+            .join("arxell-test-files")
+            .join(std::process::id().to_string())
+            .join(thread_slug);
+    }
+
+    #[cfg(not(test))]
+    {
     let documents_root = dirs::document_dir()
         .unwrap_or_else(|| dirs::home_dir().unwrap_or_else(|| PathBuf::from(".")));
     documents_root.join(Path::new("Arxell")).join("Files")
+    }
 }
 
 #[cfg(test)]

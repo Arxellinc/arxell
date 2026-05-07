@@ -101,6 +101,29 @@ jobs:
             libfuse2 \
             patchelf
 
+      - name: Normalize Linux pkg-config metadata
+        if: matrix.platform.os == 'ubuntu-22.04'
+        shell: bash
+        run: |
+          set -euo pipefail
+          overlay_dir="${RUNNER_TEMP}/pkgconfig"
+          mkdir -p "${overlay_dir}"
+
+          pc_path="$(pkg-config --path librsvg-2.0)"
+          cp "${pc_path}" "${overlay_dir}/librsvg-2.0.pc"
+
+          if [[ -z "$(PKG_CONFIG_PATH="${overlay_dir}${PKG_CONFIG_PATH:+:${PKG_CONFIG_PATH}}" pkg-config --variable=libdir librsvg-2.0)" ]]; then
+            multiarch="$(gcc -print-multiarch)"
+            {
+              echo
+              echo "libdir=/usr/lib/${multiarch}"
+            } >> "${overlay_dir}/librsvg-2.0.pc"
+          fi
+
+          echo "PKG_CONFIG_PATH=${overlay_dir}${PKG_CONFIG_PATH:+:${PKG_CONFIG_PATH}}" >> "${GITHUB_ENV}"
+          pkg-config --modversion librsvg-2.0
+          PKG_CONFIG_PATH="${overlay_dir}${PKG_CONFIG_PATH:+:${PKG_CONFIG_PATH}}" pkg-config --variable=libdir librsvg-2.0
+
       - name: Install frontend dependencies
         working-directory: frontend
         run: npm ci

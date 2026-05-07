@@ -465,9 +465,24 @@ fn generate_draft_path() -> PathBuf {
 }
 
 fn resolve_arxell_files_dir() -> PathBuf {
+    #[cfg(test)]
+    {
+        let thread_slug = std::thread::current()
+            .name()
+            .unwrap_or("test")
+            .replace([':', '<', '>', '"', '|', '?', '*', '\\', '/'], "_");
+        return std::env::temp_dir()
+            .join("arxell-test-files")
+            .join(std::process::id().to_string())
+            .join(thread_slug);
+    }
+
+    #[cfg(not(test))]
+    {
     let documents_root = dirs::document_dir()
         .unwrap_or_else(|| dirs::home_dir().unwrap_or_else(|| PathBuf::from(".")));
     documents_root.join("Arxell").join("Files")
+    }
 }
 
 async fn ensure_parent_dirs(path: &Path) -> Result<(), String> {

@@ -596,12 +596,8 @@ mod tests {
         ));
         fs::create_dir_all(&tmp).expect("create test dir");
         let db_path = tmp.join("tasks.sqlite3");
-        std::env::set_var(
-            "ARXELL_TASKS_DB_PATH",
-            db_path.to_string_lossy().to_string(),
-        );
 
-        let app = AppContext::new().expect("app context");
+        let app = AppContext::new_for_test_with_tasks_path(db_path.clone()).expect("app context");
         let state = app.tauri_bridge_state();
         let now = now_ms();
         let task = DurableTaskRecord {
@@ -645,7 +641,6 @@ mod tests {
             || n.title.contains("Task failed")
             || n.title.contains("Task blocked")));
 
-        std::env::remove_var("ARXELL_TASKS_DB_PATH");
         let _ = fs::remove_file(db_path);
         let _ = fs::remove_dir_all(tmp);
     }
