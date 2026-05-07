@@ -1343,7 +1343,8 @@ body {
 
 .chat-stt-btn,
 .chat-tts-btn,
-.chat-speech-btn {
+.chat-speech-btn,
+.chat-auto-btn {
   width: 28px;
   height: 28px;
 }
@@ -1372,10 +1373,15 @@ body {
   color: var(--icon-inactive);
 }
 
+.chat-auto-btn:not(.is-active) .icon-dark {
+  color: var(--icon-inactive);
+}
+
 .chat-stt-btn.is-active,
 .chat-tts-btn.is-active,
 .chat-speech-btn.is-active,
-.chat-avatar-btn.is-active {
+.chat-avatar-btn.is-active,
+.chat-auto-btn.is-active {
   background: transparent;
 }
 

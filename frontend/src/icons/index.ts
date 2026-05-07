@@ -66,6 +66,7 @@ import x from "./x.svg?raw";
 import replace from "./replace.svg?raw";
 import botMessageSquare from "./bot-message-square.svg?raw";
 import refreshCw from "./refresh-cw.svg?raw";
+import rocket from "./rocket.svg?raw";
 import info from "./info.svg?raw";
 import code from "./code.svg?raw";
 import eye from "./eye.svg?raw";
@@ -171,6 +172,7 @@ const ICON_SVGS = {
   "table-2": table2,
   "bot-message-square": botMessageSquare,
   "refresh-cw": refreshCw,
+  rocket,
   info,
   code,
   eye,

@@ -253,6 +253,7 @@ export interface PrimaryPanelRenderState {
   showBottomTtsLatency: boolean;
   enableNotificationChime: boolean;
   enableChatQuestionChime: boolean;
+  autoSafeEnabled: boolean;
   chat: ChatPanelState;
   chatToolIntentByCorrelation: Record<string, boolean>;
   chatFirstAssistantChunkMsByCorrelation: Record<string, number>;
@@ -394,6 +395,7 @@ export interface PrimaryPanelBindings {
   onStopCurrentResponse: () => Promise<void>;
   onSpeakLatestAssistantTts: () => Promise<void>;
   onToggleVoiceMode: () => Promise<void>;
+  onToggleAutoMode: () => Promise<void>;
   onToggleThinkingPanel: (correlationId: string) => Promise<void>;
   onCreateConversation: () => Promise<void>;
   onClearChat: () => Promise<void>;

@@ -4706,6 +4706,58 @@ async function autoStartLlamaRuntimeIfConfigured(): Promise<void> {
 
 let waitForLocalModelReady: () => Promise<boolean> = async () => false;
 
+async function toggleAutoSafeMode(sendMessage: (text: string) => Promise<void>): Promise<void> {
+  const nextEnabled = !state.autoSafeEnabled;
+  state.autoSafeEnabled = nextEnabled;
+  persistAutoSafeEnabled(nextEnabled);
+
+  const projectId = state.chatProjectMap[state.conversationId] || state.projectsSelectedId || "";
+  const project = projectId ? state.projectsById[projectId] : null;
+  const scopeText = project
+    ? `Confined to project: ${project.name || project.rootPath || project.id}`
+    : "No active project selected; scheduled tasks use their approved project scopes.";
+
+  if (!nextEnabled) {
+    pushConsoleEntry("info", "browser", "Auto Safe stopped.");
+    pushAppNotification({
+      title: "Auto Safe stopped",
+      description: scopeText,
+      tone: "warn"
+    });
+    renderAndBind(sendMessage);
+    return;
+  }
+
+  let executed = 0;
+  try {
+    if (clientRef) {
+      const correlationId = nextCorrelationId();
+      const resp = await clientRef.toolInvoke({
+        correlationId,
+        toolId: "tasks",
+        action: "scheduler-run-due-now",
+        mode: "sandbox",
+        payload: { correlationId, limit: 16 }
+      });
+      executed = Number((resp.data as any)?.executed ?? 0);
+    }
+    pushConsoleEntry("info", "browser", `Auto Safe enabled. Ran due scheduled task check: ${executed}.`);
+    pushAppNotification({
+      title: "Auto Safe enabled",
+      description: `${scopeText}. Due task check ran ${executed} task(s).`,
+      tone: "success"
+    });
+  } catch (error) {
+    pushConsoleEntry("warn", "browser", `Auto Safe due task check failed: ${String(error)}`);
+    pushAppNotification({
+      title: "Auto Safe enabled",
+      description: `${scopeText}. Due task check failed; background scheduler will retry.`,
+      tone: "warn"
+    });
+  }
+  renderAndBind(sendMessage);
+}
+
 function renderAndBind(sendMessage: (text: string) => Promise<void>): void {
   if (deferredWorkspaceSelectionRenderTimerId !== null) {
     window.clearTimeout(deferredWorkspaceSelectionRenderTimerId);
@@ -5180,6 +5232,7 @@ syncOverlayScrollbars();
     },
     onSpeakLatestAssistantTts: toggleChatAutoSpeak,
     onToggleVoiceMode: toggleVoiceMode,
+    onToggleAutoMode: () => toggleAutoSafeMode(sendMessage),
     onToggleThinkingPanel: async (correlationId: string) => {
       const current = state.chatThinkingExpandedByCorrelation[correlationId] === true;
       state.chatThinkingExpandedByCorrelation[correlationId] = !current;
@@ -7378,10 +7431,8 @@ function attachTopbarInteractions(sendMessage: (text: string) => Promise<void>):
   }
   const autoSafeToggle = document.querySelector<HTMLButtonElement>("#autoSafeToggle");
   if (autoSafeToggle) {
-    autoSafeToggle.onclick = () => {
-      state.autoSafeEnabled = !state.autoSafeEnabled;
-      persistAutoSafeEnabled(state.autoSafeEnabled);
-      renderAndBind(sendMessage);
+    autoSafeToggle.onclick = async () => {
+      await toggleAutoSafeMode(sendMessage);
     };
   }
   const windowMinimizeBtn = document.querySelector<HTMLButtonElement>("#windowMinimizeBtn");

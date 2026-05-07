@@ -196,6 +196,12 @@ export function attachPrimaryPanelInteractions(
         await bindings.onToggleAvatar();
       };
     }
+    const chatAutoModeBtn = document.querySelector<HTMLButtonElement>("#chatAutoModeBtn");
+    if (chatAutoModeBtn) {
+      chatAutoModeBtn.onclick = async () => {
+        await bindings.onToggleAutoMode();
+      };
+    }
     const chatSpeakBtn = document.querySelector<HTMLButtonElement>("#chatSpeakBtn");
     if (chatSpeakBtn) {
       chatSpeakBtn.onclick = async () => {

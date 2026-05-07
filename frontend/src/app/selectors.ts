@@ -62,6 +62,7 @@ export function selectPrimaryPanelState(state: AnyState, chat: unknown): Record<
     showBottomContext: state.showBottomContext,
     showBottomSpeed: state.showBottomSpeed,
     showBottomTtsLatency: state.showBottomTtsLatency,
+    autoSafeEnabled: state.autoSafeEnabled,
     chat,
     chatToolIntentByCorrelation: state.chatToolIntentByCorrelation,
     chatFirstAssistantChunkMsByCorrelation: state.chatFirstAssistantChunkMsByCorrelation,
