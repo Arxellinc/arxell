@@ -594,25 +594,6 @@ jobs:
           print(f"[kokoro-runtime] manifest written for {archive.name}")
           PY
 
-      - name: Debug linuxdeploy extraction
-        if: matrix.platform.os == 'ubuntu-24.04'
-        shell: bash
-        env:
-          APPIMAGE_EXTRACT_AND_RUN: 1
-        run: |
-          set -euo pipefail
-          CACHE_DIR="${XDG_CACHE_HOME:-$RUNNER_TEMP}/tauri-bundle-tools"
-          TOOL="${CACHE_DIR}/linuxdeploy-x86_64.AppImage"
-          if [ ! -f "$TOOL" ]; then
-            echo "linuxdeploy not cached yet — will be checked during build step below"
-            exit 0
-          fi
-          chmod +x "$TOOL"
-          echo "=== linuxdeploy file info ==="
-          file "$TOOL"
-          echo "=== Trying to run linuxdeploy ==="
-          APPIMAGE_EXTRACT_AND_RUN=1 "$TOOL" --help 2>&1 || echo "EXIT_CODE=$?"
-
       - name: Build Tauri app bundle
         working-directory: src-tauri
         shell: bash
@@ -626,11 +607,7 @@ jobs:
           mkdir -p "${XDG_CACHE_HOME}"
           case "${{ matrix.platform.os }}" in
             ubuntu-24.04)
-              # Build deb first (always works), then try appimage with full output
-              cargo tauri build --bundles deb -- --features tauri-runtime 2>&1
-              echo "=== Attempting AppImage bundle ==="
-              cargo tauri build --bundles appimage -- --features tauri-runtime 2>&1 || \
-                echo "WARNING: AppImage bundle failed, deb was built successfully" >&2
+              cargo tauri build --bundles deb appimage -- --features tauri-runtime
               ;;
             windows-latest)
               cargo tauri build --bundles msi -- --features tauri-runtime
