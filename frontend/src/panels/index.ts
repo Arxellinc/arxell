@@ -4,6 +4,7 @@ import { bindAvatarPanel, renderAvatarActions, renderAvatarBody } from "./avatar
 import { bindChatPanel, renderChatActions, renderChatBody } from "./chatPanel";
 import { renderDevicesActions, renderDevicesBody } from "./devicesPanel";
 import { bindHistoryPanel, renderHistoryActions, renderHistoryBody } from "./historyPanel";
+import { bindImagesPanel, renderImagesActions, renderImagesBody } from "./imagesPanel";
 import { bindLlamaCppPanel, renderLlamaCppActions, renderLlamaCppBody } from "./llamaCppPanel";
 import {
   bindModelManagerPanel,
@@ -113,6 +114,15 @@ export function getPanelDefinition(
       icon: APP_ICON.sidebar.modelManager,
       renderBody: () => renderModelManagerBody(state),
       renderActions: () => renderModelManagerActions(state)
+    };
+  }
+
+  if (tab === "images") {
+    return {
+      title: "Images",
+      icon: APP_ICON.sidebar.images,
+      renderBody: () => renderImagesBody(state),
+      renderActions: () => renderImagesActions(state)
     };
   }
 
@@ -335,6 +345,12 @@ export function attachPrimaryPanelInteractions(
 
   if (tab === "model_manager") {
     bindModelManagerPanel(bindings);
+    return;
+  }
+
+  if (tab === "images") {
+    bindImagesPanel(bindings);
+    return;
   }
 
   if (tab === "stt" || tab === "vad") {

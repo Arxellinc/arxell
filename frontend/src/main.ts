@@ -11,6 +11,7 @@ import type {
   ChatStreamReasoningChunkPayload,
   ConversationSummaryRecord,
   FilesListDirectoryEntry,
+  ImageGenerationStatusResponse,
   LlamaRuntimeEngine,
   LlamaRuntimeStatusResponse,
   ModelManagerHfCandidate,
@@ -928,6 +929,25 @@ const state: {
     selectedAssetFileName: string;
   }>;
   modelManagerUnslothUdLoading: boolean;
+  images: {
+    status: ImageGenerationStatusResponse | null;
+    prompt: string;
+    width: number;
+    height: number;
+    steps: number;
+    guidance: number;
+    seed: string;
+    advancedOpen: boolean;
+    installBusy: boolean;
+    generateBusy: boolean;
+    removing: boolean;
+    message: string | null;
+    installReceivedBytes: number | null;
+    installTotalBytes: number | null;
+    installPercent: number | null;
+    installSpeedBytesPerSec: number | null;
+    installPhase: string | null;
+  };
   stt: {
     status: "idle" | "starting" | "running" | "error";
     message: string | null;
@@ -1191,6 +1211,25 @@ const state: {
   modelManagerMessage: null,
   modelManagerUnslothUdCatalog: [],
   modelManagerUnslothUdLoading: false,
+  images: {
+    status: null,
+    prompt: "",
+    width: 1024,
+    height: 1024,
+    steps: 4,
+    guidance: 1,
+    seed: "",
+    advancedOpen: false,
+    installBusy: false,
+    generateBusy: false,
+    removing: false,
+    message: null,
+    installReceivedBytes: null,
+    installTotalBytes: null,
+    installPercent: null,
+    installSpeedBytesPerSec: null,
+    installPhase: null
+  },
   stt: {
     status: "idle",
     message: null,
@@ -4133,6 +4172,8 @@ async function refreshVadState(): Promise<void> {
 
 let modelManagerDownloadLastSampleAtMs: number | null = null;
 let modelManagerDownloadLastSampleBytes: number | null = null;
+let imageInstallLastSampleAtMs: number | null = null;
+let imageInstallLastSampleBytes: number | null = null;
 
 function handleModelManagerDownloadProgressEvent(event: AppEvent, rerender: () => void): boolean {
   if (event.action !== "model.manager.download_hf") return false;
@@ -4195,6 +4236,59 @@ function handleModelManagerDownloadProgressEvent(event: AppEvent, rerender: () =
     state.modelManagerDownloadSpeedBytesPerSec = null;
     modelManagerDownloadLastSampleAtMs = null;
     modelManagerDownloadLastSampleBytes = null;
+    rerender();
+    return false;
+  }
+  return false;
+}
+
+function handleImageGenerationInstallProgressEvent(event: AppEvent, rerender: () => void): boolean {
+  if (event.action !== "image.generation.install") return false;
+  const payload = payloadAsRecord(event.payload);
+  const phase = typeof payload?.phase === "string" ? payload.phase : null;
+  if (event.stage === "start") {
+    state.images.installBusy = true;
+    state.images.installPhase = phase || "preflight";
+    state.images.installReceivedBytes = 0;
+    state.images.installTotalBytes = null;
+    state.images.installPercent = null;
+    state.images.installSpeedBytesPerSec = null;
+    imageInstallLastSampleAtMs = null;
+    imageInstallLastSampleBytes = null;
+    rerender();
+    return false;
+  }
+  if (event.stage === "progress") {
+    state.images.installBusy = true;
+    state.images.installPhase = phase || state.images.installPhase;
+    const receivedBytes = Number(payload?.receivedBytes);
+    const totalBytes = Number(payload?.totalBytes);
+    const percent = Number(payload?.percent);
+    state.images.installReceivedBytes = Number.isFinite(receivedBytes)
+      ? receivedBytes
+      : state.images.installReceivedBytes;
+    state.images.installTotalBytes = Number.isFinite(totalBytes) && totalBytes > 0 ? totalBytes : state.images.installTotalBytes;
+    state.images.installPercent = Number.isFinite(percent) ? percent : state.images.installPercent;
+    const now = Date.now();
+    if (Number.isFinite(receivedBytes) && receivedBytes >= 0) {
+      if (imageInstallLastSampleAtMs !== null && imageInstallLastSampleBytes !== null) {
+        const elapsedMs = now - imageInstallLastSampleAtMs;
+        const deltaBytes = receivedBytes - imageInstallLastSampleBytes;
+        if (elapsedMs > 0 && deltaBytes >= 0) {
+          state.images.installSpeedBytesPerSec = (deltaBytes * 1000) / elapsedMs;
+        }
+      }
+      imageInstallLastSampleAtMs = now;
+      imageInstallLastSampleBytes = receivedBytes;
+    }
+    rerender();
+    return false;
+  }
+  if (event.stage === "complete" || event.stage === "error") {
+    state.images.installBusy = false;
+    state.images.installPhase = null;
+    imageInstallLastSampleAtMs = null;
+    imageInstallLastSampleBytes = null;
     rerender();
     return false;
   }
@@ -4445,6 +4539,15 @@ async function refreshModelManagerInstalled(): Promise<void> {
     correlationId: nextCorrelationId()
   });
   state.modelManagerInstalled = response.models;
+}
+
+async function refreshImageGenerationStatus(): Promise<void> {
+  if (!clientRef) return;
+  const response = await clientRef.imageGenerationStatus({
+    correlationId: nextCorrelationId()
+  });
+  state.images.status = response;
+  state.images.message = response.message;
 }
 
 async function refreshModelManagerUnslothUdCatalog(): Promise<void> {
@@ -6044,6 +6147,128 @@ syncOverlayScrollbars();
       }
       renderAndBind(sendMessage);
     },
+    onImagesRefresh: async () => {
+      state.images.message = "Refreshing image generation status...";
+      try {
+        await refreshImageGenerationStatus();
+      } catch (error) {
+        state.images.message = `Images refresh failed: ${String(error)}`;
+      }
+      renderAndBind(sendMessage);
+    },
+    onImagesInstall: async () => {
+      if (!clientRef || state.images.installBusy) return;
+      const correlationId = nextCorrelationId();
+      state.images.installBusy = true;
+      state.images.installPhase = "preflight";
+      state.images.installReceivedBytes = 0;
+      state.images.installTotalBytes = null;
+      state.images.installPercent = null;
+      state.images.installSpeedBytesPerSec = null;
+      state.images.message = "Downloading and installing the curated FLUX ONNX package...";
+      renderAndBind(sendMessage);
+      try {
+        await clientRef.imageGenerationInstall({ correlationId });
+        await refreshImageGenerationStatus();
+        state.images.message = "Image package installed. Runtime is held behind the FLUX ONNX probe gate until generation is verified.";
+      } catch (error) {
+        state.images.message = `Image package install failed: ${String(error)}`;
+      } finally {
+        state.images.installBusy = false;
+        state.images.installPhase = null;
+      }
+      renderAndBind(sendMessage);
+    },
+    onImagesSetDisabled: async (disabled: boolean) => {
+      if (!clientRef) return;
+      try {
+        const response = await clientRef.imageGenerationSetDisabled({
+          correlationId: nextCorrelationId(),
+          disabled
+        });
+        if (state.images.status) {
+          state.images.status = { ...state.images.status, disabled: response.disabled };
+        }
+        state.images.message = response.disabled
+          ? "Image generation disabled."
+          : "Image generation enabled preference restored.";
+      } catch (error) {
+        state.images.message = `Image generation preference failed: ${String(error)}`;
+      }
+      renderAndBind(sendMessage);
+    },
+    onImagesRemovePackages: async () => {
+      if (!clientRef || state.images.removing) return;
+      const confirmed = window.confirm("Remove installed image packages? This deletes local model package files.");
+      if (!confirmed) return;
+      state.images.removing = true;
+      state.images.message = "Removing image packages...";
+      renderAndBind(sendMessage);
+      try {
+        await clientRef.imageGenerationRemovePackages({ correlationId: nextCorrelationId() });
+        await refreshImageGenerationStatus();
+        state.images.message = "Image packages removed.";
+      } catch (error) {
+        state.images.message = `Remove image packages failed: ${String(error)}`;
+      } finally {
+        state.images.removing = false;
+      }
+      renderAndBind(sendMessage);
+    },
+    onImagesGenerate: async () => {
+      if (!clientRef || state.images.generateBusy) return;
+      const prompt = state.images.prompt.trim();
+      if (!prompt) {
+        state.images.message = "Enter a prompt first.";
+        renderAndBind(sendMessage);
+        return;
+      }
+      state.images.generateBusy = true;
+      state.images.message = "Starting image generation...";
+      renderAndBind(sendMessage);
+      try {
+        const seed = state.images.seed.trim() ? Number.parseInt(state.images.seed.trim(), 10) : null;
+        const request = {
+          correlationId: nextCorrelationId(),
+          prompt,
+          width: state.images.width,
+          height: state.images.height,
+          steps: state.images.steps,
+          guidance: state.images.guidance
+        };
+        await clientRef.imageGenerationGenerate(
+          Number.isFinite(seed) && seed !== null ? { ...request, seed } : request
+        );
+      } catch (error) {
+        state.images.message = `Image generation blocked: ${String(error)}`;
+      } finally {
+        state.images.generateBusy = false;
+      }
+      renderAndBind(sendMessage);
+    },
+    onImagesSetPrompt: async (prompt: string) => {
+      state.images.prompt = prompt;
+    },
+    onImagesSetSizePreset: async (width: number, height: number) => {
+      state.images.width = width;
+      state.images.height = height;
+      renderAndBind(sendMessage);
+    },
+    onImagesSetSteps: async (steps: number) => {
+      state.images.steps = Math.max(1, Math.min(12, Math.round(steps)));
+      renderAndBind(sendMessage);
+    },
+    onImagesSetGuidance: async (guidance: number) => {
+      state.images.guidance = Math.max(0, Math.min(10, guidance));
+      renderAndBind(sendMessage);
+    },
+    onImagesSetSeed: async (seed: string) => {
+      state.images.seed = seed.trim();
+    },
+    onImagesToggleAdvanced: async () => {
+      state.images.advancedOpen = !state.images.advancedOpen;
+      renderAndBind(sendMessage);
+    },
     ...createTtsPanelBindings({
       state,
       getClient: () => clientRef,
@@ -7506,6 +7731,13 @@ function attachSidebarInteractions(sendMessage: (text: string) => Promise<void>)
       if (nextTab === "apis") {
         await refreshApiConnections();
       }
+      if (nextTab === "images") {
+        try {
+          await refreshImageGenerationStatus();
+        } catch (error) {
+          state.images.message = `Images refresh failed: ${String(error)}`;
+        }
+      }
       if (nextTab === "tts") {
         try {
           await refreshTtsState();
@@ -8511,6 +8743,7 @@ async function bootstrap(): Promise<void> {
         });
       }
       handleModelManagerDownloadProgressEvent(event, () => renderAndBind(sendMessage));
+      handleImageGenerationInstallProgressEvent(event, () => renderAndBind(sendMessage));
       if (event.action === "chart.definition.set") {
         const payload = payloadAsRecord(event.payload);
         const definition = typeof payload?.definition === "string" ? payload.definition.trim() : "";

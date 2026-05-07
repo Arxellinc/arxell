@@ -11,6 +11,7 @@ import type {
   VadManifest,
   DuplexMode,
   HandoffState,
+  ImageGenerationStatusResponse,
   SpeculationState,
   VoiceRuntimeState
 } from "../contracts";
@@ -29,6 +30,7 @@ export type SidebarTab =
   | "vad"
   | "llama_cpp"
   | "model_manager"
+  | "images"
   | "avatar"
   | "settings";
 
@@ -50,6 +52,7 @@ export interface UiMessage {
   text: string;
   correlationId?: string;
   structuredPayload?: ChatStructuredPayload | null;
+  attachments?: ChatAttachment[];
 }
 
 export interface ChatToolEventRow {
@@ -222,6 +225,26 @@ export interface TtsState {
   lastSampleRate: number | null;
 }
 
+export interface ImagesPanelState {
+  status: ImageGenerationStatusResponse | null;
+  prompt: string;
+  width: number;
+  height: number;
+  steps: number;
+  guidance: number;
+  seed: string;
+  advancedOpen: boolean;
+  installBusy: boolean;
+  generateBusy: boolean;
+  removing: boolean;
+  message: string | null;
+  installReceivedBytes: number | null;
+  installTotalBytes: number | null;
+  installPercent: number | null;
+  installSpeedBytesPerSec: number | null;
+  installPhase: string | null;
+}
+
 export interface ConsoleEntry {
   timestampMs: number;
   level: "log" | "info" | "warn" | "error" | "debug";
@@ -355,6 +378,7 @@ export interface PrimaryPanelRenderState {
   } | null;
   vadMessage: string | null;
   tts: TtsState;
+  images: ImagesPanelState;
   consoleEntries: ConsoleEntry[];
   projectsById: Record<string, ProjectRecord>;
   projectsSelectedId: string | null;
@@ -456,6 +480,17 @@ export interface PrimaryPanelBindings {
   onModelManagerUseAsLlamaPath: (modelPath: string) => Promise<void>;
   onModelManagerEjectActive: () => Promise<void>;
   onModelManagerDeleteInstalled: (modelId: string) => Promise<void>;
+  onImagesRefresh: () => Promise<void>;
+  onImagesInstall: () => Promise<void>;
+  onImagesSetDisabled: (disabled: boolean) => Promise<void>;
+  onImagesRemovePackages: () => Promise<void>;
+  onImagesGenerate: () => Promise<void>;
+  onImagesSetPrompt: (prompt: string) => Promise<void>;
+  onImagesSetSizePreset: (width: number, height: number) => Promise<void>;
+  onImagesSetSteps: (steps: number) => Promise<void>;
+  onImagesSetGuidance: (guidance: number) => Promise<void>;
+  onImagesSetSeed: (seed: string) => Promise<void>;
+  onImagesToggleAdvanced: () => Promise<void>;
   onToggleStt: () => Promise<void>;
   onSetSttBackend: (backend: "whisper_cpp") => Promise<void>;
   onSetSttModel: (model: string) => Promise<void>;

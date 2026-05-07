@@ -15,6 +15,7 @@ export const APP_ICON = {
     vad: "speech",
     llamaCpp: "cpu",
     modelManager: "package-search",
+    images: "image",
     avatar: "square-user-round",
     terminal: "square-terminal",
     settings: "settings"
@@ -59,6 +60,7 @@ export const APP_ICON = {
     vad: IconName;
     llamaCpp: IconName;
     modelManager: IconName;
+    images: IconName;
     avatar: IconName;
     terminal: IconName;
     settings: IconName;

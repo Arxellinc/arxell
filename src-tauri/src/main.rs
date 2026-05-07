@@ -22,7 +22,11 @@ use arxell_lite::contracts::{
     CustomItemDeleteResponse, CustomItemUpsertRequest, CustomItemUpsertResponse,
     CustomToolCapabilityInvokeRequest, CustomToolCapabilityInvokeResponse,
     DevicesProbeMicrophoneRequest, DevicesProbeMicrophoneResponse, EventSeverity, EventStage,
-    FilesListDirectoryRequest, FilesListDirectoryResponse, LlamaRuntimeInstallRequest,
+    FilesListDirectoryRequest, FilesListDirectoryResponse, ImageGenerationGenerateRequest,
+    ImageGenerationGenerateResponse, ImageGenerationInstallRequest, ImageGenerationInstallResponse,
+    ImageGenerationRemovePackagesRequest, ImageGenerationRemovePackagesResponse,
+    ImageGenerationSetDisabledRequest, ImageGenerationSetDisabledResponse,
+    ImageGenerationStatusRequest, ImageGenerationStatusResponse, LlamaRuntimeInstallRequest,
     LlamaRuntimeInstallResponse, LlamaRuntimeStartRequest, LlamaRuntimeStartResponse,
     LlamaRuntimeStatusRequest, LlamaRuntimeStatusResponse, LlamaRuntimeStopRequest,
     LlamaRuntimeStopResponse, LooperPreviewRequest, LooperPreviewResponse, MemoryDeleteRequest,
@@ -175,6 +179,7 @@ fn main() {
         permissions: std::sync::Arc::clone(&app_context.permissions),
         model_manager: std::sync::Arc::clone(&app_context.model_manager),
         files: std::sync::Arc::clone(&app_context.files),
+        image_generation: std::sync::Arc::clone(&app_context.image_generation),
         tasks: std::sync::Arc::clone(&app_context.tasks),
         sheets: std::sync::Arc::clone(&app_context.sheets),
         voice: std::sync::Arc::clone(&app_context.voice),
@@ -294,6 +299,11 @@ fn main() {
             cmd_model_manager_delete_installed,
             cmd_model_manager_list_catalog_csv,
             cmd_model_manager_refresh_unsloth_catalog,
+            cmd_image_generation_status,
+            cmd_image_generation_install,
+            cmd_image_generation_set_disabled,
+            cmd_image_generation_remove_packages,
+            cmd_image_generation_generate,
             cmd_files_list_directory,
             cmd_tool_invoke,
             cmd_custom_tool_capability_invoke,
@@ -1484,6 +1494,90 @@ async fn cmd_model_manager_refresh_unsloth_catalog(
         rows,
         new_count,
     })
+}
+
+#[cfg(feature = "tauri-runtime")]
+#[tauri::command]
+async fn cmd_image_generation_status(
+    _app: tauri::AppHandle,
+    state: State<'_, TauriBridgeState>,
+    request: ImageGenerationStatusRequest,
+) -> Result<ImageGenerationStatusResponse, String> {
+    let app_data = app_paths::app_data_dir();
+    let service = std::sync::Arc::clone(&state.image_generation);
+    let correlation_id = request.correlation_id.clone();
+    tokio::task::spawn_blocking(move || service.status(correlation_id.as_str(), app_data.as_path()))
+        .await
+        .map_err(|e| format!("image generation status task failed: {e}"))?
+}
+
+#[cfg(feature = "tauri-runtime")]
+#[tauri::command]
+async fn cmd_image_generation_install(
+    _app: tauri::AppHandle,
+    state: State<'_, TauriBridgeState>,
+    request: ImageGenerationInstallRequest,
+) -> Result<ImageGenerationInstallResponse, String> {
+    let app_data = app_paths::app_data_dir();
+    let service = std::sync::Arc::clone(&state.image_generation);
+    let correlation_id = request.correlation_id.clone();
+    tokio::task::spawn_blocking(move || {
+        service.install_curated_package(correlation_id.as_str(), app_data.as_path())
+    })
+    .await
+    .map_err(|e| format!("image generation install task failed: {e}"))?
+}
+
+#[cfg(feature = "tauri-runtime")]
+#[tauri::command]
+async fn cmd_image_generation_set_disabled(
+    _app: tauri::AppHandle,
+    state: State<'_, TauriBridgeState>,
+    request: ImageGenerationSetDisabledRequest,
+) -> Result<ImageGenerationSetDisabledResponse, String> {
+    let app_data = app_paths::app_data_dir();
+    let service = std::sync::Arc::clone(&state.image_generation);
+    let correlation_id = request.correlation_id.clone();
+    tokio::task::spawn_blocking(move || {
+        service.set_disabled(correlation_id.as_str(), app_data.as_path(), request.disabled)
+    })
+    .await
+    .map_err(|e| format!("image generation settings task failed: {e}"))?
+}
+
+#[cfg(feature = "tauri-runtime")]
+#[tauri::command]
+async fn cmd_image_generation_remove_packages(
+    _app: tauri::AppHandle,
+    state: State<'_, TauriBridgeState>,
+    request: ImageGenerationRemovePackagesRequest,
+) -> Result<ImageGenerationRemovePackagesResponse, String> {
+    let app_data = app_paths::app_data_dir();
+    let service = std::sync::Arc::clone(&state.image_generation);
+    let correlation_id = request.correlation_id.clone();
+    let removed = tokio::task::spawn_blocking(move || {
+        service.remove_packages(correlation_id.as_str(), app_data.as_path())
+    })
+    .await
+    .map_err(|e| format!("image generation remove task failed: {e}"))??;
+    Ok(ImageGenerationRemovePackagesResponse {
+        correlation_id: request.correlation_id,
+        removed,
+    })
+}
+
+#[cfg(feature = "tauri-runtime")]
+#[tauri::command]
+async fn cmd_image_generation_generate(
+    _app: tauri::AppHandle,
+    state: State<'_, TauriBridgeState>,
+    request: ImageGenerationGenerateRequest,
+) -> Result<ImageGenerationGenerateResponse, String> {
+    let app_data = app_paths::app_data_dir();
+    let service = std::sync::Arc::clone(&state.image_generation);
+    tokio::task::spawn_blocking(move || service.generate(&request, app_data.as_path()))
+        .await
+        .map_err(|e| format!("image generation task failed: {e}"))?
 }
 
 #[cfg(feature = "tauri-runtime")]

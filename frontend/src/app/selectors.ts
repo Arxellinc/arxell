@@ -122,6 +122,7 @@ export function selectPrimaryPanelState(state: AnyState, chat: unknown): Record<
     modelManagerMessage: state.modelManagerMessage,
     modelManagerUnslothUdCatalog: state.modelManagerUnslothUdCatalog,
     modelManagerUnslothUdLoading: state.modelManagerUnslothUdLoading,
+    images: state.images,
     stt: state.stt,
     vadMethods: state.vadMethods,
     vadIncludeExperimental: state.vadIncludeExperimental,

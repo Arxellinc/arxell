@@ -2,7 +2,7 @@ import type { AppEvent, ChatAttachment, ChatStructuredPayload } from "../contrac
 import { appendAppEvent } from "./events.js";
 
 interface ChatSendState {
-  messages: Array<{ role: string; text: string; correlationId?: string; structuredPayload?: ChatStructuredPayload | null }>;
+  messages: Array<{ role: string; text: string; correlationId?: string; structuredPayload?: ChatStructuredPayload | null; attachments?: ChatAttachment[] }>;
   chatDraft: string;
   chatStreaming: boolean;
   activeChatCorrelationId: string | null;
@@ -71,7 +71,11 @@ export function createSendMessageHandler(
       return;
     }
     const correlationId = deps.nextCorrelationId();
-    deps.state.messages.push({ role: "user", text: normalizedUserText });
+    deps.state.messages.push(
+      attachments?.length
+        ? { role: "user", text: normalizedUserText, attachments }
+        : { role: "user", text: normalizedUserText }
+    );
     deps.state.chatDraft = "";
     deps.state.chatStreaming = true;
     deps.state.activeChatCorrelationId = correlationId;

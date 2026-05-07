@@ -60,6 +60,27 @@ function renderStructuredPayload(payload: ChatStructuredPayload | null | undefin
   }
 }
 
+function renderImageAttachments(attachments: ChatAttachment[] | undefined): string {
+  const images = (attachments || []).filter((item) => item.kind === "image" && item.dataBase64);
+  if (!images.length) return "";
+  return `<div class="message-image-list">
+    ${images
+      .map((item, index) => {
+        const mime = item.mimeType || "image/png";
+        const src = `data:${mime};base64,${item.dataBase64}`;
+        const name = item.fileName || `image-${index + 1}.png`;
+        return `<figure class="message-image-card">
+          <img src="${escapeHtml(src)}" alt="${escapeHtml(name)}" loading="lazy" />
+          <figcaption class="message-image-actions">
+            <a href="${escapeHtml(src)}" download="${escapeHtml(name)}">Save</a>
+            <button type="button" data-copy-image-src="${escapeHtml(src)}">Copy</button>
+          </figcaption>
+        </figure>`;
+      })
+      .join("")}
+  </div>`;
+}
+
 function renderPlannerOfferPayload(title: string, prompt: string, reasons: string[]): string {
   const reasonText = reasons.length ? `<div class="chat-plan-inline-note">${escapeHtml(reasons.join("; "))}</div>` : "";
   return `<section class="chat-plan-inline" aria-label="${escapeHtml(title || "Use Planned Workflow?")}">
@@ -284,6 +305,7 @@ export function renderChatMessages(state: Pick<PrimaryPanelRenderState, "chat">)
             : "";
         const structuredPayloadHtml =
           m.role === "assistant" ? renderStructuredPayload(m.structuredPayload) : "";
+        const imageAttachmentsHtml = renderImageAttachments(m.attachments);
         const attachmentRowId = parsed.attachment
           ? `attachment-row-${messageIndex}-${parsed.attachment.fileName}`
           : "";
@@ -326,8 +348,8 @@ export function renderChatMessages(state: Pick<PrimaryPanelRenderState, "chat">)
             : "";
         const contentHtml =
           placement === "before"
-            ? `${attachmentRowsHtml}${assistantToolRowsHtml}${thinkingHtml}${textHtml}${structuredPayloadHtml}`
-            : `${attachmentRowsHtml}${assistantToolRowsHtml}${textHtml}${structuredPayloadHtml}${thinkingHtml}`;
+            ? `${attachmentRowsHtml}${imageAttachmentsHtml}${assistantToolRowsHtml}${thinkingHtml}${textHtml}${structuredPayloadHtml}`
+            : `${attachmentRowsHtml}${imageAttachmentsHtml}${assistantToolRowsHtml}${textHtml}${structuredPayloadHtml}${thinkingHtml}`;
         return `<div class="message ${m.role}">
           ${contentHtml}
         </div>`;
@@ -510,6 +532,27 @@ export function bindChatPanel(
       event.preventDefault();
       event.stopPropagation();
       handlePlanAction(actionEl);
+    };
+  });
+
+  actionRoot.querySelectorAll<HTMLButtonElement>("[data-copy-image-src]").forEach((button) => {
+    button.onclick = async (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      const src = button.dataset.copyImageSrc || "";
+      if (!src) return;
+      try {
+        await navigator.clipboard.writeText(src);
+        button.textContent = "Copied";
+        window.setTimeout(() => {
+          button.textContent = "Copy";
+        }, 1200);
+      } catch {
+        button.textContent = "Copy failed";
+        window.setTimeout(() => {
+          button.textContent = "Copy";
+        }, 1200);
+      }
     };
   });
 

@@ -1338,6 +1338,132 @@ pub struct ModelManagerRefreshUnslothCatalogResponse {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct ImagePackageMetadata {
+    pub id: String,
+    pub name: String,
+    pub repo_id: String,
+    pub license: String,
+    pub source_url: String,
+    pub approximate_size_gb: f32,
+    pub recommended_steps: u32,
+    pub recommended_guidance: f32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ImageGenerationInstallState {
+    NotInstalled,
+    Installing,
+    Installed,
+    Error,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ImageGenerationRuntimeState {
+    NotReady,
+    ProbeOnly,
+    Ready,
+    Error,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImageGenerationStatusRequest {
+    pub correlation_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImageGenerationStatusResponse {
+    pub correlation_id: String,
+    pub package: ImagePackageMetadata,
+    pub install_state: ImageGenerationInstallState,
+    pub runtime_state: ImageGenerationRuntimeState,
+    pub disabled: bool,
+    pub installed_path: Option<String>,
+    pub message: Option<String>,
+    pub required_paths_present: bool,
+    pub generation_ready: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImageGenerationInstallRequest {
+    pub correlation_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImageGenerationInstallResponse {
+    pub correlation_id: String,
+    pub installed_path: String,
+    pub enabled: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImageGenerationSetDisabledRequest {
+    pub correlation_id: String,
+    pub disabled: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImageGenerationSetDisabledResponse {
+    pub correlation_id: String,
+    pub disabled: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImageGenerationRemovePackagesRequest {
+    pub correlation_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImageGenerationRemovePackagesResponse {
+    pub correlation_id: String,
+    pub removed: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MediaAssetRecord {
+    pub id: String,
+    pub kind: String,
+    pub mime: String,
+    pub filename: String,
+    pub path: String,
+    pub width: Option<u32>,
+    pub height: Option<u32>,
+    pub size_bytes: u64,
+    pub created_at: i64,
+    pub data_base64: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImageGenerationGenerateRequest {
+    pub correlation_id: String,
+    pub prompt: String,
+    pub width: u32,
+    pub height: u32,
+    pub steps: u32,
+    pub guidance: f32,
+    pub seed: Option<u64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImageGenerationGenerateResponse {
+    pub correlation_id: String,
+    pub asset: MediaAssetRecord,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct DevicesProbeMicrophoneRequest {
     pub correlation_id: String,
     pub attempt_open: Option<bool>,

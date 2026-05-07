@@ -1,14 +1,5 @@
 # Voice Mode Fixes — May 2026
 
-## Problem
-
-Voice mode was non-functional: no speech generated, TTS panel "test text" also silent, and the "Loading model..." indicator was invisible when the LLM model was warming up.
-
-**Root cause (TTS):** The Kokoro ONNX model had been updated (quantized), and the input/output tensor names changed. The `kokoro_ort.rs` code hardcoded `"input_ids"` as the first input name, which the quantized model rejected with `Invalid input name: input_ids`.
-
-**Root cause (loading indicator):** `chatSend.ts` correctly set `chatModelStatusMessage = "Loading model into memory..."` and called `renderAndBind()`, but the `is-loading` CSS class had no styles defined. The text rendered silently in a tiny `0.6rem` muted font, invisible to the user.
-
----
 
 ## Changes
 

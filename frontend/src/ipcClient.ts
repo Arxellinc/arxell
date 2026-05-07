@@ -85,6 +85,16 @@ import type {
   LlamaRuntimeStatusResponse,
   LlamaRuntimeStopRequest,
   LlamaRuntimeStopResponse,
+  ImageGenerationGenerateRequest,
+  ImageGenerationGenerateResponse,
+  ImageGenerationInstallRequest,
+  ImageGenerationInstallResponse,
+  ImageGenerationRemovePackagesRequest,
+  ImageGenerationRemovePackagesResponse,
+  ImageGenerationSetDisabledRequest,
+  ImageGenerationSetDisabledResponse,
+  ImageGenerationStatusRequest,
+  ImageGenerationStatusResponse,
   ModelManagerDeleteInstalledRequest,
   ModelManagerDeleteInstalledResponse,
   ModelManagerCancelDownloadRequest,
@@ -242,6 +252,21 @@ export interface ChatIpcClient {
   modelManagerRefreshUnslothCatalog(
     request: ModelManagerRefreshUnslothCatalogRequest
   ): Promise<ModelManagerRefreshUnslothCatalogResponse>;
+  imageGenerationStatus(
+    request: ImageGenerationStatusRequest
+  ): Promise<ImageGenerationStatusResponse>;
+  imageGenerationInstall(
+    request: ImageGenerationInstallRequest
+  ): Promise<ImageGenerationInstallResponse>;
+  imageGenerationSetDisabled(
+    request: ImageGenerationSetDisabledRequest
+  ): Promise<ImageGenerationSetDisabledResponse>;
+  imageGenerationRemovePackages(
+    request: ImageGenerationRemovePackagesRequest
+  ): Promise<ImageGenerationRemovePackagesResponse>;
+  imageGenerationGenerate(
+    request: ImageGenerationGenerateRequest
+  ): Promise<ImageGenerationGenerateResponse>;
   probeMicrophoneDevice(
     request: DevicesProbeMicrophoneRequest
   ): Promise<DevicesProbeMicrophoneResponse>;
@@ -621,6 +646,36 @@ class TauriChatIpcClient implements ChatIpcClient {
       "cmd_model_manager_refresh_unsloth_catalog",
       { request }
     );
+  }
+
+  imageGenerationStatus(
+    request: ImageGenerationStatusRequest
+  ): Promise<ImageGenerationStatusResponse> {
+    return this.invokeFn<ImageGenerationStatusResponse>("cmd_image_generation_status", { request });
+  }
+
+  imageGenerationInstall(
+    request: ImageGenerationInstallRequest
+  ): Promise<ImageGenerationInstallResponse> {
+    return this.invokeFn<ImageGenerationInstallResponse>("cmd_image_generation_install", { request });
+  }
+
+  imageGenerationSetDisabled(
+    request: ImageGenerationSetDisabledRequest
+  ): Promise<ImageGenerationSetDisabledResponse> {
+    return this.invokeFn<ImageGenerationSetDisabledResponse>("cmd_image_generation_set_disabled", { request });
+  }
+
+  imageGenerationRemovePackages(
+    request: ImageGenerationRemovePackagesRequest
+  ): Promise<ImageGenerationRemovePackagesResponse> {
+    return this.invokeFn<ImageGenerationRemovePackagesResponse>("cmd_image_generation_remove_packages", { request });
+  }
+
+  imageGenerationGenerate(
+    request: ImageGenerationGenerateRequest
+  ): Promise<ImageGenerationGenerateResponse> {
+    return this.invokeFn<ImageGenerationGenerateResponse>("cmd_image_generation_generate", { request });
   }
 
   probeMicrophoneDevice(
@@ -1920,6 +1975,74 @@ export class MockChatIpcClient implements ChatIpcClient {
       rows: [],
       newCount: 0
     };
+  }
+
+  async imageGenerationStatus(
+    request: ImageGenerationStatusRequest
+  ): Promise<ImageGenerationStatusResponse> {
+    return {
+      correlationId: request.correlationId,
+      package: {
+        id: "flux-1-schnell-onnx-amd",
+        name: "FLUX.1 Schnell ONNX",
+        repoId: "amd/FLUX.1-schnell-onnx",
+        license: "Apache-2.0",
+        sourceUrl: "https://huggingface.co/amd/FLUX.1-schnell-onnx",
+        approximateSizeGb: 36,
+        recommendedSteps: 4,
+        recommendedGuidance: 1
+      },
+      installState: "not_installed",
+      runtimeState: "not_ready",
+      disabled: false,
+      installedPath: null,
+      message: "Mock runtime: package is not installed.",
+      requiredPathsPresent: false,
+      generationReady: false
+    };
+  }
+
+  async imageGenerationInstall(
+    request: ImageGenerationInstallRequest
+  ): Promise<ImageGenerationInstallResponse> {
+    this.emit({
+      timestampMs: Date.now(),
+      correlationId: request.correlationId,
+      subsystem: "service",
+      action: "image.generation.install",
+      stage: "complete",
+      severity: "info",
+      payload: { packageId: "flux-1-schnell-onnx-amd", phase: "complete" }
+    });
+    return {
+      correlationId: request.correlationId,
+      installedPath: "/tmp/arxell/image-packages/flux-1-schnell-onnx-amd",
+      enabled: true
+    };
+  }
+
+  async imageGenerationSetDisabled(
+    request: ImageGenerationSetDisabledRequest
+  ): Promise<ImageGenerationSetDisabledResponse> {
+    return {
+      correlationId: request.correlationId,
+      disabled: request.disabled
+    };
+  }
+
+  async imageGenerationRemovePackages(
+    request: ImageGenerationRemovePackagesRequest
+  ): Promise<ImageGenerationRemovePackagesResponse> {
+    return {
+      correlationId: request.correlationId,
+      removed: true
+    };
+  }
+
+  async imageGenerationGenerate(
+    request: ImageGenerationGenerateRequest
+  ): Promise<ImageGenerationGenerateResponse> {
+    throw new Error(`Mock image generation is not available for prompt: ${request.prompt}`);
   }
 
   async probeMicrophoneDevice(

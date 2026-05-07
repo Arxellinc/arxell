@@ -1385,6 +1385,193 @@ body {
   background: transparent;
 }
 
+.images-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.images-status-pill {
+  display: inline-flex;
+  align-items: center;
+  min-height: 20px;
+  padding: 0 8px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  font-size: var(--text-xs);
+  color: var(--muted);
+  background: var(--surface);
+}
+
+.images-status-pill.is-success {
+  color: var(--status-success);
+}
+
+.images-status-pill.is-warn {
+  color: var(--status-warning);
+}
+
+.images-status-pill.is-error {
+  color: var(--error);
+}
+
+.images-status-pill.is-info {
+  color: var(--status-info);
+}
+
+.images-panel {
+  display: grid;
+  gap: 12px;
+  padding: 12px;
+  color: var(--ink);
+}
+
+.images-topbar,
+.images-section,
+.images-remove-section {
+  display: grid;
+  gap: 10px;
+}
+
+.images-section {
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+
+.images-section-title {
+  font-size: var(--text-sm);
+  color: var(--muted);
+}
+
+.images-disable-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: var(--text-sm);
+  color: var(--ink);
+}
+
+.images-primary-btn {
+  justify-self: start;
+}
+
+.images-progress {
+  display: grid;
+  gap: 5px;
+  max-width: 520px;
+}
+
+.images-progress-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: var(--text-xs);
+  color: var(--ink);
+}
+
+.images-progress-row.is-muted {
+  color: var(--muted);
+}
+
+.images-progress-track {
+  height: 6px;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--surface);
+}
+
+.images-progress-track span {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+}
+
+.images-meta-grid {
+  display: grid;
+  grid-template-columns: minmax(78px, max-content) minmax(0, 1fr);
+  gap: 6px 12px;
+  align-items: center;
+  font-size: var(--text-sm);
+}
+
+.images-meta-grid span {
+  color: var(--muted);
+}
+
+.images-meta-grid strong,
+.images-meta-grid code,
+.images-meta-grid a {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ink);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.images-message {
+  max-width: 620px;
+  font-size: var(--text-xs);
+  color: var(--muted);
+}
+
+.images-prompt {
+  min-height: 110px;
+  resize: vertical;
+}
+
+.images-size-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.images-size-btn {
+  min-height: 24px;
+  padding: 0 8px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  color: var(--ink);
+  background: var(--surface);
+  font-size: var(--text-xs);
+}
+
+.images-size-btn:hover {
+  background: var(--surface-hover);
+}
+
+.images-size-btn.is-active {
+  border-color: var(--active-line);
+  background: var(--active-bg);
+}
+
+.images-settings-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 120px));
+  gap: 10px;
+}
+
+.images-advanced {
+  display: grid;
+  gap: 8px;
+  padding-top: 8px;
+}
+
+.images-remove-section {
+  margin-top: 6px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+
+.tool-action-btn.is-danger {
+  color: var(--error);
+}
+
+.tool-action-btn.is-danger:hover {
+  border-color: var(--error);
+}
+
 .chat-pane {
   grid-template-columns: 1fr;
   grid-template-rows: var(--pane-bar-h) var(--tool-toolbar-h) 1fr auto;
@@ -1449,6 +1636,60 @@ body {
 .message.assistant {
   text-align: left;
   color: var(--muted);
+}
+
+.message-image-list {
+  display: grid;
+  gap: 6px;
+  width: 85%;
+  max-width: 85%;
+}
+
+.message.user .message-image-list {
+  margin-left: auto;
+}
+
+.message.assistant .message-image-list {
+  margin-right: auto;
+}
+
+.message-image-card {
+  display: grid;
+  gap: 4px;
+  width: 100%;
+  margin: 0;
+}
+
+.message-image-card img {
+  display: block;
+  width: 100%;
+  height: auto;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--surface);
+}
+
+.message-image-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  min-height: 16px;
+  font-size: var(--text-2xs);
+}
+
+.message-image-actions a,
+.message-image-actions button {
+  padding: 0;
+  border: 0;
+  color: var(--muted);
+  background: transparent;
+  font: inherit;
+  text-decoration: none;
+}
+
+.message-image-actions a:hover,
+.message-image-actions button:hover {
+  color: var(--ink);
 }
 
 .message-tool-rows {

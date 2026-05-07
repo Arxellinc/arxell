@@ -973,6 +973,93 @@ export interface ModelManagerRefreshUnslothCatalogResponse {
   newCount: number;
 }
 
+export interface ImagePackageMetadata {
+  id: string;
+  name: string;
+  repoId: string;
+  license: string;
+  sourceUrl: string;
+  approximateSizeGb: number;
+  recommendedSteps: number;
+  recommendedGuidance: number;
+}
+
+export type ImageGenerationInstallState = "not_installed" | "installing" | "installed" | "error";
+export type ImageGenerationRuntimeState = "not_ready" | "probe_only" | "ready" | "error";
+
+export interface ImageGenerationStatusRequest {
+  correlationId: string;
+}
+
+export interface ImageGenerationStatusResponse {
+  correlationId: string;
+  package: ImagePackageMetadata;
+  installState: ImageGenerationInstallState;
+  runtimeState: ImageGenerationRuntimeState;
+  disabled: boolean;
+  installedPath: string | null;
+  message: string | null;
+  requiredPathsPresent: boolean;
+  generationReady: boolean;
+}
+
+export interface ImageGenerationInstallRequest {
+  correlationId: string;
+}
+
+export interface ImageGenerationInstallResponse {
+  correlationId: string;
+  installedPath: string;
+  enabled: boolean;
+}
+
+export interface ImageGenerationSetDisabledRequest {
+  correlationId: string;
+  disabled: boolean;
+}
+
+export interface ImageGenerationSetDisabledResponse {
+  correlationId: string;
+  disabled: boolean;
+}
+
+export interface ImageGenerationRemovePackagesRequest {
+  correlationId: string;
+}
+
+export interface ImageGenerationRemovePackagesResponse {
+  correlationId: string;
+  removed: boolean;
+}
+
+export interface MediaAssetRecord {
+  id: string;
+  kind: string;
+  mime: string;
+  filename: string;
+  path: string;
+  width: number | null;
+  height: number | null;
+  sizeBytes: number;
+  createdAt: number;
+  dataBase64?: string | null;
+}
+
+export interface ImageGenerationGenerateRequest {
+  correlationId: string;
+  prompt: string;
+  width: number;
+  height: number;
+  steps: number;
+  guidance: number;
+  seed?: number;
+}
+
+export interface ImageGenerationGenerateResponse {
+  correlationId: string;
+  asset: MediaAssetRecord;
+}
+
 export interface DevicesProbeMicrophoneRequest {
   correlationId: string;
   attemptOpen?: boolean;
