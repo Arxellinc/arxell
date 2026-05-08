@@ -17,6 +17,12 @@ jobs:
   build:
     name: Build (${{ matrix.platform.name }})
     runs-on: ${{ matrix.platform.os }}
+    env:
+      APPIMAGE_EXTRACT_AND_RUN: "1"
+      ARCH: x86_64
+      NO_STRIP: "true"
+      GDK_PIXBUF_MODULEDIR: /usr/lib/x86_64-linux-gnu/gdk-pixbuf-2.0/2.10.0/loaders
+      GDK_PIXBUF_MODULE_FILE: /usr/lib/x86_64-linux-gnu/gdk-pixbuf-2.0/2.10.0/loaders.cache
     strategy:
       fail-fast: false
       matrix:
@@ -92,22 +98,30 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y \
-            pkg-config \
-            libasound2-dev \
             libwebkit2gtk-4.1-dev \
-            libgtk-3-dev \
-            libayatana-appindicator3-dev \
+            libappindicator3-dev \
             librsvg2-dev \
+            patchelf \
+            libfuse2t64 \
             libcairo2-dev \
             libgdk-pixbuf-2.0-dev \
             libgdk-pixbuf2.0-bin \
-            libfuse2t64 \
             squashfs-tools \
-            patchelf
-          sudo gdk-pixbuf-query-loaders --update-cache || true
-          multiarch="$(gcc -print-multiarch)"
-          echo "GDK_PIXBUF_MODULEDIR=/usr/lib/${multiarch}/gdk-pixbuf-2.0/2.10.0/loaders" >> "${GITHUB_ENV}"
-          echo "GDK_PIXBUF_MODULE_FILE=/usr/lib/${multiarch}/gdk-pixbuf-2.0/2.10.0/loaders.cache" >> "${GITHUB_ENV}"
+            libgstreamer1.0-dev \
+            libgstreamer-plugins-base1.0-dev \
+            libgstreamer-plugins-bad1.0-dev \
+            gstreamer1.0-plugins-base \
+            gstreamer1.0-plugins-good \
+            gstreamer1.0-plugins-bad \
+            gstreamer1.0-plugins-ugly \
+            gstreamer1.0-libav \
+            gtk+3.0 \
+            libgtk-3-dev \
+            librsvg2-common \
+            shared-mime-info
+          sudo gdk-pixbuf-query-loaders --update-cache
+          sudo gtk-query-immodules-3.0 --update-cache 2>/dev/null || true
+          sudo update-mime-database /usr/share/mime 2>/dev/null || true
 
       - name: Normalize Linux pkg-config metadata
         if: matrix.platform.os == 'ubuntu-24.04'
@@ -598,59 +612,56 @@ jobs:
           print(f"[kokoro-runtime] manifest written for {archive.name}")
           PY
 
-      - name: Diagnose linuxdeploy (Linux only)
+      - name: Debug — verify linuxdeploy GTK plugin
         if: matrix.platform.os == 'ubuntu-24.04'
-        shell: bash
         env:
-          APPIMAGE_EXTRACT_AND_RUN: 1
-          VERBOSE: 1
+          APPIMAGE_EXTRACT_AND_RUN: "1"
           ARCH: x86_64
+          NO_STRIP: "true"
+          GDK_PIXBUF_MODULEDIR: /usr/lib/x86_64-linux-gnu/gdk-pixbuf-2.0/2.10.0/loaders
+          GDK_PIXBUF_MODULE_FILE: /usr/lib/x86_64-linux-gnu/gdk-pixbuf-2.0/2.10.0/loaders.cache
         run: |
-          set -euo pipefail
-          echo "=== TMP mount options ==="
-          mount | grep "$(df /tmp --output=target | tail -1)" || echo "(no specific mount for /tmp)"
-          echo "=== TMPDIR ==="
-          echo "TMPDIR=${TMPDIR:-/tmp}"
-          echo "=== Download linuxdeploy ==="
-          LINUXDEPLOY_URL="https://github.com/tauri-apps/binary-releases/releases/download/linuxdeploy/linuxdeploy-x86_64.AppImage"
-          curl -fsSL -o /tmp/linuxdeploy.AppImage "${LINUXDEPLOY_URL}"
-          chmod +x /tmp/linuxdeploy.AppImage
-          echo "=== File info ==="
-          file /tmp/linuxdeploy.AppImage
-          ls -la /tmp/linuxdeploy.AppImage
-          echo "=== ldd check ==="
-          ld.so --version 2>&1 || true
-          ldd /tmp/linuxdeploy.AppImage 2>&1 || true
-          echo "=== Try running linuxdeploy --help ==="
-          /tmp/linuxdeploy.AppImage --help 2>&1 || true
-          echo "=== Try running linuxdeploy --list ==="
-          /tmp/linuxdeploy.AppImage --list 2>&1 || true
-          echo "=== Try running linuxdeploy with verbose on a dummy AppDir ==="
-          mkdir -p /tmp/test-appdir/usr/bin
-          mkdir -p /tmp/test-appdir/usr/share/applications
-          mkdir -p /tmp/test-appdir/usr/share/icons/hicolor/256x256/apps
-          cp src-tauri/target/release/arxell /tmp/test-appdir/usr/bin/ || echo "(binary not built yet, using touch)"
-          touch /tmp/test-appdir/usr/bin/arxell
-          chmod +x /tmp/test-appdir/usr/bin/arxell
-          cat > /tmp/test-appdir/usr/share/applications/com.arxell.desktop.desktop <<'DESKTOP'
-          [Desktop Entry]
-          Type=Application
-          Name=Arxell
-          Exec=arxell
-          Icon=arxell
-          Categories=Utility;
-          DESKTOP
-          /tmp/linuxdeploy.AppImage --appdir /tmp/test-appdir --verbose 2>&1 || true
-          echo "=== Diagnostics complete ==="
+          set -uo pipefail
+          CACHE="$HOME/.cache/tauri/linuxdeploy"
+          mkdir -p "$CACHE"
+
+          LDEPLOY="$CACHE/linuxdeploy-x86_64.AppImage"
+          GTK_PLUGIN="$CACHE/linuxdeploy-plugin-gtk.sh"
+
+          [ -f "$LDEPLOY" ] || {
+            curl -fsSL -o "$LDEPLOY" \
+              https://github.com/tauri-apps/binary-releases/releases/download/linuxdeploy/linuxdeploy-x86_64.AppImage
+            chmod +x "$LDEPLOY"
+          }
+          [ -f "$GTK_PLUGIN" ] || {
+            curl -fsSL -o "$GTK_PLUGIN" \
+              https://raw.githubusercontent.com/tauri-apps/linuxdeploy-plugin-gtk/master/linuxdeploy-plugin-gtk.sh
+            chmod +x "$GTK_PLUGIN"
+          }
+
+          APPDIR="$(mktemp -d)/Probe.AppDir"
+          mkdir -p "$APPDIR/usr/bin" "$APPDIR/usr/share/applications"
+          mkdir -p "$APPDIR/usr/share/icons/hicolor/256x256/apps"
+          cp "$(which bash)" "$APPDIR/usr/bin/probe"
+          printf '[Desktop Entry]\nType=Application\nName=Probe\nExec=probe\nIcon=probe\nCategories=Utility;\n' \
+            > "$APPDIR/usr/share/applications/probe.desktop"
+          touch "$APPDIR/usr/share/icons/hicolor/256x256/apps/probe.png"
+
+          echo "=== pixbuf loaders cache ==="
+          find /usr/lib -name "loaders.cache" 2>/dev/null || echo "NOT FOUND"
+
+          echo "=== GTK IM modules cache ==="
+          find /usr/lib -name "immodules.cache" 2>/dev/null || echo "NOT FOUND"
+
+          echo "=== linuxdeploy + GTK plugin ==="
+          DEPLOY_GTK_PLUGINS="$GTK_PLUGIN" \
+            "$LDEPLOY" --appdir "$APPDIR" --plugin gtk 2>&1 || echo "GTK plugin exit: $?"
 
       - name: Build Tauri app bundle
         working-directory: src-tauri
         shell: bash
         env:
           XDG_CACHE_HOME: ${{ runner.temp }}/xdg-cache
-          APPIMAGE_EXTRACT_AND_RUN: 1
-          ARCH: x86_64
-          NO_STRIP: true
         run: |
           set -euo pipefail
           mkdir -p "${XDG_CACHE_HOME}"
@@ -671,6 +682,24 @@ jobs:
               exit 1
               ;;
           esac
+
+      - name: Verify Linux artifacts
+        if: matrix.platform.os == 'ubuntu-24.04'
+        run: |
+          DEB=$(find src-tauri/target/release/bundle/deb -name "*.deb" | head -1)
+          APPIMAGE=$(find src-tauri/target/release/bundle/appimage -name "*.AppImage" | head -1)
+
+          [ -f "$DEB" ]      || { echo "ERROR: .deb not found";      exit 1; }
+          [ -f "$APPIMAGE" ] || { echo "ERROR: .AppImage not found"; exit 1; }
+
+          echo "deb:      $(du -h "$DEB"      | cut -f1)  $DEB"
+          echo "AppImage: $(du -h "$APPIMAGE" | cut -f1)  $APPIMAGE"
+
+          find src-tauri/target/release/bundle/appimage \
+            -type d -name "*.AppDir" -exec rm -rf {} + 2>/dev/null || true
+
+          SIZE=$(stat -c%s "$APPIMAGE")
+          [ "$SIZE" -gt 10485760 ] || { echo "ERROR: AppImage is ${SIZE} bytes — likely a partial build"; exit 1; }
 
       - name: Verify Tauri bundle output
         shell: bash
@@ -713,8 +742,8 @@ jobs:
         with:
           name: ${{ matrix.platform.name }}-v${{ steps.app_version.outputs.version }}-tauri-bundle
           path: |
-            src-tauri/target/release/bundle/**/*.AppImage
-            src-tauri/target/release/bundle/**/*.deb
+            src-tauri/target/release/bundle/deb/*.deb
+            src-tauri/target/release/bundle/appimage/*.AppImage
             src-tauri/target/release/bundle/**/*.dmg
             src-tauri/target/release/bundle/**/*.msi
           if-no-files-found: error
