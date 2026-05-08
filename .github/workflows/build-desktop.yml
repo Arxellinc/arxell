@@ -318,6 +318,13 @@ jobs:
             shutil.copy2(binary_src, binary_dest)
             if os_key != "windows":
               binary_dest.chmod(binary_dest.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+            for so_file in extract_dir.rglob("*.so*"):
+              if so_file.is_file():
+                so_dest = engine_dir / so_file.name
+                shutil.copy2(so_file, so_dest)
+                if os_key != "windows":
+                  so_dest.chmod(so_dest.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+                print(f"[llama-runtime] bundled shared library: {so_file.name}")
             print(f"[llama-runtime] prepared {engine_id}: {binary_dest}")
             prepared[engine_id] = {
               "name": name,
