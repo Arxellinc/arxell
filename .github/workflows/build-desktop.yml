@@ -598,6 +598,51 @@ jobs:
           print(f"[kokoro-runtime] manifest written for {archive.name}")
           PY
 
+      - name: Diagnose linuxdeploy (Linux only)
+        if: matrix.platform.os == 'ubuntu-24.04'
+        shell: bash
+        env:
+          APPIMAGE_EXTRACT_AND_RUN: 1
+          VERBOSE: 1
+          ARCH: x86_64
+        run: |
+          set -euo pipefail
+          echo "=== TMP mount options ==="
+          mount | grep "$(df /tmp --output=target | tail -1)" || echo "(no specific mount for /tmp)"
+          echo "=== TMPDIR ==="
+          echo "TMPDIR=${TMPDIR:-/tmp}"
+          echo "=== Download linuxdeploy ==="
+          LINUXDEPLOY_URL="https://github.com/tauri-apps/binary-releases/releases/download/linuxdeploy/linuxdeploy-x86_64.AppImage"
+          curl -fsSL -o /tmp/linuxdeploy.AppImage "${LINUXDEPLOY_URL}"
+          chmod +x /tmp/linuxdeploy.AppImage
+          echo "=== File info ==="
+          file /tmp/linuxdeploy.AppImage
+          ls -la /tmp/linuxdeploy.AppImage
+          echo "=== ldd check ==="
+          ld.so --version 2>&1 || true
+          ldd /tmp/linuxdeploy.AppImage 2>&1 || true
+          echo "=== Try running linuxdeploy --help ==="
+          /tmp/linuxdeploy.AppImage --help 2>&1 || true
+          echo "=== Try running linuxdeploy --list ==="
+          /tmp/linuxdeploy.AppImage --list 2>&1 || true
+          echo "=== Try running linuxdeploy with verbose on a dummy AppDir ==="
+          mkdir -p /tmp/test-appdir/usr/bin
+          mkdir -p /tmp/test-appdir/usr/share/applications
+          mkdir -p /tmp/test-appdir/usr/share/icons/hicolor/256x256/apps
+          cp src-tauri/target/release/arxell /tmp/test-appdir/usr/bin/ || echo "(binary not built yet, using touch)"
+          touch /tmp/test-appdir/usr/bin/arxell
+          chmod +x /tmp/test-appdir/usr/bin/arxell
+          cat > /tmp/test-appdir/usr/share/applications/com.arxell.desktop.desktop <<'DESKTOP'
+          [Desktop Entry]
+          Type=Application
+          Name=Arxell
+          Exec=arxell
+          Icon=arxell
+          Categories=Utility;
+          DESKTOP
+          /tmp/linuxdeploy.AppImage --appdir /tmp/test-appdir --verbose 2>&1 || true
+          echo "=== Diagnostics complete ==="
+
       - name: Build Tauri app bundle
         working-directory: src-tauri
         shell: bash
