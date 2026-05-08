@@ -18,6 +18,7 @@ jobs:
     name: Build (${{ matrix.platform.name }})
     runs-on: ${{ matrix.platform.os }}
     env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
       APPIMAGE_EXTRACT_AND_RUN: "1"
       ARCH: x86_64
       NO_STRIP: "true"
