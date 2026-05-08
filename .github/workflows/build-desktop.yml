@@ -776,86 +776,15 @@ jobs:
           path: src-tauri/resources/kokoro-runtime/kokoro-runtime-*.zip
           if-no-files-found: error
 
-      - name: Package release bundle
-        id: package_release
-        shell: bash
-        env:
-          PLATFORM_NAME: ${{ matrix.platform.name }}
-          APP_VERSION: ${{ steps.app_version.outputs.version }}
-        run: |
-          set -euo pipefail
-          python - <<'PY'
-          import hashlib
-          import os
-          import pathlib
-          import shutil
-
-          platform_name = os.environ["PLATFORM_NAME"]
-          app_version = os.environ["APP_VERSION"]
-          github_output = pathlib.Path(os.environ["GITHUB_OUTPUT"])
-
-          out_root = pathlib.Path("release-assets")
-          out_root.mkdir(parents=True, exist_ok=True)
-          bundle_dir = out_root / f"{platform_name}-v{app_version}"
-          if bundle_dir.exists():
-              shutil.rmtree(bundle_dir)
-          bundle_dir.mkdir(parents=True, exist_ok=True)
-
-          tauri_bundle_dir = pathlib.Path("src-tauri/target/release/bundle")
-          final_package_suffixes = {".appimage", ".deb", ".dmg", ".msi"}
-          tauri_bundle_files = [
-              p for p in tauri_bundle_dir.rglob("*")
-              if p.is_file() and p.suffix.lower() in final_package_suffixes
-          ]
-          if not tauri_bundle_files:
-              raise RuntimeError(f"no Tauri bundle files found under {tauri_bundle_dir}")
-          for source in tauri_bundle_files:
-              destination = bundle_dir / "tauri-bundle" / source.relative_to(tauri_bundle_dir)
-              destination.parent.mkdir(parents=True, exist_ok=True)
-              shutil.copy2(source, destination)
-
-          llama_manifest = pathlib.Path("src-tauri/resources/llama-runtime/manifest.json")
-          if llama_manifest.is_file():
-              shutil.copy2(llama_manifest, bundle_dir / "llama-runtime-manifest.json")
-
-          whisper_manifest = pathlib.Path("src-tauri/resources/whisper-server/manifest.json")
-          if whisper_manifest.is_file():
-              shutil.copy2(whisper_manifest, bundle_dir / "whisper-runtime-manifest.json")
-
-          kokoro_manifest = pathlib.Path("src-tauri/resources/kokoro-runtime/manifest.json")
-          if kokoro_manifest.is_file():
-              shutil.copy2(kokoro_manifest, bundle_dir / "kokoro-runtime-manifest.json")
-
-          for kokoro_archive in pathlib.Path("src-tauri/resources/kokoro-runtime").glob("kokoro-runtime-*.zip"):
-              shutil.copy2(kokoro_archive, bundle_dir / kokoro_archive.name)
-
-          archive_base = out_root / f"{platform_name}-v{app_version}"
-          archive_zip = pathlib.Path(
-              shutil.make_archive(str(archive_base), "zip", root_dir=bundle_dir.parent, base_dir=bundle_dir.name)
-          )
-          max_release_zip_bytes = 1500 * 1024 * 1024
-          if archive_zip.stat().st_size > max_release_zip_bytes:
-              raise RuntimeError(
-                  f"release asset is too large: {archive_zip.stat().st_size} bytes. "
-                  "This usually means duplicate or unsupported bundle formats were included."
-              )
-
-          digest = hashlib.sha256(archive_zip.read_bytes()).hexdigest()
-          checksum_file = archive_zip.with_suffix(".zip.sha256")
-          checksum_file.write_text(f"{digest}  {archive_zip.name}\n", encoding="utf-8")
-
-          with github_output.open("a", encoding="utf-8") as f:
-              f.write(f"zip={archive_zip.as_posix()}\n")
-              f.write(f"sha256={checksum_file.as_posix()}\n")
-          PY
-
       - name: Upload release bundle artifact
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.platform.name }}-v${{ steps.app_version.outputs.version }}-release-assets
           path: |
-            ${{ steps.package_release.outputs.zip }}
-            ${{ steps.package_release.outputs.sha256 }}
+            src-tauri/target/release/bundle/deb/*.deb
+            src-tauri/target/release/bundle/appimage/*.AppImage
+            src-tauri/target/release/bundle/**/*.dmg
+            src-tauri/target/release/bundle/**/*.msi
           if-no-files-found: error
 
   publish-release:
@@ -877,7 +806,9 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            release-assets/*.zip
-            release-assets/*.sha256
+            release-assets/**/*.deb
+            release-assets/**/*.AppImage
+            release-assets/**/*.dmg
+            release-assets/**/*.msi
           fail_on_unmatched_files: true
           generate_release_notes: true
