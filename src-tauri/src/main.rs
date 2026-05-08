@@ -1,3 +1,8 @@
+#![cfg_attr(
+    all(target_os = "windows", feature = "tauri-runtime"),
+    windows_subsystem = "windows"
+)]
+
 #[cfg(not(feature = "tauri-runtime"))]
 use arxell_lite::app::AppContext;
 #[cfg(not(feature = "tauri-runtime"))]

@@ -1,138 +1,56 @@
+use crate::app_paths;
 use crate::contracts::{
     EventSeverity, EventStage, ImageGenerationGenerateRequest, ImageGenerationGenerateResponse,
     ImageGenerationInstallResponse, ImageGenerationInstallState, ImageGenerationRuntimeState,
     ImageGenerationSetDisabledResponse, ImageGenerationStatusResponse, ImagePackageMetadata,
-    Subsystem,
+    MediaAssetRecord, Subsystem,
 };
 use crate::observability::EventHub;
-use libloading::Library;
+use flate2::read::GzDecoder;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::collections::HashSet;
-use std::fs::File;
+use std::ffi::OsString;
+use std::fs;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
-const CURATED_REPO_ID: &str = "Futuremark/FLUX.1-schnell-onnx";
-const CURATED_SUPPLEMENTAL_REPO_ID: &str = "amd/FLUX.1-schnell-onnx";
-const CURATED_UPSTREAM_URL: &str = "https://huggingface.co/black-forest-labs/FLUX.1-schnell-onnx";
-const PACKAGE_ID: &str = "flux-1-schnell-onnx-fp4-curated";
-const PACKAGE_DIR_NAME: &str = "flux-1-schnell-onnx-fp4-curated";
+const ENGINE_REPO: &str = "leejet/stable-diffusion.cpp";
+const TRANSFORMER_REPO: &str = "leejet/FLUX.1-schnell-gguf";
+const VAE_REPO: &str = "Kijai/flux-fp8";
+const TEXT_ENCODER_REPO: &str = "comfyanonymous/flux_text_encoders";
+const PACKAGE_ID: &str = "flux-1-schnell-gguf-q4";
 const DOWNLOAD_PROGRESS_INTERVAL_BYTES: u64 = 2 * 1024 * 1024;
-const CURATED_CORE_MODEL_BYTES: u64 = 6_777_600_000;
-const CURATED_AUXILIARY_BYTES: u64 = 9_865_749_000;
-struct CuratedAsset {
+
+struct ModelAsset {
     repo_id: &'static str,
-    source_path: &'static str,
-    install_path: &'static str,
+    filename: &'static str,
+    install_name: &'static str,
 }
 
-const CURATED_ASSETS: &[CuratedAsset] = &[
-    CuratedAsset {
-        repo_id: CURATED_REPO_ID,
-        source_path: "clip.opt/model.onnx",
-        install_path: "clip.opt/model.onnx",
+const MODEL_ASSETS: &[ModelAsset] = &[
+    ModelAsset {
+        repo_id: TRANSFORMER_REPO,
+        filename: "flux1-schnell-q4_0.gguf",
+        install_name: "flux1-schnell-q4_0.gguf",
     },
-    CuratedAsset {
-        repo_id: CURATED_REPO_ID,
-        source_path: "t5.opt/model.onnx",
-        install_path: "t5.opt/model.onnx",
+    ModelAsset {
+        repo_id: VAE_REPO,
+        filename: "flux-vae-bf16.safetensors",
+        install_name: "ae.safetensors",
     },
-    CuratedAsset {
-        repo_id: CURATED_REPO_ID,
-        source_path: "t5.opt/backbone.onnx_data",
-        install_path: "t5.opt/backbone.onnx_data",
+    ModelAsset {
+        repo_id: TEXT_ENCODER_REPO,
+        filename: "clip_l.safetensors",
+        install_name: "clip_l.safetensors",
     },
-    CuratedAsset {
-        repo_id: CURATED_REPO_ID,
-        source_path: "transformer.opt/fp4/model.onnx",
-        install_path: "transformer.opt/fp4/model.onnx",
-    },
-    CuratedAsset {
-        repo_id: CURATED_REPO_ID,
-        source_path: "transformer.opt/fp4/backbone.onnx_data",
-        install_path: "transformer.opt/fp4/backbone.onnx_data",
-    },
-    CuratedAsset {
-        repo_id: CURATED_REPO_ID,
-        source_path: "vae.opt/model.onnx",
-        install_path: "vae.opt/model.onnx",
-    },
-    CuratedAsset {
-        repo_id: CURATED_SUPPLEMENTAL_REPO_ID,
-        source_path: "model_index.json",
-        install_path: "model_index.json",
-    },
-    CuratedAsset {
-        repo_id: CURATED_SUPPLEMENTAL_REPO_ID,
-        source_path: "scheduler/scheduler_config.json",
-        install_path: "scheduler/scheduler_config.json",
-    },
-    CuratedAsset {
-        repo_id: CURATED_SUPPLEMENTAL_REPO_ID,
-        source_path: "text_encoder/config.json",
-        install_path: "text_encoder/config.json",
-    },
-    CuratedAsset {
-        repo_id: CURATED_SUPPLEMENTAL_REPO_ID,
-        source_path: "text_encoder_2/config.json",
-        install_path: "text_encoder_2/config.json",
-    },
-    CuratedAsset {
-        repo_id: CURATED_SUPPLEMENTAL_REPO_ID,
-        source_path: "tokenizer/merges.txt",
-        install_path: "tokenizer/merges.txt",
-    },
-    CuratedAsset {
-        repo_id: CURATED_SUPPLEMENTAL_REPO_ID,
-        source_path: "tokenizer/special_tokens_map.json",
-        install_path: "tokenizer/special_tokens_map.json",
-    },
-    CuratedAsset {
-        repo_id: CURATED_SUPPLEMENTAL_REPO_ID,
-        source_path: "tokenizer/tokenizer_config.json",
-        install_path: "tokenizer/tokenizer_config.json",
-    },
-    CuratedAsset {
-        repo_id: CURATED_SUPPLEMENTAL_REPO_ID,
-        source_path: "tokenizer/vocab.json",
-        install_path: "tokenizer/vocab.json",
-    },
-    CuratedAsset {
-        repo_id: CURATED_SUPPLEMENTAL_REPO_ID,
-        source_path: "tokenizer_2/special_tokens_map.json",
-        install_path: "tokenizer_2/special_tokens_map.json",
-    },
-    CuratedAsset {
-        repo_id: CURATED_SUPPLEMENTAL_REPO_ID,
-        source_path: "tokenizer_2/spiece.model",
-        install_path: "tokenizer_2/spiece.model",
-    },
-    CuratedAsset {
-        repo_id: CURATED_SUPPLEMENTAL_REPO_ID,
-        source_path: "tokenizer_2/tokenizer.json",
-        install_path: "tokenizer_2/tokenizer.json",
-    },
-    CuratedAsset {
-        repo_id: CURATED_SUPPLEMENTAL_REPO_ID,
-        source_path: "tokenizer_2/tokenizer_config.json",
-        install_path: "tokenizer_2/tokenizer_config.json",
-    },
-    CuratedAsset {
-        repo_id: CURATED_SUPPLEMENTAL_REPO_ID,
-        source_path: "unet/config.json",
-        install_path: "unet/config.json",
-    },
-    CuratedAsset {
-        repo_id: CURATED_SUPPLEMENTAL_REPO_ID,
-        source_path: "vae_decoder/config.json",
-        install_path: "vae_decoder/config.json",
-    },
-    CuratedAsset {
-        repo_id: CURATED_SUPPLEMENTAL_REPO_ID,
-        source_path: "vae_encoder/config.json",
-        install_path: "vae_encoder/config.json",
+    ModelAsset {
+        repo_id: TEXT_ENCODER_REPO,
+        filename: "t5xxl_fp8_e4m3fn.safetensors",
+        install_name: "t5xxl_fp8_e4m3fn.safetensors",
     },
 ];
 
@@ -147,11 +65,23 @@ struct HfSibling {
     size: Option<u64>,
 }
 
-#[derive(Debug, Clone)]
-struct ResolvedCuratedAsset {
-    repo_id: &'static str,
-    source_path: String,
-    install_path: String,
+#[derive(Debug, Deserialize)]
+struct GithubRelease {
+    tag_name: String,
+    assets: Vec<GithubAsset>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct GithubAsset {
+    name: String,
+    browser_download_url: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct ResolvedModelAsset {
+    repo_id: String,
+    filename: String,
+    install_name: String,
     size: u64,
 }
 
@@ -162,11 +92,10 @@ struct ImageGenerationSettings {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct ImageGenerationProbeState {
-    package_signature: String,
-    runtime_state: ImageGenerationRuntimeState,
-    message: String,
+#[allow(dead_code)]
+struct EngineInstallSnapshot {
+    engine_installed: bool,
+    model_files_present: bool,
 }
 
 #[derive(Clone)]
@@ -188,65 +117,45 @@ impl ImageGenerationService {
         correlation_id: &str,
         app_data_dir: &Path,
     ) -> Result<ImageGenerationStatusResponse, String> {
-        let package_dir = package_dir(app_data_dir);
         let settings = read_settings(app_data_dir);
-        let validation = validate_package_dir(&package_dir);
-        let installed = package_dir.exists() && validation.is_ok();
-        let validation_error = validation.err();
-        let probe_state = if installed {
-            read_probe_state(app_data_dir)
-        } else {
-            None
-        };
-        let package_signature = installed
-            .then(|| compute_package_signature(&package_dir))
-            .transpose()?;
-        let probe_matches = probe_state
-            .as_ref()
-            .zip(package_signature.as_ref())
-            .map(|(probe, sig)| probe.package_signature == *sig)
-            .unwrap_or(false);
-        let runtime_state = if installed {
-            match probe_state
-                .as_ref()
-                .filter(|_| probe_matches)
-                .map(|probe| probe.runtime_state.clone())
-            {
-                Some(ImageGenerationRuntimeState::Error) => ImageGenerationRuntimeState::Error,
-                Some(ImageGenerationRuntimeState::Ready) => ImageGenerationRuntimeState::Ready,
-                Some(_) => ImageGenerationRuntimeState::ProbeOnly,
-                None => ImageGenerationRuntimeState::NotReady,
-            }
-        } else {
+        let engine_path = engine_binary_path(app_data_dir);
+        let model_dir = model_dir(app_data_dir);
+        let engine_installed = engine_path.exists();
+        let model_files_present = validate_model_dir(&model_dir).is_ok();
+        let installed = engine_installed && model_files_present;
+        let generation_ready = installed && !settings.disabled;
+
+        let runtime_state = if !installed {
             ImageGenerationRuntimeState::NotReady
-        };
-        let message = if let Some(err) = validation_error {
-            Some(err)
-        } else if installed {
-            probe_state
-                .as_ref()
-                .filter(|_| probe_matches)
-                .map(|probe| probe.message.clone())
-                .or_else(|| {
-                    Some("Curated FLUX ONNX FP4 package is installed, but the runtime probe has not been recorded yet.".to_string())
-                })
+        } else if settings.disabled {
+            ImageGenerationRuntimeState::ProbeOnly
         } else {
-            None
+            ImageGenerationRuntimeState::Ready
         };
-        let generation_ready = matches!(runtime_state, ImageGenerationRuntimeState::Ready);
+
+        let message = if !engine_installed && !model_files_present {
+            None
+        } else if !engine_installed {
+            Some("Model files are installed but the engine binary is missing.".to_string())
+        } else if !model_files_present {
+            Some("Engine is installed but model files are missing.".to_string())
+        } else {
+            Some("FLUX.1 Schnell GGUF Q4_0 ready for image generation.".to_string())
+        };
+
         Ok(ImageGenerationStatusResponse {
             correlation_id: correlation_id.to_string(),
             package: curated_package_metadata(),
             install_state: if installed {
                 ImageGenerationInstallState::Installed
-            } else if package_dir.exists() {
+            } else if engine_path.exists() || model_dir.exists() {
                 ImageGenerationInstallState::Error
             } else {
                 ImageGenerationInstallState::NotInstalled
             },
             runtime_state,
             disabled: settings.disabled,
-            installed_path: installed.then(|| package_dir.to_string_lossy().to_string()),
+            installed_path: installed.then(|| model_dir.to_string_lossy().to_string()),
             message,
             required_paths_present: installed,
             generation_ready,
@@ -281,229 +190,162 @@ impl ImageGenerationService {
         app_data_dir: &Path,
     ) -> Result<ImageGenerationInstallResponse, String> {
         self.clear_install_cancel(correlation_id);
+        let mut phase = "preflight";
+
         self.emit(
             correlation_id,
             "image.generation.install",
             EventStage::Start,
             EventSeverity::Info,
             json!({
-                "repoId": CURATED_REPO_ID,
-                "supplementalRepoId": CURATED_SUPPLEMENTAL_REPO_ID,
                 "packageId": PACKAGE_ID,
-                "phase": "preflight"
+                "phase": phase,
             }),
         );
 
-        let image_root = image_packages_dir(app_data_dir)?;
-        let staging_root = app_data_dir.join("image-packages-staging");
-        std::fs::create_dir_all(&staging_root)
-            .map_err(|e| format!("failed to create image package staging directory: {e}"))?;
-        let staging_dir = staging_root.join(format!("{}.part", PACKAGE_DIR_NAME));
-        let mut phase = "preflight";
+        let engine_dir = engine_dir(app_data_dir);
+        let model_root = model_dir(app_data_dir);
+
         let result = (|| -> Result<ImageGenerationInstallResponse, String> {
-            if staging_dir.exists() {
-                std::fs::remove_dir_all(&staging_dir).map_err(|e| {
-                    format!("failed to clean previous image package staging directory: {e}")
+            fs::create_dir_all(&engine_dir)
+                .map_err(|e| format!("failed to create engine directory: {e}"))?;
+            fs::create_dir_all(&model_root)
+                .map_err(|e| format!("failed to create model directory: {e}"))?;
+
+            verify_write_access(&engine_dir)?;
+
+            if !engine_binary_path(app_data_dir).exists() {
+                phase = "engine";
+                self.emit(
+                    correlation_id,
+                    "image.generation.install",
+                    EventStage::Progress,
+                    EventSeverity::Info,
+                    json!({
+                        "packageId": PACKAGE_ID,
+                        "phase": phase,
+                        "message": "Downloading stable-diffusion.cpp engine",
+                    }),
+                );
+                let engine_binary = download_engine_binary().map_err(|e| {
+                    format!("engine download failed (correlation={}): {e}", correlation_id)
                 })?;
+                let target = engine_binary_path(app_data_dir);
+                install_engine_binary(&engine_binary, &target)?;
+                let _ = fs::remove_dir_all(&engine_binary.parent().unwrap_or(Path::new(".")));
             }
-            std::fs::create_dir_all(&staging_dir)
-                .map_err(|e| format!("failed to create image package staging directory: {e}"))?;
 
-            verify_runtime_architecture()?;
-            verify_write_access(&staging_root)?;
-            let ort_path = resolve_onnxruntime_library().ok_or_else(|| {
-                "bundled ONNX Runtime library was not found in resources/onnxruntime".to_string()
-            })?;
-            verify_onnxruntime_library_loadable(&ort_path)?;
+            if validate_model_dir(&model_root).is_err() {
+                phase = "download";
+                let client = reqwest::blocking::Client::builder()
+                    .user_agent(format!("{}/image-install", app_paths::APP_USER_AGENT))
+                    .build()
+                    .map_err(|e| format!("failed to create HTTP client: {e}"))?;
 
-            let client = reqwest::blocking::Client::builder()
-                .user_agent("arxell-image-generation/0.1")
-                .build()
-                .map_err(|e| format!("failed to create HTTP client: {e}"))?;
-            let assets = resolve_curated_assets(&client)?;
-            if assets.is_empty() {
-                return Err(
-                    "curated image package metadata did not include downloadable files".to_string(),
+                let resolved = resolve_model_assets(&client)?;
+                let total_bytes: u64 = resolved.iter().map(|a| a.size).sum();
+                let file_count = resolved.len();
+
+                ensure_free_space(&model_root, required_free_space_bytes(total_bytes))?;
+
+                self.emit(
+                    correlation_id,
+                    "image.generation.install",
+                    EventStage::Progress,
+                    EventSeverity::Info,
+                    json!({
+                        "packageId": PACKAGE_ID,
+                        "phase": phase,
+                        "fileCount": file_count,
+                        "totalBytes": total_bytes,
+                    }),
                 );
-            }
-            let total_bytes = total_bytes_for_assets(&assets);
-            ensure_free_space(&staging_root, required_free_space_bytes(total_bytes))?;
 
-            phase = "download";
-            self.emit(
-                correlation_id,
-                "image.generation.install",
-                EventStage::Progress,
-                EventSeverity::Info,
-                json!({
-                    "repoId": CURATED_REPO_ID,
-                    "supplementalRepoId": CURATED_SUPPLEMENTAL_REPO_ID,
-                    "packageId": PACKAGE_ID,
-                    "phase": phase,
-                    "fileCount": assets.len(),
-                    "totalBytes": total_bytes
-                }),
-            );
+                let mut received_total = 0_u64;
+                let mut next_emit_at = DOWNLOAD_PROGRESS_INTERVAL_BYTES;
 
-            let mut received_total = 0_u64;
-            let mut next_emit_at = DOWNLOAD_PROGRESS_INTERVAL_BYTES;
-            for asset in assets {
-                if self.is_install_cancelled(correlation_id) {
-                    return Err("image package install cancelled by user".to_string());
-                }
-                let relative = sanitize_relative_path(asset.install_path.as_str())?;
-                let target = staging_dir.join(&relative);
-                if let Some(parent) = target.parent() {
-                    std::fs::create_dir_all(parent)
-                        .map_err(|e| format!("failed to create model package directory: {e}"))?;
-                }
-                let encoded_path = asset
-                    .source_path
-                    .split('/')
-                    .map(url_encode_path_segment)
-                    .collect::<Vec<_>>()
-                    .join("/");
-                let url = format!(
-                    "https://huggingface.co/{}/resolve/main/{encoded_path}?download=true",
-                    asset.repo_id
-                );
-                let mut response = client
-                    .get(url.as_str())
-                    .send()
-                    .and_then(|r| r.error_for_status())
-                    .map_err(|e| {
-                        format!(
-                            "failed downloading {} from {}: {e}",
-                            asset.source_path, asset.repo_id
-                        )
-                    })?;
-                let mut file = File::create(&target)
-                    .map_err(|e| format!("failed creating package file: {e}"))?;
-                let mut buffer = [0_u8; 64 * 1024];
-                loop {
+                for asset in &resolved {
                     if self.is_install_cancelled(correlation_id) {
                         return Err("image package install cancelled by user".to_string());
                     }
-                    let read = response
-                        .read(&mut buffer)
-                        .map_err(|e| format!("failed reading package response: {e}"))?;
-                    if read == 0 {
-                        break;
+                    let target = model_root.join(&asset.install_name);
+                    if target.exists() {
+                        if let Ok(meta) = fs::metadata(&target) {
+                            received_total = received_total.saturating_add(meta.len());
+                            continue;
+                        }
                     }
-                    file.write_all(&buffer[..read])
-                        .map_err(|e| format!("failed writing package file: {e}"))?;
-                    received_total = received_total.saturating_add(read as u64);
-                    if received_total >= next_emit_at {
-                        self.emit(
-                            correlation_id,
-                            "image.generation.install",
-                            EventStage::Progress,
-                            EventSeverity::Info,
-                            json!({
-                                "repoId": CURATED_REPO_ID,
-                                "supplementalRepoId": CURATED_SUPPLEMENTAL_REPO_ID,
-                                "packageId": PACKAGE_ID,
-                                "phase": phase,
-                                "fileName": asset.install_path,
-                                "receivedBytes": received_total,
-                                "totalBytes": total_bytes,
-                                "percent": (received_total as f64 / total_bytes as f64 * 100.0).min(100.0)
-                            }),
-                        );
-                        next_emit_at =
-                            received_total.saturating_add(DOWNLOAD_PROGRESS_INTERVAL_BYTES);
+                    let encoded_filename = url_encode_path_segment(&asset.filename);
+                    let url = format!(
+                        "https://huggingface.co/{}/resolve/main/{}?download=true",
+                        asset.repo_id, encoded_filename,
+                    );
+                    let mut response = client
+                        .get(&url)
+                        .send()
+                        .and_then(|r| r.error_for_status())
+                        .map_err(|e| {
+                            format!("failed downloading {} from {}: {e}", asset.filename, asset.repo_id)
+                        })?;
+                    let mut file =
+                        fs::File::create(&target).map_err(|e| format!("failed creating file: {e}"))?;
+                    let mut buffer = [0u8; 64 * 1024];
+                    loop {
+                        if self.is_install_cancelled(correlation_id) {
+                            let _ = fs::remove_file(&target);
+                            return Err("image package install cancelled by user".to_string());
+                        }
+                        let read = response
+                            .read(&mut buffer)
+                            .map_err(|e| format!("failed reading response: {e}"))?;
+                        if read == 0 {
+                            break;
+                        }
+                        file.write_all(&buffer[..read])
+                            .map_err(|e| format!("failed writing file: {e}"))?;
+                        received_total = received_total.saturating_add(read as u64);
+                        if received_total >= next_emit_at {
+                            self.emit(
+                                correlation_id,
+                                "image.generation.install",
+                                EventStage::Progress,
+                                EventSeverity::Info,
+                                json!({
+                                    "packageId": PACKAGE_ID,
+                                    "phase": phase,
+                                    "fileName": asset.install_name,
+                                    "receivedBytes": received_total,
+                                    "totalBytes": total_bytes,
+                                    "percent": (received_total as f64 / total_bytes as f64 * 100.0).min(100.0),
+                                }),
+                            );
+                            next_emit_at = received_total.saturating_add(DOWNLOAD_PROGRESS_INTERVAL_BYTES);
+                        }
                     }
+                    file.flush().map_err(|e| format!("failed flushing file: {e}"))?;
                 }
-                file.flush()
-                    .map_err(|e| format!("failed flushing package file: {e}"))?;
-            }
-            self.emit(
-                correlation_id,
-                "image.generation.install",
-                EventStage::Progress,
-                EventSeverity::Info,
-                json!({
-                    "repoId": CURATED_REPO_ID,
-                    "supplementalRepoId": CURATED_SUPPLEMENTAL_REPO_ID,
-                    "packageId": PACKAGE_ID,
-                    "phase": phase,
-                    "receivedBytes": received_total,
-                    "totalBytes": total_bytes,
-                    "percent": (received_total as f64 / total_bytes as f64 * 100.0).min(100.0)
-                }),
-            );
 
-            phase = "validate";
-            self.emit(
-                correlation_id,
-                "image.generation.install",
-                EventStage::Progress,
-                EventSeverity::Info,
-                json!({
-                    "repoId": CURATED_REPO_ID,
-                    "supplementalRepoId": CURATED_SUPPLEMENTAL_REPO_ID,
-                    "packageId": PACKAGE_ID,
-                    "phase": phase
-                }),
-            );
-            validate_package_dir(&staging_dir)?;
+                self.emit(
+                    correlation_id,
+                    "image.generation.install",
+                    EventStage::Progress,
+                    EventSeverity::Info,
+                    json!({
+                        "packageId": PACKAGE_ID,
+                        "phase": "validate",
+                        "receivedBytes": received_total,
+                        "totalBytes": total_bytes,
+                        "percent": 100.0_f64,
+                    }),
+                );
 
-            phase = "activating";
-            self.emit(
-                correlation_id,
-                "image.generation.install",
-                EventStage::Progress,
-                EventSeverity::Info,
-                json!({
-                    "repoId": CURATED_REPO_ID,
-                    "supplementalRepoId": CURATED_SUPPLEMENTAL_REPO_ID,
-                    "packageId": PACKAGE_ID,
-                    "phase": phase,
-                    "receivedBytes": total_bytes,
-                    "totalBytes": total_bytes,
-                    "percent": 100.0_f64
-                }),
-            );
-
-            let final_dir = image_root.join(PACKAGE_DIR_NAME);
-            let previous_dir = image_root.join(format!("{}.previous", PACKAGE_DIR_NAME));
-            if previous_dir.exists() {
-                let _ = std::fs::remove_dir_all(&previous_dir);
-            }
-            if final_dir.exists() {
-                std::fs::rename(&final_dir, &previous_dir)
-                    .map_err(|e| format!("failed staging previous image package: {e}"))?;
-            }
-            match std::fs::rename(&staging_dir, &final_dir) {
-                Ok(()) => {
-                    if previous_dir.exists() {
-                        let _ = std::fs::remove_dir_all(&previous_dir);
-                    }
-                }
-                Err(err) => {
-                    if previous_dir.exists() {
-                        let _ = std::fs::rename(&previous_dir, &final_dir);
-                    }
-                    return Err(format!("failed activating image package: {err}"));
-                }
+                validate_model_dir(&model_root)?;
             }
 
             let mut settings = read_settings(app_data_dir);
             settings.disabled = false;
             write_settings(app_data_dir, &settings)?;
-            let probe_state = match run_runtime_probe(&final_dir) {
-                Ok(message) => ImageGenerationProbeState {
-                    package_signature: compute_package_signature(&final_dir)?,
-                    runtime_state: ImageGenerationRuntimeState::ProbeOnly,
-                    message,
-                },
-                Err(message) => ImageGenerationProbeState {
-                    package_signature: compute_package_signature(&final_dir)?,
-                    runtime_state: ImageGenerationRuntimeState::Error,
-                    message,
-                },
-            };
-            write_probe_state(app_data_dir, &probe_state)?;
+
             self.clear_install_cancel(correlation_id);
             self.emit(
                 correlation_id,
@@ -511,25 +353,23 @@ impl ImageGenerationService {
                 EventStage::Complete,
                 EventSeverity::Info,
                 json!({
-                    "repoId": CURATED_REPO_ID,
-                    "supplementalRepoId": CURATED_SUPPLEMENTAL_REPO_ID,
                     "packageId": PACKAGE_ID,
                     "phase": "complete",
-                    "installedPath": final_dir.to_string_lossy(),
-                    "runtimeState": probe_state.runtime_state,
-                    "runtimeMessage": probe_state.message
+                    "enginePath": engine_binary_path(app_data_dir).to_string_lossy(),
+                    "modelPath": model_root.to_string_lossy(),
                 }),
             );
+
             Ok(ImageGenerationInstallResponse {
                 correlation_id: correlation_id.to_string(),
-                installed_path: final_dir.to_string_lossy().to_string(),
+                installed_path: model_root.to_string_lossy().to_string(),
                 enabled: true,
             })
         })();
+
         match result {
             Ok(response) => Ok(response),
             Err(message) => {
-                let _ = std::fs::remove_dir_all(&staging_dir);
                 self.clear_install_cancel(correlation_id);
                 self.emit(
                     correlation_id,
@@ -537,11 +377,9 @@ impl ImageGenerationService {
                     EventStage::Error,
                     EventSeverity::Error,
                     json!({
-                        "repoId": CURATED_REPO_ID,
-                        "supplementalRepoId": CURATED_SUPPLEMENTAL_REPO_ID,
                         "packageId": PACKAGE_ID,
                         "phase": phase,
-                        "message": message
+                        "message": message,
                     }),
                 );
                 Err(format!("install {phase} failed: {message}"))
@@ -566,21 +404,22 @@ impl ImageGenerationService {
         correlation_id: &str,
         app_data_dir: &Path,
     ) -> Result<bool, String> {
-        let root = app_data_dir.join("image-packages");
-        let removed = if root.exists() {
-            std::fs::remove_dir_all(&root)
-                .map_err(|e| format!("failed removing image packages: {e}"))?;
-            true
-        } else {
-            false
-        };
-        let staging = app_data_dir.join("image-packages-staging");
-        if staging.exists() {
-            let _ = std::fs::remove_dir_all(&staging);
+        let engine_root = engine_dir(app_data_dir);
+        let model_root = model_dir(app_data_dir);
+        let staging = model_root.with_extension("staging");
+        let mut removed = false;
+        if engine_root.exists() {
+            fs::remove_dir_all(&engine_root)
+                .map_err(|e| format!("failed removing engine: {e}"))?;
+            removed = true;
         }
-        let probe = probe_state_path(app_data_dir);
-        if probe.exists() {
-            let _ = std::fs::remove_file(&probe);
+        if model_root.exists() {
+            fs::remove_dir_all(&model_root)
+                .map_err(|e| format!("failed removing models: {e}"))?;
+            removed = true;
+        }
+        if staging.exists() {
+            let _ = fs::remove_dir_all(&staging);
         }
         let mut settings = read_settings(app_data_dir);
         settings.disabled = true;
@@ -605,14 +444,130 @@ impl ImageGenerationService {
             return Err("image generation is disabled".to_string());
         }
         if !status.required_paths_present {
-            return Err("image package is not installed or failed validation".to_string());
+            return Err("image generation engine and/or models are not installed".to_string());
         }
-        if status.runtime_state == ImageGenerationRuntimeState::Error {
-            return Err(status
-                .message
-                .unwrap_or_else(|| "image runtime probe failed".to_string()));
+        if !status.generation_ready {
+            return Err("image generation is not ready".to_string());
         }
-        Err("The curated FLUX package is installed and validated, but the full text-to-image pipeline is not implemented yet.".to_string())
+
+        let binary = engine_binary_path(app_data_dir);
+        let models = model_dir(app_data_dir);
+        let output_dir = app_data_dir.join("outputs").join("images");
+        fs::create_dir_all(&output_dir)
+            .map_err(|e| format!("failed creating output directory: {e}"))?;
+
+        let output_id = uuid::Uuid::new_v4().to_string();
+        let output_filename = format!("{output_id}.png");
+        let output_path = output_dir.join(&output_filename);
+
+        self.emit(
+            &request.correlation_id,
+            "image.generation.generate",
+            EventStage::Start,
+            EventSeverity::Info,
+            json!({
+                "prompt": request.prompt,
+                "width": request.width,
+                "height": request.height,
+                "steps": request.steps,
+                "guidance": request.guidance,
+            }),
+        );
+
+        let diffusion_model = models.join("flux1-schnell-q4_0.gguf");
+        let vae = models.join("ae.safetensors");
+        let clip_l = models.join("clip_l.safetensors");
+        let t5xxl = models.join("t5xxl_fp8_e4m3fn.safetensors");
+
+        let mut cmd = Command::new(&binary);
+        cmd.arg("--diffusion-model")
+            .arg(&diffusion_model)
+            .arg("--vae")
+            .arg(&vae)
+            .arg("--clip_l")
+            .arg(&clip_l)
+            .arg("--t5xxl")
+            .arg(&t5xxl)
+            .arg("-p")
+            .arg(&request.prompt)
+            .arg("-o")
+            .arg(&output_path)
+            .arg("--cfg-scale")
+            .arg(request.guidance.to_string())
+            .arg("--sampling-method")
+            .arg("euler")
+            .arg("--steps")
+            .arg(request.steps.to_string())
+            .arg("-W")
+            .arg(request.width.to_string())
+            .arg("-H")
+            .arg(request.height.to_string())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+
+        if let Some(seed) = request.seed {
+            cmd.arg("--seed").arg(seed.to_string());
+        }
+
+        let engine_parent = binary.parent().unwrap_or(app_data_dir);
+        prepend_engine_lib_path(&mut cmd, engine_parent);
+
+        #[cfg(target_os = "windows")]
+        {
+            use std::os::windows::process::CommandExt;
+            const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+            cmd.creation_flags(CREATE_NO_WINDOW);
+        }
+
+        let result = cmd.output().map_err(|e| format!("failed to run sd-cli: {e}"))?;
+
+        if !result.status.success() {
+            let stderr = String::from_utf8_lossy(&result.stderr);
+            return Err(format!("sd-cli failed (exit {:?}): {}", result.status.code(), stderr.trim()));
+        }
+
+        if !output_path.exists() {
+            return Err("sd-cli completed but output file was not created".to_string());
+        }
+
+        let file_bytes = fs::read(&output_path)
+            .map_err(|e| format!("failed reading generated image: {e}"))?;
+        let file_size = file_bytes.len() as u64;
+        let data_base64 = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &file_bytes);
+
+        let now_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as i64)
+            .unwrap_or(0);
+
+        let asset = MediaAssetRecord {
+            id: output_id,
+            kind: "generated".to_string(),
+            mime: "image/png".to_string(),
+            filename: output_filename,
+            path: output_path.to_string_lossy().to_string(),
+            width: Some(request.width),
+            height: Some(request.height),
+            size_bytes: file_size,
+            created_at: now_ms,
+            data_base64: Some(data_base64),
+        };
+
+        self.emit(
+            &request.correlation_id,
+            "image.generation.generate",
+            EventStage::Complete,
+            EventSeverity::Info,
+            json!({
+                "assetId": asset.id,
+                "sizeBytes": asset.size_bytes,
+            }),
+        );
+
+        Ok(ImageGenerationGenerateResponse {
+            correlation_id: request.correlation_id.clone(),
+            asset,
+        })
     }
 
     fn is_install_cancelled(&self, correlation_id: &str) -> bool {
@@ -651,44 +606,51 @@ impl ImageGenerationService {
 pub fn curated_package_metadata() -> ImagePackageMetadata {
     ImagePackageMetadata {
         id: PACKAGE_ID.to_string(),
-        name: "FLUX.1 Schnell ONNX FP4".to_string(),
-        repo_id: CURATED_REPO_ID.to_string(),
+        name: "FLUX.1 Schnell GGUF Q4_0".to_string(),
+        repo_id: TRANSFORMER_REPO.to_string(),
         license: "Apache-2.0".to_string(),
-        source_url: format!("https://huggingface.co/{CURATED_REPO_ID}"),
-        upstream_url: Some(CURATED_UPSTREAM_URL.to_string()),
-        precision_label: "FP4 transformer".to_string(),
-        core_model_bytes: CURATED_CORE_MODEL_BYTES,
-        auxiliary_bytes: CURATED_AUXILIARY_BYTES,
-        total_install_bytes: CURATED_CORE_MODEL_BYTES.saturating_add(CURATED_AUXILIARY_BYTES),
+        source_url: format!("https://huggingface.co/{TRANSFORMER_REPO}"),
+        upstream_url: Some("https://huggingface.co/black-forest-labs/FLUX.1-schnell".to_string()),
+        precision_label: "GGUF Q4_0".to_string(),
+        core_model_bytes: 6_400_000_000,
+        auxiliary_bytes: 5_100_000_000,
+        total_install_bytes: 11_500_000_000,
         recommended_steps: 4,
         recommended_guidance: 1.0,
     }
 }
 
-fn image_packages_dir(app_data_dir: &Path) -> Result<PathBuf, String> {
-    let path = app_data_dir.join("image-packages");
-    std::fs::create_dir_all(&path)
-        .map_err(|e| format!("failed to create image packages directory: {e}"))?;
-    Ok(path)
+fn engine_dir(app_data_dir: &Path) -> PathBuf {
+    app_data_dir.join("engines").join("sd-cpp")
 }
 
-fn package_dir(app_data_dir: &Path) -> PathBuf {
-    app_data_dir.join("image-packages").join(PACKAGE_DIR_NAME)
+fn engine_binary_path(app_data_dir: &Path) -> PathBuf {
+    engine_dir(app_data_dir).join(engine_binary_filename())
+}
+
+fn engine_binary_filename() -> &'static str {
+    if cfg!(target_os = "windows") {
+        "sd-cli.exe"
+    } else {
+        "sd-cli"
+    }
+}
+
+fn model_dir(app_data_dir: &Path) -> PathBuf {
+    app_data_dir
+        .join("models")
+        .join("flux")
+        .join("schnell")
+        .join("q4_0")
 }
 
 fn settings_path(app_data_dir: &Path) -> PathBuf {
     app_data_dir.join("image-generation").join("settings.json")
 }
 
-fn probe_state_path(app_data_dir: &Path) -> PathBuf {
-    app_data_dir
-        .join("image-generation")
-        .join("probe-state.json")
-}
-
 fn read_settings(app_data_dir: &Path) -> ImageGenerationSettings {
     let path = settings_path(app_data_dir);
-    let Ok(raw) = std::fs::read_to_string(&path) else {
+    let Ok(raw) = fs::read_to_string(&path) else {
         return ImageGenerationSettings::default();
     };
     serde_json::from_str(&raw).unwrap_or_default()
@@ -697,218 +659,460 @@ fn read_settings(app_data_dir: &Path) -> ImageGenerationSettings {
 fn write_settings(app_data_dir: &Path, settings: &ImageGenerationSettings) -> Result<(), String> {
     let path = settings_path(app_data_dir);
     if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)
-            .map_err(|e| format!("failed creating image generation settings directory: {e}"))?;
+        fs::create_dir_all(parent)
+            .map_err(|e| format!("failed creating settings directory: {e}"))?;
     }
     let raw = serde_json::to_string_pretty(settings)
-        .map_err(|e| format!("failed serializing image generation settings: {e}"))?;
-    std::fs::write(&path, raw).map_err(|e| format!("failed writing image generation settings: {e}"))
+        .map_err(|e| format!("failed serializing settings: {e}"))?;
+    fs::write(&path, raw).map_err(|e| format!("failed writing settings: {e}"))
 }
 
-fn read_probe_state(app_data_dir: &Path) -> Option<ImageGenerationProbeState> {
-    let path = probe_state_path(app_data_dir);
-    let Ok(raw) = std::fs::read_to_string(&path) else {
-        return None;
-    };
-    serde_json::from_str(&raw).ok()
-}
-
-fn write_probe_state(app_data_dir: &Path, probe: &ImageGenerationProbeState) -> Result<(), String> {
-    let path = probe_state_path(app_data_dir);
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)
-            .map_err(|e| format!("failed creating image generation probe directory: {e}"))?;
-    }
-    let raw = serde_json::to_string_pretty(probe)
-        .map_err(|e| format!("failed serializing image generation probe state: {e}"))?;
-    std::fs::write(&path, raw)
-        .map_err(|e| format!("failed writing image generation probe state: {e}"))
-}
-
-fn validate_package_dir(path: &Path) -> Result<(), String> {
+fn validate_model_dir(path: &Path) -> Result<(), String> {
     if !path.is_dir() {
-        return Err("image package directory is missing".to_string());
+        return Err("model directory is missing".to_string());
     }
     let mut missing = Vec::new();
-    for asset in CURATED_ASSETS {
-        if !path.join(asset.install_path).exists() {
-            missing.push(asset.install_path);
+    for asset in MODEL_ASSETS {
+        if !path.join(asset.install_name).exists() {
+            missing.push(asset.install_name);
         }
     }
     if !missing.is_empty() {
-        return Err(format!(
-            "image package is missing required paths: {}",
-            missing.join(", ")
-        ));
-    }
-    let has_onnx = contains_extension(path, "onnx")?;
-    if !has_onnx {
-        return Err("image package does not contain any .onnx model files".to_string());
+        return Err(format!("model files missing: {}", missing.join(", ")));
     }
     Ok(())
-}
-
-fn contains_extension(path: &Path, extension: &str) -> Result<bool, String> {
-    let entries = std::fs::read_dir(path)
-        .map_err(|e| format!("failed reading image package directory: {e}"))?;
-    for entry in entries.flatten() {
-        let p = entry.path();
-        if p.is_dir() {
-            if contains_extension(&p, extension)? {
-                return Ok(true);
-            }
-        } else if p
-            .extension()
-            .and_then(|s| s.to_str())
-            .map(|s| s.eq_ignore_ascii_case(extension))
-            .unwrap_or(false)
-        {
-            return Ok(true);
-        }
-    }
-    Ok(false)
-}
-
-fn resolve_curated_assets(
-    client: &reqwest::blocking::Client,
-) -> Result<Vec<ResolvedCuratedAsset>, String> {
-    let primary_detail: HfModelDetail = client
-        .get(format!(
-            "https://huggingface.co/api/models/{CURATED_REPO_ID}"
-        ))
-        .send()
-        .and_then(|r| r.error_for_status())
-        .map_err(|e| format!("failed contacting Hugging Face for {CURATED_REPO_ID}: {e}"))?
-        .json()
-        .map_err(|e| {
-            format!("failed to parse curated package metadata for {CURATED_REPO_ID}: {e}")
-        })?;
-    let supplemental_detail: HfModelDetail = client
-        .get(format!(
-            "https://huggingface.co/api/models/{CURATED_SUPPLEMENTAL_REPO_ID}"
-        ))
-        .send()
-        .and_then(|r| r.error_for_status())
-        .map_err(|e| {
-            format!("failed contacting Hugging Face for {CURATED_SUPPLEMENTAL_REPO_ID}: {e}")
-        })?
-        .json()
-        .map_err(|e| {
-            format!(
-                "failed to parse curated package metadata for {CURATED_SUPPLEMENTAL_REPO_ID}: {e}"
-            )
-        })?;
-    let mut resolved = Vec::with_capacity(CURATED_ASSETS.len());
-    resolved.extend(select_repo_assets(
-        primary_detail.siblings.unwrap_or_default(),
-        CURATED_ASSETS
-            .iter()
-            .filter(|asset| asset.repo_id == CURATED_REPO_ID),
-        CURATED_REPO_ID,
-    )?);
-    resolved.extend(select_repo_assets(
-        supplemental_detail.siblings.unwrap_or_default(),
-        CURATED_ASSETS
-            .iter()
-            .filter(|asset| asset.repo_id == CURATED_SUPPLEMENTAL_REPO_ID),
-        CURATED_SUPPLEMENTAL_REPO_ID,
-    )?);
-    resolved.sort_by(|a, b| a.install_path.cmp(&b.install_path));
-    Ok(resolved)
-}
-
-fn select_repo_assets<'a>(
-    siblings: Vec<HfSibling>,
-    expected_assets: impl Iterator<Item = &'a CuratedAsset>,
-    repo_id: &str,
-) -> Result<Vec<ResolvedCuratedAsset>, String> {
-    let sibling_map = siblings
-        .into_iter()
-        .map(|item| (item.rfilename, item.size))
-        .collect::<std::collections::HashMap<_, _>>();
-    let expected_assets = expected_assets.collect::<Vec<_>>();
-    let missing: Vec<&str> = expected_assets
-        .iter()
-        .filter(|asset| !sibling_map.contains_key(asset.source_path))
-        .map(|asset| asset.source_path)
-        .collect();
-    if !missing.is_empty() {
-        return Err(format!(
-            "curated image package is missing required files from {repo_id}: {}",
-            missing.join(", ")
-        ));
-    }
-    expected_assets
-        .into_iter()
-        .map(|asset| {
-            let size = sibling_map
-                .get(asset.source_path)
-                .copied()
-                .flatten()
-                .ok_or_else(|| {
-                    format!(
-                        "curated image package is missing size metadata for {} in {}",
-                        asset.source_path, repo_id
-                    )
-                })?;
-            Ok(ResolvedCuratedAsset {
-                repo_id: asset.repo_id,
-                source_path: asset.source_path.to_string(),
-                install_path: asset.install_path.to_string(),
-                size,
-            })
-        })
-        .collect()
-}
-
-fn sanitize_relative_path(path: &str) -> Result<PathBuf, String> {
-    let mut out = PathBuf::new();
-    for part in path.split('/') {
-        if part.is_empty() || part == "." || part == ".." || part.contains('\\') {
-            return Err(format!("unsafe model package path: {path}"));
-        }
-        out.push(part);
-    }
-    Ok(out)
-}
-
-fn total_bytes_for_assets(assets: &[ResolvedCuratedAsset]) -> u64 {
-    assets
-        .iter()
-        .fold(0_u64, |acc, item| acc.saturating_add(item.size))
-}
-
-fn required_free_space_bytes(download_bytes: u64) -> u64 {
-    let headroom = (download_bytes / 10).max(512 * 1024 * 1024);
-    download_bytes.saturating_add(headroom)
 }
 
 fn verify_write_access(path: &Path) -> Result<(), String> {
-    std::fs::create_dir_all(path)
-        .map_err(|e| format!("failed creating image package staging directory: {e}"))?;
+    fs::create_dir_all(path)
+        .map_err(|e| format!("directory not writable: {e}"))?;
     let probe = path.join(".write-probe");
-    std::fs::write(&probe, b"ok")
-        .map_err(|e| format!("image package staging directory is not writable: {e}"))?;
-    let _ = std::fs::remove_file(&probe);
+    fs::write(&probe, b"ok").map_err(|e| format!("directory not writable: {e}"))?;
+    let _ = fs::remove_file(&probe);
     Ok(())
 }
 
-fn verify_runtime_architecture() -> Result<(), String> {
-    #[cfg(not(target_arch = "x86_64"))]
-    {
-        return Err(format!(
-            "the curated ONNX image package is only supported on x64 right now (current arch: {})",
-            std::env::consts::ARCH
-        ));
+fn resolve_model_assets(
+    client: &reqwest::blocking::Client,
+) -> Result<Vec<ResolvedModelAsset>, String> {
+    let repo_ids: Vec<&str> = MODEL_ASSETS.iter().map(|a| a.repo_id).collect();
+    let mut repo_details: std::collections::HashMap<&str, HfModelDetail> =
+        std::collections::HashMap::new();
+    for repo_id in repo_ids {
+        if repo_details.contains_key(repo_id) {
+            continue;
+        }
+        let detail: HfModelDetail = client
+            .get(format!("https://huggingface.co/api/models/{repo_id}"))
+            .send()
+            .and_then(|r| r.error_for_status())
+            .map_err(|e| format!("failed contacting HuggingFace for {repo_id}: {e}"))?
+            .json()
+            .map_err(|e| format!("failed parsing metadata for {repo_id}: {e}"))?;
+        repo_details.insert(repo_id, detail);
+    }
+
+    let mut resolved = Vec::with_capacity(MODEL_ASSETS.len());
+    for asset in MODEL_ASSETS {
+        let detail = repo_details.get(asset.repo_id).ok_or_else(|| {
+            format!("missing HuggingFace metadata for {}", asset.repo_id)
+        })?;
+        let siblings = detail.siblings.as_deref().unwrap_or(&[]);
+        let size = siblings
+            .iter()
+            .find(|s| s.rfilename == asset.filename)
+            .and_then(|s| s.size)
+            .ok_or_else(|| {
+                format!(
+                    "file {} not found in {} repository",
+                    asset.filename, asset.repo_id
+                )
+            })?;
+        resolved.push(ResolvedModelAsset {
+            repo_id: asset.repo_id.to_string(),
+            filename: asset.filename.to_string(),
+            install_name: asset.install_name.to_string(),
+            size,
+        });
+    }
+    Ok(resolved)
+}
+
+fn download_engine_binary() -> Result<PathBuf, String> {
+    let release: GithubRelease = http_client(30)?
+        .get(format!(
+            "https://api.github.com/repos/{ENGINE_REPO}/releases/latest"
+        ))
+        .header("User-Agent", app_paths::APP_USER_AGENT)
+        .send()
+        .map_err(|e| format!("failed fetching sd.cpp releases: {e}"))?
+        .error_for_status()
+        .map_err(|e| format!("failed fetching sd.cpp release metadata: {e}"))?
+        .json()
+        .map_err(|e| format!("failed parsing sd.cpp release metadata: {e}"))?;
+
+    let asset = select_engine_asset(
+        std::env::consts::OS,
+        std::env::consts::ARCH,
+        release.assets.as_slice(),
+    )
+    .ok_or_else(|| {
+        format!(
+            "No compatible sd.cpp release asset found for {}-{} (release {})",
+            std::env::consts::OS,
+            std::env::consts::ARCH,
+            release.tag_name
+        )
+    })?;
+
+    let download_dir = std::env::temp_dir()
+        .join("arxell")
+        .join("sd-cpp-engine-download")
+        .join(
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_millis().to_string())
+                .unwrap_or_else(|_| "now".to_string()),
+        );
+    fs::create_dir_all(&download_dir)
+        .map_err(|e| format!("failed creating download directory: {e}"))?;
+
+    let archive_path = download_dir.join(&asset.name);
+    let mut response = http_client(300)?
+        .get(&asset.browser_download_url)
+        .header("User-Agent", app_paths::APP_USER_AGENT)
+        .send()
+        .map_err(|e| format!("failed downloading {}: {e}", asset.name))?
+        .error_for_status()
+        .map_err(|e| format!("failed downloading {}: {e}", asset.name))?;
+
+    let mut out =
+        fs::File::create(&archive_path).map_err(|e| format!("failed creating archive: {e}"))?;
+    std::io::copy(&mut response, &mut out)
+        .map_err(|e| format!("failed writing archive: {e}"))?;
+
+    let extract_dir = download_dir.join("extract");
+    fs::create_dir_all(&extract_dir)
+        .map_err(|e| format!("failed creating extraction directory: {e}"))?;
+    extract_archive(&archive_path, &extract_dir)?;
+
+    let binary_name = engine_binary_filename();
+    find_binary_recursive(&extract_dir, binary_name).ok_or_else(|| {
+        format!(
+            "Downloaded asset {} did not contain {}",
+            asset.name, binary_name
+        )
+    })
+}
+
+fn select_engine_asset(
+    os: &str,
+    arch: &str,
+    assets: &[GithubAsset],
+) -> Option<GithubAsset> {
+    let arch_keywords: Vec<&str> = match arch {
+        "x86_64" => vec!["x64", "x86_64"],
+        "aarch64" => vec!["arm64", "aarch64"],
+        other => vec![other],
+    };
+
+    let mut candidates: Vec<GithubAsset> = Vec::new();
+
+    match os {
+        "macos" => {
+            for asset in assets {
+                let name = asset.name.to_ascii_lowercase();
+                if !name.contains("darwin") && !name.contains("macos") {
+                    continue;
+                }
+                if !arch_keywords.iter().any(|k| name.contains(k)) {
+                    continue;
+                }
+                candidates.push(asset.clone());
+            }
+        }
+        "linux" => {
+            let preferred_order = ["vulkan", "ubuntu"];
+            for keyword in &preferred_order {
+                for asset in assets {
+                    let name = asset.name.to_ascii_lowercase();
+                    if !name.contains("linux") {
+                        continue;
+                    }
+                    if !name.contains(keyword) {
+                        continue;
+                    }
+                    if name.contains("rocm") || name.contains("cuda") {
+                        continue;
+                    }
+                    if !arch_keywords.iter().any(|k| name.contains(k)) {
+                        continue;
+                    }
+                    candidates.push(asset.clone());
+                }
+                if !candidates.is_empty() {
+                    break;
+                }
+            }
+            if candidates.is_empty() {
+                for asset in assets {
+                    let name = asset.name.to_ascii_lowercase();
+                    if !name.contains("linux") {
+                        continue;
+                    }
+                    if name.contains("rocm") || name.contains("cuda") {
+                        continue;
+                    }
+                    if !arch_keywords.iter().any(|k| name.contains(k)) {
+                        continue;
+                    }
+                    candidates.push(asset.clone());
+                }
+            }
+        }
+        "windows" => {
+            let preferred_order = ["vulkan", "avx2", "avx"];
+            for keyword in &preferred_order {
+                for asset in assets {
+                    let name = asset.name.to_ascii_lowercase();
+                    if !name.contains("win") {
+                        continue;
+                    }
+                    if name.contains("cuda") || name.contains("rocm") || name.contains("cudart") {
+                        continue;
+                    }
+                    if keyword != &"vulkan" && !name.contains(keyword) {
+                        continue;
+                    }
+                    if keyword == &"vulkan" && !name.contains("vulkan") {
+                        continue;
+                    }
+                    if !arch_keywords.iter().any(|k| name.contains(k)) {
+                        continue;
+                    }
+                    candidates.push(asset.clone());
+                }
+                if !candidates.is_empty() {
+                    break;
+                }
+            }
+            if candidates.is_empty() {
+                for asset in assets {
+                    let name = asset.name.to_ascii_lowercase();
+                    if !name.contains("win") {
+                        continue;
+                    }
+                    if name.contains("cuda") || name.contains("rocm") || name.contains("cudart") {
+                        continue;
+                    }
+                    if !arch_keywords.iter().any(|k| name.contains(k)) {
+                        continue;
+                    }
+                    candidates.push(asset.clone());
+                }
+            }
+        }
+        _ => {}
+    }
+
+    candidates.sort_by_key(|a| a.name.len());
+    candidates.into_iter().next()
+}
+
+fn install_engine_binary(source: &Path, target: &Path) -> Result<(), String> {
+    if let Some(parent) = target.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|e| format!("failed creating engine directory: {e}"))?;
+    }
+    fs::copy(source, target)
+        .map_err(|e| format!("failed copying engine binary: {e}"))?;
+    set_executable(target)?;
+    let support_count = copy_runtime_support_files(source, target)?;
+    if support_count > 0 {
+        eprintln!("copied {support_count} engine support files");
     }
     Ok(())
+}
+
+fn set_executable(path: &Path) -> Result<(), String> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = fs::metadata(path)
+            .map_err(|e| format!("failed reading engine metadata: {e}"))?
+            .permissions();
+        perms.set_mode(0o755);
+        fs::set_permissions(path, perms)
+            .map_err(|e| format!("failed setting engine executable bit: {e}"))?;
+    }
+    Ok(())
+}
+
+fn copy_runtime_support_files(source: &Path, target: &Path) -> Result<usize, String> {
+    let Some(source_dir) = source.parent() else {
+        return Ok(0);
+    };
+    let Some(target_dir) = target.parent() else {
+        return Ok(0);
+    };
+    let mut copied = 0;
+    let entries = fs::read_dir(source_dir)
+        .map_err(|e| format!("failed listing engine support files: {e}"))?;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path.is_file() || path == source {
+            continue;
+        }
+        let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+            continue;
+        };
+        if !is_runtime_support_file(name) {
+            continue;
+        }
+        let dest = target_dir.join(name);
+        fs::copy(&path, &dest).map_err(|e| {
+            format!(
+                "failed copying support file {} -> {}: {e}",
+                path.display(),
+                dest.display()
+            )
+        })?;
+        copied += 1;
+    }
+    Ok(copied)
+}
+
+fn is_runtime_support_file(name: &str) -> bool {
+    let lower = name.to_ascii_lowercase();
+    #[cfg(target_os = "windows")]
+    {
+        lower.ends_with(".dll")
+    }
+    #[cfg(target_os = "macos")]
+    {
+        lower.ends_with(".dylib")
+    }
+    #[cfg(target_os = "linux")]
+    {
+        return lower.ends_with(".so") || lower.contains(".so.") || lower.ends_with(".bin");
+    }
+    #[allow(unreachable_code)]
+    false
+}
+
+fn prepend_engine_lib_path(cmd: &mut Command, engine_dir: &Path) {
+    #[cfg(target_os = "linux")]
+    {
+        cmd.env(
+            "LD_LIBRARY_PATH",
+            prepend_env_path("LD_LIBRARY_PATH", engine_dir),
+        );
+    }
+    #[cfg(target_os = "macos")]
+    {
+        cmd.env(
+            "DYLD_LIBRARY_PATH",
+            prepend_env_path("DYLD_LIBRARY_PATH", engine_dir),
+        );
+    }
+    #[cfg(target_os = "windows")]
+    {
+        cmd.env("PATH", prepend_env_path("PATH", engine_dir));
+    }
+}
+
+fn prepend_env_path(var: &str, first: &Path) -> OsString {
+    let mut parts = vec![first.to_path_buf()];
+    if let Some(existing) = std::env::var_os(var) {
+        parts.extend(std::env::split_paths(&existing));
+    }
+    std::env::join_paths(parts).unwrap_or_else(|_| first.as_os_str().to_os_string())
+}
+
+fn http_client(timeout_secs: u64) -> Result<reqwest::blocking::Client, String> {
+    reqwest::blocking::Client::builder()
+        .connect_timeout(Duration::from_secs(6))
+        .timeout(Duration::from_secs(timeout_secs))
+        .build()
+        .map_err(|e| format!("failed creating HTTP client: {e}"))
+}
+
+fn extract_archive(archive_path: &Path, out_dir: &Path) -> Result<(), String> {
+    let name = archive_path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    if name.ends_with(".zip") {
+        let file =
+            fs::File::open(archive_path).map_err(|e| format!("failed opening zip: {e}"))?;
+        let mut zip =
+            zip::ZipArchive::new(file).map_err(|e| format!("failed reading zip: {e}"))?;
+        for i in 0..zip.len() {
+            let mut entry = zip.by_index(i).map_err(|e| format!("zip entry {i}: {e}"))?;
+            let Some(rel) = entry.enclosed_name().map(|p| p.to_path_buf()) else {
+                continue;
+            };
+            let target = out_dir.join(rel);
+            if entry.is_dir() {
+                fs::create_dir_all(&target)
+                    .map_err(|e| format!("failed creating directory: {e}"))?;
+                continue;
+            }
+            if let Some(parent) = target.parent() {
+                fs::create_dir_all(parent)
+                    .map_err(|e| format!("failed creating parent directory: {e}"))?;
+            }
+            let mut out =
+                fs::File::create(&target).map_err(|e| format!("failed creating file: {e}"))?;
+            std::io::copy(&mut entry, &mut out)
+                .map_err(|e| format!("failed extracting file: {e}"))?;
+        }
+        return Ok(());
+    }
+    if name.ends_with(".tar.gz") || name.ends_with(".tgz") {
+        let file =
+            fs::File::open(archive_path).map_err(|e| format!("failed opening tar: {e}"))?;
+        let gz = GzDecoder::new(file);
+        let mut archive = tar::Archive::new(gz);
+        archive
+            .unpack(out_dir)
+            .map_err(|e| format!("failed extracting tar: {e}"))?;
+        return Ok(());
+    }
+    Err(format!(
+        "unsupported archive format: {}",
+        archive_path.display()
+    ))
+}
+
+fn find_binary_recursive(root: &Path, binary_name: &str) -> Option<PathBuf> {
+    let entries = fs::read_dir(root).ok()?;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            if let Some(found) = find_binary_recursive(&path, binary_name) {
+                return Some(found);
+            }
+            continue;
+        }
+        if path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .map(|n| n.eq_ignore_ascii_case(binary_name))
+            .unwrap_or(false)
+        {
+            return Some(path);
+        }
+    }
+    None
 }
 
 fn ensure_free_space(path: &Path, required_bytes: u64) -> Result<(), String> {
     let available = available_space_bytes(path)?;
     if available < required_bytes {
         return Err(format!(
-            "not enough free disk space for image package install: need {}, available {}",
+            "not enough free disk space: need {}, available {}",
             human_bytes(required_bytes),
             human_bytes(available)
         ));
@@ -916,20 +1120,21 @@ fn ensure_free_space(path: &Path, required_bytes: u64) -> Result<(), String> {
     Ok(())
 }
 
+fn required_free_space_bytes(download_bytes: u64) -> u64 {
+    let headroom = (download_bytes / 10).max(512 * 1024 * 1024);
+    download_bytes.saturating_add(headroom)
+}
+
 #[cfg(target_family = "unix")]
 fn available_space_bytes(path: &Path) -> Result<u64, String> {
     use std::ffi::CString;
     use std::os::unix::ffi::OsStrExt;
-
     let c_path = CString::new(path.as_os_str().as_bytes())
-        .map_err(|_| format!("invalid install path: {}", path.display()))?;
+        .map_err(|_| format!("invalid path: {}", path.display()))?;
     let mut stat: libc::statvfs = unsafe { std::mem::zeroed() };
     let rc = unsafe { libc::statvfs(c_path.as_ptr(), &mut stat) };
     if rc != 0 {
-        return Err(format!(
-            "failed to read free disk space for {}",
-            path.display()
-        ));
+        return Err(format!("failed to read free disk space for {}", path.display()));
     }
     Ok((stat.f_bavail as u64).saturating_mul(stat.f_frsize as u64))
 }
@@ -937,188 +1142,6 @@ fn available_space_bytes(path: &Path) -> Result<u64, String> {
 #[cfg(not(target_family = "unix"))]
 fn available_space_bytes(_path: &Path) -> Result<u64, String> {
     Ok(u64::MAX)
-}
-
-fn resolve_onnxruntime_library() -> Option<PathBuf> {
-    let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap_or_default();
-    let roots = [
-        PathBuf::from(&manifest_dir)
-            .join("resources")
-            .join("onnxruntime"),
-        std::env::current_dir()
-            .unwrap_or_else(|_| PathBuf::from("."))
-            .join("resources")
-            .join("onnxruntime"),
-    ];
-
-    #[cfg(target_os = "linux")]
-    let names: &[&str] = &[
-        "linux-x64/libonnxruntime.so",
-        "linux-x64/libonnxruntime.so.1",
-        "linux-x64/libonnxruntime.so.1.20.1",
-    ];
-    #[cfg(target_os = "macos")]
-    let names: &[&str] = &["macos/libonnxruntime.dylib"];
-    #[cfg(target_os = "windows")]
-    let names: &[&str] = &["win-x64/onnxruntime.dll"];
-
-    for root in roots {
-        for name in names {
-            let candidate = root.join(name);
-            if candidate.is_file() {
-                return Some(candidate);
-            }
-        }
-    }
-    None
-}
-
-fn verify_onnxruntime_library_loadable(path: &Path) -> Result<(), String> {
-    let lib = unsafe { Library::new(path) }
-        .map_err(|e| format!("failed loading ONNX Runtime from {}: {e}", path.display()))?;
-    let _: libloading::Symbol<'_, unsafe extern "C" fn() -> *const ort_sys::OrtApiBase> =
-        unsafe { lib.get(b"OrtGetApiBase") }
-            .map_err(|_| format!("ONNX Runtime is missing OrtGetApiBase: {}", path.display()))?;
-    Ok(())
-}
-
-fn run_runtime_probe(package_dir: &Path) -> Result<String, String> {
-    let ort_path = resolve_onnxruntime_library().ok_or_else(|| {
-        "bundled ONNX Runtime library was not found in resources/onnxruntime".to_string()
-    })?;
-    let lib = unsafe { Library::new(&ort_path) }.map_err(|e| {
-        format!(
-            "failed loading ONNX Runtime from {}: {e}",
-            ort_path.display()
-        )
-    })?;
-    let api = unsafe { load_ort_api(&lib)? };
-    for asset in CURATED_ASSETS {
-        if !asset.install_path.ends_with(".onnx") {
-            continue;
-        }
-        let model_path = package_dir.join(asset.install_path);
-        unsafe { probe_onnx_session(api, &model_path)? };
-    }
-    Ok("Package validated, ONNX sessions load successfully, and the supplemental tokenizer/scheduler/config assets are present. Full image generation is still disabled until the FLUX pipeline is implemented.".to_string())
-}
-
-fn compute_package_signature(package_dir: &Path) -> Result<String, String> {
-    let mut parts = Vec::new();
-    for asset in CURATED_ASSETS {
-        let path = package_dir.join(asset.install_path);
-        let metadata = std::fs::metadata(&path).map_err(|e| {
-            format!(
-                "failed reading package metadata for {}: {e}",
-                path.display()
-            )
-        })?;
-        parts.push(format!(
-            "{}:{}:{}",
-            asset.install_path,
-            metadata.len(),
-            metadata
-                .modified()
-                .ok()
-                .and_then(|ts| ts.duration_since(std::time::UNIX_EPOCH).ok())
-                .map(|dur| dur.as_secs())
-                .unwrap_or(0)
-        ));
-    }
-    Ok(parts.join("|"))
-}
-
-unsafe fn load_ort_api(lib: &Library) -> Result<&ort_sys::OrtApi, String> {
-    let base_getter: libloading::Symbol<'_, unsafe extern "C" fn() -> *const ort_sys::OrtApiBase> =
-        unsafe { lib.get(b"OrtGetApiBase") }
-            .map_err(|_| "expected OrtGetApiBase to be present in libonnxruntime".to_string())?;
-    let base = unsafe { base_getter() };
-    if base.is_null() {
-        return Err("ORT: OrtGetApiBase returned null".to_string());
-    }
-    let base_ref = unsafe { &*base };
-    let get_api = base_ref
-        .GetApi
-        .ok_or_else(|| "ORT: GetApi missing from OrtApiBase".to_string())?;
-    let api_ptr = get_api(19);
-    if api_ptr.is_null() {
-        return Err("ORT: GetApi(19) returned null".to_string());
-    }
-    Ok(unsafe { &*api_ptr })
-}
-
-unsafe fn ort_check_status(
-    api: &ort_sys::OrtApi,
-    status: *mut ort_sys::OrtStatus,
-) -> Result<(), String> {
-    if status.is_null() {
-        return Ok(());
-    }
-    let msg_ptr = api
-        .GetErrorMessage
-        .ok_or_else(|| "ORT: GetErrorMessage missing".to_string())?(status);
-    let msg = unsafe { std::ffi::CStr::from_ptr(msg_ptr) }
-        .to_string_lossy()
-        .into_owned();
-    if let Some(release) = api.ReleaseStatus {
-        release(status);
-    }
-    Err(msg)
-}
-
-unsafe fn probe_onnx_session(api: &ort_sys::OrtApi, model_path: &Path) -> Result<(), String> {
-    let env_name = std::ffi::CString::new("image_probe").map_err(|e| format!("{e}"))?;
-    let model_cstr = std::ffi::CString::new(model_path.to_string_lossy().as_bytes())
-        .map_err(|e| format!("invalid model path {}: {e}", model_path.display()))?;
-    let create_env = api
-        .CreateEnv
-        .ok_or_else(|| "ORT: CreateEnv missing".to_string())?;
-    let create_opts = api
-        .CreateSessionOptions
-        .ok_or_else(|| "ORT: CreateSessionOptions missing".to_string())?;
-    let create_session = api
-        .CreateSession
-        .ok_or_else(|| "ORT: CreateSession missing".to_string())?;
-    let mut env: *mut ort_sys::OrtEnv = std::ptr::null_mut();
-    let mut opts: *mut ort_sys::OrtSessionOptions = std::ptr::null_mut();
-    let mut session: *mut ort_sys::OrtSession = std::ptr::null_mut();
-    unsafe {
-        ort_check_status(
-            api,
-            create_env(
-                ort_sys::OrtLoggingLevel::ORT_LOGGING_LEVEL_WARNING,
-                env_name.as_ptr(),
-                &mut env,
-            ),
-        )
-        .map_err(|e| format!("failed creating ORT env for {}: {e}", model_path.display()))?;
-        ort_check_status(api, create_opts(&mut opts)).map_err(|e| {
-            format!(
-                "failed creating ORT session options for {}: {e}",
-                model_path.display()
-            )
-        })?;
-        if let Some(set_threads) = api.SetIntraOpNumThreads {
-            let _ = ort_check_status(api, set_threads(opts, 2));
-        }
-        let status = create_session(env, model_cstr.as_ptr() as *const _, opts, &mut session);
-        let session_result = ort_check_status(api, status)
-            .map_err(|e| format!("failed loading ONNX session {}: {e}", model_path.display()));
-        if let Some(release) = api.ReleaseSessionOptions {
-            release(opts);
-        }
-        if !session.is_null() {
-            if let Some(release) = api.ReleaseSession {
-                release(session);
-            }
-        }
-        if !env.is_null() {
-            if let Some(release) = api.ReleaseEnv {
-                release(env);
-            }
-        }
-        session_result
-    }
 }
 
 fn human_bytes(bytes: u64) -> String {

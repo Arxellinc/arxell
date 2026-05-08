@@ -12,6 +12,7 @@ import type { PrimaryPanelRenderState } from "./types";
 import type { ChatModelCapabilities } from "../modelCapabilities";
 import { escapeHtml } from "./utils";
 import { renderAvatarPreview } from "./avatarPanel";
+import { copyImageFromSrc } from "./imageClipboard";
 
 interface ParsedAttachmentMessage {
   displayText: string;
@@ -542,7 +543,7 @@ export function bindChatPanel(
       const src = button.dataset.copyImageSrc || "";
       if (!src) return;
       try {
-        await navigator.clipboard.writeText(src);
+        await copyImageFromSrc(src);
         button.textContent = "Copied";
         window.setTimeout(() => {
           button.textContent = "Copy";

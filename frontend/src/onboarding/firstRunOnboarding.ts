@@ -105,6 +105,7 @@ export function bindFirstRunOnboardingInteractions(deps: {
   persistLlamaModelPath: (path: string) => void;
   refreshModelManagerInstalled: () => Promise<void>;
   persistFirstRunOnboardingDismissed: () => void;
+  autoStartLlamaRuntimeIfConfigured: () => Promise<void>;
   render: () => void;
 }): void {
   const dismiss = () => {
@@ -150,6 +151,7 @@ export function bindFirstRunOnboardingInteractions(deps: {
         deps.state.firstRunOnboardingStep = "model";
       } else {
         dismiss();
+        deps.autoStartLlamaRuntimeIfConfigured();
         return;
       }
       deps.state.firstRunMessage = null;

@@ -795,16 +795,16 @@ export class MockChatIpcClient implements ChatIpcClient {
   private mockImageStatus: ImageGenerationStatusResponse = {
     correlationId: "mock-image-status",
       package: {
-        id: "flux-1-schnell-onnx-fp4-curated",
-        name: "FLUX.1 Schnell ONNX FP4",
-        repoId: "Futuremark/FLUX.1-schnell-onnx",
+        id: "flux-1-schnell-gguf-q4",
+        name: "FLUX.1 Schnell GGUF Q4_0",
+        repoId: "leejet/FLUX.1-schnell-gguf",
         license: "Apache-2.0",
-        sourceUrl: "https://huggingface.co/Futuremark/FLUX.1-schnell-onnx",
-        upstreamUrl: "https://huggingface.co/black-forest-labs/FLUX.1-schnell-onnx",
-        precisionLabel: "FP4 transformer",
-        coreModelBytes: 6777600000,
-        auxiliaryBytes: 9865749000,
-        totalInstallBytes: 16643349000,
+        sourceUrl: "https://huggingface.co/leejet/FLUX.1-schnell-gguf",
+        upstreamUrl: "https://huggingface.co/black-forest-labs/FLUX.1-schnell",
+        precisionLabel: "GGUF Q4_0",
+        coreModelBytes: 6400000000,
+        auxiliaryBytes: 5100000000,
+        totalInstallBytes: 11500000000,
         recommendedSteps: 4,
         recommendedGuidance: 1
       },
@@ -2027,13 +2027,13 @@ export class MockChatIpcClient implements ChatIpcClient {
     this.mockImageStatus = {
       ...this.mockImageStatus,
       installState: "installed",
-      runtimeState: "probe_only",
+      runtimeState: "ready",
       disabled: false,
-      installedPath: "/tmp/arxell/image-packages/flux-1-schnell-onnx-fp4-curated",
+      installedPath: "/tmp/arxell/models/flux/schnell/q4_0",
       message:
-        "Mock runtime: package installed and validated. Generation remains blocked behind the runtime probe gate.",
+        "Mock runtime: FLUX.1 Schnell GGUF Q4_0 installed and ready.",
       requiredPathsPresent: true,
-      generationReady: false
+      generationReady: true
     };
     this.emit({
       timestampMs: Date.now(),
@@ -2042,11 +2042,11 @@ export class MockChatIpcClient implements ChatIpcClient {
       action: "image.generation.install",
       stage: "complete",
       severity: "info",
-      payload: { packageId: "flux-1-schnell-onnx-fp4-curated", phase: "complete" }
+      payload: { packageId: "flux-1-schnell-gguf-q4", phase: "complete" }
     });
     return {
       correlationId: request.correlationId,
-      installedPath: "/tmp/arxell/image-packages/flux-1-schnell-onnx-fp4-curated",
+      installedPath: "/tmp/arxell/models/flux/schnell/q4_0",
       enabled: true
     };
   }
@@ -2114,7 +2114,24 @@ export class MockChatIpcClient implements ChatIpcClient {
   async imageGenerationGenerate(
     request: ImageGenerationGenerateRequest
   ): Promise<ImageGenerationGenerateResponse> {
-    throw new Error(`Mock image generation is not available for prompt: ${request.prompt}`);
+    const base64 =
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wn7L0YAAAAASUVORK5CYII=";
+    const stamp = Date.now();
+    return {
+      correlationId: request.correlationId,
+      asset: {
+        id: `mock-image-${stamp}`,
+        kind: "image",
+        mime: "image/png",
+        filename: `flux-${stamp}.png`,
+        path: `/mock/flux-${stamp}.png`,
+        width: request.width,
+        height: request.height,
+        sizeBytes: Math.ceil((base64.length * 3) / 4),
+        createdAt: stamp,
+        dataBase64: base64
+      }
+    };
   }
 
   async probeMicrophoneDevice(

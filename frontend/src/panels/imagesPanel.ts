@@ -1,6 +1,7 @@
 import { escapeHtml } from "./utils";
 import { iconHtml } from "../icons";
 import type { PrimaryPanelBindings, PrimaryPanelRenderState } from "./types";
+import { copyImageFromSrc } from "./imageClipboard";
 
 function formatBytes(bytes: number | null): string {
   if (typeof bytes !== "number" || !Number.isFinite(bytes) || bytes < 0) return "n/a";
@@ -66,6 +67,7 @@ export function renderImagesBody(state: PrimaryPanelRenderState): string {
   const pkg = status?.package;
   const installed = status?.installState === "installed";
   const disabled = status?.disabled === true;
+  const outputHtml = renderGeneratedAssets(images.recentAssets);
   const installBusy = images.installBusy;
   const generateDisabled = !status?.generationReady || disabled || images.generateBusy;
   const percent = images.installPercent !== null ? `${Math.max(0, Math.min(100, images.installPercent)).toFixed(1)}%` : "n/a";
@@ -106,11 +108,11 @@ export function renderImagesBody(state: PrimaryPanelRenderState): string {
       <section class="images-section">
         <div class="images-section-title">Package</div>
         <div class="images-meta-grid">
-          <span>Model</span><strong>${escapeHtml(pkg?.name || "FLUX.1 Schnell ONNX FP4")}</strong>
-          <span>Source</span><a href="${escapeHtml(pkg?.sourceUrl || "https://huggingface.co/Futuremark/FLUX.1-schnell-onnx")}" target="_blank" rel="noreferrer">${escapeHtml(pkg?.repoId || "Futuremark/FLUX.1-schnell-onnx")}</a>
-          ${pkg?.upstreamUrl ? `<span>Upstream</span><a href="${escapeHtml(pkg.upstreamUrl)}" target="_blank" rel="noreferrer">black-forest-labs/FLUX.1-schnell-onnx</a>` : ""}
+          <span>Model</span><strong>${escapeHtml(pkg?.name || "FLUX.1 Schnell GGUF Q4_0")}</strong>
+          <span>Source</span><a href="${escapeHtml(pkg?.sourceUrl || "https://huggingface.co/leejet/FLUX.1-schnell-gguf")}" target="_blank" rel="noreferrer">${escapeHtml(pkg?.repoId || "leejet/FLUX.1-schnell-gguf")}</a>
+          ${pkg?.upstreamUrl ? `<span>Upstream</span><a href="${escapeHtml(pkg.upstreamUrl)}" target="_blank" rel="noreferrer">black-forest-labs/FLUX.1-schnell</a>` : ""}
           <span>License</span><strong>${escapeHtml(pkg?.license || "Apache-2.0")}</strong>
-          <span>Precision</span><strong>${escapeHtml(pkg?.precisionLabel || "FP4 transformer")}</strong>
+          <span>Precision</span><strong>${escapeHtml(pkg?.precisionLabel || "GGUF Q4_0")}</strong>
           <span>Core model</span><strong>${escapeHtml(formatBytes(pkg?.coreModelBytes ?? null))}</strong>
           <span>Total install</span><strong>${escapeHtml(formatBytes(pkg?.totalInstallBytes ?? null))}</strong>
           <span>Location</span><code title="${escapeHtml(status?.installedPath || "")}">${escapeHtml(status?.installedPath || "Not installed")}</code>
@@ -148,6 +150,8 @@ export function renderImagesBody(state: PrimaryPanelRenderState): string {
         <button type="button" class="tool-action-btn images-primary-btn" id="imagesGenerateBtn" ${generateDisabled ? "disabled" : ""}>Generate</button>
       </section>
 
+      ${outputHtml}
+
       <section class="images-section">
         <button type="button" class="tool-action-btn" id="imagesAdvancedToggleBtn">${images.advancedOpen ? "Hide" : "Show"} Advanced</button>
         ${images.advancedOpen ? `<div class="images-advanced">
@@ -165,6 +169,31 @@ export function renderImagesBody(state: PrimaryPanelRenderState): string {
 function renderSizeButton(currentW: number, currentH: number, width: number, height: number): string {
   const active = currentW === width && currentH === height ? " is-active" : "";
   return `<button type="button" class="images-size-btn${active}" data-images-size="${width}x${height}">${width}x${height}</button>`;
+}
+
+function renderGeneratedAssets(assets: PrimaryPanelRenderState["images"]["recentAssets"]): string {
+  if (!assets.length) return "";
+  const cards = assets
+    .map((asset) => {
+      const src = asset.dataBase64
+        ? `data:${asset.mime || "image/png"};base64,${asset.dataBase64}`
+        : "";
+      if (!src) return "";
+      return `<figure class="message-image-card">
+        <img src="${escapeHtml(src)}" alt="${escapeHtml(asset.filename)}" loading="lazy" />
+        <figcaption class="message-image-actions">
+          <a href="${escapeHtml(src)}" download="${escapeHtml(asset.filename)}">Save</a>
+          <button type="button" data-copy-image-src="${escapeHtml(src)}">Copy</button>
+        </figcaption>
+      </figure>`;
+    })
+    .filter(Boolean)
+    .join("");
+  if (!cards) return "";
+  return `<section class="images-section">
+    <div class="images-section-title">Recent Output</div>
+    <div class="message-image-list images-output-list">${cards}</div>
+  </section>`;
 }
 
 export function bindImagesPanel(bindings: PrimaryPanelBindings): void {
@@ -232,6 +261,25 @@ export function bindImagesPanel(bindings: PrimaryPanelBindings): void {
       const [w, h] = raw.split("x").map((part) => Number.parseInt(part, 10));
       if (typeof w === "number" && typeof h === "number" && Number.isFinite(w) && Number.isFinite(h)) {
         void bindings.onImagesSetSizePreset(w, h);
+      }
+    };
+  });
+  document.querySelectorAll<HTMLButtonElement>("[data-copy-image-src]").forEach((button) => {
+    button.onclick = async (event) => {
+      event.preventDefault();
+      const src = button.dataset.copyImageSrc || "";
+      if (!src) return;
+      try {
+        await copyImageFromSrc(src);
+        button.textContent = "Copied";
+        window.setTimeout(() => {
+          button.textContent = "Copy";
+        }, 1200);
+      } catch {
+        button.textContent = "Copy failed";
+        window.setTimeout(() => {
+          button.textContent = "Copy";
+        }, 1200);
       }
     };
   });

@@ -12,6 +12,7 @@ import type {
   ConversationSummaryRecord,
   FilesListDirectoryEntry,
   ImageGenerationStatusResponse,
+  MediaAssetRecord,
   LlamaRuntimeEngine,
   LlamaRuntimeStatusResponse,
   ModelManagerHfCandidate,
@@ -931,6 +932,7 @@ const state: {
   modelManagerUnslothUdLoading: boolean;
   images: {
     status: ImageGenerationStatusResponse | null;
+    recentAssets: MediaAssetRecord[];
     prompt: string;
     width: number;
     height: number;
@@ -1215,6 +1217,7 @@ const state: {
   modelManagerUnslothUdLoading: false,
   images: {
     status: null,
+    recentAssets: [],
     prompt: "",
     width: 1024,
     height: 1024,
@@ -5319,6 +5322,7 @@ syncOverlayScrollbars();
     persistLlamaModelPath,
     refreshModelManagerInstalled,
     persistFirstRunOnboardingDismissed,
+    autoStartLlamaRuntimeIfConfigured,
     render: () => renderAndBind(sendMessage)
   });
   const llamaState: LlamaStateSlice = state;
@@ -6207,7 +6211,7 @@ syncOverlayScrollbars();
       state.images.installTotalBytes = null;
       state.images.installPercent = null;
       state.images.installSpeedBytesPerSec = null;
-      state.images.message = "Downloading and installing the curated FLUX ONNX FP4 package...";
+      state.images.message = "Downloading engine and model files for FLUX.1 Schnell GGUF Q4_0...";
       renderAndBind(sendMessage);
       try {
         await client.imageGenerationInstall({ correlationId });
@@ -6219,7 +6223,7 @@ syncOverlayScrollbars();
         } else {
           state.images.message =
             state.images.status?.message ||
-            "Image package installed. Runtime is held behind the FLUX ONNX probe gate until generation is verified.";
+            "Image package installed and ready for generation.";
         }
       } catch (error) {
         state.images.message = `Image package install failed: ${String(error)}`;
@@ -6315,9 +6319,14 @@ syncOverlayScrollbars();
           steps: state.images.steps,
           guidance: state.images.guidance
         };
-        await client.imageGenerationGenerate(
+        const response = await client.imageGenerationGenerate(
           Number.isFinite(seed) && seed !== null ? { ...request, seed } : request
         );
+        state.images.recentAssets = [
+          response.asset,
+          ...state.images.recentAssets.filter((asset) => asset.id !== response.asset.id)
+        ].slice(0, 8);
+        state.images.message = `Generated ${response.asset.filename}.`;
       } catch (error) {
         state.images.message = `Image generation blocked: ${String(error)}`;
       } finally {

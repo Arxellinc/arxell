@@ -12,6 +12,7 @@ import type {
   DuplexMode,
   HandoffState,
   ImageGenerationStatusResponse,
+  MediaAssetRecord,
   SpeculationState,
   VoiceRuntimeState
 } from "../contracts";
@@ -227,6 +228,7 @@ export interface TtsState {
 
 export interface ImagesPanelState {
   status: ImageGenerationStatusResponse | null;
+  recentAssets: MediaAssetRecord[];
   prompt: string;
   width: number;
   height: number;
