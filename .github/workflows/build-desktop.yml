@@ -617,104 +617,19 @@ jobs:
           print(f"[kokoro-runtime] manifest written for {archive.name}")
           PY
 
-      - name: Debug — verify linuxdeploy GTK plugin
-        if: matrix.platform.os == 'ubuntu-24.04'
-        env:
-          APPIMAGE_EXTRACT_AND_RUN: "1"
-          ARCH: x86_64
-          NO_STRIP: "true"
-          GDK_PIXBUF_MODULEDIR: /usr/lib/x86_64-linux-gnu/gdk-pixbuf-2.0/2.10.0/loaders
-          GDK_PIXBUF_MODULE_FILE: /usr/lib/x86_64-linux-gnu/gdk-pixbuf-2.0/2.10.0/loaders.cache
-        run: |
-          set -uo pipefail
-          CACHE="$HOME/.cache/tauri/linuxdeploy"
-          mkdir -p "$CACHE"
-
-          LDEPLOY="$CACHE/linuxdeploy-x86_64.AppImage"
-          GTK_PLUGIN="$CACHE/linuxdeploy-plugin-gtk.sh"
-          APPIMAGE_PLUGIN="$CACHE/linuxdeploy-plugin-appimage-x86_64.AppImage"
-
-          [ -f "$LDEPLOY" ] || {
-            curl -fsSL -o "$LDEPLOY" \
-              https://github.com/tauri-apps/binary-releases/releases/download/linuxdeploy/linuxdeploy-x86_64.AppImage
-            chmod +x "$LDEPLOY"
-          }
-          [ -f "$GTK_PLUGIN" ] || {
-            curl -fsSL -o "$GTK_PLUGIN" \
-              https://raw.githubusercontent.com/tauri-apps/linuxdeploy-plugin-gtk/master/linuxdeploy-plugin-gtk.sh
-            chmod +x "$GTK_PLUGIN"
-          }
-          [ -f "$APPIMAGE_PLUGIN" ] || {
-            curl -fsSL -o "$APPIMAGE_PLUGIN" \
-              https://github.com/linuxdeploy/linuxdeploy-plugin-appimage/releases/download/continuous/linuxdeploy-plugin-appimage-x86_64.AppImage
-            chmod +x "$APPIMAGE_PLUGIN"
-          }
-
-          APPDIR="$(mktemp -d)/Probe.AppDir"
-          mkdir -p "$APPDIR/usr/bin" "$APPDIR/usr/share/applications"
-          mkdir -p "$APPDIR/usr/share/icons/hicolor/256x256/apps"
-          cp "$(which bash)" "$APPDIR/usr/bin/probe"
-          printf '[Desktop Entry]\nType=Application\nName=Probe\nExec=probe\nIcon=probe\nCategories=Utility;\n' \
-            > "$APPDIR/usr/share/applications/probe.desktop"
-          touch "$APPDIR/usr/share/icons/hicolor/256x256/apps/probe.png"
-
-          echo "=== pixbuf loaders cache ==="
-          find /usr/lib -name "loaders.cache" 2>/dev/null || echo "NOT FOUND"
-
-          echo "=== GTK IM modules cache ==="
-          find /usr/lib -name "immodules.cache" 2>/dev/null || echo "NOT FOUND"
-
-          echo "=== linuxdeploy + GTK plugin ==="
-          DEPLOY_GTK_PLUGINS="$GTK_PLUGIN" \
-            "$LDEPLOY" --appdir "$APPDIR" --plugin gtk 2>&1 || echo "GTK plugin exit: $?"
-
-          echo "=== appimage plugin standalone test ==="
-          echo "--- file info ---"
-          file "$APPIMAGE_PLUGIN" || true
-          echo "--- trying --help ---"
-          "$APPIMAGE_PLUGIN" --help 2>&1 || echo "appimage plugin --help exit: $?"
-          echo "--- trying with AppDir ---"
-          OUTPUT="/tmp/test-probe.AppImage" \
-          "$LDEPLOY" --appdir "$APPDIR" --output appimage 2>&1 || echo "FULL appimage build exit: $?"
-          echo "=== appimage plugin test done ==="
-
-          echo "=== GStreamer plugin test ==="
-          GST_PLUGIN="$CACHE/linuxdeploy-plugin-gstreamer.sh"
-          [ -f "$GST_PLUGIN" ] || {
-            curl -fsSL -o "$GST_PLUGIN" \
-              https://raw.githubusercontent.com/tauri-apps/linuxdeploy-plugin-gstreamer/master/linuxdeploy-plugin-gstreamer.sh
-            chmod +x "$GST_PLUGIN"
-          }
-          GST_APPDIR="$(mktemp -d)/GSTProbe.AppDir"
-          mkdir -p "$GST_APPDIR/usr/bin" "$GST_APPDIR/usr/share/applications"
-          mkdir -p "$GST_APPDIR/usr/share/icons/hicolor/256x256/apps"
-          cp "$(which bash)" "$GST_APPDIR/usr/bin/probe"
-          printf '[Desktop Entry]\nType=Application\nName=Probe\nExec=probe\nIcon=probe\nCategories=Utility;\n' \
-            > "$GST_APPDIR/usr/share/applications/probe.desktop"
-          touch "$GST_APPDIR/usr/share/icons/hicolor/256x256/apps/probe.png"
-          echo "--- gstreamer registry ---"
-          gst-inspect-1.0 --version 2>&1 || echo "gst-inspect-1.0 not found"
-          echo "--- GST_PLUGIN_PATH ---"
-          echo "GST_PLUGIN_PATH=${GST_PLUGIN_PATH:-(not set)}"
-          echo "--- find gst plugins ---"
-          find /usr/lib -name "libgst*.so" 2>/dev/null | head -5 || echo "no gst plugins found"
-          echo "--- running gstreamer plugin ---"
-          "$LDEPLOY" --appdir "$GST_APPDIR" --plugin gstreamer 2>&1 || echo "GST plugin exit: $?"
-          echo "=== GStreamer plugin test done ==="
-
       - name: Build Tauri app bundle
         working-directory: src-tauri
         shell: bash
         env:
           XDG_CACHE_HOME: ${{ runner.temp }}/xdg-cache
-          RUST_LOG: debug
         run: |
           set -euo pipefail
           mkdir -p "${XDG_CACHE_HOME}"
           rm -rf target/release/bundle
           case "${{ matrix.platform.os }}" in
             ubuntu-24.04)
-              cargo tauri build -vv --bundles deb -- --features tauri-runtime 2>&1
+              cargo tauri build --bundles deb -- --features tauri-runtime 2>&1
+              LD_LIBRARY_PATH="" cargo tauri build --bundles appimage -- --features tauri-runtime 2>&1
               ;;
             windows-latest)
               cargo tauri build --bundles msi -- --features tauri-runtime
@@ -727,63 +642,6 @@ jobs:
               exit 1
               ;;
           esac
-
-      - name: Check Linux dynamic dependencies
-        if: matrix.platform.os == 'ubuntu-24.04'
-        run: |
-          set -euo pipefail
-          BINARY=$(find src-tauri/target/release -maxdepth 1 -type f -executable -name "arxell*" | head -1)
-          if [ -z "$BINARY" ]; then
-            echo "ERROR: Could not find built binary"
-            exit 1
-          fi
-          echo "Binary: $BINARY"
-          ldd "$BINARY" | tee /tmp/arxell-ldd.txt || true
-          if grep -q "not found" /tmp/arxell-ldd.txt; then
-            echo "ERROR: Missing shared library dependency detected"
-            grep "not found" /tmp/arxell-ldd.txt
-            exit 1
-          fi
-          echo "All shared library dependencies resolved"
-
-      - name: Build Linux AppImage
-        if: matrix.platform.os == 'ubuntu-24.04'
-        working-directory: src-tauri
-        shell: bash
-        env:
-          XDG_CACHE_HOME: ${{ runner.temp }}/xdg-cache
-          RUST_LOG: debug
-          LD_LIBRARY_PATH: ""
-        run: |
-          set -euo pipefail
-          echo "APPIMAGE_BUNDLE_GSTREAMER=${APPIMAGE_BUNDLE_GSTREAMER:-<unset>}"
-          grep -R "bundleMediaFramework\|APPIMAGE_BUNDLE_GSTREAMER" src-tauri .github || true
-          cargo tauri build -vv --bundles appimage -- --features tauri-runtime 2>&1
-
-      - name: Inspect failed AppImage AppDir
-        if: failure() && matrix.platform.os == 'ubuntu-24.04'
-        run: |
-          set -ux
-          APPDIR="src-tauri/target/release/bundle/appimage/Arxell.AppDir"
-          if [ -d "$APPDIR" ]; then
-            echo "=== AppDir total size ==="
-            du -sh "$APPDIR"
-
-            echo "=== Largest top-level dirs ==="
-            du -ah "$APPDIR" | sort -rh | head -100
-
-            echo "=== File count ==="
-            find "$APPDIR" -type f | wc -l
-
-            echo "=== GStreamer payload ==="
-            find "$APPDIR" -path "*gstreamer*" -o -name "libgst*.so" | head -200
-            find "$APPDIR" -path "*gstreamer*" -o -name "libgst*.so" | wc -l
-
-            echo "=== Native runtime payload ==="
-            find "$APPDIR" -type f \( -name "*.so" -o -name "*.so.*" -perm -111 \) -exec file {} \; | head -300
-          else
-            echo "No AppDir found"
-          fi
 
       - name: Verify Linux artifacts
         if: matrix.platform.os == 'ubuntu-24.04'
