@@ -266,8 +266,8 @@ Also discovered: `bundle_media_framework` was never explicitly set in `tauri.con
 
 ### Attempt 9 — Explicitly disable GStreamer bundling + clear LD_LIBRARY_PATH + diagnostics
 
-**Commits:** (pending)
-**Result:** PENDING
+**Commit:** `20ad151`
+**Result:** FAILED — but finally revealed the **actual root cause**
 
 Four targeted changes:
 
@@ -289,26 +289,46 @@ Four targeted changes:
 4. **AppDir size inspection on failure**:
    - New `if: failure()` step inspects the partial AppDir left behind
    - Reports total size, largest dirs, file count, GStreamer payload count, and shared library inventory
-   - This will reveal if the AppDir is too large for squashfs or has unexpected payload
+   - **Result**: Only 555 files, 0 GStreamer plugins — AppDir is small and clean
 
-## Current State of the CI Workflow
+**The `-vv` + `RUST_LOG=debug` finally exposed the real error from linuxdeploy:**
 
-The following changes from failed attempts are still in the workflow and are benign (safe to keep):
-- Job-level `APPIMAGE_EXTRACT_AND_RUN`, `ARCH`, `NO_STRIP`, `GDK_PIXBUF_MODULEDIR`, `GDK_PIXBUF_MODULE_FILE`
-- Expanded apt package list with GStreamer and GTK runtime deps
-- Loader cache regeneration commands
-- GTK plugin diagnostic step (non-blocking)
-- Linux artifact verification step
-- Restricted upload globs
+```
+Deploying dependencies for ELF file .../llama-runtime/llama.cpp-cpu/llama-server
+ERROR: Could not find dependency: libllama-common.so.0
+ERROR: Failed to deploy dependencies for existing files
+Error [tauri_cli] failed to bundle project `failed to run .../linuxdeploy-x86_64.AppImage`
+```
 
-## Next Steps to Investigate
+### ROOT CAUSE — `libllama-common.so.0` missing from bundled llama runtime
 
-Once we have the actual linuxdeploy error output from attempt 8, we can fix the root cause.
+**Commit:** `9fc59fd` (fix)
+**Result:** PENDING CI VERIFICATION
 
-If attempt 8 still fails with no useful output:
-1. **Add `DEBUG=1`** to job env — linuxdeploy may respect this for even more output
-2. **Try building AppImage manually** after Tauri builds the deb — bypass Tauri's bundler entirely
-3. **Check disk space** on CI runner — AppDir + squashfs might exhaust available space
+The llama.cpp project recently changed their Linux release artifacts. `llama-server` is now dynamically linked to `libllama-common.so.0`, which ships as a separate `.so` file in the release archive. Our runtime preparation script (`Prepare bundled llama.cpp runtimes`) only copied the `llama-server` binary to `src-tauri/resources/llama-runtime/llama.cpp-cpu/` and discarded everything else from the extracted archive.
+
+When linuxdeploy scanned the AppDir, it found `llama-server` with `DT_NEEDED: libllama-common.so.0`, couldn't locate that library anywhere on the system or in the AppDir, and aborted.
+
+**Fix:** After copying the `llama-server` binary, also copy all `*.so*` files from the extracted llama.cpp archive into the same engine directory:
+
+```python
+for so_file in extract_dir.rglob("*.so*"):
+    if so_file.is_file():
+        so_dest = engine_dir / so_file.name
+        shutil.copy2(so_file, so_dest)
+        ...
+```
+
+This ensures `libllama-common.so.0` (and any future shared libraries llama.cpp ships) are bundled alongside `llama-server` in the AppDir.
+
+## Why It Took 9 Attempts to Find
+
+1. **Attempts 1-6**: Tauri's bundler swallows all linuxdeploy output by default. The error `"failed to run linuxdeploy"` contains zero diagnostic information.
+2. **Attempt 7**: Diagnosed all three linuxdeploy plugins (GTK, GStreamer, AppImage) in isolation — all worked. This ruled out broken tooling but used `/bin/bash` as the test binary instead of the real Arxell binary with its bundled runtimes.
+3. **Attempt 8**: Added `-vv` + `RUST_LOG=debug` based on reading the Tauri bundler source code. Still no output captured (the error mode may have still been suppressed).
+4. **Attempt 9**: Split deb/appimage builds, cleared `LD_LIBRARY_PATH`, added failure diagnostics. The `-vv` + `RUST_LOG=debug` + separated step finally allowed linuxdeploy's stderr through, revealing `libllama-common.so.0` as the missing dependency.
+
+The fundamental issue: Tauri's `tauri-bundler` captures linuxdeploy stderr and only prints it at `log::debug!` level. Without `RUST_LOG=debug`, every linuxdeploy error line was silently discarded, and only the generic `"failed to run linuxdeploy"` wrapper was reported.
 
 ## How Tauri Invokes linuxdeploy (tauri-bundler 2.8.0)
 
