@@ -10,7 +10,7 @@ use crate::contracts::{
 use base64::Engine;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use std::collections::{BTreeSet, HashMap};
+use std::collections::HashMap;
 use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -634,72 +634,6 @@ fn recursive_find_dir_named(root: &Path, dir_name: &str, max_depth: usize) -> Op
     None
 }
 
-fn recursive_collect_files_named(
-    root: &Path,
-    file_names: &[&str],
-    max_depth: usize,
-    out: &mut BTreeSet<PathBuf>,
-) {
-    if max_depth == 0 || !root.is_dir() {
-        return;
-    }
-    let Ok(entries) = fs::read_dir(root) else {
-        return;
-    };
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path.is_file() {
-            let matches = path
-                .file_name()
-                .and_then(|n| n.to_str())
-                .map(|name| {
-                    file_names
-                        .iter()
-                        .any(|candidate| name.eq_ignore_ascii_case(candidate))
-                })
-                .unwrap_or(false);
-            if matches {
-                out.insert(path);
-            }
-            continue;
-        }
-        if path.is_dir() {
-            recursive_collect_files_named(&path, file_names, max_depth - 1, out);
-        }
-    }
-}
-
-fn recursive_collect_files_with_ext(
-    root: &Path,
-    ext: &str,
-    max_depth: usize,
-    out: &mut BTreeSet<PathBuf>,
-) {
-    if max_depth == 0 || !root.is_dir() {
-        return;
-    }
-    let Ok(entries) = fs::read_dir(root) else {
-        return;
-    };
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path.is_file() {
-            let matches = path
-                .extension()
-                .and_then(|value| value.to_str())
-                .map(|value| value.eq_ignore_ascii_case(ext))
-                .unwrap_or(false);
-            if matches {
-                out.insert(path);
-            }
-            continue;
-        }
-        if path.is_dir() {
-            recursive_collect_files_with_ext(&path, ext, max_depth - 1, out);
-        }
-    }
-}
-
 fn canonicalize_piper_model_path(model_path: PathBuf, engine_dir: &Path) -> PathBuf {
     let Some(parent) = model_path.parent() else {
         return model_path;
@@ -719,67 +653,6 @@ fn canonicalize_piper_model_path(model_path: PathBuf, engine_dir: &Path) -> Path
     } else {
         model_path
     }
-}
-
-fn discover_available_model_paths(
-    paths: &KokoroPaths,
-    settings: &PersistedTtsSettings,
-) -> Vec<String> {
-    let engine = resolve_engine(settings);
-    let engine_dir = paths.kokoro_dir.join(engine.as_key());
-    let tts_engine_dir = paths.app_data_dir.join("tts").join(engine.as_key());
-    let file_names: &[&str] = match engine {
-        TtsEngine::Kokoro => &[
-            "model.int8.onnx",
-            "kokoro-v0_19.int8.onnx",
-            "model.onnx",
-            "model_quantized.onnx",
-        ],
-        TtsEngine::Piper | TtsEngine::Matcha => &["model.onnx"],
-        TtsEngine::Kitten => &["model.fp16.onnx"],
-    };
-    let mut found = BTreeSet::new();
-    if let Some(model_path) = active_engine_paths(settings)
-        .model_path
-        .filter(|path| !path.trim().is_empty())
-    {
-        let path = PathBuf::from(model_path);
-        found.insert(if matches!(engine, TtsEngine::Piper) {
-            canonicalize_piper_model_path(path, &engine_dir)
-        } else {
-            path
-        });
-    }
-    for root in [&tts_engine_dir, &engine_dir] {
-        if matches!(engine, TtsEngine::Piper) {
-            recursive_collect_files_with_ext(root, "onnx", 4, &mut found);
-        } else {
-            recursive_collect_files_named(root, file_names, 4, &mut found);
-        }
-    }
-    if matches!(engine, TtsEngine::Piper) {
-        let nested_models: BTreeSet<PathBuf> = found
-            .iter()
-            .filter(|path| {
-                path.parent()
-                    .map(|parent| parent != engine_dir)
-                    .unwrap_or(false)
-            })
-            .cloned()
-            .collect();
-        if !nested_models.is_empty() {
-            found = nested_models;
-        }
-        found = found
-            .into_iter()
-            .map(|path| canonicalize_piper_model_path(path, &engine_dir))
-            .collect();
-    }
-    found
-        .into_iter()
-        .filter(|path| path.is_file())
-        .map(|path| path.to_string_lossy().to_string())
-        .collect()
 }
 
 fn model_parent_dir(model_path: Option<&str>) -> Option<PathBuf> {
@@ -1251,22 +1124,6 @@ fn is_voices_bin(path: &Path) -> bool {
         .unwrap_or("")
         .to_lowercase();
     name == "voices.bin" || (name.starts_with("voices") && name.ends_with(".bin"))
-}
-
-fn is_known_kokoro_voice_pack(signature: &EngineSignature) -> bool {
-    if !matches!(signature.engine, TtsEngine::Kokoro) {
-        return false;
-    }
-    let voices_path = Path::new(&signature.voices_path);
-    if is_voices_bin(voices_path) {
-        let size = file_size(voices_path).unwrap_or(0);
-        return size >= 10 * 1024 * 1024;
-    }
-    voices_path
-        .extension()
-        .map(|ext| ext == "bin")
-        .unwrap_or(false)
-        && voices_path.is_file()
 }
 
 fn bundled_kokoro_voice_names(resources_dir: &Path) -> Vec<String> {
@@ -1854,6 +1711,7 @@ pub async fn self_test(
     }
 }
 
+#[allow(dead_code)]
 pub(crate) fn split_into_sentences(phonemes: &str) -> Vec<String> {
     let mut sentences: Vec<String> = Vec::new();
     let mut current = String::new();

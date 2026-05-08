@@ -49,9 +49,6 @@ impl KokoroTokenizer {
         out
     }
 
-    pub fn token_count(&self, phonemes: &str) -> usize {
-        self.tokenize_phonemes(phonemes).len()
-    }
 }
 
 #[cfg(test)]

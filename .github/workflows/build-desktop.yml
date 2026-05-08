@@ -100,8 +100,14 @@ jobs:
             librsvg2-dev \
             libcairo2-dev \
             libgdk-pixbuf-2.0-dev \
+            libgdk-pixbuf2.0-bin \
             libfuse2t64 \
+            squashfs-tools \
             patchelf
+          sudo gdk-pixbuf-query-loaders --update-cache || true
+          multiarch="$(gcc -print-multiarch)"
+          echo "GDK_PIXBUF_MODULEDIR=/usr/lib/${multiarch}/gdk-pixbuf-2.0/2.10.0/loaders" >> "${GITHUB_ENV}"
+          echo "GDK_PIXBUF_MODULE_FILE=/usr/lib/${multiarch}/gdk-pixbuf-2.0/2.10.0/loaders.cache" >> "${GITHUB_ENV}"
 
       - name: Normalize Linux pkg-config metadata
         if: matrix.platform.os == 'ubuntu-24.04'

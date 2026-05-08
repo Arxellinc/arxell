@@ -116,3 +116,54 @@ Why this is durable:
 - CI cannot accidentally publish `AppDir` as if it were an installer.
 - Linux release size stays in the same practical range as macOS/Windows instead of approaching GitHub's 2 GiB limit.
 - AppImage bundling no longer has to process large or accelerator-specific runtime payloads that are unnecessary for the default Linux release.
+
+## May 8 — Attempt #2: Warnings + AppImage Retry
+
+### Bundle identifier warning
+
+Changed `"identifier": "com.arxell.app"` → `"com.arxell.desktop"` in `src-tauri/tauri.conf.json`.
+
+Tauri warns because `.app` conflicts with the macOS application bundle extension. This is a cosmetic warning only but clutters CI output.
+
+**Status: safe, no side effects.**
+
+### Dead code warnings (11 items)
+
+Audited all 11 flagged items for actual usage across the codebase. **9 were truly dead** (zero callers in production or test code) and were removed. **3 are alive** and kept with `#[allow(dead_code)]`:
+
+| File | Item | Action | Reason |
+|------|------|--------|--------|
+| `tts/mod.rs` | `recursive_collect_files_named` | **Removed** | Zero references outside dead code |
+| `tts/mod.rs` | `recursive_collect_files_with_ext` | **Removed** | Zero references outside dead code |
+| `tts/mod.rs` | `discover_available_model_paths` | **Removed** | Zero references |
+| `tts/mod.rs` | `is_known_kokoro_voice_pack` | **Removed** | Zero references |
+| `kokoro_frontend.rs` | `token_count` | **Removed** | Zero references |
+| `kokoro_ort.rs` | `release_session` | **Removed** | Zero references |
+| `kokoro_voice.rs` | `find_data_offset` | **Removed** | Stub returning constant `10`, zero references |
+| `phonemizer.rs` | `bin_path` | **Removed** | Field accessed directly, getter never called |
+| `phonemizer.rs` | `data_path` | **Removed** | Field accessed directly, getter never called |
+| `tts/mod.rs` | `split_into_sentences` | Kept with `#[allow(dead_code)]` | Used in `kokoro_ort` tests |
+| `kokoro_voice.rs` | `load_voice_style` | Kept with `#[allow(dead_code)]` | Used in tests (5 call sites) |
+| `kokoro_ort.rs` | `CachedSession.env` field | Kept with `#[allow(dead_code)]` | Never read but must stay alive for ORT session lifetime |
+
+Also removed unused `BTreeSet` import from `tts/mod.rs` (only the removed functions used it).
+
+**Status: safe, no side effects. Confirmed zero warnings with `cargo check --features tauri-runtime`.**
+
+### AppImage bundling retry
+
+Added to `.github/workflows/build-desktop.yml`:
+
+1. `libgdk-pixbuf2.0-bin` to apt dependencies (provides `gdk-pixbuf-query-loaders`)
+2. `squashfs-tools` to apt dependencies (provides `mksquashfs` for AppImage creation)
+3. `sudo gdk-pixbuf-query-loaders --update-cache` to regenerate loaders cache after install
+4. `GDK_PIXBUF_MODULEDIR` and `GDK_PIXBUF_MODULE_FILE` environment variables set via `GITHUB_ENV`
+
+**Status: unverified — needs CI run to confirm. If linuxdeploy still fails, these changes can be reverted.**
+
+### Revert instructions
+
+If AppImage still fails after this attempt:
+
+1. Revert the 4 CI additions above from `.github/workflows/build-desktop.yml` (the `libgdk-pixbuf2.0-bin`, `squashfs-tools`, `gdk-pixbuf-query-loaders` line, and the two `GDK_PIXBUF_*` env lines)
+2. The bundle identifier and dead code fixes are independent and safe to keep

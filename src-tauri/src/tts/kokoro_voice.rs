@@ -12,6 +12,7 @@ fn voice_cache() -> &'static Mutex<HashMap<String, Vec<f32>>> {
     VOICE_DATA_CACHE.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
+#[allow(dead_code)]
 pub fn load_voice_style(path: &Path, token_len: usize) -> Result<Vec<f32>, String> {
     load_voice_style_named(path, None, token_len)
 }
@@ -107,10 +108,6 @@ fn parse_npy_f32(data: &[u8]) -> Result<Vec<f32>, String> {
         .map(|chunk| f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
         .collect();
     Ok(values)
-}
-
-fn find_data_offset(_data: &[u8]) -> usize {
-    10
 }
 
 pub fn list_voices_in_pack(path: &Path) -> Result<Vec<String>, String> {

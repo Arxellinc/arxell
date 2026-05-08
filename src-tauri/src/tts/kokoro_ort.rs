@@ -15,6 +15,7 @@ static ORT_SESSION_CACHE: OnceLock<Mutex<HashMap<String, CachedSession>>> = Once
 
 #[derive(Clone)]
 struct CachedSession {
+    #[allow(dead_code)]
     env: *mut ort_sys::OrtEnv,
     session: *mut ort_sys::OrtSession,
     input_names: Vec<String>,
@@ -219,14 +220,6 @@ unsafe fn release_memory_info(info: *mut ort_sys::OrtMemoryInfo) {
     if let Ok(api) = ort_api() {
         if let Some(release) = api.ReleaseMemoryInfo {
             release(info);
-        }
-    }
-}
-
-unsafe fn release_session(session: *mut ort_sys::OrtSession) {
-    if let Ok(api) = ort_api() {
-        if let Some(release) = api.ReleaseSession {
-            release(session);
         }
     }
 }

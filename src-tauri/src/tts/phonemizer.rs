@@ -54,13 +54,6 @@ impl EspeakPhonemizer {
         Err("espeak-ng not found: neither bundled binary nor system binary available".to_string())
     }
 
-    pub fn bin_path(&self) -> &Path {
-        &self.bin_path
-    }
-
-    pub fn data_path(&self) -> Option<&Path> {
-        self.data_path.as_deref()
-    }
 }
 
 fn which_espeak_ng() -> Option<PathBuf> {
