@@ -49,6 +49,11 @@
   padding: 0.25rem;
 }
 
+.opencode-host .xterm-screen canvas {
+  -webkit-transform: translateZ(0);
+  transform: translateZ(0);
+}
+
 .opencode-placeholder {
   display: flex;
   align-items: center;

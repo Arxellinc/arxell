@@ -5093,6 +5093,11 @@ function renderAndBind(sendMessage: (text: string) => Promise<void>): void {
       } catch (error) {
         state.tts.status = "error";
         state.tts.message = `TTS engine start failed: ${formatTtsError(error)}`;
+        pushAppNotification({
+          title: "TTS engine error",
+          description: state.tts.message,
+          tone: "error"
+        });
         renderAndBind(sendMessage);
         return;
       }
@@ -5116,7 +5121,16 @@ function renderAndBind(sendMessage: (text: string) => Promise<void>): void {
       if (state.chatTtsEnabled) {
         await toggleChatAutoSpeak();
       }
-      state.tts.message = "Voice mode failed to fully enable. Check microphone permission and STT status.";
+      const detail = state.stt.message
+        ? `Voice mode failed: ${state.stt.message}`
+        : "Voice mode failed to fully enable. Check microphone permission and STT status.";
+      state.tts.message = detail;
+      pushConsoleEntry("warn", "browser", detail);
+      pushAppNotification({
+        title: "Voice mode unavailable",
+        description: detail,
+        tone: "warn"
+      });
       renderAndBind(sendMessage);
     }
     } finally {
@@ -8746,12 +8760,17 @@ async function ensureTerminalSession(): Promise<void> {
 
 function prewarmWhisper(): void {
   import("@tauri-apps/api/core").then(({ invoke }) => {
-    invoke("stt_set_backend", { backend: state.stt.backend }).catch(() => {});
+    invoke("stt_set_backend", { backend: state.stt.backend }).catch((e: unknown) => {
+      pushConsoleEntry("warn", "browser", `STT backend init skipped: ${String(e)}`);
+    });
     invoke("start_stt")
       .then(() => {
         state.stt.serverWarmed = true;
+        pushConsoleEntry("info", "browser", "Whisper server prewarmed successfully.");
       })
-      .catch(() => {});
+      .catch((e: unknown) => {
+        pushConsoleEntry("warn", "browser", `Whisper prewarm skipped: ${String(e)}`);
+      });
   }).catch(() => {});
 }
 

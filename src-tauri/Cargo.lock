@@ -139,7 +139,7 @@ dependencies = [
 
 [[package]]
 name = "arxell"
-version = "0.2.8"
+version = "0.2.9"
 dependencies = [
  "arx_rs",
  "async-trait",
