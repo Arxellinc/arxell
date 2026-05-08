@@ -232,10 +232,8 @@ jobs:
 
           if os_key == "linux":
             targets = [
-              ("llama.cpp-cpu", ["ubuntu", "x64"], ["vulkan", "cuda", "rocm", "hip", "aclgraph", "s390x", "cudart"]),
+              ("llama.cpp-cpu", ["ubuntu", "x64"], ["vulkan", "cuda", "rocm", "hip", "openvino", "sycl", "aclgraph", "s390x", "cudart"]),
               ("llama.cpp-vulkan", ["ubuntu", "vulkan", "x64"], ["cuda", "rocm", "hip", "aclgraph", "s390x", "cudart"]),
-              ("llama.cpp-cuda", ["ubuntu", "cuda", "x64"], ["vulkan", "rocm", "hip", "aclgraph", "s390x", "cudart"]),
-              ("llama.cpp-rocm", ["ubuntu", "rocm", "x64"], ["vulkan", "cuda", "aclgraph", "s390x", "cudart"]),
             ]
             required_engines = ["llama.cpp-cpu", "llama.cpp-vulkan"]
           elif os_key == "windows":
@@ -594,26 +592,6 @@ jobs:
           print(f"[kokoro-runtime] manifest written for {archive.name}")
           PY
 
-      - name: Pre-cache linuxdeploy tools
-        if: matrix.platform.os == 'ubuntu-24.04'
-        shell: bash
-        env:
-          APPIMAGE_EXTRACT_AND_RUN: 1
-        run: |
-          set -euo pipefail
-          CACHE_DIR="${XDG_CACHE_HOME:-$RUNNER_TEMP}/tauri-bundle-tools"
-          mkdir -p "${CACHE_DIR}"
-          TOOL="${CACHE_DIR}/linuxdeploy-x86_64.AppImage"
-          if [ ! -f "$TOOL" ]; then
-            echo "linuxdeploy not cached yet — will be downloaded during build below"
-            exit 0
-          fi
-          chmod +x "$TOOL"
-          echo "=== linuxdeploy file info ==="
-          file "$TOOL"
-          echo "=== Verifying linuxdeploy extraction ==="
-          APPIMAGE_EXTRACT_AND_RUN=1 "$TOOL" --help 2>&1 || echo "EXIT_CODE=$?"
-
       - name: Build Tauri app bundle
         working-directory: src-tauri
         shell: bash
@@ -625,13 +603,11 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p "${XDG_CACHE_HOME}"
+          rm -rf target/release/bundle
           case "${{ matrix.platform.os }}" in
             ubuntu-24.04)
-              # Build deb first, then appimage separately (avoids linuxdeploy-process-state issue)
               cargo tauri build --bundles deb -- --features tauri-runtime 2>&1
-              echo "=== Building AppImage bundle ==="
-              cargo tauri build --bundles appimage -- --features tauri-runtime 2>&1 || \
-                echo "WARNING: AppImage bundle failed, deb was built successfully" >&2
+              cargo tauri build --bundles appimage -- --features tauri-runtime 2>&1
               ;;
             windows-latest)
               cargo tauri build --bundles msi -- --features tauri-runtime
@@ -647,23 +623,49 @@ jobs:
 
       - name: Verify Tauri bundle output
         shell: bash
+        env:
+          PLATFORM_OS: ${{ matrix.platform.os }}
         run: |
           set -euo pipefail
           test -d src-tauri/target/release/bundle
           python - <<'PY'
+          import os
           import pathlib
+
+          platform_os = os.environ["PLATFORM_OS"]
+          expected_suffixes = {
+              "ubuntu-24.04": {".deb", ".appimage"},
+              "windows-latest": {".msi"},
+              "macos-latest": {".dmg"},
+          }.get(platform_os)
+          if expected_suffixes is None:
+              raise SystemExit(f"Unsupported platform: {platform_os}")
+
           files = [p for p in pathlib.Path("src-tauri/target/release/bundle").rglob("*") if p.is_file()]
-          if not files:
-            raise SystemExit("No Tauri bundle files were produced")
-          for path in files:
-            print(path)
+          package_files = [p for p in files if p.suffix.lower() in expected_suffixes]
+          if not package_files:
+            raise SystemExit("No final Tauri package files were produced")
+          for path in package_files:
+            print(f"{path} ({path.stat().st_size} bytes)")
+
+          produced_suffixes = {p.suffix.lower() for p in package_files}
+          missing_suffixes = expected_suffixes - produced_suffixes
+          if missing_suffixes:
+              raise SystemExit(
+                  f"Missing required bundle output for {platform_os}: "
+                  f"{sorted(missing_suffixes)}"
+              )
           PY
 
       - name: Upload Tauri bundle artifact
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.platform.name }}-v${{ steps.app_version.outputs.version }}-tauri-bundle
-          path: src-tauri/target/release/bundle/**/*
+          path: |
+            src-tauri/target/release/bundle/**/*.AppImage
+            src-tauri/target/release/bundle/**/*.deb
+            src-tauri/target/release/bundle/**/*.dmg
+            src-tauri/target/release/bundle/**/*.msi
           if-no-files-found: error
 
       - name: Upload bundled runtime manifest
@@ -720,7 +722,11 @@ jobs:
           bundle_dir.mkdir(parents=True, exist_ok=True)
 
           tauri_bundle_dir = pathlib.Path("src-tauri/target/release/bundle")
-          tauri_bundle_files = [p for p in tauri_bundle_dir.rglob("*") if p.is_file()]
+          final_package_suffixes = {".appimage", ".deb", ".dmg", ".msi"}
+          tauri_bundle_files = [
+              p for p in tauri_bundle_dir.rglob("*")
+              if p.is_file() and p.suffix.lower() in final_package_suffixes
+          ]
           if not tauri_bundle_files:
               raise RuntimeError(f"no Tauri bundle files found under {tauri_bundle_dir}")
           for source in tauri_bundle_files:
@@ -747,6 +753,12 @@ jobs:
           archive_zip = pathlib.Path(
               shutil.make_archive(str(archive_base), "zip", root_dir=bundle_dir.parent, base_dir=bundle_dir.name)
           )
+          max_release_zip_bytes = 1500 * 1024 * 1024
+          if archive_zip.stat().st_size > max_release_zip_bytes:
+              raise RuntimeError(
+                  f"release asset is too large: {archive_zip.stat().st_size} bytes. "
+                  "This usually means duplicate or unsupported bundle formats were included."
+              )
 
           digest = hashlib.sha256(archive_zip.read_bytes()).hexdigest()
           checksum_file = archive_zip.with_suffix(".zip.sha256")
