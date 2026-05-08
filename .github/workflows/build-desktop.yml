@@ -676,6 +676,30 @@ jobs:
           "$LDEPLOY" --appdir "$APPDIR" --output appimage 2>&1 || echo "FULL appimage build exit: $?"
           echo "=== appimage plugin test done ==="
 
+          echo "=== GStreamer plugin test ==="
+          GST_PLUGIN="$CACHE/linuxdeploy-plugin-gstreamer.sh"
+          [ -f "$GST_PLUGIN" ] || {
+            curl -fsSL -o "$GST_PLUGIN" \
+              https://raw.githubusercontent.com/tauri-apps/linuxdeploy-plugin-gstreamer/master/linuxdeploy-plugin-gstreamer.sh
+            chmod +x "$GST_PLUGIN"
+          }
+          GST_APPDIR="$(mktemp -d)/GSTProbe.AppDir"
+          mkdir -p "$GST_APPDIR/usr/bin" "$GST_APPDIR/usr/share/applications"
+          mkdir -p "$GST_APPDIR/usr/share/icons/hicolor/256x256/apps"
+          cp "$(which bash)" "$GST_APPDIR/usr/bin/probe"
+          printf '[Desktop Entry]\nType=Application\nName=Probe\nExec=probe\nIcon=probe\nCategories=Utility;\n' \
+            > "$GST_APPDIR/usr/share/applications/probe.desktop"
+          touch "$GST_APPDIR/usr/share/icons/hicolor/256x256/apps/probe.png"
+          echo "--- gstreamer registry ---"
+          gst-inspect-1.0 --version 2>&1 || echo "gst-inspect-1.0 not found"
+          echo "--- GST_PLUGIN_PATH ---"
+          echo "GST_PLUGIN_PATH=${GST_PLUGIN_PATH:-(not set)}"
+          echo "--- find gst plugins ---"
+          find /usr/lib -name "libgst*.so" 2>/dev/null | head -5 || echo "no gst plugins found"
+          echo "--- running gstreamer plugin ---"
+          "$LDEPLOY" --appdir "$GST_APPDIR" --plugin gstreamer 2>&1 || echo "GST plugin exit: $?"
+          echo "=== GStreamer plugin test done ==="
+
       - name: Build Tauri app bundle
         working-directory: src-tauri
         shell: bash
