@@ -41,6 +41,11 @@
       "icons/icon.ico",
       "icons/icon.png"
     ],
-    "useLocalToolsDir": false
+    "useLocalToolsDir": false,
+    "linux": {
+      "appimage": {
+        "bundleMediaFramework": false
+      }
+    }
   }
 }

@@ -112,11 +112,6 @@ jobs:
             libgstreamer1.0-dev \
             libgstreamer-plugins-base1.0-dev \
             libgstreamer-plugins-bad1.0-dev \
-            gstreamer1.0-plugins-base \
-            gstreamer1.0-plugins-good \
-            gstreamer1.0-plugins-bad \
-            gstreamer1.0-plugins-ugly \
-            gstreamer1.0-libav \
             gtk+3.0 \
             libgtk-3-dev \
             librsvg2-common \
@@ -705,14 +700,14 @@ jobs:
         shell: bash
         env:
           XDG_CACHE_HOME: ${{ runner.temp }}/xdg-cache
+          RUST_LOG: debug
         run: |
           set -euo pipefail
           mkdir -p "${XDG_CACHE_HOME}"
           rm -rf target/release/bundle
           case "${{ matrix.platform.os }}" in
             ubuntu-24.04)
-              cargo tauri build --bundles deb -- --features tauri-runtime 2>&1
-              cargo tauri build --bundles appimage -- --features tauri-runtime 2>&1
+              cargo tauri build -vv --bundles deb -- --features tauri-runtime 2>&1
               ;;
             windows-latest)
               cargo tauri build --bundles msi -- --features tauri-runtime
@@ -725,6 +720,63 @@ jobs:
               exit 1
               ;;
           esac
+
+      - name: Check Linux dynamic dependencies
+        if: matrix.platform.os == 'ubuntu-24.04'
+        run: |
+          set -euo pipefail
+          BINARY=$(find src-tauri/target/release -maxdepth 1 -type f -executable -name "arxell*" | head -1)
+          if [ -z "$BINARY" ]; then
+            echo "ERROR: Could not find built binary"
+            exit 1
+          fi
+          echo "Binary: $BINARY"
+          ldd "$BINARY" | tee /tmp/arxell-ldd.txt || true
+          if grep -q "not found" /tmp/arxell-ldd.txt; then
+            echo "ERROR: Missing shared library dependency detected"
+            grep "not found" /tmp/arxell-ldd.txt
+            exit 1
+          fi
+          echo "All shared library dependencies resolved"
+
+      - name: Build Linux AppImage
+        if: matrix.platform.os == 'ubuntu-24.04'
+        working-directory: src-tauri
+        shell: bash
+        env:
+          XDG_CACHE_HOME: ${{ runner.temp }}/xdg-cache
+          RUST_LOG: debug
+          LD_LIBRARY_PATH: ""
+        run: |
+          set -euo pipefail
+          echo "APPIMAGE_BUNDLE_GSTREAMER=${APPIMAGE_BUNDLE_GSTREAMER:-<unset>}"
+          grep -R "bundleMediaFramework\|APPIMAGE_BUNDLE_GSTREAMER" src-tauri .github || true
+          cargo tauri build -vv --bundles appimage -- --features tauri-runtime 2>&1
+
+      - name: Inspect failed AppImage AppDir
+        if: failure() && matrix.platform.os == 'ubuntu-24.04'
+        run: |
+          set -ux
+          APPDIR="src-tauri/target/release/bundle/appimage/Arxell.AppDir"
+          if [ -d "$APPDIR" ]; then
+            echo "=== AppDir total size ==="
+            du -sh "$APPDIR"
+
+            echo "=== Largest top-level dirs ==="
+            du -ah "$APPDIR" | sort -rh | head -100
+
+            echo "=== File count ==="
+            find "$APPDIR" -type f | wc -l
+
+            echo "=== GStreamer payload ==="
+            find "$APPDIR" -path "*gstreamer*" -o -name "libgst*.so" | head -200
+            find "$APPDIR" -path "*gstreamer*" -o -name "libgst*.so" | wc -l
+
+            echo "=== Native runtime payload ==="
+            find "$APPDIR" -type f \( -name "*.so" -o -name "*.so.*" -perm -111 \) -exec file {} \; | head -300
+          else
+            echo "No AppDir found"
+          fi
 
       - name: Verify Linux artifacts
         if: matrix.platform.os == 'ubuntu-24.04'
