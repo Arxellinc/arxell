@@ -630,6 +630,7 @@ jobs:
 
           LDEPLOY="$CACHE/linuxdeploy-x86_64.AppImage"
           GTK_PLUGIN="$CACHE/linuxdeploy-plugin-gtk.sh"
+          APPIMAGE_PLUGIN="$CACHE/linuxdeploy-plugin-appimage-x86_64.AppImage"
 
           [ -f "$LDEPLOY" ] || {
             curl -fsSL -o "$LDEPLOY" \
@@ -640,6 +641,11 @@ jobs:
             curl -fsSL -o "$GTK_PLUGIN" \
               https://raw.githubusercontent.com/tauri-apps/linuxdeploy-plugin-gtk/master/linuxdeploy-plugin-gtk.sh
             chmod +x "$GTK_PLUGIN"
+          }
+          [ -f "$APPIMAGE_PLUGIN" ] || {
+            curl -fsSL -o "$APPIMAGE_PLUGIN" \
+              https://github.com/linuxdeploy/linuxdeploy-plugin-appimage/releases/download/continuous/linuxdeploy-plugin-appimage-x86_64.AppImage
+            chmod +x "$APPIMAGE_PLUGIN"
           }
 
           APPDIR="$(mktemp -d)/Probe.AppDir"
@@ -659,6 +665,16 @@ jobs:
           echo "=== linuxdeploy + GTK plugin ==="
           DEPLOY_GTK_PLUGINS="$GTK_PLUGIN" \
             "$LDEPLOY" --appdir "$APPDIR" --plugin gtk 2>&1 || echo "GTK plugin exit: $?"
+
+          echo "=== appimage plugin standalone test ==="
+          echo "--- file info ---"
+          file "$APPIMAGE_PLUGIN" || true
+          echo "--- trying --help ---"
+          "$APPIMAGE_PLUGIN" --help 2>&1 || echo "appimage plugin --help exit: $?"
+          echo "--- trying with AppDir ---"
+          OUTPUT="/tmp/test-probe.AppImage" \
+          "$LDEPLOY" --appdir "$APPDIR" --output appimage 2>&1 || echo "FULL appimage build exit: $?"
+          echo "=== appimage plugin test done ==="
 
       - name: Build Tauri app bundle
         working-directory: src-tauri
