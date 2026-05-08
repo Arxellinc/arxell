@@ -85,7 +85,15 @@ jobs:
       - name: Setup Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Cache Tauri CLI
+        id: cache_tauri_cli
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin/cargo-tauri
+          key: tauri-cli-${{ runner.os }}-v2
+
       - name: Install Tauri CLI
+        if: steps.cache_tauri_cli.outputs.cache-hit != 'true'
         run: cargo install tauri-cli --locked --version "^2.0.0"
 
       - name: Cache Rust build artifacts
@@ -167,7 +175,34 @@ jobs:
         working-directory: frontend
         run: npm run build
 
+      - name: Resolve runtime versions
+        id: runtime_versions
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          llama_tag="$(curl -fsSL -H "Authorization: Bearer ${GITHUB_TOKEN}" https://api.github.com/repos/ggml-org/llama.cpp/releases/latest | python3 -c 'import json,sys; print(json.load(sys.stdin)["tag_name"])')"
+          whisper_tag="$(curl -fsSL -H "Authorization: Bearer ${GITHUB_TOKEN}" https://api.github.com/repos/ggerganov/whisper.cpp/releases/latest | python3 -c 'import json,sys; print(json.load(sys.stdin)["tag_name"])')"
+          kokoro_hash="$(md5sum scripts/prepare_kokoro_runtime.py scripts/verify_kokoro_runtime_archive.py | md5sum | cut -d' ' -f1)"
+          echo "llama_tag=${llama_tag}" >> "${GITHUB_OUTPUT}"
+          echo "whisper_tag=${whisper_tag}" >> "${GITHUB_OUTPUT}"
+          echo "kokoro_hash=${kokoro_hash}" >> "${GITHUB_OUTPUT}"
+          echo "Cache key: llama=${llama_tag} whisper=${whisper_tag} kokoro=${kokoro_hash}"
+
+      - name: Cache bundled runtimes
+        id: cache_runtimes
+        uses: actions/cache@v4
+        with:
+          path: |
+            src-tauri/resources/llama-runtime
+            src-tauri/resources/whisper-server
+            src-tauri/resources/whisper
+            src-tauri/resources/kokoro-runtime
+          key: runtimes-${{ runner.os }}-${{ steps.runtime_versions.outputs.llama_tag }}-${{ steps.runtime_versions.outputs.whisper_tag }}-${{ steps.runtime_versions.outputs.kokoro_hash }}
+
       - name: Prepare bundled llama.cpp runtimes
+        if: steps.cache_runtimes.outputs.cache-hit != 'true'
         shell: bash
         env:
           GITHUB_TOKEN: ${{ github.token }}
@@ -346,6 +381,7 @@ jobs:
           PY
 
       - name: Prepare bundled whisper runtimes
+        if: steps.cache_runtimes.outputs.cache-hit != 'true'
         shell: bash
         env:
           GITHUB_TOKEN: ${{ github.token }}
@@ -530,6 +566,7 @@ jobs:
           PY
 
       - name: Prepare bundled Kokoro runtime archive
+        if: steps.cache_runtimes.outputs.cache-hit != 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -544,6 +581,7 @@ jobs:
           "$PY" scripts/prepare_kokoro_runtime.py
 
       - name: Verify bundled Kokoro runtime archive
+        if: steps.cache_runtimes.outputs.cache-hit != 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -558,6 +596,7 @@ jobs:
           "$PY" scripts/verify_kokoro_runtime_archive.py
 
       - name: Generate Kokoro runtime manifest
+        if: steps.cache_runtimes.outputs.cache-hit != 'true'
         shell: bash
         run: |
           set -euo pipefail
