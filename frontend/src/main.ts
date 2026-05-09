@@ -952,6 +952,7 @@ const state: {
     installSpeedBytesPerSec: number | null;
     installPhase: string | null;
     installCurrentFileName: string | null;
+    generateCorrelationId: string | null;
     installCorrelationId: string | null;
   };
   stt: {
