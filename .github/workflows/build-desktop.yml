@@ -795,6 +795,22 @@ jobs:
     permissions:
       contents: write
     steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Read app version
+        id: app_version
+        shell: bash
+        run: |
+          set -euo pipefail
+          if command -v python3 >/dev/null 2>&1; then
+            PY=python3
+          elif command -v python >/dev/null 2>&1; then
+            PY=python
+          fi
+          version="$("$PY" -c 'import pathlib,re,sys; text=pathlib.Path("src-tauri/Cargo.toml").read_text(encoding="utf-8"); section=re.search(r"(?ms)^\[package\]\s*(.*?)(?=^\[|\Z)", text); m=re.search(r"(?m)^\s*version\s*=\s*\"([^\"]+)\"\s*$", section.group(1) if section else ""); print(m.group(1) if m else (sys.stderr.write("Could not find [package].version in src-tauri/Cargo.toml\\n") or sys.exit(1)))')"
+          echo "version=${version}" >> "${GITHUB_OUTPUT}"
+
       - name: Download release bundle artifacts
         uses: actions/download-artifact@v4
         with:
@@ -802,21 +818,10 @@ jobs:
           merge-multiple: true
           path: release-assets
 
-      - name: Determine release tag
-        id: release_tag
-        shell: bash
-        run: |
-          if [[ "${GITHUB_REF}" == refs/tags/* ]]; then
-            echo "tag=${GITHUB_REF_NAME}" >> "${GITHUB_OUTPUT}"
-          else
-            short_sha="$(echo "${GITHUB_SHA}" | cut -c1-7)"
-            echo "tag=nightly-${short_sha}" >> "${GITHUB_OUTPUT}"
-          fi
-
       - name: Publish GitHub Release assets
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ steps.release_tag.outputs.tag }}
+          tag_name: v${{ steps.app_version.outputs.version }}
           files: |
             release-assets/**/*.deb
             release-assets/**/*.AppImage
