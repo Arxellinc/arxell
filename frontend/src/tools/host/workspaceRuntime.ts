@@ -10,6 +10,7 @@ import {
   deleteFilesPath,
   duplicateActiveFilesTab,
   ensureFilesExplorerLoaded,
+  initFilesImageHelpers,
   listFilesDirectory,
   openFilesFile,
   pasteFilesClipboard,
@@ -176,6 +177,7 @@ export function createWorkspaceToolsRuntime(
     },
     nextCorrelationId: deps.nextCorrelationId
   };
+  initFilesImageHelpers(deps.nextCorrelationId, () => deps.getClient());
 
   const webDeps = {
     get client() {

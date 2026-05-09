@@ -1075,6 +1075,15 @@ export interface ImageGenerationGenerateResponse {
   asset: MediaAssetRecord;
 }
 
+export interface ImageGenerationCancelGenerateRequest {
+  correlationId: string;
+}
+
+export interface ImageGenerationCancelGenerateResponse {
+  correlationId: string;
+  cancelled: boolean;
+}
+
 export interface DevicesProbeMicrophoneRequest {
   correlationId: string;
   attemptOpen?: boolean;

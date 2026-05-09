@@ -82,6 +82,8 @@ export interface WorkspaceToolViewInput {
   filesSelectionDragActive: boolean;
   filesSelectionJustDragged: boolean;
   filesSelectionGesture: "single" | "toggle" | "range" | null;
+  filesImagePreviewUrlByPath: Record<string, string>;
+  filesImageViewMode: "fit" | "actual";
   filesError: string | null;
   tasksById: Record<string, TaskRecord>;
   tasksRunsByTaskId: Record<string, TaskRunRecord[]>;
@@ -251,6 +253,8 @@ export function buildWorkspaceToolViews(input: WorkspaceToolViewInput, activeToo
     selectionDragActive: input.filesSelectionDragActive,
     selectionJustDragged: input.filesSelectionJustDragged,
     selectionGesture: input.filesSelectionGesture,
+    imagePreviewUrlByPath: input.filesImagePreviewUrlByPath,
+    imageViewMode: input.filesImageViewMode,
     error: input.filesError
   }) : "";
 

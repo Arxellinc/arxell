@@ -185,6 +185,8 @@ export function createInitialFilesState(): FilesToolStateSlice {
     filesSelectionDragActive: false,
     filesSelectionJustDragged: false,
     filesSelectionGesture: null,
+    filesImagePreviewUrlByPath: {},
+    filesImageViewMode: "fit",
     filesError: null
   };
 }
@@ -453,6 +455,8 @@ export function selectFilesToolState(
     filesSelectionDragActive: state.filesSelectionDragActive,
     filesSelectionJustDragged: state.filesSelectionJustDragged,
     filesSelectionGesture: state.filesSelectionGesture,
+    filesImagePreviewUrlByPath: state.filesImagePreviewUrlByPath,
+    filesImageViewMode: state.filesImageViewMode,
     filesError: state.filesError,
     filesUndoDeleteAvailable: state.filesDeleteUndoStack.length > 0
   };

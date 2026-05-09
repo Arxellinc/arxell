@@ -6,7 +6,8 @@ import {
   openFilesContextMenu,
   type FilesConflictResolution,
   selectAllFilesInDirectory,
-  setFilesClipboard
+  setFilesClipboard,
+  isImagePath
 } from "./actions";
 import {
   copyText,
@@ -441,6 +442,14 @@ export async function handleFilesClick(
   }
   if (filesAction === "toggle-wrap") {
     slice.filesLineWrap = slice.filesLineWrap !== true;
+    return true;
+  }
+  if (filesAction === "image-zoom-fit") {
+    slice.filesImageViewMode = "fit";
+    return true;
+  }
+  if (filesAction === "image-zoom-actual") {
+    slice.filesImageViewMode = "actual";
     return true;
   }
   if (filesAction === "toggle-root-selector") {

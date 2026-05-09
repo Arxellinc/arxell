@@ -724,6 +724,8 @@ const state: {
   filesSelectionDragActive: boolean;
   filesSelectionJustDragged: boolean;
   filesSelectionGesture: "single" | "toggle" | "range" | null;
+  filesImagePreviewUrlByPath: Record<string, string>;
+  filesImageViewMode: "fit" | "actual";
   filesError: string | null;
   notepadOpenTabs: string[];
   notepadActiveTabId: string | null;
@@ -1227,6 +1229,7 @@ const state: {
     advancedOpen: false,
     installBusy: false,
     generateBusy: false,
+    generateCorrelationId: null,
     removing: false,
     message: null,
     installReceivedBytes: null,
@@ -6322,11 +6325,13 @@ syncOverlayScrollbars();
       }
       state.images.generateBusy = true;
       state.images.message = "Starting image generation...";
+      const correlationId = nextCorrelationId();
+      state.images.generateCorrelationId = correlationId;
       renderAndBind(sendMessage);
       try {
         const seed = state.images.seed.trim() ? Number.parseInt(state.images.seed.trim(), 10) : null;
         const request = {
-          correlationId: nextCorrelationId(),
+          correlationId,
           prompt,
           width: state.images.width,
           height: state.images.height,
@@ -6345,7 +6350,22 @@ syncOverlayScrollbars();
         state.images.message = `Image generation blocked: ${String(error)}`;
       } finally {
         state.images.generateBusy = false;
+        state.images.generateCorrelationId = null;
       }
+      renderAndBind(sendMessage);
+    },
+    onImagesCancelGenerate: async () => {
+      const client = clientRef;
+      const correlationId = state.images.generateCorrelationId;
+      if (!client || !correlationId) return;
+      try {
+        await client.imageGenerationCancelGenerate({ correlationId: nextCorrelationId() });
+        state.images.message = "Image generation cancelled.";
+      } catch (error) {
+        state.images.message = `Cancel failed: ${String(error)}`;
+      }
+      state.images.generateBusy = false;
+      state.images.generateCorrelationId = null;
       renderAndBind(sendMessage);
     },
     onImagesSetPrompt: async (prompt: string) => {

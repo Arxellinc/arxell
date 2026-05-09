@@ -1483,6 +1483,19 @@ pub struct ImageGenerationGenerateResponse {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct ImageGenerationCancelGenerateRequest {
+    pub correlation_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImageGenerationCancelGenerateResponse {
+    pub correlation_id: String,
+    pub cancelled: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct DevicesProbeMicrophoneRequest {
     pub correlation_id: String,
     pub attempt_open: Option<bool>,

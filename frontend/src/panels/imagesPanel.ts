@@ -53,8 +53,14 @@ function statusLabel(state: PrimaryPanelRenderState): { label: string; tone: str
 
 export function renderImagesActions(state: PrimaryPanelRenderState): string {
   const label = statusLabel(state);
+  const disabled = state.images.status?.disabled === true;
+  const installed = state.images.status?.installState === "installed";
   return `
     <div class="images-actions">
+      <label class="images-disable-row">
+        <input type="checkbox" id="imagesDisableToggle" ${disabled ? "checked" : ""} ${installed ? "" : "disabled"} />
+        <span>Disable image generation</span>
+      </label>
       <span class="images-status-pill is-${escapeHtml(label.tone)}">${escapeHtml(label.label)}</span>
       <button type="button" class="topbar-icon-btn" id="imagesRefreshBtn" aria-label="Refresh images status" data-title="Refresh Images" title="Refresh Images">${iconHtml("refresh-cw", { size: 16, tone: "dark" })}</button>
     </div>
@@ -96,14 +102,19 @@ export function renderImagesBody(state: PrimaryPanelRenderState): string {
   const message = images.message || status?.message || "";
   return `
     <div class="images-panel">
-      <section class="images-topbar">
-        <label class="images-disable-row">
-          <input type="checkbox" id="imagesDisableToggle" ${disabled ? "checked" : ""} ${installed ? "" : "disabled"} />
-          <span>Disable image generation</span>
-        </label>
+      ${!installed ? `
+      <section class="images-install-section">
+        <p class="images-install-description">Stable Diffusion image generation is not installed. Click the button below to download and install the engine and model files. This is a large download (~11 GB) and may take over an hour on slower connections.</p>
         ${installHtml}
         ${progressHtml}
       </section>
+      ` : `
+      ${installBusy ? `
+      <section class="images-install-section">
+        ${progressHtml}
+      </section>
+      ` : ""}
+      `}
 
       <section class="images-section">
         <div class="images-section-title">Package</div>
@@ -122,32 +133,35 @@ export function renderImagesBody(state: PrimaryPanelRenderState): string {
 
       <section class="images-section">
         <div class="images-section-title">Generate</div>
-        <label class="field">
-          <span>Prompt</span>
-          <textarea class="field-textarea-soft images-prompt" id="imagesPromptInput" rows="5" placeholder="Describe the image">${escapeHtml(images.prompt)}</textarea>
-        </label>
-        <div class="images-size-row" role="group" aria-label="Image size">
-          ${renderSizeButton(images.width, images.height, 512, 512)}
-          ${renderSizeButton(images.width, images.height, 768, 768)}
-          ${renderSizeButton(images.width, images.height, 1024, 1024)}
-          ${renderSizeButton(images.width, images.height, 768, 1024)}
-          ${renderSizeButton(images.width, images.height, 1024, 768)}
+        <div class="images-centered">
+          <label class="field images-prompt-field">
+            <span>Prompt</span>
+            <textarea class="field-textarea-soft images-prompt" id="imagesPromptInput" rows="3" placeholder="Describe the image">${escapeHtml(images.prompt)}</textarea>
+          </label>
+          <div class="images-size-row" role="group" aria-label="Image size">
+            ${renderSizeButton(images.width, images.height, 512, 512)}
+            ${renderSizeButton(images.width, images.height, 768, 768)}
+            ${renderSizeButton(images.width, images.height, 1024, 1024)}
+            ${renderSizeButton(images.width, images.height, 768, 1024)}
+            ${renderSizeButton(images.width, images.height, 1024, 768)}
+          </div>
+          <div class="images-settings-grid">
+            <label class="field">
+              <span>Steps</span>
+              <input class="field-input-soft" id="imagesStepsInput" type="number" min="1" max="12" value="${escapeHtml(String(images.steps))}" />
+            </label>
+            <label class="field">
+              <span>Guidance</span>
+              <input class="field-input-soft" id="imagesGuidanceInput" type="number" min="0" max="10" step="0.1" value="${escapeHtml(String(images.guidance))}" />
+            </label>
+            <label class="field">
+              <span>Seed</span>
+              <input class="field-input-soft" id="imagesSeedInput" type="text" value="${escapeHtml(images.seed)}" placeholder="random" />
+            </label>
+          </div>
+          <button type="button" class="images-hero-btn" id="imagesGenerateBtn" ${generateDisabled ? "disabled" : ""}>${images.generateBusy ? "Generating..." : "Generate"}</button>
+          ${images.generateBusy ? `<button type="button" class="tool-action-btn images-cancel-gen-btn" id="imagesCancelGenerateBtn">Cancel</button>` : ""}
         </div>
-        <div class="images-settings-grid">
-          <label class="field">
-            <span>Steps</span>
-            <input class="field-input-soft" id="imagesStepsInput" type="number" min="1" max="12" value="${escapeHtml(String(images.steps))}" />
-          </label>
-          <label class="field">
-            <span>Guidance</span>
-            <input class="field-input-soft" id="imagesGuidanceInput" type="number" min="0" max="10" step="0.1" value="${escapeHtml(String(images.guidance))}" />
-          </label>
-          <label class="field">
-            <span>Seed</span>
-            <input class="field-input-soft" id="imagesSeedInput" type="text" value="${escapeHtml(images.seed)}" placeholder="random" />
-          </label>
-        </div>
-        <button type="button" class="tool-action-btn images-primary-btn" id="imagesGenerateBtn" ${generateDisabled ? "disabled" : ""}>Generate</button>
       </section>
 
       ${outputHtml}
@@ -232,6 +246,12 @@ export function bindImagesPanel(bindings: PrimaryPanelBindings): void {
   if (generateBtn) {
     generateBtn.onclick = () => {
       void bindings.onImagesGenerate();
+    };
+  }
+  const cancelGenerateBtn = document.querySelector<HTMLButtonElement>("#imagesCancelGenerateBtn");
+  if (cancelGenerateBtn) {
+    cancelGenerateBtn.onclick = () => {
+      void bindings.onImagesCancelGenerate();
     };
   }
   document.querySelector<HTMLTextAreaElement>("#imagesPromptInput")?.addEventListener("input", (event) => {

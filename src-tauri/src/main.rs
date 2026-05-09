@@ -28,7 +28,8 @@ use arxell_lite::contracts::{
     CustomToolCapabilityInvokeRequest, CustomToolCapabilityInvokeResponse,
     DevicesProbeMicrophoneRequest, DevicesProbeMicrophoneResponse, EventSeverity, EventStage,
     FilesListDirectoryRequest, FilesListDirectoryResponse, ImageGenerationCancelInstallRequest,
-    ImageGenerationCancelInstallResponse, ImageGenerationGenerateRequest,
+    ImageGenerationCancelInstallResponse, ImageGenerationCancelGenerateRequest,
+    ImageGenerationCancelGenerateResponse, ImageGenerationGenerateRequest,
     ImageGenerationGenerateResponse, ImageGenerationInstallRequest, ImageGenerationInstallResponse,
     ImageGenerationRemovePackagesRequest, ImageGenerationRemovePackagesResponse,
     ImageGenerationSetDisabledRequest, ImageGenerationSetDisabledResponse,
@@ -311,6 +312,7 @@ fn main() {
             cmd_image_generation_set_disabled,
             cmd_image_generation_remove_packages,
             cmd_image_generation_generate,
+            cmd_image_generation_cancel_generate,
             cmd_files_list_directory,
             cmd_tool_invoke,
             cmd_custom_tool_capability_invoke,
@@ -1605,6 +1607,23 @@ async fn cmd_image_generation_generate(
     tokio::task::spawn_blocking(move || service.generate(&request, app_data.as_path()))
         .await
         .map_err(|e| format!("image generation task failed: {e}"))?
+}
+
+#[cfg(feature = "tauri-runtime")]
+#[tauri::command]
+async fn cmd_image_generation_cancel_generate(
+    _app: tauri::AppHandle,
+    state: State<'_, TauriBridgeState>,
+    request: ImageGenerationCancelGenerateRequest,
+) -> Result<ImageGenerationCancelGenerateResponse, String> {
+    let service = std::sync::Arc::clone(&state.image_generation);
+    let cancelled = tokio::task::spawn_blocking(move || service.cancel_generate())
+        .await
+        .map_err(|e| format!("image generation cancel task failed: {e}"))?;
+    Ok(ImageGenerationCancelGenerateResponse {
+        correlation_id: request.correlation_id,
+        cancelled,
+    })
 }
 
 #[cfg(feature = "tauri-runtime")]

@@ -1015,3 +1015,106 @@
 .files-editor-highlight .hljs-code {
   color: #ce9178;
 }
+
+.files-image-preview {
+  min-height: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  background: #1e1e1e;
+  border-bottom: 1px solid var(--line);
+  position: relative;
+}
+
+.files-image-loading {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #9d9d9d;
+  font-size: var(--text-sm);
+}
+
+.files-image-container {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  scrollbar-width: thin;
+  scrollbar-color: #6f7780 transparent;
+}
+
+.files-image-container.is-fit img {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  display: block;
+}
+
+.files-image-container.is-actual {
+  align-items: flex-start;
+  justify-content: flex-start;
+}
+
+.files-image-container.is-actual img {
+  display: block;
+  image-rendering: auto;
+}
+
+.files-image-container::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+  background: transparent;
+}
+
+.files-image-container::-webkit-scrollbar-track,
+.files-image-container::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+.files-image-container::-webkit-scrollbar-thumb {
+  background: #6f7780;
+  border-radius: 4px;
+}
+
+.files-image-container::-webkit-scrollbar-thumb:hover {
+  background: #858d96;
+}
+
+.files-image-zoom-bar {
+  position: absolute;
+  bottom: 8px;
+  right: 8px;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  background: rgba(30, 30, 30, 0.9);
+  border: 1px solid #3c3c3c;
+  border-radius: 6px;
+  padding: 2px;
+  z-index: 10;
+}
+
+.files-image-zoom-btn {
+  height: 24px;
+  border: none;
+  background: transparent;
+  color: #d4d4d4;
+  border-radius: 4px;
+  padding: 0 8px;
+  font-size: var(--text-xs);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.files-image-zoom-btn:hover {
+  background: #353535;
+}
+
+.files-image-zoom-btn.is-active {
+  background: #37373d;
+  color: #ffffff;
+  outline: 1px solid #007fd4;
+}

@@ -87,6 +87,8 @@ import type {
   LlamaRuntimeStopResponse,
   ImageGenerationGenerateRequest,
   ImageGenerationGenerateResponse,
+  ImageGenerationCancelGenerateRequest,
+  ImageGenerationCancelGenerateResponse,
   ImageGenerationCancelInstallRequest,
   ImageGenerationCancelInstallResponse,
   ImageGenerationInstallRequest,
@@ -272,6 +274,9 @@ export interface ChatIpcClient {
   imageGenerationGenerate(
     request: ImageGenerationGenerateRequest
   ): Promise<ImageGenerationGenerateResponse>;
+  imageGenerationCancelGenerate(
+    request: ImageGenerationCancelGenerateRequest
+  ): Promise<ImageGenerationCancelGenerateResponse>;
   probeMicrophoneDevice(
     request: DevicesProbeMicrophoneRequest
   ): Promise<DevicesProbeMicrophoneResponse>;
@@ -687,6 +692,12 @@ class TauriChatIpcClient implements ChatIpcClient {
     request: ImageGenerationGenerateRequest
   ): Promise<ImageGenerationGenerateResponse> {
     return this.invokeFn<ImageGenerationGenerateResponse>("cmd_image_generation_generate", { request });
+  }
+
+  imageGenerationCancelGenerate(
+    request: ImageGenerationCancelGenerateRequest
+  ): Promise<ImageGenerationCancelGenerateResponse> {
+    return this.invokeFn<ImageGenerationCancelGenerateResponse>("cmd_image_generation_cancel_generate", { request });
   }
 
   probeMicrophoneDevice(
@@ -2132,6 +2143,12 @@ export class MockChatIpcClient implements ChatIpcClient {
         dataBase64: base64
       }
     };
+  }
+
+  async imageGenerationCancelGenerate(
+    request: ImageGenerationCancelGenerateRequest
+  ): Promise<ImageGenerationCancelGenerateResponse> {
+    return { correlationId: request.correlationId, cancelled: true };
   }
 
   async probeMicrophoneDevice(

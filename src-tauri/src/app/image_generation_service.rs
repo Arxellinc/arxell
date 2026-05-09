@@ -102,6 +102,7 @@ struct EngineInstallSnapshot {
 pub struct ImageGenerationService {
     hub: EventHub,
     cancelled_installs: Arc<Mutex<HashSet<String>>>,
+    active_pid: Arc<Mutex<Option<u32>>>,
 }
 
 impl ImageGenerationService {
@@ -109,6 +110,7 @@ impl ImageGenerationService {
         Self {
             hub,
             cancelled_installs: Arc::new(Mutex::new(HashSet::new())),
+            active_pid: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -399,6 +401,15 @@ impl ImageGenerationService {
         false
     }
 
+    pub fn cancel_generate(&self) -> bool {
+        if let Ok(mut guard) = self.active_pid.lock() {
+            if let Some(pid) = guard.take() {
+                return kill_process(pid);
+            }
+        }
+        false
+    }
+
     pub fn remove_packages(
         &self,
         correlation_id: &str,
@@ -519,11 +530,24 @@ impl ImageGenerationService {
             cmd.creation_flags(CREATE_NO_WINDOW);
         }
 
-        let result = cmd.output().map_err(|e| format!("failed to run sd-cli: {e}"))?;
+        let mut child = cmd
+            .spawn()
+            .map_err(|e| format!("failed to spawn sd-cli: {e}"))?;
 
-        if !result.status.success() {
-            let stderr = String::from_utf8_lossy(&result.stderr);
-            return Err(format!("sd-cli failed (exit {:?}): {}", result.status.code(), stderr.trim()));
+        {
+            let mut guard = self.active_pid.lock().map_err(|e| format!("lock error: {e}"))?;
+            *guard = Some(child.id());
+        }
+
+        let result = child.wait().map_err(|e| format!("failed to wait for sd-cli: {e}"))?;
+
+        {
+            let mut guard = self.active_pid.lock().map_err(|e| format!("lock error: {e}"))?;
+            *guard = None;
+        }
+
+        if !result.success() {
+            return Err(format!("sd-cli failed (exit {:?})", result.code()));
         }
 
         if !output_path.exists() {
@@ -986,11 +1010,11 @@ fn is_runtime_support_file(name: &str) -> bool {
     let lower = name.to_ascii_lowercase();
     #[cfg(target_os = "windows")]
     {
-        lower.ends_with(".dll")
+        return lower.ends_with(".dll");
     }
     #[cfg(target_os = "macos")]
     {
-        lower.ends_with(".dylib")
+        return lower.ends_with(".dylib");
     }
     #[cfg(target_os = "linux")]
     {
@@ -1172,4 +1196,24 @@ fn url_encode_path_segment(segment: &str) -> String {
         }
     }
     out
+}
+
+#[cfg(target_family = "unix")]
+fn kill_process(pid: u32) -> bool {
+    unsafe { libc::kill(pid as i32, libc::SIGTERM) == 0 }
+}
+
+#[cfg(target_os = "windows")]
+fn kill_process(pid: u32) -> bool {
+    use std::process::Command as StdCommand;
+    StdCommand::new("taskkill")
+        .args(["/PID", &pid.to_string(), "/F"])
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+}
+
+#[cfg(not(any(target_family = "unix", target_os = "windows")))]
+fn kill_process(_pid: u32) -> bool {
+    false
 }

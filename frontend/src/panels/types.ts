@@ -238,6 +238,7 @@ export interface ImagesPanelState {
   advancedOpen: boolean;
   installBusy: boolean;
   generateBusy: boolean;
+  generateCorrelationId: string | null;
   removing: boolean;
   message: string | null;
   installReceivedBytes: number | null;
@@ -490,6 +491,7 @@ export interface PrimaryPanelBindings {
   onImagesSetDisabled: (disabled: boolean) => Promise<void>;
   onImagesRemovePackages: () => Promise<void>;
   onImagesGenerate: () => Promise<void>;
+  onImagesCancelGenerate: () => Promise<void>;
   onImagesSetPrompt: (prompt: string) => Promise<void>;
   onImagesSetSizePreset: (width: number, height: number) => Promise<void>;
   onImagesSetSteps: (steps: number) => Promise<void>;
