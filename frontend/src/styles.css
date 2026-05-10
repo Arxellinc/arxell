@@ -173,7 +173,7 @@ body {
   width: 100%;
   display: grid;
   grid-template-rows: var(--global-bar-h) 1fr var(--bottom-bar-h);
-  contain: layout style;
+  contain: style;
   position: relative;
 }
 
@@ -243,7 +243,7 @@ body {
   display: grid;
   grid-template-columns: var(--sidebar-w) 1fr;
   overflow: hidden;
-  contain: layout style;
+  contain: style;
 }
 
 .app-body.app-body-portrait {
@@ -998,7 +998,7 @@ body {
   height: 100%;
   display: grid;
   grid-template-rows: 1fr;
-  contain: layout style;
+  contain: style;
 }
 
 .global-topbar {
