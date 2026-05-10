@@ -1,201 +1,196 @@
-<div align="center">
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/icons/banner-dark.svg">
+    <source media="(prefers-color-scheme: light)" srcset="docs/icons/banner-light.svg">
+    <img width="480" alt="Arxell — Your AI Workspace" src="docs/icons/banner-light.svg">
+  </picture>
+</p>
 
-# Arxell
+<p align="center">
+  <strong>The private, fully-local AI workspace.</strong><br>
+  Chat with any LLM. Run agents. Edit files. Talk out loud. All on your machine — zero telemetry, zero compromise.
+</p>
 
-**Privacy-first desktop AI workstation**
-
-Chat, voice, code, and local inference — fully offline, cross-platform, yours.
-
-[![Build](https://img.shields.io/github/actions/workflow/status/anomalyco/arxell/build-desktop.yml?branch=main&style=flat-square&label=build)](https://github.com/anomalyco/arxell/actions/workflows/build-desktop.yml)
-[![Version](https://img.shields.io/badge/version-0.2.7-blue?style=flat-square)](https://github.com/anomalyco/arxell)
-[![License](https://img.shields.io/badge/license-Apache--2.0-green?style=flat-square)](LICENSE)
-[![Tauri](https://img.shields.io/badge/tauri-v2-orange?style=flat-square)](https://v2.tauri.app)
-
-[Features](#features) · [Architecture](#architecture) · [Getting Started](#getting-started) · [Documentation](#documentation) · [Development](#development)
-
-</div>
-
----
-
-## Why Arxell
-
-Most AI tools send everything to the cloud. Arxell runs **locally** on your machine — your conversations, your API keys, your models, your files. Nothing leaves your machine unless you explicitly connect to an external provider.
-
-- **No cloud dependency** — works fully offline with local models
-- **Your keys stay yours** — API keys stored in your OS keychain, never transmitted
-- **Your data stays local** — conversations, files, and settings live in `~/.arxell`
-- **Cross-platform** — native desktop app for Windows, macOS, and Linux
-- **Extensible** — workspace tools, agent skills, and plugin support
+<p align="center">
+  <img src="https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-6e7681?style=flat-square" alt="Platform">
+  <img src="https://img.shields.io/badge/version-0.2.10-blue?style=flat-square" alt="Version">
+  <img src="https://img.shields.io/badge/rust-2021-orange?style=flat-square" alt="Rust Edition">
+  <img src="https://img.shields.io/badge/license-Proprietary-red?style=flat-square" alt="License">
+  <img src="https://img.shields.io/badge/telemetry-none-brightgreen?style=flat-square" alt="No Telemetry">
+</p>
 
 ---
 
-## Features
+<p align="center">
+  <img src="docs/screenshot-hero.png" width="880" alt="Arxell workspace screenshot" />
+</p>
 
-### AI Chat
+---
 
-Multi-conversation chat interface with streaming responses, thinking/reasoning display, and agent loop integration. Connect to any OpenAI-compatible API or run models locally through llama.cpp.
+## Why Arxell?
 
-- Streaming text and reasoning chunks
-- Multi-conversation management with history
-- Thinking mode toggle (chain-of-thought visibility)
-- File attachments in messages
-- TTS playback of responses
-- Voice mode with full-duplex conversation
+Most AI tools funnel your data through cloud services you don't control. Arxell flips that model: everything stays on your hardware. Your API keys live in your OS keychain. Your conversations stay on your disk. Your voice never leaves your microphone.
 
-### Voice Pipeline
+<table>
+  <tr>
+    <td width="50%">
+      <h3>&#x1F6E1;&#xFE0F; Zero Telemetry</h3>
+      <p>No analytics. No tracking pixels. No phone-home. The network is used only when <em>you</em> choose to call an LLM provider.</p>
+    </td>
+    <td width="50%">
+      <h3>&#x1F5A5;&#xFE0F; Native Desktop</h3>
+      <p>Built on <strong>Tauri 2</strong> (Rust + WebView) for a lean, fast, cross-platform experience. Small bundle. Low memory. No Electron.</p>
+    </td>
+  </tr>
+  <tr>
+    <td>
+      <h3>&#x1F504; Multi-Agent Loops</h3>
+      <p>Orchestrate Planner &rarr; Executor &rarr; Validator &rarr; Critic cycles with the built-in Looper tool for iterative, self-correcting workflows.</p>
+    </td>
+    <td>
+      <h3>&#x1F399;&#xFE0F; Full Voice Stack</h3>
+      <p>Speech-to-text (Whisper), text-to-speech (Kokoro, Piper, Matcha, Kitten), and live VAD with duplex modes — all local.</p>
+    </td>
+  </tr>
+  <tr>
+    <td>
+      <h3>&#x1F4BE; Local Model Inference</h3>
+      <p>Download GGUF models from HuggingFace, run them through the bundled LLaMA runtime with GPU offload, context-size tuning, and sampling controls.</p>
+    </td>
+    <td>
+      <h3>&#x1F510; OS-Keychain Secrets</h3>
+      <p>API keys are stored in your operating system's credential manager. Plaintext fallback requires explicit acknowledgment.</p>
+    </td>
+  </tr>
+</table>
 
-Full speech-to-text and text-to-speech subsystems with configurable voice activity detection.
+---
 
-| Component | Backend | Details |
-|-----------|---------|---------|
-| **Speech-to-Text** | whisper.cpp | Streaming transcription, partial results, configurable VAD |
-| **Text-to-Speech** | Kokoro (ONNX) | 53+ voices across American, British, Japanese, Chinese accents |
-| **VAD** | Multiple methods | Method selection, shadow evaluation, live handoff between methods |
+## Workspace Tools
 
-Voice runtime supports single-turn, full-duplex speculative, and shadow-only duplex modes with real-time state machine management.
+Arxell ships with 11 built-in workspace tools — each one a full-featured panel in the UI, and several are also available as agent capabilities.
 
-### Local Inference
+<p align="center">
+  <img src="docs/icons/tools-banner.svg" width="720" alt="Arxell workspace tools" />
+</p>
 
-Run GGUF models directly on your hardware through llama.cpp with automatic backend selection.
+| | Tool | Description |
+|---|------|-------------|
+| <img src="docs/icons/ico-terminal.svg" width="20"> | **Terminal** | Full PTY shell sessions — bash, zsh, PowerShell. Run anything you'd run in a terminal, right inside the workspace. |
+| <img src="docs/icons/ico-opencode.svg" width="20"> | **OpenCode** | An AI-powered coding agent embedded in your terminal. Ask it to write, refactor, debug, or explain code. |
+| <img src="docs/icons/ico-looper.svg" width="20"> | **Looper** | Multi-agent loop orchestration with Planner, Executor, Validator, and Critic phases. Run iterative build cycles with interactive checkpoints. |
+| <img src="docs/icons/ico-files.svg" width="20"> | **Files** | Browse directories, read and edit files, create folders — all through a permission-checked filesystem interface. |
+| <img src="docs/icons/ico-notepad.svg" width="20"> | **Notepad** | A tabbed text editor for workspace files and scratch buffers with syntax highlighting. |
+| <img src="docs/icons/ico-sheets.svg" width="20"> | **Sheets** | A backend-powered spreadsheet editor. Open CSV and XLSX workbooks, edit cells, and save structured data. |
+| <img src="docs/icons/ico-search.svg" width="20"> | **WebSearch** | Search the web and pull live context into your workspace. Route queries through your configured search API. |
+| <img src="docs/icons/ico-chart.svg" width="20"> | **Chart** | Render Mermaid flowcharts, sequence diagrams, and more — visualised directly in the workspace pane. |
+| <img src="docs/icons/ico-tasks.svg" width="20"> | **Tasks** | Plan, track, and status-check work items. Works standalone or as an agent-accessible task board. |
+| <img src="docs/icons/ico-memory.svg" width="20"> | **Memory** | Persistent context references the agent can read and write across sessions. Long-term memory, local-first. |
+| <img src="docs/icons/ico-docs.svg" width="20"> | **Docs** | Browse and read documentation files without leaving the workspace. |
 
-| Backend | Platforms | Auto-detection |
-|---------|-----------|----------------|
-| CUDA | Windows, Linux | `nvidia-smi` probe |
-| Metal | macOS | Always available on Apple Silicon |
-| Vulkan | Windows, Linux | Runtime/driver detection |
-| CPU | All | Universal fallback |
+---
 
-Model Manager connects to HuggingFace — search, download, and manage GGUF models with progress tracking and the Unsloth dynamic quantization catalog.
+## Agent Skills
 
-### Image Generation
+Eight specialised agent skills ship out of the box, giving the AI structured playbooks for complex software-engineering workflows:
 
-Local image generation using FLUX.1 Schnell via stable-diffusion.cpp with GGUF quantized weights.
+<p align="center">
+  <img src="docs/icons/skills-ring.svg" width="520" alt="Agent skills overview" />
+</p>
 
-- **Model**: FLUX.1 Schnell (Apache-2.0)
-- **Quantization**: GGUF Q4\_0 default (~11 GB download)
-- **Resolution**: 512×512 to 1024×1024
-- **Backend**: Auto-detected GPU with CPU fallback
-- **No Python/PyTorch required** — pure C++ sidecar
+| Skill | Purpose |
+|-------|---------|
+| **Core Orchestrator** | Top-level routing and task decomposition |
+| **Planning & Specs** | Break features into actionable specifications |
+| **Product Designer** | UX flows, wireframes, interaction patterns |
+| **Frontend Engineer** | Component architecture, state, styling |
+| **Backend Engineer** | APIs, data models, services |
+| **Database Engineer** | Schema design, migrations, query optimisation |
+| **Guardrails & Evals** | Quality checks, observability, safety |
+| **Product Vision** | Strategic direction and roadmap thinking |
 
-### Workspace Tools
+---
 
-11 builtin tools for productivity, all accessible from the workspace panel and available to the agent runtime.
+## Voice
 
-| Tool | Category | Description |
-|------|----------|-------------|
-| **Terminal** | workspace | PTY-based shell sessions |
-| **Files** | workspace | File browser and editor |
-| **Sheets** | data | Spreadsheet editor with formulas and agent access |
-| **Notepad** | workspace | Tabbed text editor |
-| **WebSearch** | agent | Web search integration |
-| **Chart** | agent | Mermaid flowcharts and diagrams |
-| **Tasks** | agent | Task planning and tracking |
-| **Memory** | data | Persistent context references |
-| **Looper** | automation | Multi-agent build loop orchestration |
-| **OpenCode** | automation | AI coding agent |
-| **Docs** | workspace | Documentation browser |
+Arxell includes a complete local voice stack — no cloud STT/TTS services required.
 
-Tools support enable/disable, icon customization, and import/export of workspace configurations.
+```
+┌──────────────┐     ┌──────────────┐     ┌──────────────┐
+│   Microphone  │────▶│  VAD Engine  │────▶│  STT (Whisper)│
+│   (local)     │     │  (sherpa-onnx)│     │  (streaming)  │
+└──────────────┘     └──────┬───────┘     └──────────────┘
+                            │
+                     duplex modes
+                            │
+┌──────────────┐     ┌──────┴───────┐     ┌──────────────┐
+│   Speakers   │◀────│  TTS Engine  │◀────│  Agent Text   │
+│   (local)    │     │ (Kokoro · Piper · Matcha · Kitten) │
+└──────────────┘     └──────────────────────┘──────────────┘
+```
 
-### Agent Skills
-
-8 specialized skills that guide the agent runtime through complex workflows — from product vision to database engineering.
-
-| Skill | Scope |
-|-------|-------|
-| Core Orchestrator | Agent architecture, control loops, memory, approvals |
-| Product Visionary | Scope, differentiation, roadmap, success metrics |
-| Product Designer | PRDs, UX design, trust/approval patterns |
-| Planning & Specs | Contract-first specs, phase decomposition |
-| Backend Engineer | Run lifecycle, orchestrators, tool routers, reliability |
-| Frontend Engineer | Agent UX surfaces, streaming state, recovery |
-| Evals & Guardrails | Test suites, observability, rollout criteria |
-| Database Engineer | Schema, migrations, performance, backups |
-
-### Security
-
-- API keys stored in your OS keychain (via `keyring`)
-- Plaintext fallback requires explicit user acknowledgment
-- Secrets never appear in event payloads
-- Tool policy checks before execution
-- Plugin tools run in sandboxed iframes
+- **Speech-to-Text** — Whisper-compatible streaming transcription
+- **Text-to-Speech** — Four engine options (Kokoro, Piper, Matcha, Kitten) with voice selection and speed control
+- **Voice Activity Detection** — Multi-VAD architecture with live handoff, shadow evaluation, and speculative decoding
+- **Duplex Modes** — Single-turn, full-duplex speculative, and shadow-only diagnostic modes
 
 ---
 
 ## Architecture
 
-Arxell follows a strict layered architecture with forbidden dependency paths to keep subsystems independently testable and migratable.
+Arxell follows a strict layered architecture where dependencies flow in one direction only:
 
 ```
-┌─────────────────────────────────────────┐
-│           Frontend (TypeScript)          │
-│         Vite · xterm.js · Three.js       │
-├─────────────────────────────────────────┤
-│           IPC Command Layer (Rust)       │
-│     Tauri bridge · 96 typed commands     │
-├─────────────────────────────────────────┤
-│        Application Services (Rust)       │
-│  Chat · Voice · Runtime · Files · etc.  │
-├─────────────────────────────────────────┤
-│          Tool Registry (Rust)            │
-│     Policy gateway · Tool dispatch       │
-├─────────────────────────────────────────┤
-│       Tool Modules (Rust / C++)          │
-│  Terminal · Sheets · Search · sd-cli     │
-└─────────────────────────────────────────┘
+┌─────────────────────────────────────────────────┐
+│                  Frontend (TS)                   │
+│           Rendering & user interaction           │
+├─────────────────────────────────────────────────┤
+│              IPC Command Layer (Rust)            │
+│          Thin payload translation only           │
+├─────────────────────────────────────────────────┤
+│           Application Services (Rust)            │
+│      Orchestration, state machines, agent        │
+├─────────────────────────────────────────────────┤
+│             Tool & Agent Registries              │
+│          Dispatch, policy, enablement            │
+├─────────────────────────────────────────────────┤
+│           Tool Modules & Memory (Rust)           │
+│        Side effects, platform specifics          │
+└─────────────────────────────────────────────────┘
+         ▲ No upward dependencies allowed ▲
 ```
 
-**Dependency direction:** Frontend → IPC → Services → Registry → Tools
-
-**Forbidden:** Frontend → services directly, tools calling tools, IPC → tool modules directly
-
-All operations emit structured events with correlation IDs, timestamps, subsystem, action, stage, and severity — giving you full observability from UI click to backend execution.
-
-### Backend Services
-
-| Service | Purpose |
-|---------|---------|
-| Chat Service | Message handling, agent loop, tool binding, streaming |
-| Terminal Service | PTY sessions with streaming output |
-| LLaMA Runtime Service | Engine discovery, installation, start/stop |
-| Model Manager Service | GGUF model lifecycle, HuggingFace integration |
-| Image Generation Service | stable-diffusion.cpp sidecar, GGUF model management |
-| Voice Runtime Service | VAD method selection, duplex modes, handoff |
-| API Registry Service | API connection CRUD, secret storage |
-| Files Service | Filesystem operations with permission checks |
-| Web Search Service | Search query execution |
-| Sheets Service | Spreadsheet state, formulas, agent access |
-| Looper Handler | Multi-phase build loop orchestration |
-| Permission Service | Tool action and file access enforcement |
+Every layer communicates through typed contracts with correlation IDs, structured events, and explicit error propagation. Secrets never appear in event payloads. Tools never call other tools directly.
 
 ---
 
 ## Tech Stack
 
-### Frontend
+| Layer | Technology |
+|-------|-----------|
+| Desktop shell | **Tauri 2** (Rust backend + system WebView) |
+| Frontend | **TypeScript**, **Vite**, **React 18** |
+| Terminal | **xterm.js** with PTY binding |
+| Charts | **Mermaid 11** |
+| Spreadsheets | **IronCalc** |
+| STT | **Whisper** (streaming) |
+| TTS | **sherpa-onnx** (Kokoro · Piper · Matcha · Kitten) |
+| Local inference | **llama.cpp** runtime (bundled) |
+| Secret storage | **OS keychain** via `keyring` crate |
+| Database | **SQLite** via `rusqlite` |
 
-| Technology | Purpose |
-|------------|---------|
-| TypeScript | UI logic and rendering |
-| Vite | Build tooling |
-| xterm.js | Terminal emulator |
-| Three.js | 3D avatar rendering |
-| Mermaid | Diagram visualization |
-| highlight.js | Syntax highlighting |
+---
 
-### Backend
+## Privacy Commitment
 
-| Technology | Purpose |
-|------------|---------|
-| Rust | Core application logic |
-| Tauri v2 | Desktop framework and IPC |
-| SQLite (rusqlite) | Local persistence |
-| tokio | Async runtime |
-| ONNX Runtime | TTS inference |
-| llama.cpp | Local LLM inference |
-| stable-diffusion.cpp | Local image generation |
-| whisper.cpp | Speech-to-text |
-| reqwest | HTTP client |
+> **Arxell collects nothing. Not now. Not ever.**
+
+- No analytics, telemetry, or crash reporting
+- No accounts, sign-ups, or cloud sync
+- API keys stored exclusively in your OS credential manager
+- All conversations, files, and voice data remain on your local disk
+- The only network traffic is LLM API calls **you** initiate
+- Plugin tools run in sandboxed iframes with capability gating
 
 ---
 
@@ -203,11 +198,11 @@ All operations emit structured events with correlation IDs, timestamps, subsyste
 
 ### Prerequisites
 
-- **Node.js** 20+
-- **Rust** stable (via rustup)
-- **Tauri CLI** v2 (`cargo install tauri-cli --version "^2"`)
+- [Rust](https://rustup.rs/) (latest stable)
+- [Node.js](https://nodejs.org/) >= 18
+- Platform-specific WebView2 (Windows) / WebKit (macOS &mdash; built-in) / webkit2gtk (Linux)
 
-### Build and Run
+### Build from Source
 
 ```bash
 # Clone the repository
@@ -217,29 +212,27 @@ cd arxell
 # Install frontend dependencies
 cd frontend && npm install && cd ..
 
-# Development mode (two terminals)
-cd frontend && npm run dev          # Terminal 1: frontend dev server
-cd src-tauri && cargo tauri dev     # Terminal 2: Tauri app
+# Run in development mode
+cd src-tauri && cargo tauri dev
 
-# Production build
+# Or build a production bundle
 cd src-tauri && cargo tauri build
 ```
 
-### Quick Checks
+### Connect an LLM
 
-```bash
-# Frontend type check
-cd frontend && npm run lint
+1. Open **Settings &rarr; API Connections**
+2. Add a provider (OpenAI, Anthropic, local server, etc.)
+3. Your API key is stored in your OS keychain automatically
+4. Start chatting
 
-# Frontend tests
-cd frontend && npm run test
+### Run a Local Model
 
-# Rust compilation check (no Tauri)
-cd src-tauri && cargo check
-
-# Rust compilation check (with Tauri)
-cd src-tauri && cargo check --features tauri-runtime
-```
+1. Open the **Model Manager** (sidebar)
+2. Browse the Unsloth Dynamic Quants catalog (auto-updated from HuggingFace)
+3. Download a GGUF model
+4. Configure the LLaMA runtime (context size, GPU layers)
+5. Start inference — no API key needed
 
 ---
 
@@ -247,138 +240,29 @@ cd src-tauri && cargo check --features tauri-runtime
 
 ```
 arxell/
-├── src-tauri/                    # Rust backend
-│   ├── src/
-│   │   ├── app/                  # Application services
-│   │   │   ├── chat_service.rs
-│   │   │   ├── terminal_service.rs
-│   │   │   ├── runtime_service.rs
-│   │   │   ├── model_manager_service.rs
-│   │   │   ├── image_generation_service.rs
-│   │   │   ├── voice_runtime_service.rs
-│   │   │   └── ...
-│   │   ├── agent_tools/          # Tools exposed to the agent loop
-│   │   ├── contracts.rs          # Typed IPC request/response contracts
-│   │   ├── ipc/                  # IPC command handlers
-│   │   ├── skills/               # Agent skill definitions
-│   │   ├── stt/                  # Speech-to-text subsystem
-│   │   ├── tts/                  # Text-to-speech subsystem
-│   │   ├── tools/                # Workspace tool invoke handlers
-│   │   ├── voice/                # Voice/VAD subsystem
-│   │   ├── workspace_tools/      # Backend workspace registry
-│   │   └── main.rs               # Tauri entry point
-│   └── Cargo.toml
-├── frontend/
-│   └── src/
-│       ├── panels/               # Sidebar panel renderers
-│       ├── tools/                # Workspace tool implementations
-│       │   ├── terminal/
-│       │   ├── files/
-│       │   ├── sheets/
-│       │   ├── chart/
-│       │   └── ...
-│       ├── contracts.ts          # TypeScript contract mirrors
-│       ├── styles.css            # Global styles and CSS variables
-│       ├── main.ts               # App entry and state management
-│       └── ipcClient.ts          # IPC client (Tauri + mock)
-├── agent/                        # Agent runtime (local Rust crate)
-├── docs/                         # Architecture and integration docs
-└── .github/workflows/            # CI/CD pipelines
+├── frontend/            # TypeScript frontend (Vite + React)
+│   └── src/tools/       # Workspace tool modules
+├── src-tauri/           # Rust backend (Tauri 2)
+│   ├── src/app/         # Application services
+│   ├── src/agent_tools/ # Agent-facing tool implementations
+│   ├── src/skills/      # Agent skill playbooks
+│   ├── src/stt/         # Speech-to-text subsystem
+│   ├── src/tts/         # Text-to-speech subsystem
+│   └── resources/       # Bundled runtimes (llama.cpp, Kokoro, Whisper)
+├── agent/               # arx-rs agent library
+├── docs/                # Architecture & design documents
+├── model-lists/         # Bundled model catalog CSVs
+├── plugins/             # Plugin tool extensions
+└── scripts/             # Build & sync utilities
 ```
 
 ---
 
-## Documentation
+<p align="center">
+  <img src="docs/icons/divider.svg" width="480" alt="divider" />
+</p>
 
-| Document | Description |
-|----------|-------------|
-| [Architecture](docs/ARCHITECTURE.md) | Layering contract, subsystems, dependency rules |
-| [Tools Architecture](docs/TOOLS_ARCHITECTURE.md) | Tool types, rendering, invoke flow, adding new tools |
-| [IPC Events](docs/IPC_EVENTS.md) | Command reference, event contracts, streaming actions |
-| [Tauri Integration](docs/TAURI_INTEGRATION.md) | Bridge state, registered commands, event forwarding |
-| [Guardrails](docs/GUARDRAILS.md) | Engineering constraints for security, layers, observability |
-| [Smoke Test](docs/SMOKE_TEST.md) | Manual and automated test procedures |
-| [macOS Setup](docs/MACOS_SETUP_GUIDE.md) | macOS-specific build instructions |
-
----
-
-## Development
-
-### Adding a Workspace Tool
-
-1. Create `frontend/src/tools/<toolId>/manifest.ts` with metadata
-2. Add render functions in `index.tsx`, state in `state.ts`, bindings in `bindings.ts`
-3. Add the tool ID to `PREFERRED_TOOL_ORDER` in `frontend/src/tools/registry.ts`
-4. Add a builtin manifest in `src-tauri/src/workspace_tools/mod.rs`
-5. Add the rendered view in `frontend/src/tools/host/viewBuilder.ts`
-6. Add event dispatch hooks in `frontend/src/tools/host/workspaceDispatch.ts`
-7. Add backend invoke handlers (only if backend behavior is needed)
-8. Add agent tool bindings (only if the model needs direct capability)
-
-Full checklist in [docs/TOOLS_ARCHITECTURE.md](docs/TOOLS_ARCHITECTURE.md).
-
-### Code Conventions
-
-- **Frontend**: Pure rendering — no business logic, no persistence, no tool policies
-- **IPC**: Thin translation layer — no orchestration, no direct tool calls
-- **Services**: Orchestration only — no direct tool side effects
-- **Tools**: Side effects and platform-specific behavior — no cross-tool calls
-- **Events**: Every operation emits structured events with correlation IDs
-- **Security**: Never include secrets in event payloads
-
-### CSS Guidelines
-
-- Use CSS variables from `frontend/src/styles.css` — never hardcode colors or font sizes
-- Use shared utility classes (`.field-input`, `.modal-box`, `.data-table`, etc.)
-- Scope tool-specific styles with the tool name prefix
-- No CSS frameworks, no remote font dependencies
-
----
-
-## CI/CD
-
-Automated builds run on every push to `main` and on version tags:
-
-| Platform | Runner | Artifacts |
-|----------|--------|-----------|
-| Linux x64 | ubuntu-24.04 | `.deb`, `.AppImage` |
-| macOS | macos-latest | `.dmg` |
-| Windows x64 | windows-latest | `.msi` |
-
-The pipeline automatically:
-- Runs frontend type checks, tests, and production build
-- Runs Rust `cargo test` with Tauri features
-- Downloads and bundles llama.cpp runtimes (CPU, Vulkan, Metal)
-- Downloads and bundles whisper.cpp + Kokoro TTS runtimes
-- Builds platform-specific Tauri bundles
-- Publishes GitHub Releases on version tags
-
----
-
-## Data Storage
-
-All user data is stored locally in `~/.arxell/`:
-
-```
-~/.arxell/
-├── conversations.sqlite3         # Chat history
-├── api-registry/                  # API connection metadata
-├── engines/                       # Engine binaries
-│   ├── llama-runtime/             # llama.cpp engines
-│   └── sd-cpp/                    # stable-diffusion.cpp binary
-├── models/                        # Downloaded models
-│   └── flux/schnell/q4_0/         # FLUX.1 Schnell GGUF models
-├── outputs/                       # Generated content
-│   └── images/                    # Generated images
-├── tools-registry.json            # Workspace tool settings
-├── image-generation/              # Image generation settings
-└── voice/                         # Voice configuration
-```
-
-API keys are stored in your OS keychain — never in plaintext files.
-
----
-
-## License
-
-Apache License 2.0
+<p align="center">
+  <strong>Arxell</strong> &mdash; AI that respects your privacy.<br>
+  Built with &#x2764;&#xFE0F; and Rust.
+</p>
