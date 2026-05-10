@@ -1,5 +1,14 @@
 import type { AppEvent } from "../contracts";
 
+export const MAX_APP_EVENTS = 3000;
+
+export function appendAppEvent(events: AppEvent[], event: AppEvent): void {
+  events.push(event);
+  if (events.length > MAX_APP_EVENTS) {
+    events.splice(0, events.length - MAX_APP_EVENTS);
+  }
+}
+
 export function parseTerminalOutput(payload: AppEvent["payload"]): { sessionId: string; data: string } | null {
   if (!payload || typeof payload !== "object") return null;
   const value = payload as Record<string, unknown>;
@@ -21,18 +30,23 @@ export function isNoisyTerminalControlEvent(event: AppEvent): boolean {
 }
 
 export function isNoisyRuntimeStatusEvent(event: AppEvent): boolean {
-  if (
-    event.subsystem === "runtime" &&
-    event.action === "tts.download_model" &&
-    event.stage === "progress"
-  ) {
-    return true;
-  }
   return (
     event.subsystem === "runtime" &&
     event.action === "llama.runtime.status" &&
     event.stage === "complete"
   );
+}
+
+export function isNoisyRuntimeStderrEvent(event: AppEvent): boolean {
+  return event.action === "llama.runtime.stderr" && event.severity !== "error";
+}
+
+export function isNoisyServiceLog(event: AppEvent): boolean {
+  if (event.stage === "error") return false;
+  if (event.subsystem === "ipc") return event.stage === "start";
+  if (event.subsystem === "persistence") return true;
+  if (event.subsystem === "service" && event.stage === "start") return true;
+  return false;
 }
 
 export function isNoisyChatStreamEvent(event: AppEvent): boolean {
@@ -69,8 +83,10 @@ export function handleCoreAppEvent(
     updateRuntimeMetricsFromLine: (line: string) => void;
     formatRuntimeEventLine: (event: AppEvent) => string;
     refreshLlamaRuntime: () => Promise<void>;
+    setChatModelLoadingMessage: (message: string | null) => void;
     state: {
       llamaRuntimeLogs: string[];
+      llamaRuntimeBusy: boolean;
       modelManagerBusy: boolean;
       modelManagerMessage: string | null;
       flowPaused: boolean;
@@ -83,6 +99,11 @@ export function handleCoreAppEvent(
 ): boolean {
   if (event.action === "tts.stream.chunk") {
     deps.onChatTtsStreamChunkEvent(event);
+    return true;
+  }
+
+  if (event.action === "tts.request") {
+    return true;
   }
 
   const agentEventLine = deps.formatAgentEventLine(event);
@@ -95,7 +116,8 @@ export function handleCoreAppEvent(
   } else if (
     !event.action.startsWith("llama.runtime") &&
     !isNoisyRuntimeStatusEvent(event) &&
-    !isNoisyChatStreamEvent(event)
+    !isNoisyChatStreamEvent(event) &&
+    !isNoisyServiceLog(event)
   ) {
     const payloadText =
       event.stage === "error"
@@ -125,7 +147,7 @@ export function handleCoreAppEvent(
     return true;
   }
 
-  if (event.action === "tts.request" && event.stage === "complete") {
+  if (event.action === "tts.request" && (event.stage === "complete" || event.stage === "error")) {
     deps.resolveChatTtsStreamWaiters(event.correlationId);
     const payload = (event.payload && typeof event.payload === "object")
       ? (event.payload as Record<string, unknown>)
@@ -146,6 +168,9 @@ export function handleCoreAppEvent(
       const synthesis = num(timings.synthesis);
       const wavEncode = num(timings.wavEncode);
       const workerWait = num(timings.workerWait);
+      const ipcMarshal = num(timings.ipcMarshal);
+      const firstChunk = num(timings.firstChunk);
+      const ttfa = num(timings.ttfa);
       deps.pushConsoleEntry(
         "debug",
         "app",
@@ -158,7 +183,10 @@ export function handleCoreAppEvent(
           `enginePrepare=${enginePrepare ?? "n/a"}`,
           `synthesis=${synthesis ?? "n/a"}`,
           `wavEncode=${wavEncode ?? "n/a"}`,
-          `workerWait=${workerWait ?? "n/a"}`
+          `workerWait=${workerWait ?? "n/a"}`,
+          `ipcMarshal=${ipcMarshal ?? "n/a"}`,
+          `firstChunk=${firstChunk ?? "n/a"}`,
+          `ttfa=${ttfa ?? "n/a"}`
         ].join(" ")
       );
     }
@@ -174,11 +202,13 @@ export function handleCoreAppEvent(
       deps.updateRuntimeMetricsFromLine(processLine);
     }
     const runtimeLine = deps.formatRuntimeEventLine(event);
-    deps.pushConsoleEntry(
-      event.severity === "error" ? "error" : "info",
-      "app",
-      `[runtime] ${runtimeLine} corr=${event.correlationId}`
-    );
+    if (!isNoisyRuntimeStderrEvent(event)) {
+      deps.pushConsoleEntry(
+        event.severity === "error" ? "error" : "info",
+        "app",
+        `[runtime] ${runtimeLine} corr=${event.correlationId}`
+      );
+    }
 
     if (!isNoisyRuntimeStatusEvent(event)) {
       deps.state.llamaRuntimeLogs.push(runtimeLine);
@@ -191,6 +221,35 @@ export function handleCoreAppEvent(
       event.action !== "llama.runtime.status"
     ) {
       void deps.refreshLlamaRuntime().then(() => deps.renderAndBind());
+    }
+
+    if (event.action === "llama.runtime.start" && event.stage === "start") {
+      const p = payloadAsRecord(event.payload);
+      const model = typeof p?.modelPath === "string" ? p.modelPath.split("/").pop() || "" : "model";
+      deps.setChatModelLoadingMessage(`Loading ${model}...`);
+      deps.state.llamaRuntimeBusy = true;
+      deps.renderAndBind();
+    }
+    if (event.action === "llama.runtime.start" && event.stage === "error") {
+      deps.setChatModelLoadingMessage(null);
+      deps.state.llamaRuntimeBusy = false;
+      deps.renderAndBind();
+    }
+    if (event.action === "llama.runtime.loading" && event.stage === "progress") {
+      const p = payloadAsRecord(event.payload);
+      const progress = typeof p?.progress === "number" ? p.progress : null;
+      if (progress !== null && progress < 1.0) {
+        const pct = Math.round(progress * 100);
+        const filled = Math.round(progress * 20);
+        const bar = "█".repeat(filled) + "░".repeat(20 - filled);
+        deps.setChatModelLoadingMessage(`Loading model [${bar}] ${pct}%`);
+        deps.renderAndBind();
+      }
+    }
+    if (event.action === "llama.runtime.loading" && event.stage === "complete") {
+      deps.setChatModelLoadingMessage(null);
+      deps.state.llamaRuntimeBusy = false;
+      deps.renderAndBind();
     }
   }
 
@@ -213,7 +272,7 @@ export function handleCoreAppEvent(
     }
   }
 
-  deps.state.events.push(event);
+  appendAppEvent(deps.state.events, event);
   deps.applyFlowRuntimeEvent(event);
   deps.applyLooperRuntimeEvent(event);
   void deps.maybeHandleFlowPhaseTerminalEvent(event);

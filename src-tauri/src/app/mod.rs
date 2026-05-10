@@ -1,8 +1,10 @@
 pub mod chat_service;
 pub mod files_service;
+pub mod image_generation_service;
 pub mod model_manager_service;
 pub mod permission_service;
 pub mod runtime_service;
+pub mod tasks_service;
 pub mod terminal_service;
 pub mod user_projects_service;
 pub mod voice_handoff_service;
@@ -30,6 +32,8 @@ pub struct AppContext {
     pub permissions: Arc<permission_service::PermissionService>,
     pub model_manager: Arc<model_manager_service::ModelManagerService>,
     pub files: Arc<files_service::FilesService>,
+    pub image_generation: Arc<image_generation_service::ImageGenerationService>,
+    pub tasks: Arc<tasks_service::TaskAutomationService>,
     pub sheets: Arc<SheetsService>,
     pub looper: Arc<LooperHandler>,
     pub voice: Arc<voice_runtime_service::VoiceRuntimeService>,
@@ -37,10 +41,20 @@ pub struct AppContext {
 
 impl AppContext {
     pub fn new() -> Result<Self, String> {
+        Self::new_with_paths(
+            SqliteConversationRepository::default_path(),
+            tasks_service::TaskAutomationService::default_path(),
+        )
+    }
+
+    fn new_with_paths(
+        conversation_db_path: std::path::PathBuf,
+        tasks_db_path: std::path::PathBuf,
+    ) -> Result<Self, String> {
         let hub = EventHub::new();
         let memory = Arc::new(InMemoryMemoryManager::new());
         let conversation_repo = Arc::new(
-            SqliteConversationRepository::new(SqliteConversationRepository::default_path())
+            SqliteConversationRepository::new(conversation_db_path)
                 .map_err(|err| format!("failed to initialize conversation repository: {err}"))?,
         );
         let api_registry = Arc::new(ApiRegistryService::new());
@@ -53,15 +67,6 @@ impl AppContext {
             Arc::clone(&api_registry),
         ));
 
-        let service = Arc::new(chat_service::ChatService::new(
-            hub.clone(),
-            memory,
-            conversation_repo,
-            Arc::clone(&api_registry),
-            Arc::clone(&workspace_tools),
-            Arc::clone(&sheets),
-            Arc::clone(&web_search),
-        ));
         let terminal = Arc::new(terminal_service::TerminalService::new(hub.clone()));
         let runtime = Arc::new(runtime_service::LlamaRuntimeService::new(hub.clone()));
         let user_projects = Arc::new(user_projects_service::UserProjectsService::new());
@@ -69,6 +74,13 @@ impl AppContext {
         let permissions = Arc::new(permission_service::PermissionService::new(hub.clone()));
         let model_manager = Arc::new(model_manager_service::ModelManagerService::new(hub.clone()));
         let files = Arc::new(files_service::FilesService::new());
+        let image_generation = Arc::new(image_generation_service::ImageGenerationService::new(
+            hub.clone(),
+        ));
+        let tasks = Arc::new(
+            tasks_service::TaskAutomationService::new(tasks_db_path)
+                .map_err(|err| format!("failed to initialize tasks service: {err}"))?,
+        );
         let looper = Arc::new(LooperHandler::new(
             hub.clone(),
             Arc::clone(&terminal),
@@ -80,6 +92,16 @@ impl AppContext {
         looper.load_from_disk();
         #[cfg(feature = "tauri-runtime")]
         looper.start_event_listener();
+        let service = Arc::new(chat_service::ChatService::new(
+            hub.clone(),
+            memory,
+            conversation_repo,
+            Arc::clone(&api_registry),
+            Arc::clone(&workspace_tools),
+            Arc::clone(&sheets),
+            Arc::clone(&web_search),
+            Arc::clone(&looper),
+        ));
         let voice = Arc::new(voice_runtime_service::VoiceRuntimeService::new(hub.clone()));
 
         let ipc = IpcLayer::new(
@@ -99,11 +121,42 @@ impl AppContext {
             permissions,
             model_manager,
             files,
+            image_generation,
+            tasks,
             sheets,
             looper,
             voice,
         })
     }
+
+    #[cfg(test)]
+    pub fn new_for_test() -> Result<Self, String> {
+        let root = test_context_root();
+        Self::new_with_paths(
+            root.join("conversations.sqlite3"),
+            root.join("tasks.sqlite3"),
+        )
+    }
+
+    #[cfg(test)]
+    pub fn new_for_test_with_tasks_path(tasks_db_path: std::path::PathBuf) -> Result<Self, String> {
+        let root = test_context_root();
+        Self::new_with_paths(root.join("conversations.sqlite3"), tasks_db_path)
+    }
+}
+
+#[cfg(test)]
+fn test_context_root() -> std::path::PathBuf {
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static NEXT_TEST_CONTEXT_ID: AtomicU64 = AtomicU64::new(0);
+
+    let context_id = NEXT_TEST_CONTEXT_ID.fetch_add(1, Ordering::Relaxed);
+    std::env::temp_dir().join(format!(
+        "arxell-app-context-test-{}-{}",
+        std::process::id(),
+        context_id
+    ))
 }
 
 impl Default for AppContext {
@@ -129,6 +182,8 @@ impl AppContext {
             permissions: Arc::clone(&self.permissions),
             model_manager: Arc::clone(&self.model_manager),
             files: Arc::clone(&self.files),
+            image_generation: Arc::clone(&self.image_generation),
+            tasks: Arc::clone(&self.tasks),
             sheets: Arc::clone(&self.sheets),
             voice: Arc::clone(&self.voice),
         }

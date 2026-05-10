@@ -3,8 +3,6 @@ import type { AppEvent, ChatContextBreakdownItem, ConversationSummaryRecord } fr
 import type { DocsToolState } from "../tools/docs/state";
 import type { FilesToolStateSlice } from "../tools/files/state";
 import type { NotepadToolStateSlice } from "../tools/notepad/state";
-import { getInitialSkillsState } from "../tools/skills/state";
-import type { SkillsToolViewState } from "../tools/skills/state";
 import { loadPersistedTasksById } from "../tools/tasks/actions";
 import type { TasksRuntimeSlice } from "../tools/tasks/state";
 
@@ -187,6 +185,8 @@ export function createInitialFilesState(): FilesToolStateSlice {
     filesSelectionDragActive: false,
     filesSelectionJustDragged: false,
     filesSelectionGesture: null,
+    filesImagePreviewUrlByPath: {},
+    filesImageViewMode: "fit",
     filesError: null
   };
 }
@@ -210,7 +210,8 @@ export function createInitialNotepadState(): NotepadToolStateSlice {
     notepadReplaceQuery: "",
     notepadFindCaseSensitive: false,
     notepadLineWrap: false,
-    notepadError: null
+    notepadError: null,
+    notepadUnsavedModalTabId: null
   };
 }
 
@@ -242,10 +243,6 @@ export function createInitialDocsState(): DocsToolState {
   };
 }
 
-export function createInitialSkillsFileState(): SkillsToolViewState {
-  return getInitialSkillsState();
-}
-
 export function createInitialMemoryState(options: {
   alwaysLoadToolKeys: string[];
   alwaysLoadSkillKeys: string[];
@@ -270,7 +267,7 @@ export function createInitialMemoryState(options: {
     memoryModalSourcePath: null,
     memoryModalConversationId: null,
     memoryModalDraftKey: "",
-    memoryModalDraftCategory: "directive",
+    memoryModalDraftCategory: "fact",
     memoryModalDraftDescription: "",
     memoryActiveTab: "context",
     memoryRouteMode: "auto",
@@ -283,12 +280,14 @@ export function createInitialMemoryState(options: {
 export function createInitialTasksState(): TasksRuntimeSlice {
   return {
     tasksById: loadPersistedTasksById(),
+    tasksRunsByTaskId: {},
     tasksSelectedId: null,
     tasksFolder: "inbox",
     tasksSortKey: "createdAt",
     tasksSortDirection: "desc",
     tasksDetailsCollapsed: false,
-    tasksJsonDraft: ""
+    tasksJsonDraft: "",
+    taskNotifications: []
   };
 }
 
@@ -456,6 +455,8 @@ export function selectFilesToolState(
     filesSelectionDragActive: state.filesSelectionDragActive,
     filesSelectionJustDragged: state.filesSelectionJustDragged,
     filesSelectionGesture: state.filesSelectionGesture,
+    filesImagePreviewUrlByPath: state.filesImagePreviewUrlByPath,
+    filesImageViewMode: state.filesImageViewMode,
     filesError: state.filesError,
     filesUndoDeleteAvailable: state.filesDeleteUndoStack.length > 0
   };
@@ -480,7 +481,8 @@ export function selectNotepadToolState(state: NotepadToolStateSlice): NotepadToo
     notepadReplaceQuery: state.notepadReplaceQuery,
     notepadFindCaseSensitive: state.notepadFindCaseSensitive,
     notepadLineWrap: state.notepadLineWrap,
-    notepadError: state.notepadError
+    notepadError: state.notepadError,
+    notepadUnsavedModalTabId: state.notepadUnsavedModalTabId
   };
 }
 
@@ -512,43 +514,17 @@ export function selectDocsToolState(state: DocsToolState): DocsToolState {
   };
 }
 
-export function selectSkillsToolState(state: SkillsToolViewState): SkillsToolViewState {
-  return {
-    skillsRootPath: state.skillsRootPath,
-    skillsSelectedPath: state.skillsSelectedPath,
-    skillsSelectedEntryPath: state.skillsSelectedEntryPath,
-    skillsExpandedByPath: state.skillsExpandedByPath,
-    skillsEntriesByPath: state.skillsEntriesByPath,
-    skillsLoadingByPath: state.skillsLoadingByPath,
-    skillsOpenTabs: state.skillsOpenTabs,
-    skillsActiveTabPath: state.skillsActiveTabPath,
-    skillsContentByPath: state.skillsContentByPath,
-    skillsSavedContentByPath: state.skillsSavedContentByPath,
-    skillsDirtyByPath: state.skillsDirtyByPath,
-    skillsLoadingFileByPath: state.skillsLoadingFileByPath,
-    skillsSavingFileByPath: state.skillsSavingFileByPath,
-    skillsReadOnlyByPath: state.skillsReadOnlyByPath,
-    skillsSizeByPath: state.skillsSizeByPath,
-    skillsSidebarWidth: state.skillsSidebarWidth,
-    skillsSidebarCollapsed: state.skillsSidebarCollapsed,
-    skillsFindOpen: state.skillsFindOpen,
-    skillsFindQuery: state.skillsFindQuery,
-    skillsReplaceQuery: state.skillsReplaceQuery,
-    skillsFindCaseSensitive: state.skillsFindCaseSensitive,
-    skillsLineWrap: state.skillsLineWrap,
-    skillsError: state.skillsError
-  };
-}
-
 export function selectTasksToolState(state: TasksRuntimeSlice): TasksRuntimeSlice {
   return {
     tasksById: state.tasksById,
+    tasksRunsByTaskId: state.tasksRunsByTaskId,
     tasksSelectedId: state.tasksSelectedId,
     tasksFolder: state.tasksFolder,
     tasksSortKey: state.tasksSortKey,
     tasksSortDirection: state.tasksSortDirection,
     tasksDetailsCollapsed: state.tasksDetailsCollapsed,
-    tasksJsonDraft: state.tasksJsonDraft
+    tasksJsonDraft: state.tasksJsonDraft,
+    taskNotifications: state.taskNotifications
   };
 }
 

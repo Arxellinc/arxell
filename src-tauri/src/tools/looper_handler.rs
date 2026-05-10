@@ -1633,6 +1633,7 @@ impl LooperHandler {
         }
     }
 
+    #[cfg(feature = "tauri-runtime")]
     fn on_terminal_output(&self, session_id: &str, chunk: &str) {
         let Some(url) = detect_preview_url(chunk) else {
             return;
@@ -2202,6 +2203,7 @@ fn infer_preview_command(cwd: &str) -> String {
     "npm run dev".to_string()
 }
 
+#[cfg(feature = "tauri-runtime")]
 fn detect_preview_url(chunk: &str) -> Option<String> {
     for token in chunk.split_whitespace() {
         let trimmed =
@@ -2334,6 +2336,7 @@ fn check_opencode_installed() -> bool {
         .unwrap_or(false)
 }
 
+#[cfg(feature = "tauri-runtime")]
 fn extract_session_id(payload: &serde_json::Value) -> Option<String> {
     if let Some(obj) = payload.as_object() {
         if let Some(session_id) = obj.get("sessionId") {

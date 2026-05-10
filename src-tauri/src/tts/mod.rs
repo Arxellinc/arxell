@@ -2,28 +2,28 @@
 
 use crate::app_paths;
 use crate::contracts::{
-    AppEvent, EventSeverity, EventStage, Subsystem, TtsDownloadModelRequest,
-    TtsDownloadModelResponse, TtsListVoicesRequest, TtsListVoicesResponse, TtsSelfTestRequest,
-    TtsSelfTestResponse, TtsSettingsGetRequest, TtsSettingsGetResponse, TtsSettingsSetRequest,
-    TtsSettingsSetResponse, TtsSpeakRequest, TtsSpeakResponse, TtsStatusRequest, TtsStatusResponse,
-    TtsStopRequest, TtsStopResponse,
+    AppEvent, EventSeverity, EventStage, Subsystem, TtsListVoicesRequest, TtsListVoicesResponse,
+    TtsSelfTestRequest, TtsSelfTestResponse, TtsSettingsGetRequest, TtsSettingsGetResponse,
+    TtsSettingsSetRequest, TtsSettingsSetResponse, TtsSpeakRequest, TtsSpeakResponse,
+    TtsSpeakStreamResponse, TtsStatusRequest, TtsStatusResponse, TtsStopRequest, TtsStopResponse,
 };
-use bzip2::read::BzDecoder;
+use base64::Engine;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use sherpa_onnx::{
-    GenerationConfig, OfflineTts, OfflineTtsConfig, OfflineTtsKittenModelConfig,
-    OfflineTtsKokoroModelConfig, OfflineTtsMatchaModelConfig, OfflineTtsModelConfig,
-    OfflineTtsVitsModelConfig,
-};
-use std::collections::{BTreeSet, HashMap};
+use std::collections::HashMap;
 use std::fs;
-use std::io::{Read, Write};
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
-use tar::Archive;
+use std::time::Instant;
 use tauri::{AppHandle, Emitter, Manager};
+
+mod kokoro_frontend;
+mod kokoro_ort;
+mod kokoro_voice;
+mod phonemizer;
+use kokoro_ort::{init_onnxruntime, synthesize_phonemes};
+use phonemizer::{EspeakPhonemizer, Phonemizer};
 
 const DEFAULT_VOICE: &str = "af_heart";
 const DEFAULT_SPEED: f32 = 1.0;
@@ -31,28 +31,178 @@ const DEFAULT_PROVIDER: &str = "cpu";
 const DEFAULT_ENGINE: &str = "kokoro";
 const DEFAULT_NUM_THREADS: i32 = 4;
 const MAX_NUM_THREADS: i32 = 4;
-const DEFAULT_SHERPA_KOKORO_INT8_URL: &str = "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/kokoro-int8-multi-lang-v1_1.tar.bz2";
-const DOWNLOAD_PROGRESS_INTERVAL_MS: u128 = 250;
 
+#[allow(dead_code)]
 #[derive(Default)]
+struct GenerationConfig {
+    speed: f32,
+    sid: i32,
+}
+
+#[allow(dead_code)]
+#[derive(Default)]
+struct OfflineTtsConfig {
+    model: OfflineTtsModelConfig,
+}
+
+#[allow(dead_code)]
+#[derive(Default)]
+struct OfflineTtsModelConfig {
+    num_threads: i32,
+    provider: Option<String>,
+    kokoro: OfflineTtsKokoroModelConfig,
+    kitten: OfflineTtsKittenModelConfig,
+    vits: OfflineTtsVitsModelConfig,
+    matcha: OfflineTtsMatchaModelConfig,
+}
+
+#[allow(dead_code)]
+#[derive(Default)]
+struct OfflineTtsKokoroModelConfig {
+    model: Option<String>,
+    voices: Option<String>,
+    tokens: Option<String>,
+    data_dir: Option<String>,
+    dict_dir: Option<String>,
+    lexicon: Option<String>,
+    lang: Option<String>,
+}
+
+#[allow(dead_code)]
+#[derive(Default)]
+struct OfflineTtsKittenModelConfig {
+    model: Option<String>,
+    voices: Option<String>,
+    tokens: Option<String>,
+    data_dir: Option<String>,
+}
+
+#[allow(dead_code)]
+#[derive(Default)]
+struct OfflineTtsVitsModelConfig {
+    model: Option<String>,
+    tokens: Option<String>,
+    data_dir: Option<String>,
+    dict_dir: Option<String>,
+    lexicon: Option<String>,
+}
+
+#[allow(dead_code)]
+#[derive(Default)]
+struct OfflineTtsMatchaModelConfig {
+    acoustic_model: Option<String>,
+    vocoder: Option<String>,
+    tokens: Option<String>,
+    data_dir: Option<String>,
+    dict_dir: Option<String>,
+    lexicon: Option<String>,
+}
+
+#[allow(dead_code)]
+struct OfflineTts;
+
+impl OfflineTts {
+    fn create(_config: &OfflineTtsConfig) -> Option<Self> {
+        None
+    }
+
+    fn num_speakers(&self) -> i32 {
+        0
+    }
+
+    fn generate_with_config<F>(
+        &mut self,
+        _text: &str,
+        _config: &GenerationConfig,
+        _callback: Option<F>,
+    ) -> Option<GeneratedAudio>
+    where
+        F: FnMut(&[f32], f32) -> bool,
+    {
+        None
+    }
+}
+
+#[allow(dead_code)]
+struct GeneratedAudio {
+    samples: Vec<f32>,
+    sample_rate: i32,
+}
+
+impl GeneratedAudio {
+    fn samples(&self) -> &[f32] {
+        &self.samples
+    }
+
+    fn sample_rate(&self) -> i32 {
+        self.sample_rate
+    }
+}
+
+#[derive(Clone)]
 pub struct TTSState {
-    engine: Arc<Mutex<HashMap<String, SherpaEngine>>>,
+    engine: Arc<Mutex<HashMap<String, OfflineEngine>>>,
+    phonemizer: Arc<Mutex<Option<EspeakPhonemizer>>>,
+    active_streams: Arc<Mutex<Vec<tokio::task::AbortHandle>>>,
 }
 
 impl TTSState {
     pub fn new() -> Self {
-        Self::default()
+        Self {
+            engine: Arc::new(Mutex::new(HashMap::new())),
+            phonemizer: Arc::new(Mutex::new(None)),
+            active_streams: Arc::new(Mutex::new(Vec::new())),
+        }
     }
 
     pub fn shutdown(&self) {
         if let Ok(mut guard) = self.engine.lock() {
             guard.clear();
         }
+        if let Ok(mut guard) = self.active_streams.lock() {
+            for handle in guard.drain(..) {
+                handle.abort();
+            }
+        }
+    }
+
+    fn register_stream(&self, handle: tokio::task::AbortHandle) {
+        if let Ok(mut guard) = self.active_streams.lock() {
+            guard.push(handle);
+        }
+    }
+
+    fn unregister_stream(&self, handle: &tokio::task::AbortHandle) {
+        if let Ok(mut guard) = self.active_streams.lock() {
+            guard.retain(|h| !h.is_finished() && !std::ptr::eq(h, handle));
+        }
+    }
+
+    fn get_or_create_phonemizer(&self, resources_dir: &Path) -> Result<EspeakPhonemizer, String> {
+        {
+            let guard = self
+                .phonemizer
+                .lock()
+                .map_err(|e| format!("phonemizer lock: {e}"))?;
+            if let Some(ref p) = *guard {
+                return Ok(p.clone());
+            }
+        }
+        let phonemizer = EspeakPhonemizer::new(resources_dir)?;
+        {
+            let mut guard = self
+                .phonemizer
+                .lock()
+                .map_err(|e| format!("phonemizer lock: {e}"))?;
+            *guard = Some(phonemizer.clone());
+        }
+        Ok(phonemizer)
     }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[allow(dead_code)]
 struct PersistedTtsSettings {
     #[serde(default = "default_engine")]
     engine: String,
@@ -62,8 +212,6 @@ struct PersistedTtsSettings {
     engine_settings: HashMap<String, PersistedEnginePaths>,
     provider: Option<String>,
     num_threads: Option<u32>,
-    #[serde(default)]
-    python_path: Option<String>,
     #[serde(default, skip_serializing)]
     model_path: Option<String>,
     #[serde(default, skip_serializing)]
@@ -95,7 +243,6 @@ impl Default for PersistedTtsSettings {
             engine_settings: HashMap::new(),
             provider: Some(DEFAULT_PROVIDER.to_string()),
             num_threads: None,
-            python_path: None,
             model_path: None,
             secondary_path: None,
             voices_path: None,
@@ -135,10 +282,14 @@ struct EngineSignature {
     num_threads: i32,
 }
 
-struct SherpaEngine {
-    tts: OfflineTts,
+struct OfflineEngine {
+    runtime: RuntimeEngine,
     signature: EngineSignature,
     voices: Vec<String>,
+}
+
+enum RuntimeEngine {
+    Offline(OfflineTts),
 }
 
 #[derive(Debug, Clone)]
@@ -148,7 +299,15 @@ struct SpeakResult {
     duration_ms: u32,
 }
 
+#[derive(Debug, Clone, Copy)]
+struct SpeakWorkerTiming {
+    engine_prepare_ms: u128,
+    synthesis_ms: u128,
+    wav_encode_ms: u128,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)]
 enum TtsEngine {
     Kokoro,
     Piper,
@@ -159,9 +318,6 @@ enum TtsEngine {
 impl TtsEngine {
     fn from_str(value: &str) -> Self {
         match value.trim().to_lowercase().as_str() {
-            "piper" => Self::Piper,
-            "matcha" => Self::Matcha,
-            "kitten" | "kittentts" => Self::Kitten,
             _ => Self::Kokoro,
         }
     }
@@ -177,10 +333,10 @@ impl TtsEngine {
 
     fn as_engine_id(self) -> &'static str {
         match self {
-            Self::Kokoro => "sherpa-kokoro",
-            Self::Piper => "sherpa-piper",
-            Self::Matcha => "sherpa-matcha",
-            Self::Kitten => "sherpa-kitten",
+            Self::Kokoro => "kokoro",
+            Self::Piper => "piper-disabled",
+            Self::Matcha => "matcha-disabled",
+            Self::Kitten => "kitten-disabled",
         }
     }
 }
@@ -227,67 +383,6 @@ fn emit_tts_event(
     let _ = app.emit("app:event", event);
 }
 
-fn copy_response_with_progress(
-    app: &AppHandle,
-    correlation_id: &str,
-    response: &mut reqwest::blocking::Response,
-    out: &mut fs::File,
-    url: &str,
-) -> Result<(), String> {
-    let total_bytes = response.content_length();
-    let mut received_bytes = 0_u64;
-    let mut buffer = [0_u8; 64 * 1024];
-    let mut last_emit = Instant::now();
-
-    loop {
-        let read = response
-            .read(&mut buffer)
-            .map_err(|e| format!("failed reading downloaded archive: {e}"))?;
-        if read == 0 {
-            break;
-        }
-        out.write_all(&buffer[..read])
-            .map_err(|e| format!("failed writing downloaded archive: {e}"))?;
-        received_bytes = received_bytes.saturating_add(read as u64);
-
-        if last_emit.elapsed().as_millis() >= DOWNLOAD_PROGRESS_INTERVAL_MS {
-            emit_tts_event(
-                app,
-                correlation_id,
-                "tts.download_model",
-                EventStage::Progress,
-                EventSeverity::Info,
-                json!({
-                    "url": url,
-                    "receivedBytes": received_bytes,
-                    "totalBytes": total_bytes,
-                    "percent": total_bytes
-                        .filter(|total| *total > 0)
-                        .map(|total| (received_bytes as f64 / total as f64 * 100.0).min(100.0)),
-                }),
-            );
-            last_emit = Instant::now();
-        }
-    }
-
-    emit_tts_event(
-        app,
-        correlation_id,
-        "tts.download_model",
-        EventStage::Progress,
-        EventSeverity::Info,
-        json!({
-            "url": url,
-            "receivedBytes": received_bytes,
-            "totalBytes": total_bytes,
-            "percent": total_bytes
-                .filter(|total| *total > 0)
-                .map(|total| (received_bytes as f64 / total as f64 * 100.0).min(100.0)),
-        }),
-    );
-    Ok(())
-}
-
 fn now_ms() -> i64 {
     use std::time::{SystemTime, UNIX_EPOCH};
     SystemTime::now()
@@ -296,17 +391,114 @@ fn now_ms() -> i64 {
         .unwrap_or(0)
 }
 
-fn ensure_assets(app: &AppHandle) -> Result<KokoroPaths, String> {
+fn resolve_resources_dir(app: &AppHandle) -> Result<PathBuf, String> {
+    if let Some(rd) = app.path().resource_dir().ok() {
+        if rd.join("kokoro").join("config.json").is_file()
+            || rd.join("espeak-ng").join("bin").is_file()
+        {
+            return Ok(rd);
+        }
+    }
+    let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap_or_default();
+    let manifest_resources = PathBuf::from(&manifest_dir).join("resources");
+    if manifest_resources
+        .join("kokoro")
+        .join("config.json")
+        .is_file()
+    {
+        return Ok(manifest_resources);
+    }
+    app.path()
+        .resource_dir()
+        .map(|rd| rd)
+        .map_err(|e| format!("failed resolving app resources dir: {e}"))
+}
+
+fn ensure_assets(_app: &AppHandle) -> Result<KokoroPaths, String> {
     let app_data_dir = app_paths::app_data_dir();
     let kokoro_dir = app_data_dir.join("kokoro");
     fs::create_dir_all(&kokoro_dir).map_err(|e| format!("failed creating kokoro dir: {e}"))?;
 
     let settings = load_settings(&app_data_dir);
-    Ok(resolve_paths_for_settings(
-        app_data_dir,
-        kokoro_dir,
-        &settings,
-    ))
+    let mut resolved = resolve_paths_for_settings(app_data_dir, kokoro_dir, &settings);
+
+    let resources_dir = resolve_resources_dir(_app).ok();
+
+    if resolved.model_path.is_none() {
+        resolved.model_path = bundled_kokoro_model_path(_app);
+    }
+    if resolved.voices_path.is_none() {
+        if let Some(ref rd) = resources_dir {
+            resolved.voices_path = find_voice_bin_in_dir(&rd.join("kokoro"));
+        }
+    }
+
+    log::info!(
+        "[tts] resolved paths — model: {:?}, voices: {:?}, tokens: {:?}, data_dir: {:?}, \
+         resources_dir: {:?}",
+        resolved.model_path,
+        resolved.voices_path,
+        resolved.tokens_path,
+        resolved.data_dir,
+        resources_dir,
+    );
+
+    Ok(resolved)
+}
+
+fn bundled_kokoro_model_path(app: &AppHandle) -> Option<PathBuf> {
+    let resource_dir = app.path().resource_dir().ok()?;
+    let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap_or_default();
+    [
+        resource_dir.join("kokoro").join("model_quantized.onnx"),
+        resource_dir
+            .join("kokoro-runtime")
+            .join("model_quantized.onnx"),
+        resource_dir
+            .join("kokoro-runtime")
+            .join("onnx")
+            .join("model_quantized.onnx"),
+        resource_dir.join("kokoro-runtime").join("model_q8f16.onnx"),
+        resource_dir
+            .join("kokoro-runtime")
+            .join("onnx")
+            .join("model_q8f16.onnx"),
+        PathBuf::from(&manifest_dir)
+            .join("resources")
+            .join("kokoro")
+            .join("model_quantized.onnx"),
+    ]
+    .into_iter()
+    .find(|path| path.is_file())
+}
+
+fn bundled_ort_library_path(resources_dir: &Path) -> Option<PathBuf> {
+    #[cfg(target_os = "linux")]
+    let candidates = [
+        resources_dir
+            .join("onnxruntime")
+            .join("linux-x64")
+            .join("libonnxruntime.so"),
+        resources_dir
+            .join("onnxruntime")
+            .join("linux-x64")
+            .join("libonnxruntime.so.1"),
+        resources_dir
+            .join("onnxruntime")
+            .join("linux-x64")
+            .join("libonnxruntime.so.1.20.1"),
+    ];
+    #[cfg(target_os = "macos")]
+    let candidates = [resources_dir
+        .join("onnxruntime")
+        .join("macos")
+        .join("libonnxruntime.dylib")];
+    #[cfg(target_os = "windows")]
+    let candidates = [resources_dir
+        .join("onnxruntime")
+        .join("win-x64")
+        .join("onnxruntime.dll")];
+    candidates.into_iter().find(|path| path.is_file())
 }
 
 fn first_existing_file(candidates: &[PathBuf]) -> Option<PathBuf> {
@@ -332,11 +524,35 @@ fn find_voice_bin_in_dir(dir: &Path) -> Option<PathBuf> {
         if lower == "voices.bin" {
             return Some(path);
         }
-        if lower.ends_with(".bin") && (lower.starts_with("voices") || lower.contains("voice")) {
+        if lower.ends_with(".bin")
+            && (lower.starts_with("voices")
+                || lower.contains("voice")
+                || lower == "af_heart.bin"
+                || lower == "af.bin")
+        {
             named_match = Some(path);
         }
     }
     named_match
+}
+
+fn recursive_find_voice_bin(root: &Path, max_depth: usize) -> Option<PathBuf> {
+    if max_depth == 0 || !root.is_dir() {
+        return None;
+    }
+    if let Some(found) = find_voice_bin_in_dir(root) {
+        return Some(found);
+    }
+    let entries = fs::read_dir(root).ok()?;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            if let Some(found) = recursive_find_voice_bin(&path, max_depth - 1) {
+                return Some(found);
+            }
+        }
+    }
+    None
 }
 
 fn recursive_find_file_named(root: &Path, file_name: &str, max_depth: usize) -> Option<PathBuf> {
@@ -418,72 +634,6 @@ fn recursive_find_dir_named(root: &Path, dir_name: &str, max_depth: usize) -> Op
     None
 }
 
-fn recursive_collect_files_named(
-    root: &Path,
-    file_names: &[&str],
-    max_depth: usize,
-    out: &mut BTreeSet<PathBuf>,
-) {
-    if max_depth == 0 || !root.is_dir() {
-        return;
-    }
-    let Ok(entries) = fs::read_dir(root) else {
-        return;
-    };
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path.is_file() {
-            let matches = path
-                .file_name()
-                .and_then(|n| n.to_str())
-                .map(|name| {
-                    file_names
-                        .iter()
-                        .any(|candidate| name.eq_ignore_ascii_case(candidate))
-                })
-                .unwrap_or(false);
-            if matches {
-                out.insert(path);
-            }
-            continue;
-        }
-        if path.is_dir() {
-            recursive_collect_files_named(&path, file_names, max_depth - 1, out);
-        }
-    }
-}
-
-fn recursive_collect_files_with_ext(
-    root: &Path,
-    ext: &str,
-    max_depth: usize,
-    out: &mut BTreeSet<PathBuf>,
-) {
-    if max_depth == 0 || !root.is_dir() {
-        return;
-    }
-    let Ok(entries) = fs::read_dir(root) else {
-        return;
-    };
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path.is_file() {
-            let matches = path
-                .extension()
-                .and_then(|value| value.to_str())
-                .map(|value| value.eq_ignore_ascii_case(ext))
-                .unwrap_or(false);
-            if matches {
-                out.insert(path);
-            }
-            continue;
-        }
-        if path.is_dir() {
-            recursive_collect_files_with_ext(&path, ext, max_depth - 1, out);
-        }
-    }
-}
-
 fn canonicalize_piper_model_path(model_path: PathBuf, engine_dir: &Path) -> PathBuf {
     let Some(parent) = model_path.parent() else {
         return model_path;
@@ -503,67 +653,6 @@ fn canonicalize_piper_model_path(model_path: PathBuf, engine_dir: &Path) -> Path
     } else {
         model_path
     }
-}
-
-fn discover_available_model_paths(
-    paths: &KokoroPaths,
-    settings: &PersistedTtsSettings,
-) -> Vec<String> {
-    let engine = resolve_engine(settings);
-    let engine_dir = paths.kokoro_dir.join(engine.as_key());
-    let tts_engine_dir = paths.app_data_dir.join("tts").join(engine.as_key());
-    let file_names: &[&str] = match engine {
-        TtsEngine::Kokoro => &[
-            "model.int8.onnx",
-            "kokoro-v0_19.int8.onnx",
-            "model.onnx",
-            "model_quantized.onnx",
-        ],
-        TtsEngine::Piper | TtsEngine::Matcha => &["model.onnx"],
-        TtsEngine::Kitten => &["model.fp16.onnx"],
-    };
-    let mut found = BTreeSet::new();
-    if let Some(model_path) = active_engine_paths(settings)
-        .model_path
-        .filter(|path| !path.trim().is_empty())
-    {
-        let path = PathBuf::from(model_path);
-        found.insert(if matches!(engine, TtsEngine::Piper) {
-            canonicalize_piper_model_path(path, &engine_dir)
-        } else {
-            path
-        });
-    }
-    for root in [&tts_engine_dir, &engine_dir] {
-        if matches!(engine, TtsEngine::Piper) {
-            recursive_collect_files_with_ext(root, "onnx", 4, &mut found);
-        } else {
-            recursive_collect_files_named(root, file_names, 4, &mut found);
-        }
-    }
-    if matches!(engine, TtsEngine::Piper) {
-        let nested_models: BTreeSet<PathBuf> = found
-            .iter()
-            .filter(|path| {
-                path.parent()
-                    .map(|parent| parent != engine_dir)
-                    .unwrap_or(false)
-            })
-            .cloned()
-            .collect();
-        if !nested_models.is_empty() {
-            found = nested_models;
-        }
-        found = found
-            .into_iter()
-            .map(|path| canonicalize_piper_model_path(path, &engine_dir))
-            .collect();
-    }
-    found
-        .into_iter()
-        .filter(|path| path.is_file())
-        .map(|path| path.to_string_lossy().to_string())
-        .collect()
 }
 
 fn model_parent_dir(model_path: Option<&str>) -> Option<PathBuf> {
@@ -667,6 +756,9 @@ fn resolve_paths_for_settings(
                 ])
             })
             .or_else(|| recursive_find_file_named(&kokoro_dir, "voices.bin", 4))
+            .or_else(|| recursive_find_voice_bin(&tts_engine_dir, 4))
+            .or_else(|| recursive_find_voice_bin(&engine_dir, 4))
+            .or_else(|| recursive_find_voice_bin(&kokoro_dir, 4))
     } else {
         configured_voices_path
             .or(auto_voices_path)
@@ -727,24 +819,29 @@ fn resolve_paths_for_settings(
     let model_path_for_companions = model_path
         .as_ref()
         .map(|path| path.to_string_lossy().to_string());
+    let token_file_names: &[&str] = if matches!(engine, TtsEngine::Kokoro) {
+        &["tokenizer.json", "tokens.txt"]
+    } else {
+        &["tokens.txt"]
+    };
     let tokens_path = engine_paths
         .tokens_path
         .as_ref()
         .map(PathBuf::from)
         .filter(|path| path.is_file())
         .or_else(|| {
-            companion_file_from_model_dirs(model_path_for_companions.as_deref(), &["tokens.txt"])
+            companion_file_from_model_dirs(model_path_for_companions.as_deref(), token_file_names)
         })
         .or_else(|| {
             first_existing_file(&[
-                tts_engine_dir.join("tokens.txt"),
-                engine_dir.join("tokens.txt"),
-                kokoro_dir.join("tokens.txt"),
+                tts_engine_dir.join(token_file_names[0]),
+                engine_dir.join(token_file_names[0]),
+                kokoro_dir.join(token_file_names[0]),
             ])
             .or_else(|| {
-                recursive_find_file_named(&tts_engine_dir, "tokens.txt", 4)
-                    .or_else(|| recursive_find_file_named(&engine_dir, "tokens.txt", 4))
-                    .or_else(|| recursive_find_file_named(&kokoro_dir, "tokens.txt", 4))
+                recursive_find_file_named(&tts_engine_dir, token_file_names[0], 4)
+                    .or_else(|| recursive_find_file_named(&engine_dir, token_file_names[0], 4))
+                    .or_else(|| recursive_find_file_named(&kokoro_dir, token_file_names[0], 4))
             })
         });
     let data_dir = engine_paths
@@ -820,10 +917,53 @@ fn file_contains_bytes(path: &Path, needle: &[u8]) -> bool {
     if needle.is_empty() {
         return true;
     }
-    let Ok(bytes) = fs::read(path) else {
+    let Ok(file) = fs::File::open(path) else {
         return false;
     };
-    bytes.windows(needle.len()).any(|window| window == needle)
+    let mut reader = std::io::BufReader::new(file);
+    let mut buffer = vec![0_u8; 64 * 1024];
+    let mut carry: Vec<u8> = Vec::new();
+
+    loop {
+        let Ok(read_len) = reader.read(&mut buffer) else {
+            return false;
+        };
+        if read_len == 0 {
+            return false;
+        }
+
+        let chunk = &buffer[..read_len];
+        if carry.is_empty() {
+            if chunk.windows(needle.len()).any(|window| window == needle) {
+                return true;
+            }
+        } else {
+            let mut joined = Vec::with_capacity(carry.len() + chunk.len());
+            joined.extend_from_slice(&carry);
+            joined.extend_from_slice(chunk);
+            if joined.windows(needle.len()).any(|window| window == needle) {
+                return true;
+            }
+        }
+
+        if needle.len() > 1 {
+            let keep = needle.len() - 1;
+            if read_len >= keep {
+                carry.clear();
+                carry.extend_from_slice(&chunk[read_len - keep..]);
+            } else {
+                let needed_prefix = keep.saturating_sub(read_len);
+                let mut next_carry = Vec::with_capacity(keep);
+                if carry.len() > needed_prefix {
+                    next_carry.extend_from_slice(&carry[carry.len() - needed_prefix..]);
+                } else {
+                    next_carry.extend_from_slice(&carry);
+                }
+                next_carry.extend_from_slice(chunk);
+                carry = next_carry;
+            }
+        }
+    }
 }
 
 fn normalize_speed(speed: f32) -> f32 {
@@ -831,6 +971,13 @@ fn normalize_speed(speed: f32) -> f32 {
         return DEFAULT_SPEED;
     }
     speed.clamp(0.5, 2.0)
+}
+
+fn stream_sample_rate_hint(engine: TtsEngine) -> u32 {
+    match engine {
+        TtsEngine::Piper => 22_050,
+        TtsEngine::Kokoro | TtsEngine::Matcha | TtsEngine::Kitten => 24_000,
+    }
 }
 
 fn normalize_provider(provider: Option<&str>) -> String {
@@ -879,6 +1026,30 @@ fn resolve_selected_voice(voices: &[String], requested: &str) -> String {
         .first()
         .cloned()
         .unwrap_or_else(|| DEFAULT_VOICE.to_string())
+}
+
+fn resolve_voice_file(resources_dir: &Path, voice_name: &str, fallback_path: &str) -> PathBuf {
+    let kokoro_dir = resources_dir.join("kokoro");
+    let bin_name = format!("{voice_name}.bin");
+    let direct = kokoro_dir.join(&bin_name);
+    if direct.is_file() {
+        return direct;
+    }
+    let fallback = PathBuf::from(fallback_path);
+    if fallback.is_file() {
+        return fallback;
+    }
+    if let Some(first_bin) = fs::read_dir(&kokoro_dir).ok().and_then(|entries| {
+        entries.flatten().find(|e| {
+            e.path()
+                .extension()
+                .map(|ext| ext == "bin")
+                .unwrap_or(false)
+        })
+    }) {
+        return first_bin.path();
+    }
+    direct
 }
 
 fn known_kokoro_voices() -> Vec<String> {
@@ -946,24 +1117,71 @@ fn generic_speaker_voices(num_speakers: Option<usize>) -> Vec<String> {
     (0..count).map(|index| format!("speaker_{index}")).collect()
 }
 
-fn is_known_kokoro_voice_pack(signature: &EngineSignature) -> bool {
-    if !matches!(signature.engine, TtsEngine::Kokoro) {
-        return false;
+fn is_voices_bin(path: &Path) -> bool {
+    let name = path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("")
+        .to_lowercase();
+    name == "voices.bin" || (name.starts_with("voices") && name.ends_with(".bin"))
+}
+
+fn bundled_kokoro_voice_names(resources_dir: &Path) -> Vec<String> {
+    let kokoro_dir = resources_dir.join("kokoro");
+    let mut names: Vec<String> = Vec::new();
+    if let Ok(entries) = fs::read_dir(&kokoro_dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if !path.is_file() {
+                continue;
+            }
+            let Some(name) = path.file_stem().and_then(|n| n.to_str()) else {
+                continue;
+            };
+            if path.extension().map(|e| e == "bin").unwrap_or(false) {
+                names.push(name.to_string());
+            }
+        }
     }
-    let voices_path = Path::new(&signature.voices_path);
-    if file_name(voices_path) != "voices.bin" {
-        return false;
-    }
-    let size = file_size(voices_path).unwrap_or(0);
-    // Known sherpa Kokoro bundles currently ship either a compact v0.19 voice
-    // pack or a larger multi-language v1.1 pack. Unknown custom packs should
-    // not inherit these labels just because they have the same speaker count.
-    (10 * 1024 * 1024..=15 * 1024 * 1024).contains(&size) || size >= 20 * 1024 * 1024
+    names.sort();
+    names
 }
 
 fn voices_for_signature(signature: &EngineSignature, num_speakers: Option<usize>) -> Vec<String> {
-    if is_known_kokoro_voice_pack(signature) {
-        let mut voices = known_kokoro_voices();
+    if matches!(signature.engine, TtsEngine::Kokoro) {
+        let voices_path = Path::new(&signature.voices_path);
+        let voices_dir = if voices_path.is_file() {
+            voices_path
+                .parent()
+                .map(|p| p.to_path_buf())
+                .unwrap_or_default()
+        } else {
+            Path::new(&signature.model_path)
+                .parent()
+                .map(|p| p.to_path_buf())
+                .unwrap_or_default()
+        };
+        let has_voices_bin = fs::read_dir(&voices_dir)
+            .ok()
+            .map(|entries| entries.flatten().any(|e| is_voices_bin(&e.path())))
+            .unwrap_or(false);
+        let mut voices = if has_voices_bin {
+            let voices_pack = fs::read_dir(&voices_dir)
+                .ok()
+                .and_then(|entries| entries.flatten().find(|e| is_voices_bin(&e.path())))
+                .map(|e| e.path());
+            if let Some(ref pack_path) = voices_pack {
+                kokoro_voice::list_voices_in_pack(pack_path)
+                    .unwrap_or_else(|_| known_kokoro_voices())
+            } else {
+                known_kokoro_voices()
+            }
+        } else {
+            bundled_kokoro_voice_names(&voices_dir)
+        };
+        if voices.is_empty() {
+            voices = known_kokoro_voices();
+        }
         if let Some(count) = num_speakers.filter(|count| *count > 0) {
             if count < voices.len() {
                 voices.truncate(count);
@@ -986,7 +1204,7 @@ fn voice_to_sid(voices: &[String], voice: &str) -> i32 {
         .unwrap_or(0)
 }
 
-fn wav_from_f32_samples(samples: &[f32], sample_rate: u32) -> Vec<u8> {
+pub(crate) fn wav_from_f32_samples(samples: &[f32], sample_rate: u32) -> Vec<u8> {
     let channels: u16 = 1;
     let bits_per_sample: u16 = 16;
     let block_align = channels * (bits_per_sample / 8);
@@ -1019,6 +1237,16 @@ fn wav_from_f32_samples(samples: &[f32], sample_rate: u32) -> Vec<u8> {
     out
 }
 
+fn pcm16le_from_f32_samples(samples: &[f32]) -> Vec<u8> {
+    let mut pcm = Vec::with_capacity(samples.len() * 2);
+    for &sample in samples {
+        let clamped = sample.clamp(-1.0, 1.0);
+        let int = (clamped * 32767.0) as i16;
+        pcm.extend_from_slice(&int.to_le_bytes());
+    }
+    pcm
+}
+
 fn build_signature(
     paths: &KokoroPaths,
     settings: &PersistedTtsSettings,
@@ -1027,14 +1255,26 @@ fn build_signature(
     let model_path = paths.model_path.as_ref().ok_or_else(|| {
         "missing model file (model.onnx/model.int8.onnx/model_quantized.onnx)".to_string()
     })?;
-    let tokens_path = paths
-        .tokens_path
-        .as_ref()
-        .ok_or_else(|| "missing tokens.txt in voice resources".to_string())?;
-    let data_dir = paths
-        .data_dir
-        .as_ref()
-        .ok_or_else(|| "missing espeak-ng-data directory in voice resources".to_string())?;
+    let tokens_path = if matches!(engine, TtsEngine::Kokoro) {
+        None
+    } else {
+        Some(
+            paths
+                .tokens_path
+                .as_ref()
+                .ok_or_else(|| "missing tokens.txt in voice resources".to_string())?,
+        )
+    };
+    let data_dir = if matches!(engine, TtsEngine::Kokoro) {
+        paths.data_dir.as_ref()
+    } else {
+        Some(
+            paths
+                .data_dir
+                .as_ref()
+                .ok_or_else(|| "missing espeak-ng-data directory in voice resources".to_string())?,
+        )
+    };
     let voices_path = paths
         .voices_path
         .as_ref()
@@ -1102,35 +1342,16 @@ fn build_signature(
     if matches!(engine, TtsEngine::Piper) && has_ext(&voices_path, "bin") {
         return Err("Piper does not support Kokoro-style voices .bin files.".to_string());
     }
-    if matches!(engine, TtsEngine::Kokoro) && !file_contains_bytes(model_path, b"sample_rate") {
-        return Err(
-            "incompatible Kokoro ONNX model for sherpa-onnx: missing required metadata key \
-'sample_rate'. Use a sherpa-onnx Kokoro model bundle (k2-fsa release)."
-                .to_string(),
-        );
-    }
-    if matches!(engine, TtsEngine::Kokoro) {
-        // Guard against a known hard crash path in sherpa when model/voices bundles are mismatched.
-        let model_name = file_name(model_path);
-        let voices_name = file_name(Path::new(&voices_path));
-        if model_name == "model.int8.onnx"
-            && voices_name == "voices.bin"
-            && file_size(Path::new(&voices_path)).unwrap_or(0) < 20 * 1024 * 1024
-        {
-            return Err(
-                "incompatible Kokoro bundle: model.int8.onnx expects a larger matching voices.bin; \
-use voices.bin from the same sherpa release tarball or switch to kokoro-v0_19.int8.onnx"
-                    .to_string(),
-            );
-        }
-    }
-
     Ok(EngineSignature {
         engine,
         model_path: model_path.to_string_lossy().to_string(),
         voices_path,
-        tokens_path: tokens_path.to_string_lossy().to_string(),
-        data_dir: data_dir.to_string_lossy().to_string(),
+        tokens_path: tokens_path
+            .map(|value| value.to_string_lossy().to_string())
+            .unwrap_or_default(),
+        data_dir: data_dir
+            .map(|value| value.to_string_lossy().to_string())
+            .unwrap_or_default(),
         dict_dir: paths
             .dict_dir
             .as_ref()
@@ -1141,6 +1362,34 @@ use voices.bin from the same sherpa release tarball or switch to kokoro-v0_19.in
         provider: normalize_provider(settings.provider.as_deref()),
         num_threads: normalize_num_threads(settings.num_threads),
     })
+}
+
+fn validate_signature_runtime_compat(signature: &EngineSignature) -> Result<(), String> {
+    if matches!(signature.engine, TtsEngine::Kokoro)
+        && !file_contains_bytes(Path::new(&signature.model_path), b"sample_rate")
+    {
+        return Err(
+            "incompatible Kokoro ONNX model: missing required metadata key 'sample_rate'."
+                .to_string(),
+        );
+    }
+
+    if matches!(signature.engine, TtsEngine::Kokoro) {
+        let model_name = file_name(Path::new(&signature.model_path));
+        let voices_name = file_name(Path::new(&signature.voices_path));
+        if model_name == "model.int8.onnx"
+            && voices_name == "voices.bin"
+            && file_size(Path::new(&signature.voices_path)).unwrap_or(0) < 20 * 1024 * 1024
+        {
+            return Err(
+                "incompatible Kokoro bundle: model.int8.onnx expects a larger matching voices.bin; \
+ use voices.bin from the same release or switch to kokoro-v0_19.int8.onnx"
+                    .to_string(),
+            );
+        }
+    }
+
+    Ok(())
 }
 
 fn build_offline_tts_config(signature: &EngineSignature) -> OfflineTtsConfig {
@@ -1199,23 +1448,24 @@ fn build_offline_tts_config(signature: &EngineSignature) -> OfflineTtsConfig {
     }
 }
 
-fn create_sherpa_engine(signature: &EngineSignature) -> Result<SherpaEngine, String> {
+fn create_engine(signature: &EngineSignature) -> Result<OfflineEngine, String> {
+    validate_signature_runtime_compat(signature)?;
     let config = build_offline_tts_config(signature);
     let tts = OfflineTts::create(&config)
-        .ok_or_else(|| "failed creating sherpa tts engine".to_string())?;
-    let num_speakers = tts.num_speakers();
-    let voices = voices_for_signature(
-        signature,
-        (num_speakers > 0).then_some(num_speakers as usize),
-    );
-    Ok(SherpaEngine {
-        tts,
+        .ok_or_else(|| "failed creating offline tts engine".to_string())?;
+    let runtime = RuntimeEngine::Offline(tts);
+    let voices = voices_for_signature(signature, detect_num_speakers(signature));
+    Ok(OfflineEngine {
+        runtime,
         signature: signature.clone(),
         voices,
     })
 }
 
 fn detect_num_speakers(signature: &EngineSignature) -> Option<usize> {
+    if matches!(signature.engine, TtsEngine::Kokoro) {
+        return None;
+    }
     let config = build_offline_tts_config(signature);
     let tts = OfflineTts::create(&config)?;
     let num_speakers = tts.num_speakers();
@@ -1236,7 +1486,6 @@ pub fn status(app: &AppHandle, request: TtsStatusRequest) -> Result<TtsStatusRes
     let settings = load_settings(&paths.app_data_dir);
     let engine = resolve_engine(&settings);
     let signature = build_signature(&paths, &settings).ok();
-    let available_model_paths = discover_available_model_paths(&paths, &settings);
     let available_voices = signature
         .as_ref()
         .map(|signature| voices_for_signature(signature, detect_num_speakers(signature)))
@@ -1251,16 +1500,16 @@ pub fn status(app: &AppHandle, request: TtsStatusRequest) -> Result<TtsStatusRes
     let speed = normalize_speed(settings.speed);
     let ready = signature.is_some();
     let lexicon_status = if paths.lexicon_us_path.is_some() || paths.lexicon_zh_path.is_some() {
-        "Lexicon files were detected but are disabled by a compatibility guard because some sherpa-onnx bundles crash when lexicon tokens do not match tokens.txt."
+        "Lexicon files were detected but are disabled by a compatibility guard because lexicon tokens may not match tokens.txt."
             .to_string()
     } else {
         String::new()
     };
     let message = if ready {
-        format!("Sherpa ONNX {} ready", engine.as_key())
+        format!("{} TTS ready", engine.as_key())
     } else {
         format!(
-            "Sherpa ONNX {} not ready. Required model assets are missing or incompatible.",
+            "{} TTS not ready. Required model assets are missing or incompatible.",
             engine.as_key()
         )
     };
@@ -1276,30 +1525,6 @@ pub fn status(app: &AppHandle, request: TtsStatusRequest) -> Result<TtsStatusRes
             .as_ref()
             .map(|p| p.to_string_lossy().to_string())
             .unwrap_or_default(),
-        secondary_path: paths
-            .voices_path
-            .as_ref()
-            .map(|p| p.to_string_lossy().to_string())
-            .unwrap_or_default(),
-        voices_path: paths
-            .voices_path
-            .as_ref()
-            .map(|p| p.to_string_lossy().to_string())
-            .unwrap_or_default(),
-        tokens_path: paths
-            .tokens_path
-            .as_ref()
-            .map(|p| p.to_string_lossy().to_string())
-            .unwrap_or_default(),
-        data_dir: paths
-            .data_dir
-            .as_ref()
-            .map(|p| p.to_string_lossy().to_string())
-            .unwrap_or_default(),
-        python_path: String::new(),
-        script_path: String::new(),
-        runtime_archive_present: false,
-        available_model_paths,
         available_voices,
         selected_voice,
         speed,
@@ -1364,27 +1589,6 @@ pub fn settings_get(
             .as_ref()
             .map(|p| p.to_string_lossy().to_string())
             .unwrap_or_default(),
-        secondary_path: paths
-            .voices_path
-            .as_ref()
-            .map(|p| p.to_string_lossy().to_string())
-            .unwrap_or_default(),
-        voices_path: paths
-            .voices_path
-            .as_ref()
-            .map(|p| p.to_string_lossy().to_string())
-            .unwrap_or_default(),
-        tokens_path: paths
-            .tokens_path
-            .as_ref()
-            .map(|p| p.to_string_lossy().to_string())
-            .unwrap_or_default(),
-        data_dir: paths
-            .data_dir
-            .as_ref()
-            .map(|p| p.to_string_lossy().to_string())
-            .unwrap_or_default(),
-        python_path: String::new(),
     })
 }
 
@@ -1418,53 +1622,15 @@ pub fn settings_set(
             engine_paths.model_path = Some(model_path.to_string());
             // Reset stale companion paths; they will be re-resolved from the selected
             // model directory (or fallback kokoro dir) in ensure_assets().
-            if request.secondary_path.is_none() && request.voices_path.is_none() {
-                engine_paths.secondary_path = None;
-                engine_paths.voices_path = None;
-            }
+            engine_paths.secondary_path = None;
+            engine_paths.voices_path = None;
             engine_paths.tokens_path = None;
             engine_paths.data_dir = None;
         }
     }
-    if let Some(secondary_path) = request.secondary_path.as_ref() {
-        let secondary_path = secondary_path.trim();
-        if !secondary_path.is_empty() {
-            engine_paths.secondary_path = Some(secondary_path.to_string());
-            engine_paths.voices_path = Some(secondary_path.to_string());
-        }
-    }
-    if let Some(voices_path) = request.voices_path.as_ref() {
-        let voices_path = voices_path.trim();
-        if !voices_path.is_empty() {
-            engine_paths.voices_path = Some(voices_path.to_string());
-            if engine_paths.secondary_path.is_none() {
-                engine_paths.secondary_path = Some(voices_path.to_string());
-            }
-        }
-    }
-    if let Some(tokens_path) = request.tokens_path.as_ref() {
-        let tokens_path = tokens_path.trim();
-        if !tokens_path.is_empty() {
-            engine_paths.tokens_path = Some(tokens_path.to_string());
-        }
-    }
-    if let Some(data_dir) = request.data_dir.as_ref() {
-        let data_dir = data_dir.trim();
-        if !data_dir.is_empty() {
-            engine_paths.data_dir = Some(data_dir.to_string());
-        }
-    }
-    // python_path field is intentionally ignored in sherpa-only mode.
-    if request.python_path.is_some() {
-        settings.python_path = None;
-    }
     set_active_engine_paths(&mut settings, engine_paths.clone());
 
-    let requested_path_update = request.model_path.is_some()
-        || request.secondary_path.is_some()
-        || request.voices_path.is_some()
-        || request.tokens_path.is_some()
-        || request.data_dir.is_some();
+    let requested_path_update = request.model_path.is_some();
 
     // Validate explicit path edits, but do not block engine-only switches on
     // stale or partial assets from that engine. Status will report readiness.
@@ -1516,10 +1682,7 @@ pub async fn self_test(
     let engine = resolve_engine(&settings);
     let speak_request = TtsSpeakRequest {
         correlation_id: request.correlation_id.clone(),
-        text: format!(
-            "Sherpa ONNX {} runtime self test from Arxell.",
-            engine.as_key()
-        ),
+        text: format!("{} runtime self test from Arxell.", engine.as_key()),
         voice: None,
         speed: None,
     };
@@ -1548,11 +1711,227 @@ pub async fn self_test(
     }
 }
 
+#[allow(dead_code)]
+pub(crate) fn split_into_sentences(phonemes: &str) -> Vec<String> {
+    let mut sentences: Vec<String> = Vec::new();
+    let mut current = String::new();
+    for ch in phonemes.chars() {
+        current.push(ch);
+        if matches!(ch, '.' | '?' | '!' | '—' | '\n') {
+            let trimmed = current.trim().to_string();
+            if !trimmed.is_empty() {
+                sentences.push(trimmed);
+            }
+            current.clear();
+        }
+    }
+    let trimmed = current.trim().to_string();
+    if !trimmed.is_empty() {
+        sentences.push(trimmed);
+    }
+    if sentences.is_empty() {
+        sentences.push(phonemes.to_string());
+    }
+    sentences
+}
+
+fn phonemize_with_pauses(phonemizer: &dyn Phonemizer, text: &str) -> Result<String, String> {
+    const PAUSE_CHARS: &[char] = &[',', ':', ';', '—'];
+
+    let mut result = String::new();
+    let mut start = 0usize;
+    let chars: Vec<char> = text.chars().collect();
+
+    for (i, &ch) in chars.iter().enumerate() {
+        if PAUSE_CHARS.contains(&ch) {
+            let segment: String = chars[start..i].iter().collect();
+            let trimmed = segment.trim();
+            if !trimmed.is_empty() {
+                let phonemes = phonemizer.phonemize(trimmed)?;
+                if !phonemes.is_empty() {
+                    if !result.is_empty() {
+                        result.push(' ');
+                    }
+                    result.push_str(&phonemes);
+                }
+            }
+            if !result.is_empty() {
+                result.push(' ');
+            }
+            result.push(ch);
+            start = i + 1;
+        }
+    }
+
+    let remaining: String = chars[start..].iter().collect();
+    let trimmed = remaining.trim();
+    if !trimmed.is_empty() {
+        let phonemes = phonemizer.phonemize(trimmed)?;
+        if !phonemes.is_empty() {
+            if !result.is_empty() {
+                result.push(' ');
+            }
+            result.push_str(&phonemes);
+        }
+    }
+
+    Ok(result)
+}
+
+fn split_raw_text_into_sentences(text: &str) -> Vec<String> {
+    let mut sentences: Vec<String> = Vec::new();
+    let mut current = String::new();
+    for ch in text.chars() {
+        current.push(ch);
+        if matches!(ch, '.' | '?' | '!' | '\n') {
+            let trimmed = current.trim().to_string();
+            if !trimmed.is_empty() {
+                sentences.push(trimmed);
+            }
+            current.clear();
+        }
+    }
+    let trimmed = current.trim().to_string();
+    if !trimmed.is_empty() {
+        sentences.push(trimmed);
+    }
+    if sentences.is_empty() {
+        sentences.push(text.to_string());
+    }
+    sentences
+}
+
+fn strip_markdown_for_tts(input: &str) -> String {
+    let lines: Vec<String> = input
+        .lines()
+        .map(|line| strip_markdown_line(line))
+        .collect();
+    let result = lines.join(" ");
+    collapse_whitespace(&result)
+}
+
+fn strip_markdown_line(line: &str) -> String {
+    let line = line.trim();
+
+    if matches!(line, "---" | "***" | "___" | "- - -" | "* * *") {
+        return String::new();
+    }
+
+    let line = line.trim_start_matches('#').trim_start();
+    let line = line.trim_start_matches('>').trim_start();
+
+    let line = line
+        .strip_prefix("- ")
+        .or_else(|| line.strip_prefix("* "))
+        .or_else(|| line.strip_prefix("+ "))
+        .unwrap_or(line);
+
+    let line = if let Some(dot_pos) = line.find(". ") {
+        let prefix = &line[..dot_pos];
+        if prefix.chars().all(|c| c.is_ascii_digit()) {
+            &line[dot_pos + 2..]
+        } else {
+            line
+        }
+    } else {
+        line
+    };
+
+    let line = line.replace("**", "").replace("__", "").replace("~~", "");
+
+    let line = strip_lone_sigils(&line, '*');
+    let line = strip_lone_sigils(&line, '_');
+
+    let line = strip_links(&line);
+    let line = strip_images(&line);
+
+    line.replace('`', "")
+}
+
+fn strip_lone_sigils(input: &str, sigil: char) -> String {
+    let chars: Vec<char> = input.chars().collect();
+    let mut out = String::with_capacity(input.len());
+    for (i, &ch) in chars.iter().enumerate() {
+        if ch == sigil {
+            let prev_alnum = i > 0 && chars[i - 1].is_alphanumeric();
+            let next_alnum = i + 1 < chars.len() && chars[i + 1].is_alphanumeric();
+            if prev_alnum && next_alnum {
+                out.push(ch);
+            }
+        } else {
+            out.push(ch);
+        }
+    }
+    out
+}
+
+fn strip_links(input: &str) -> String {
+    let mut out = String::new();
+    let mut rest = input;
+    while let Some(open) = rest.find('[') {
+        out.push_str(&rest[..open]);
+        let after_open = &rest[open + 1..];
+        if let Some(close_bracket) = after_open.find("](") {
+            let label = &after_open[..close_bracket];
+            let after_label = &after_open[close_bracket + 2..];
+            if let Some(close_paren) = after_label.find(')') {
+                out.push_str(label);
+                rest = &after_label[close_paren + 1..];
+                continue;
+            }
+        }
+        out.push('[');
+        rest = after_open;
+    }
+    out.push_str(rest);
+    out
+}
+
+fn strip_images(input: &str) -> String {
+    let mut out = String::new();
+    let mut rest = input;
+    while let Some(bang) = rest.find("![") {
+        out.push_str(&rest[..bang]);
+        let after = &rest[bang + 2..];
+        if let Some(close_bracket) = after.find("](") {
+            let alt = &after[..close_bracket];
+            let after_alt = &after[close_bracket + 2..];
+            if let Some(close_paren) = after_alt.find(')') {
+                out.push_str(alt);
+                rest = &after_alt[close_paren + 1..];
+                continue;
+            }
+        }
+        out.push_str("![");
+        rest = after;
+    }
+    out.push_str(rest);
+    out
+}
+
+fn collapse_whitespace(input: &str) -> String {
+    let mut out = String::with_capacity(input.len());
+    let mut last_was_space = false;
+    for ch in input.chars() {
+        if ch.is_whitespace() {
+            if !last_was_space && !out.is_empty() {
+                out.push(' ');
+            }
+            last_was_space = true;
+        } else {
+            out.push(ch);
+            last_was_space = false;
+        }
+    }
+    out.trim_end().to_string()
+}
+
 pub async fn speak(
     app: &AppHandle,
     request: TtsSpeakRequest,
     tts_state: &TTSState,
 ) -> Result<TtsSpeakResponse, String> {
+    let total_start = Instant::now();
     emit_tts_event(
         app,
         &request.correlation_id,
@@ -1562,14 +1941,18 @@ pub async fn speak(
         json!({"chars": request.text.len()}),
     );
 
-    let text = request.text.trim().to_string();
+    let text = strip_markdown_for_tts(request.text.trim());
     if text.is_empty() {
         return Err("text is required".to_string());
     }
 
+    let ensure_assets_start = Instant::now();
     let paths = ensure_assets(app)?;
-    let mut settings = load_settings(&paths.app_data_dir);
+    let ensure_assets_ms = ensure_assets_start.elapsed().as_millis();
+    let settings = load_settings(&paths.app_data_dir);
+    let signature_start = Instant::now();
     let signature = build_signature(&paths, &settings)?;
+    let build_signature_ms = signature_start.elapsed().as_millis();
     let engine = signature.engine;
     let selectable_voices = voices_for_signature(&signature, None);
     let selected_voice = resolve_selected_voice(
@@ -1578,22 +1961,72 @@ pub async fn speak(
     );
     let speed = normalize_speed(request.speed.unwrap_or(settings.speed));
 
-    settings.voice = selected_voice.clone();
-    settings.speed = speed;
-    set_active_engine_paths(
-        &mut settings,
-        PersistedEnginePaths {
-            model_path: Some(signature.model_path.clone()),
-            secondary_path: Some(signature.voices_path.clone()),
-            voices_path: Some(signature.voices_path.clone()),
-            tokens_path: Some(signature.tokens_path.clone()),
-            data_dir: Some(signature.data_dir.clone()),
-        },
-    );
-    settings.provider = Some(signature.provider.clone());
-    settings.num_threads = Some(signature.num_threads as u32);
-    settings.python_path = None;
-    save_settings(&paths.app_data_dir, &settings)?;
+    if matches!(engine, TtsEngine::Kokoro) {
+        let resources_dir = resolve_resources_dir(app)?;
+        let ort_path = bundled_ort_library_path(&resources_dir).ok_or_else(|| {
+            format!(
+                "bundled ONNX Runtime library not found under {}",
+                resources_dir.join("onnxruntime").display()
+            )
+        })?;
+        init_onnxruntime(&ort_path)?;
+        let phonemizer = tts_state.get_or_create_phonemizer(&resources_dir)?;
+        let config_path = resources_dir.join("kokoro").join("config.json");
+        let voice_file =
+            resolve_voice_file(&resources_dir, &selected_voice, &signature.voices_path);
+        let model_path = PathBuf::from(&signature.model_path);
+        let voice_name_for_task = selected_voice.clone();
+        let text_for_task = text.clone();
+        let engine_prepare_start = Instant::now();
+        let (samples, sample_rate, phonemes) = tokio::task::spawn_blocking(move || {
+            let phonemes = phonemize_with_pauses(&phonemizer, &text_for_task)?;
+            let (samples, sample_rate) = synthesize_phonemes(
+                &model_path,
+                &config_path,
+                &voice_file,
+                Some(&voice_name_for_task),
+                &phonemes,
+                speed,
+            )?;
+            Ok::<(Vec<f32>, u32, String), String>((samples, sample_rate, phonemes))
+        })
+        .await
+        .map_err(|e| format!("tts worker join error: {e}"))??;
+        let engine_prepare_ms = engine_prepare_start.elapsed().as_millis();
+        let duration_ms = ((samples.len() as f64 / sample_rate as f64) * 1000.0).round() as u32;
+        let wav_encode_start = Instant::now();
+        let audio_bytes = wav_from_f32_samples(&samples, sample_rate);
+        let wav_encode_ms = wav_encode_start.elapsed().as_millis();
+        emit_tts_event(
+            app,
+            &request.correlation_id,
+            "tts.request",
+            EventStage::Complete,
+            EventSeverity::Info,
+            json!({
+                "bytes": audio_bytes.len(),
+                "durationMs": duration_ms,
+                "voice": selected_voice,
+                "timingsMs": {
+                    "total": total_start.elapsed().as_millis(),
+                    "ensureAssets": ensure_assets_ms,
+                    "buildSignature": build_signature_ms,
+                    "enginePrepare": engine_prepare_ms,
+                    "wavEncode": wav_encode_ms,
+                },
+            }),
+        );
+        return Ok(TtsSpeakResponse {
+            correlation_id: request.correlation_id,
+            engine_id: engine.as_engine_id().to_string(),
+            voice: selected_voice,
+            speed,
+            sample_rate,
+            duration_ms,
+            audio_bytes,
+            phonemes: Some(phonemes),
+        });
+    }
 
     let engine_state = Arc::clone(&tts_state.engine);
     let text_clone = text.clone();
@@ -1601,10 +2034,12 @@ pub async fn speak(
     let signature_clone = signature.clone();
     let engine_key = engine.as_key().to_string();
 
-    let result = tokio::task::spawn_blocking(move || {
+    let worker_wait_start = Instant::now();
+    let (result, worker_timing) = tokio::task::spawn_blocking(move || {
         let mut guard = engine_state
             .lock()
-            .map_err(|_| "sherpa tts engine lock poisoned".to_string())?;
+            .map_err(|_| "offline tts engine lock poisoned".to_string())?;
+        let engine_prepare_start = Instant::now();
         let needs_rebuild = guard
             .get(engine_key.as_str())
             .map(|engine| {
@@ -1620,35 +2055,51 @@ pub async fn speak(
             })
             .unwrap_or(true);
         if needs_rebuild {
-            guard.insert(engine_key.clone(), create_sherpa_engine(&signature_clone)?);
+            guard.insert(engine_key.clone(), create_engine(&signature_clone)?);
         }
+        let engine_prepare_ms = engine_prepare_start.elapsed().as_millis();
         let engine = guard
             .get_mut(engine_key.as_str())
-            .ok_or_else(|| "sherpa engine unavailable".to_string())?;
+            .ok_or_else(|| "offline engine unavailable".to_string())?;
 
-        let mut gen_config = GenerationConfig::default();
-        gen_config.speed = speed;
-        gen_config.sid = voice_to_sid(&engine.voices, &selected_voice_clone);
-        let generated = engine
-            .tts
-            .generate_with_config::<fn(&[f32], f32) -> bool>(&text_clone, &gen_config, None)
-            .ok_or_else(|| "sherpa synthesis returned no audio".to_string())?;
-        let samples = generated.samples().to_vec();
-        let sample_rate = generated.sample_rate() as u32;
+        let synthesis_start = Instant::now();
+        let (samples, sample_rate) = match &mut engine.runtime {
+            RuntimeEngine::Offline(tts) => {
+                let mut gen_config = GenerationConfig::default();
+                gen_config.speed = speed;
+                gen_config.sid = voice_to_sid(&engine.voices, &selected_voice_clone);
+                let generated = tts
+                    .generate_with_config::<fn(&[f32], f32) -> bool>(&text_clone, &gen_config, None)
+                    .ok_or_else(|| "offline synthesis returned no audio".to_string())?;
+                (generated.samples().to_vec(), generated.sample_rate() as u32)
+            }
+        };
+        let synthesis_ms = synthesis_start.elapsed().as_millis();
         let duration_ms = if sample_rate == 0 {
             0
         } else {
             ((samples.len() as f64 / sample_rate as f64) * 1000.0).round() as u32
         };
+        let wav_encode_start = Instant::now();
         let audio_bytes = wav_from_f32_samples(&samples, sample_rate.max(1));
-        Ok::<SpeakResult, String>(SpeakResult {
-            audio_bytes,
-            sample_rate: sample_rate.max(1),
-            duration_ms,
-        })
+        let wav_encode_ms = wav_encode_start.elapsed().as_millis();
+        Ok::<(SpeakResult, SpeakWorkerTiming), String>((
+            SpeakResult {
+                audio_bytes,
+                sample_rate: sample_rate.max(1),
+                duration_ms,
+            },
+            SpeakWorkerTiming {
+                engine_prepare_ms,
+                synthesis_ms,
+                wav_encode_ms,
+            },
+        ))
     })
     .await
     .map_err(|e| format!("tts worker join error: {e}"))??;
+    let worker_wait_ms = worker_wait_start.elapsed().as_millis();
+    let ipc_marshal_start = Instant::now();
 
     emit_tts_event(
         app,
@@ -1660,6 +2111,17 @@ pub async fn speak(
             "bytes": result.audio_bytes.len(),
             "durationMs": result.duration_ms,
             "voice": selected_voice,
+            "timingsMs": {
+                "total": total_start.elapsed().as_millis(),
+                "ensureAssets": ensure_assets_ms,
+                "buildSignature": build_signature_ms,
+                "saveSettings": 0,
+                "enginePrepare": worker_timing.engine_prepare_ms,
+                "synthesis": worker_timing.synthesis_ms,
+                "wavEncode": worker_timing.wav_encode_ms,
+                "workerWait": worker_wait_ms,
+                "ipcMarshal": ipc_marshal_start.elapsed().as_millis(),
+            },
         }),
     );
 
@@ -1671,115 +2133,503 @@ pub async fn speak(
         sample_rate: result.sample_rate,
         duration_ms: result.duration_ms,
         audio_bytes: result.audio_bytes,
+        phonemes: None,
     })
 }
 
-pub async fn download_model(
+pub async fn speak_stream(
     app: &AppHandle,
-    request: TtsDownloadModelRequest,
+    request: TtsSpeakRequest,
     tts_state: &TTSState,
-) -> Result<TtsDownloadModelResponse, String> {
+) -> Result<TtsSpeakStreamResponse, String> {
     emit_tts_event(
         app,
         &request.correlation_id,
-        "tts.download_model",
+        "tts.request",
         EventStage::Start,
         EventSeverity::Info,
-        json!({ "url": request.url.clone().unwrap_or_default() }),
+        json!({"chars": request.text.len(), "streaming": true}),
     );
+
+    let text = strip_markdown_for_tts(request.text.trim());
+    if text.is_empty() {
+        return Err("text is required".to_string());
+    }
 
     let paths = ensure_assets(app)?;
     let settings = load_settings(&paths.app_data_dir);
-    if !matches!(resolve_engine(&settings), TtsEngine::Kokoro) {
-        return Ok(TtsDownloadModelResponse {
+    let signature = build_signature(&paths, &settings)?;
+    let engine = signature.engine;
+    let selectable_voices = voices_for_signature(&signature, None);
+    let selected_voice = resolve_selected_voice(
+        &selectable_voices,
+        request.voice.as_deref().unwrap_or(settings.voice.as_str()),
+    );
+    let speed = normalize_speed(request.speed.unwrap_or(settings.speed));
+
+    if matches!(engine, TtsEngine::Kokoro) {
+        let resources_dir = resolve_resources_dir(app)?;
+        let ort_path = bundled_ort_library_path(&resources_dir).ok_or_else(|| {
+            format!(
+                "bundled ONNX Runtime library not found under {}",
+                resources_dir.join("onnxruntime").display()
+            )
+        })?;
+        init_onnxruntime(&ort_path)?;
+        let phonemizer = tts_state.get_or_create_phonemizer(&resources_dir)?;
+        let config_path = resources_dir.join("kokoro").join("config.json");
+        let voice_file =
+            resolve_voice_file(&resources_dir, &selected_voice, &signature.voices_path);
+        let model_path = PathBuf::from(&signature.model_path);
+        let app_for_task = app.clone();
+        let corr = request.correlation_id.clone();
+        let stream_voice = selected_voice.clone();
+        let raw_sentences = split_raw_text_into_sentences(&text);
+        let handle = tokio::spawn(async move {
+            let total_start = Instant::now();
+            let mut seq: u32 = 0;
+            let mut all_samples: Vec<f32> = Vec::new();
+            let sample_rate: u32 = 24_000;
+
+            let mut phoneme_fut: Option<tokio::task::JoinHandle<Result<String, String>>> = None;
+            let mut synth_fut: Option<
+                tokio::task::JoinHandle<Result<(Vec<f32>, u32, String), String>>,
+            > = None;
+            let mut sentence_idx = 0usize;
+
+            while sentence_idx < raw_sentences.len() || phoneme_fut.is_some() || synth_fut.is_some()
+            {
+                if synth_fut.is_none() {
+                    let phonemes = if let Some(handle) = phoneme_fut.take() {
+                        sentence_idx += 1;
+                        match handle.await {
+                            Ok(Ok(p)) => p,
+                            Ok(Err(e)) => {
+                                emit_tts_event(
+                                    &app_for_task,
+                                    &corr,
+                                    "tts.request",
+                                    EventStage::Error,
+                                    EventSeverity::Error,
+                                    json!({"message":e}),
+                                );
+                                return;
+                            }
+                            Err(e) => {
+                                emit_tts_event(
+                                    &app_for_task,
+                                    &corr,
+                                    "tts.request",
+                                    EventStage::Error,
+                                    EventSeverity::Error,
+                                    json!({"message": format!("phonemize worker error: {e}")}),
+                                );
+                                return;
+                            }
+                        }
+                    } else if sentence_idx < raw_sentences.len() {
+                        let raw = raw_sentences[sentence_idx].clone();
+                        sentence_idx += 1;
+                        let ph = phonemizer.clone();
+                        match tokio::task::spawn_blocking(move || phonemize_with_pauses(&ph, &raw))
+                            .await
+                        {
+                            Ok(Ok(p)) => p,
+                            Ok(Err(e)) => {
+                                emit_tts_event(
+                                    &app_for_task,
+                                    &corr,
+                                    "tts.request",
+                                    EventStage::Error,
+                                    EventSeverity::Error,
+                                    json!({"message":e}),
+                                );
+                                return;
+                            }
+                            Err(e) => {
+                                emit_tts_event(
+                                    &app_for_task,
+                                    &corr,
+                                    "tts.request",
+                                    EventStage::Error,
+                                    EventSeverity::Error,
+                                    json!({"message": format!("phonemize worker error: {e}")}),
+                                );
+                                return;
+                            }
+                        }
+                    } else {
+                        break;
+                    };
+
+                    if phonemes.trim().is_empty() {
+                        continue;
+                    }
+
+                    let mp = model_path.clone();
+                    let cp = config_path.clone();
+                    let vf = voice_file.clone();
+                    let vn = stream_voice.clone();
+                    let phonemes_for_synthesis = phonemes.clone();
+                    synth_fut = Some(tokio::task::spawn_blocking(move || {
+                        let (samples, sample_rate) = synthesize_phonemes(
+                            &mp,
+                            &cp,
+                            &vf,
+                            Some(&vn),
+                            &phonemes_for_synthesis,
+                            speed,
+                        )?;
+                        Ok::<(Vec<f32>, u32, String), String>((samples, sample_rate, phonemes))
+                    }));
+
+                    if sentence_idx < raw_sentences.len() {
+                        let raw = raw_sentences[sentence_idx].clone();
+                        let ph = phonemizer.clone();
+                        phoneme_fut = Some(tokio::task::spawn_blocking(move || {
+                            phonemize_with_pauses(&ph, &raw)
+                        }));
+                    }
+                }
+
+                if let Some(handle) = synth_fut.take() {
+                    match handle.await {
+                        Ok(Ok((samples, sr, phonemes))) => {
+                            let chunk_sample_rate = sr.max(1);
+                            let duration_ms = ((samples.len() as f64 / chunk_sample_rate as f64)
+                                * 1000.0)
+                                .round() as u32;
+                            let pcm = pcm16le_from_f32_samples(&samples);
+                            let pcm_b64 = base64::engine::general_purpose::STANDARD.encode(&pcm);
+                            emit_tts_event(
+                                &app_for_task,
+                                &corr,
+                                "tts.stream.chunk",
+                                EventStage::Progress,
+                                EventSeverity::Info,
+                                json!({
+                                    "seq": seq,
+                                    "sampleRate": chunk_sample_rate,
+                                    "sampleCount": samples.len(),
+                                    "durationMs": duration_ms,
+                                    "phonemes": phonemes,
+                                    "pcm16Base64": pcm_b64,
+                                    "final": false,
+                                }),
+                            );
+                            seq += 1;
+                            all_samples.extend_from_slice(&samples);
+                        }
+                        Ok(Err(error)) => {
+                            emit_tts_event(
+                                &app_for_task,
+                                &corr,
+                                "tts.request",
+                                EventStage::Error,
+                                EventSeverity::Error,
+                                json!({"message":error}),
+                            );
+                            return;
+                        }
+                        Err(error) => {
+                            emit_tts_event(
+                                &app_for_task,
+                                &corr,
+                                "tts.request",
+                                EventStage::Error,
+                                EventSeverity::Error,
+                                json!({"message": format!("tts worker join error: {error}")}),
+                            );
+                            return;
+                        }
+                    }
+                }
+            }
+
+            let duration_ms =
+                ((all_samples.len() as f64 / sample_rate as f64) * 1000.0).round() as u32;
+            emit_tts_event(
+                &app_for_task,
+                &corr,
+                "tts.stream.chunk",
+                EventStage::Progress,
+                EventSeverity::Info,
+                json!({
+                    "durationMs": duration_ms,
+                    "final": true,
+                }),
+            );
+            emit_tts_event(
+                &app_for_task,
+                &corr,
+                "tts.request",
+                EventStage::Complete,
+                EventSeverity::Info,
+                json!({
+                    "bytes": all_samples.len() * 2,
+                    "durationMs": duration_ms,
+                    "voice": stream_voice,
+                    "timingsMs": {"total": total_start.elapsed().as_millis()},
+                }),
+            );
+        });
+        let abort_handle = handle.abort_handle();
+        tts_state.register_stream(abort_handle.clone());
+        let tts_state_for_cleanup = tts_state.clone();
+        let cleanup_stream = async move {
+            let _ = handle.await;
+            tts_state_for_cleanup.unregister_stream(&abort_handle);
+        };
+        tokio::spawn(cleanup_stream);
+        return Ok(TtsSpeakStreamResponse {
             correlation_id: request.correlation_id,
-            ok: false,
-            message: "Model bundle download is currently available for Kokoro only.".to_string(),
-            model_path: String::new(),
-            voices_path: String::new(),
-            tokens_path: String::new(),
-            data_dir: String::new(),
+            accepted: true,
+            engine_id: engine.as_engine_id().to_string(),
+            voice: selected_voice,
+            speed,
         });
     }
-    let target_url = request
-        .url
-        .as_deref()
-        .map(str::trim)
-        .filter(|v| !v.is_empty())
-        .unwrap_or(DEFAULT_SHERPA_KOKORO_INT8_URL)
-        .to_string();
-    let tts_engine_dir = paths.app_data_dir.join("tts").join("kokoro");
-    fs::create_dir_all(&tts_engine_dir)
-        .map_err(|e| format!("failed creating tts engine dir: {e}"))?;
-    let archive_path = tts_engine_dir.join("model-download.tar.bz2");
-    let extract_dir = tts_engine_dir.clone();
-    let app_for_download = app.clone();
-    let correlation_id = request.correlation_id.clone();
 
-    tokio::task::spawn_blocking(move || -> Result<(), String> {
-        let mut response = reqwest::blocking::Client::builder()
-            .connect_timeout(Duration::from_secs(30))
-            .timeout(Duration::from_secs(15 * 60))
-            .build()
-            .map_err(|e| format!("failed creating HTTP client: {e}"))?
-            .get(&target_url)
-            .send()
-            .map_err(|e| format!("failed downloading model bundle: {e}"))?;
-        if !response.status().is_success() {
-            return Err(format!("download failed with HTTP {}", response.status()));
+    let app_for_task = app.clone();
+    let request_correlation_id = request.correlation_id.clone();
+    let engine_state = Arc::clone(&tts_state.engine);
+    let signature_clone = signature.clone();
+    let selected_voice_clone = selected_voice.clone();
+    let selected_voice_for_task = selected_voice.clone();
+    let text_clone = text.clone();
+    let engine_key = engine.as_key().to_string();
+    let stream_sample_rate = stream_sample_rate_hint(engine);
+
+    let handle = tokio::spawn(async move {
+        let total_start = Instant::now();
+        let total_start_ms = now_ms();
+        let first_chunk_ms_shared = Arc::new(Mutex::new(None::<u128>));
+        let first_chunk_ms_shared_for_blocking = Arc::clone(&first_chunk_ms_shared);
+        let app_for_blocking = app_for_task.clone();
+        let corr_for_blocking = request_correlation_id.clone();
+        let worker = tokio::task::spawn_blocking(move || {
+            let mut guard = engine_state
+                .lock()
+                .map_err(|_| "offline tts engine lock poisoned".to_string())?;
+            let engine_prepare_start = Instant::now();
+            let needs_rebuild = guard
+                .get(engine_key.as_str())
+                .map(|engine| {
+                    engine.signature.model_path != signature_clone.model_path
+                        || engine.signature.voices_path != signature_clone.voices_path
+                        || engine.signature.tokens_path != signature_clone.tokens_path
+                        || engine.signature.data_dir != signature_clone.data_dir
+                        || engine.signature.dict_dir != signature_clone.dict_dir
+                        || engine.signature.lexicon != signature_clone.lexicon
+                        || engine.signature.provider != signature_clone.provider
+                        || engine.signature.num_threads != signature_clone.num_threads
+                        || engine.signature.engine != signature_clone.engine
+                })
+                .unwrap_or(true);
+            if needs_rebuild {
+                guard.insert(engine_key.clone(), create_engine(&signature_clone)?);
+            }
+            let engine_prepare_ms = engine_prepare_start.elapsed().as_millis();
+            let engine = guard
+                .get_mut(engine_key.as_str())
+                .ok_or_else(|| "offline engine unavailable".to_string())?;
+
+            let synthesis_start = Instant::now();
+            let (samples, sample_rate) = match &mut engine.runtime {
+                RuntimeEngine::Offline(tts) => {
+                    let mut gen_config = GenerationConfig::default();
+                    gen_config.speed = speed;
+                    gen_config.sid = voice_to_sid(&engine.voices, &selected_voice_clone);
+
+                    let sample_rate_hint = Arc::new(Mutex::new(0_u32));
+                    let chunk_seq = Arc::new(Mutex::new(0_u32));
+                    let emitted_sample_count = Arc::new(Mutex::new(0_usize));
+                    let first_chunk_ms_for_callback =
+                        Arc::clone(&first_chunk_ms_shared_for_blocking);
+                    let app_for_callback = app_for_blocking.clone();
+                    let corr_for_callback = corr_for_blocking.clone();
+                    let sr_for_callback = Arc::clone(&sample_rate_hint);
+                    let seq_for_callback = Arc::clone(&chunk_seq);
+                    let emitted_for_callback = Arc::clone(&emitted_sample_count);
+
+                    let generated = tts
+                        .generate_with_config(
+                            &text_clone,
+                            &gen_config,
+                            Some(move |samples: &[f32], _progress: f32| {
+                                if samples.is_empty() {
+                                    return true;
+                                }
+                                let delta_samples = {
+                                    let mut emitted_guard = emitted_for_callback.lock().ok();
+                                    let already_emitted =
+                                        emitted_guard.as_ref().map(|v| **v).unwrap_or(0);
+                                    if already_emitted >= samples.len() {
+                                        return true;
+                                    }
+                                    if let Some(ref mut guard) = emitted_guard {
+                                        **guard = samples.len();
+                                    }
+                                    samples[already_emitted..].to_vec()
+                                };
+                                if delta_samples.is_empty() {
+                                    return true;
+                                }
+                                let sample_rate = {
+                                    let mut guard = sr_for_callback.lock().ok();
+                                    let current = guard.as_ref().map(|v| **v).unwrap_or(0);
+                                    if current == 0 {
+                                        if let Some(ref mut g) = guard {
+                                            **g = stream_sample_rate;
+                                        }
+                                        stream_sample_rate
+                                    } else {
+                                        current
+                                    }
+                                };
+                                let pcm = pcm16le_from_f32_samples(&delta_samples);
+                                let pcm_b64 = base64::engine::general_purpose::STANDARD.encode(pcm);
+                                let duration_ms =
+                                    ((delta_samples.len() as f64 / sample_rate.max(1) as f64)
+                                        * 1000.0)
+                                        .round() as u32;
+                                let seq = {
+                                    let mut seq_guard = seq_for_callback.lock().ok();
+                                    let next = seq_guard.as_ref().map(|v| **v).unwrap_or(0);
+                                    if let Some(ref mut g) = seq_guard {
+                                        **g = next.saturating_add(1);
+                                    }
+                                    next
+                                };
+                                if let Ok(mut first_chunk_guard) =
+                                    first_chunk_ms_for_callback.lock()
+                                {
+                                    if first_chunk_guard.is_none() {
+                                        let elapsed_ms = (now_ms() - total_start_ms).max(0) as u128;
+                                        *first_chunk_guard = Some(elapsed_ms);
+                                    }
+                                }
+                                emit_tts_event(
+                                    &app_for_callback,
+                                    &corr_for_callback,
+                                    "tts.stream.chunk",
+                                    EventStage::Progress,
+                                    EventSeverity::Info,
+                                    json!({
+                                        "seq": seq,
+                                        "sampleRate": sample_rate,
+                                        "sampleCount": delta_samples.len(),
+                                        "durationMs": duration_ms,
+                                        "pcm16Base64": pcm_b64,
+                                        "final": false,
+                                    }),
+                                );
+                                true
+                            }),
+                        )
+                        .ok_or_else(|| "offline synthesis returned no audio".to_string())?;
+                    (generated.samples().to_vec(), generated.sample_rate() as u32)
+                }
+            };
+            let synthesis_ms = synthesis_start.elapsed().as_millis();
+            let duration_ms = if sample_rate == 0 {
+                0
+            } else {
+                ((samples.len() as f64 / sample_rate as f64) * 1000.0).round() as u32
+            };
+            let wav_encode_start = Instant::now();
+            let audio_bytes = wav_from_f32_samples(&samples, sample_rate.max(1));
+            let wav_encode_ms = wav_encode_start.elapsed().as_millis();
+            Ok::<(SpeakResult, SpeakWorkerTiming), String>((
+                SpeakResult {
+                    audio_bytes,
+                    sample_rate: sample_rate.max(1),
+                    duration_ms,
+                },
+                SpeakWorkerTiming {
+                    engine_prepare_ms,
+                    synthesis_ms,
+                    wav_encode_ms,
+                },
+            ))
+        })
+        .await;
+
+        match worker {
+            Ok(Ok((result, worker_timing))) => {
+                let first_chunk_ms = first_chunk_ms_shared
+                    .lock()
+                    .ok()
+                    .and_then(|guard| *guard)
+                    .unwrap_or(0);
+                emit_tts_event(
+                    &app_for_task,
+                    &request_correlation_id,
+                    "tts.stream.chunk",
+                    EventStage::Progress,
+                    EventSeverity::Info,
+                    json!({
+                        "durationMs": result.duration_ms,
+                        "final": true,
+                    }),
+                );
+                emit_tts_event(
+                    &app_for_task,
+                    &request_correlation_id,
+                    "tts.request",
+                    EventStage::Complete,
+                    EventSeverity::Info,
+                    json!({
+                        "bytes": result.audio_bytes.len(),
+                        "durationMs": result.duration_ms,
+                        "voice": selected_voice_for_task,
+                        "timingsMs": {
+                            "total": total_start.elapsed().as_millis(),
+                            "firstChunk": first_chunk_ms,
+                            "ttfa": first_chunk_ms,
+                            "enginePrepare": worker_timing.engine_prepare_ms,
+                            "synthesis": worker_timing.synthesis_ms,
+                            "wavEncode": worker_timing.wav_encode_ms,
+                        },
+                    }),
+                );
+            }
+            Ok(Err(error)) => {
+                emit_tts_event(
+                    &app_for_task,
+                    &request_correlation_id,
+                    "tts.request",
+                    EventStage::Error,
+                    EventSeverity::Error,
+                    json!({ "message": error }),
+                );
+            }
+            Err(error) => {
+                emit_tts_event(
+                    &app_for_task,
+                    &request_correlation_id,
+                    "tts.request",
+                    EventStage::Error,
+                    EventSeverity::Error,
+                    json!({ "message": format!("tts worker join error: {error}") }),
+                );
+            }
         }
+    });
+    let abort_handle = handle.abort_handle();
+    tts_state.register_stream(abort_handle.clone());
+    let tts_state_for_cleanup = tts_state.clone();
+    let ah = abort_handle.clone();
+    tokio::spawn(async move {
+        let _ = handle.await;
+        tts_state_for_cleanup.unregister_stream(&ah);
+    });
 
-        let mut out = fs::File::create(&archive_path)
-            .map_err(|e| format!("failed creating archive path: {e}"))?;
-        copy_response_with_progress(
-            &app_for_download,
-            &correlation_id,
-            &mut response,
-            &mut out,
-            &target_url,
-        )?;
-
-        let archive_file = fs::File::open(&archive_path)
-            .map_err(|e| format!("failed opening downloaded archive: {e}"))?;
-        let decompressed = BzDecoder::new(archive_file);
-        let mut archive = Archive::new(decompressed);
-        archive
-            .unpack(&extract_dir)
-            .map_err(|e| format!("failed extracting model archive: {e}"))?;
-
-        let _ = fs::remove_file(&archive_path);
-        Ok(())
-    })
-    .await
-    .map_err(|e| format!("download worker join error: {e}"))??;
-
-    tts_state.shutdown();
-    let refreshed_paths = ensure_assets(app)?;
-    let settings = load_settings(&refreshed_paths.app_data_dir);
-    let signature = build_signature(&refreshed_paths, &settings)?;
-
-    emit_tts_event(
-        app,
-        &request.correlation_id,
-        "tts.download_model",
-        EventStage::Complete,
-        EventSeverity::Info,
-        json!({
-            "ok": true,
-            "modelPath": signature.model_path,
-            "voicesPath": signature.voices_path,
-            "tokensPath": signature.tokens_path,
-            "dataDir": signature.data_dir,
-        }),
-    );
-
-    Ok(TtsDownloadModelResponse {
+    Ok(TtsSpeakStreamResponse {
         correlation_id: request.correlation_id,
-        ok: true,
-        message: "Downloaded and installed sherpa Kokoro model bundle.".to_string(),
-        model_path: signature.model_path,
-        voices_path: signature.voices_path,
-        tokens_path: signature.tokens_path,
-        data_dir: signature.data_dir,
+        accepted: true,
+        engine_id: engine.as_engine_id().to_string(),
+        voice: selected_voice,
+        speed,
     })
 }

@@ -5,9 +5,11 @@ use crate::contracts::{
 use crate::observability::EventHub;
 use serde::Deserialize;
 use serde_json::json;
+use std::collections::HashSet;
 use std::fs::File;
-use std::io::Write;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 
 #[derive(Debug, Deserialize)]
 struct HfSearchItem {
@@ -47,11 +49,42 @@ struct BestAsset {
 #[derive(Clone)]
 pub struct ModelManagerService {
     hub: EventHub,
+    cancelled_downloads: Arc<Mutex<HashSet<String>>>,
 }
+
+const DOWNLOAD_PROGRESS_INTERVAL_BYTES: u64 = 512 * 1024;
 
 impl ModelManagerService {
     pub fn new(hub: EventHub) -> Self {
-        Self { hub }
+        Self {
+            hub,
+            cancelled_downloads: Arc::new(Mutex::new(HashSet::new())),
+        }
+    }
+
+    pub fn cancel_download(&self, target_correlation_id: &str) -> bool {
+        let trimmed = target_correlation_id.trim();
+        if trimmed.is_empty() {
+            return false;
+        }
+        if let Ok(mut guard) = self.cancelled_downloads.lock() {
+            guard.insert(trimmed.to_string());
+            return true;
+        }
+        false
+    }
+
+    fn is_download_cancelled(&self, correlation_id: &str) -> bool {
+        self.cancelled_downloads
+            .lock()
+            .map(|guard| guard.contains(correlation_id))
+            .unwrap_or(false)
+    }
+
+    fn clear_download_cancel(&self, correlation_id: &str) {
+        if let Ok(mut guard) = self.cancelled_downloads.lock() {
+            guard.remove(correlation_id);
+        }
     }
 
     pub fn list_installed(
@@ -196,6 +229,7 @@ impl ModelManagerService {
         repo_id: &str,
         file_name: Option<&str>,
     ) -> Result<ModelManagerInstalledModel, String> {
+        self.clear_download_cancel(correlation_id);
         let repo = repo_id.trim();
         if repo.is_empty() {
             return Err("repoId is empty".to_string());
@@ -257,12 +291,60 @@ impl ModelManagerService {
             .send()
             .and_then(|r| r.error_for_status())
             .map_err(|e| format!("model download failed: {e}"))?;
+        let total_bytes = response.content_length();
         let write_result = (|| -> Result<(), String> {
             let mut file = File::create(&temp_path)
                 .map_err(|e| format!("failed to create temp model file: {e}"))?;
-            response
-                .copy_to(&mut file)
-                .map_err(|e| format!("failed writing model file: {e}"))?;
+            let mut buffer = [0_u8; 64 * 1024];
+            let mut received_bytes = 0_u64;
+            let mut next_emit_at = DOWNLOAD_PROGRESS_INTERVAL_BYTES;
+            loop {
+                if self.is_download_cancelled(correlation_id) {
+                    return Err("download cancelled by user".to_string());
+                }
+                let read = response
+                    .read(&mut buffer)
+                    .map_err(|e| format!("failed reading model response: {e}"))?;
+                if read == 0 {
+                    break;
+                }
+                file.write_all(&buffer[..read])
+                    .map_err(|e| format!("failed writing model file: {e}"))?;
+                received_bytes = received_bytes.saturating_add(read as u64);
+                if received_bytes >= next_emit_at {
+                    self.emit(
+                        correlation_id,
+                        "model.manager.download_hf",
+                        EventStage::Progress,
+                        EventSeverity::Info,
+                        json!({
+                            "repoId": repo,
+                            "fileName": chosen.file_name,
+                            "receivedBytes": received_bytes,
+                            "totalBytes": total_bytes,
+                            "percent": total_bytes
+                                .filter(|total| *total > 0)
+                                .map(|total| (received_bytes as f64 / total as f64 * 100.0).min(100.0)),
+                        }),
+                    );
+                    next_emit_at = received_bytes.saturating_add(DOWNLOAD_PROGRESS_INTERVAL_BYTES);
+                }
+            }
+            self.emit(
+                correlation_id,
+                "model.manager.download_hf",
+                EventStage::Progress,
+                EventSeverity::Info,
+                json!({
+                    "repoId": repo,
+                    "fileName": chosen.file_name,
+                    "receivedBytes": received_bytes,
+                    "totalBytes": total_bytes,
+                    "percent": total_bytes
+                        .filter(|total| *total > 0)
+                        .map(|total| (received_bytes as f64 / total as f64 * 100.0).min(100.0)),
+                }),
+            );
             file.flush()
                 .map_err(|e| format!("failed flushing model file: {e}"))?;
             std::fs::rename(&temp_path, &final_path)
@@ -271,6 +353,7 @@ impl ModelManagerService {
         })();
         if let Err(err) = write_result {
             let _ = std::fs::remove_file(&temp_path);
+            self.clear_download_cancel(correlation_id);
             self.emit(
                 correlation_id,
                 "model.manager.download_hf",
@@ -282,6 +365,7 @@ impl ModelManagerService {
         }
 
         let model = to_installed_model(&final_path)?;
+        self.clear_download_cancel(correlation_id);
         self.emit(
             correlation_id,
             "model.manager.download_hf",

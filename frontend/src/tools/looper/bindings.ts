@@ -1,7 +1,6 @@
 import type { LooperToolState } from "./state";
-import { LOOPER_PHASES } from "./state";
 import type { LooperActionsDeps } from "./actions";
-import { LOOPER_DATA_ATTR, LOOPER_UI_ID } from "../ui/constants";
+import { LOOPER_DATA_ATTR } from "../ui/constants";
 
 export function handleLooperClick(
   target: HTMLElement,

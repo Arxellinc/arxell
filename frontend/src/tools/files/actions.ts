@@ -10,6 +10,82 @@ import type {
 
 type FilesSlice = FilesToolStateSlice;
 
+const IMAGE_EXTENSIONS = new Set([
+  "png", "jpg", "jpeg", "gif", "webp", "svg", "ico", "bmp", "tif", "tiff", "avif"
+]);
+
+export function isImagePath(path: string): boolean {
+  const lower = path.toLowerCase().replace(/\\/g, "/");
+  const slash = lower.lastIndexOf("/");
+  const name = slash >= 0 ? lower.slice(slash + 1) : lower;
+  const dot = name.lastIndexOf(".");
+  if (dot <= 0 || dot >= name.length - 1) return false;
+  return IMAGE_EXTENSIONS.has(name.slice(dot + 1));
+}
+
+let cachedConvertFileSrc: ((path: string) => string) | null | undefined;
+
+async function resolveImageUrl(filePath: string): Promise<string> {
+  if (cachedConvertFileSrc === undefined) {
+    if ((window as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__) {
+      try {
+        const tauriCore = await import("@tauri-apps/api/core");
+        cachedConvertFileSrc = (tauriCore as unknown as { convertFileSrc?: (path: string) => string }).convertFileSrc ?? null;
+      } catch {
+        cachedConvertFileSrc = null;
+      }
+    } else {
+      cachedConvertFileSrc = null;
+    }
+  }
+  if (cachedConvertFileSrc) {
+    return cachedConvertFileSrc(filePath);
+  }
+  const correlationId = deps_ref_nextCorrelationId();
+  const invokeResponse = await deps_ref_client()?.toolInvoke({
+    correlationId,
+    toolId: "files",
+    action: "read-file",
+    mode: "sandbox",
+    payload: { correlationId, path: filePath }
+  });
+  if (invokeResponse?.ok) {
+    const data = invokeResponse.data as { content?: string; isBinary?: boolean };
+    if (data.content) {
+      const ext = filePath.toLowerCase().replace(/\\/g, "/").split("/").pop() ?? "";
+      const dotIdx = ext.lastIndexOf(".");
+      const mimeMap: Record<string, string> = {
+        png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", gif: "image/gif",
+        webp: "image/webp", svg: "image/svg+xml", bmp: "image/bmp", ico: "image/x-icon",
+        tif: "image/tiff", tiff: "image/tiff", avif: "image/avif"
+      };
+      const ext2 = dotIdx >= 0 ? ext.slice(dotIdx + 1) : "";
+      const mime = mimeMap[ext2] || "image/png";
+      return `data:${mime};base64,${data.content}`;
+    }
+  }
+  return "";
+}
+
+let _nextCorrelationId: (() => string) | null = null;
+let _client: (() => ChatIpcClient | null) | null = null;
+
+export function initFilesImageHelpers(
+  nextCorrelationId: () => string,
+  client: () => ChatIpcClient | null
+): void {
+  _nextCorrelationId = nextCorrelationId;
+  _client = client;
+}
+
+function deps_ref_nextCorrelationId(): string {
+  return _nextCorrelationId?.() ?? String(Date.now());
+}
+
+function deps_ref_client(): ChatIpcClient | null {
+  return _client?.() ?? null;
+}
+
 export type FilesConflictChoice = "replace" | "copy" | "cancel";
 export interface FilesConflictResolution {
   choice: FilesConflictChoice;
@@ -169,6 +245,18 @@ export async function openFilesFile(
     slice.filesLoadingFileByPath[canonicalPath] = false;
     if (canonicalPath !== requested) {
       delete slice.filesLoadingFileByPath[requested];
+    }
+    if (isImagePath(canonicalPath)) {
+      slice.filesReadOnlyByPath[canonicalPath] = true;
+      slice.filesImageViewMode = "fit";
+      try {
+        const url = await resolveImageUrl(canonicalPath);
+        if (url) {
+          slice.filesImagePreviewUrlByPath[canonicalPath] = url;
+        }
+      } catch {
+        // URL resolution failed, image preview will show fallback
+      }
     }
   } catch (error) {
     slice.filesLoadingFileByPath[requested] = false;

@@ -140,6 +140,10 @@ export function renderApisBody(state: PrimaryPanelRenderState): string {
 }
 
 export function bindApisPanel(bindings: PrimaryPanelBindings): void {
+  if (apiUrlProbeTimer !== null) {
+    window.clearTimeout(apiUrlProbeTimer);
+    apiUrlProbeTimer = null;
+  }
   const refreshBtn = document.querySelector<HTMLButtonElement>("#apiConnectionsRefreshBtn");
   if (refreshBtn) {
     refreshBtn.onclick = async () => {
@@ -332,12 +336,6 @@ function isExhaustedLimitWarning(status: ApiConnectionStatus, statusMessage: str
     lower.includes("remaining=0") ||
     lower.includes("blocked");
   return hasLimitContext && hasExhaustedContext;
-}
-
-function statusLabel(status: ApiConnectionStatus): string {
-  if (status === "verified") return "Verified";
-  if (status === "warning") return "Warning";
-  return "Pending";
 }
 
 function buildVerificationCommand(draft: PrimaryPanelRenderState["apiDraft"]): string {

@@ -1,13 +1,13 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Arxell",
-  "version": "0.2.1",
-  "identifier": "com.arxell.app",
+  "version": "0.2.10",
+  "identifier": "com.arxell.desktop",
   "build": {
     "frontendDist": "../frontend/dist",
     "devUrl": "http://127.0.0.1:5173",
-    "beforeDevCommand": "npm --prefix ../frontend run dev -- --host 127.0.0.1 --port 5173 --strictPort",
-    "beforeBuildCommand": "npm --prefix ../frontend run build"
+    "beforeDevCommand": "npm --prefix frontend run dev -- --host 127.0.0.1 --port 5173 --strictPort",
+    "beforeBuildCommand": "npm --prefix frontend run build"
   },
   "app": {
     "windows": [
@@ -27,14 +27,25 @@
   },
   "bundle": {
     "active": true,
-    "targets": "all",
-    "resources": [
-      "resources/llama-runtime/*",
-      "resources/llama-runtime/**/*",
-      "resources/kokoro-runtime/*",
-      "resources/kokoro-runtime/**/*",
-      "resources/whisper/*",
-      "resources/whisper/**/*"
-    ]
+    "targets": [
+      "deb",
+      "appimage",
+      "msi",
+      "dmg"
+    ],
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico",
+      "icons/icon.png"
+    ],
+    "useLocalToolsDir": false,
+    "linux": {
+      "appimage": {
+        "bundleMediaFramework": false
+      }
+    }
   }
 }

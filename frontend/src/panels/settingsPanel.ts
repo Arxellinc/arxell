@@ -15,6 +15,8 @@ export function renderSettingsBody(state: PrimaryPanelRenderState): string {
   const showBottomContext = state.showBottomContext === true;
   const showBottomSpeed = state.showBottomSpeed === true;
   const showBottomTtsLatency = state.showBottomTtsLatency === true;
+  const enableNotificationChime = state.enableNotificationChime !== false;
+  const enableChatQuestionChime = state.enableChatQuestionChime !== false;
   return `
     <div class="primary-pane-body">
       <h3>Appearance</h3>
@@ -97,6 +99,19 @@ export function renderSettingsBody(state: PrimaryPanelRenderState): string {
         <label class="llama-checkbox-inline">
           <input id="settingsShowBottomTtsLatencyToggle" type="checkbox" ${showBottomTtsLatency ? "checked" : ""} />
           <span>Show TTS latency in bottom bar</span>
+        </label>
+      </div>
+      <h3>Sounds</h3>
+      <div class="settings-chat-row">
+        <label class="llama-checkbox-inline">
+          <input id="settingsEnableNotificationChimeToggle" type="checkbox" ${enableNotificationChime ? "checked" : ""} />
+          <span>Enable Notification chime</span>
+        </label>
+      </div>
+      <div class="settings-chat-row">
+        <label class="llama-checkbox-inline">
+          <input id="settingsEnableChatQuestionChimeToggle" type="checkbox" ${enableChatQuestionChime ? "checked" : ""} />
+          <span>Enable Chat Question Chime</span>
         </label>
       </div>
     </div>

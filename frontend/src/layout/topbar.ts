@@ -8,7 +8,8 @@ export function renderGlobalTopbar(
   displayMode: DisplayMode,
   layoutOrientation: LayoutOrientation,
   appVersion: string,
-  runtimeMode: "tauri" | "mock" | "unknown"
+  runtimeMode: "tauri" | "mock" | "unknown",
+  autoSafeEnabled: boolean
 ): string {
   const orientationLabel =
     layoutOrientation === "portrait" ? "Switch to landscape layout" : "Switch to portrait layout";
@@ -30,6 +31,9 @@ export function renderGlobalTopbar(
       <div class="topbar-right">
         <button type="button" class="topbar-icon-btn display-mode-btn" id="displayModeToggle" data-title="${displayModeLabel}" title="${displayModeLabel}" aria-label="${displayModeLabel}">
           ${iconHtml(displayModeIcon, { size: 16, tone: "dark" })}
+        </button>
+        <button type="button" class="topbar-icon-btn ${autoSafeEnabled ? "is-active" : ""}" id="autoSafeToggle" data-title="${autoSafeEnabled ? "Disable Auto Safe" : "Enable Auto Safe"}" title="${autoSafeEnabled ? "Disable Auto Safe" : "Enable Auto Safe"}" aria-label="${autoSafeEnabled ? "Disable Auto Safe" : "Enable Auto Safe"}">
+          ${iconHtml("bot", { size: 16, tone: "dark" })}
         </button>
         <button type="button" class="topbar-icon-btn" id="layoutOrientationToggle" data-title="${orientationLabel}" title="${orientationLabel}" aria-label="${orientationLabel}">
           ${iconHtml(APP_ICON.action.layoutOrientation, { size: 16, tone: "dark" })}

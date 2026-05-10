@@ -10,7 +10,7 @@ import {
 } from "../memory";
 import { renderChartToolActions, renderChartToolBody } from "../chart";
 import { renderTasksToolActions, renderTasksToolBody } from "../tasks";
-import type { TaskFolder, TaskSortDirection, TaskSortKey, TaskRecord } from "../tasks/state";
+import type { TaskFolder, TaskSortDirection, TaskSortKey, TaskRecord, TaskRunRecord, TaskNotificationRecord } from "../tasks/state";
 import type { ProjectRecord } from "../../projectsStore";
 import { renderWebToolActions, renderWebToolBody } from "../webSearch";
 import type { WebSearchHistoryItem, WebTabState } from "../webSearch/state";
@@ -82,14 +82,19 @@ export interface WorkspaceToolViewInput {
   filesSelectionDragActive: boolean;
   filesSelectionJustDragged: boolean;
   filesSelectionGesture: "single" | "toggle" | "range" | null;
+  filesImagePreviewUrlByPath: Record<string, string>;
+  filesImageViewMode: "fit" | "actual";
   filesError: string | null;
   tasksById: Record<string, TaskRecord>;
+  tasksRunsByTaskId: Record<string, TaskRunRecord[]>;
   tasksSelectedId: string | null;
   tasksFolder: TaskFolder;
   tasksSortKey: TaskSortKey;
   tasksSortDirection: TaskSortDirection;
   tasksDetailsCollapsed: boolean;
   tasksJsonDraft: string;
+  taskNotifications: TaskNotificationRecord[];
+  chatModelOptions: Array<{id: string; label: string}>;
   projectsById: Record<string, ProjectRecord>;
   flowRuns: Array<{ runId: string }>;
   flowActiveRunId: string | null;
@@ -152,6 +157,7 @@ export interface WorkspaceToolViewInput {
   notepadFindCaseSensitive: boolean;
   notepadLineWrap: boolean;
   notepadError: string | null;
+  notepadUnsavedModalTabId: string | null;
   sheetsState: SheetsToolState;
   docsRootPath: string | null;
   docsSelectedPath: string | null;
@@ -176,29 +182,6 @@ export interface WorkspaceToolViewInput {
   docsFindCaseSensitive: boolean;
   docsLineWrap: boolean;
   docsError: string | null;
-  skillsRootPath: string | null;
-  skillsSelectedPath: string | null;
-  skillsSelectedEntryPath: string | null;
-  skillsExpandedByPath: Record<string, boolean>;
-  skillsEntriesByPath: Record<string, FilesListDirectoryEntry[]>;
-  skillsLoadingByPath: Record<string, boolean>;
-  skillsOpenTabs: string[];
-  skillsActiveTabPath: string | null;
-  skillsContentByPath: Record<string, string>;
-  skillsSavedContentByPath: Record<string, string>;
-  skillsDirtyByPath: Record<string, boolean>;
-  skillsLoadingFileByPath: Record<string, boolean>;
-  skillsSavingFileByPath: Record<string, boolean>;
-  skillsReadOnlyByPath: Record<string, boolean>;
-  skillsSizeByPath: Record<string, number>;
-  skillsSidebarWidth: number;
-  skillsSidebarCollapsed: boolean;
-  skillsFindOpen: boolean;
-  skillsFindQuery: string;
-  skillsReplaceQuery: string;
-  skillsFindCaseSensitive: boolean;
-  skillsLineWrap: boolean;
-  skillsError: string | null;
   memoryContextItems: MemoryContextItem[];
   memoryChatHistory: MemoryToolState["chatHistory"];
   memoryPersistentItems: MemoryPersistentItem[];
@@ -227,8 +210,10 @@ export interface WorkspaceToolViewInput {
   memoryError: string | null;
 }
 
-export function buildWorkspaceToolViews(input: WorkspaceToolViewInput): Record<string, ToolViewHtml> {
-  const filesBodyHtml = renderFilesToolBody({
+export function buildWorkspaceToolViews(input: WorkspaceToolViewInput, activeToolId?: string): Record<string, ToolViewHtml> {
+  const activeId = activeToolId?.replace(/-tool$/, "");
+  const shouldRender = (toolId: string): boolean => !activeId || activeId === toolId || (activeId === "web" && toolId === "webSearch");
+  const filesBodyHtml = shouldRender("files") ? renderFilesToolBody({
     rootPath: input.filesRootPath,
     scopeRootPath: input.filesScopeRootPath,
     rootSelectorOpen: input.filesRootSelectorOpen,
@@ -268,19 +253,21 @@ export function buildWorkspaceToolViews(input: WorkspaceToolViewInput): Record<s
     selectionDragActive: input.filesSelectionDragActive,
     selectionJustDragged: input.filesSelectionJustDragged,
     selectionGesture: input.filesSelectionGesture,
+    imagePreviewUrlByPath: input.filesImagePreviewUrlByPath,
+    imageViewMode: input.filesImageViewMode,
     error: input.filesError
-  });
+  }) : "";
 
   return {
-    chart: {
+    ...(shouldRender("chart") ? { chart: {
       actionsHtml: renderChartToolActions(),
       bodyHtml: renderChartToolBody({
         source: input.chartSource,
         renderSource: input.chartRenderSource,
         error: input.chartError
       })
-    },
-    webSearch: {
+    } } : {}),
+    ...(shouldRender("webSearch") ? { webSearch: {
       actionsHtml: renderWebToolActions(
         input.webTabs.map((tab) => ({
           id: tab.id,
@@ -310,8 +297,8 @@ export function buildWorkspaceToolViews(input: WorkspaceToolViewInput): Record<s
         setupMessage: input.webSetupMessage,
         setupBusy: input.webSetupBusy
       })
-    },
-    files: {
+    } } : {}),
+    ...(shouldRender("files") ? { files: {
       actionsHtml: renderFilesToolActions({
         rootPath: input.filesRootPath,
         scopeRootPath: input.filesScopeRootPath,
@@ -355,8 +342,8 @@ export function buildWorkspaceToolViews(input: WorkspaceToolViewInput): Record<s
         error: input.filesError
       }),
       bodyHtml: filesBodyHtml
-    },
-    tasks: {
+    } } : {}),
+    ...(shouldRender("tasks") ? { tasks: {
       actionsHtml: renderTasksToolActions({
         tasksById: input.tasksById,
         selectedId: input.tasksSelectedId,
@@ -365,7 +352,9 @@ export function buildWorkspaceToolViews(input: WorkspaceToolViewInput): Record<s
         sortDirection: input.tasksSortDirection,
         detailsCollapsed: input.tasksDetailsCollapsed,
         jsonDraft: input.tasksJsonDraft,
-        projectsById: input.projectsById
+        projectsById: input.projectsById,
+        runsByTaskId: input.tasksRunsByTaskId,
+        taskNotifications: input.taskNotifications
       }),
       bodyHtml: renderTasksToolBody({
         tasksById: input.tasksById,
@@ -375,10 +364,13 @@ export function buildWorkspaceToolViews(input: WorkspaceToolViewInput): Record<s
         sortDirection: input.tasksSortDirection,
         detailsCollapsed: input.tasksDetailsCollapsed,
         jsonDraft: input.tasksJsonDraft,
-        projectsById: input.projectsById
+        projectsById: input.projectsById,
+        runsByTaskId: input.tasksRunsByTaskId,
+        taskNotifications: input.taskNotifications,
+        modelOptions: input.chatModelOptions
       })
-    },
-    memory: {
+    } } : {}),
+    ...(shouldRender("memory") ? { memory: {
       actionsHtml: renderMemoryToolActions(input.memoryActiveTab),
       bodyHtml: renderMemoryToolBody({
         contextItems: input.memoryContextItems,
@@ -408,18 +400,18 @@ export function buildWorkspaceToolViews(input: WorkspaceToolViewInput): Record<s
         loading: input.memoryLoading,
         error: input.memoryError
       })
-    },
-    opencode: {
+    } } : {}),
+    ...(shouldRender("opencode") ? { opencode: {
       actionsHtml: renderOpenCodeToolActions(input.opencodeState),
       bodyHtml: renderOpenCodeToolBody(input.opencodeState) +
         renderOpenCodeInstallModal(input.opencodeState) +
         renderOpenCodeSpawnModal(input.opencodeState)
-    },
-    looper: {
+    } } : {}),
+    ...(shouldRender("looper") ? { looper: {
       actionsHtml: renderLooperToolActions(input.looperState),
       bodyHtml: renderLooperToolBody(input.looperState, input.projectsById)
-    },
-    notepad: {
+    } } : {}),
+    ...(shouldRender("notepad") ? { notepad: {
       actionsHtml: renderNotepadToolActions({
         openTabs: input.notepadOpenTabs,
         activeTabId: input.notepadActiveTabId,
@@ -436,7 +428,8 @@ export function buildWorkspaceToolViews(input: WorkspaceToolViewInput): Record<s
         replaceQuery: input.notepadReplaceQuery,
         findCaseSensitive: input.notepadFindCaseSensitive,
         lineWrap: input.notepadLineWrap,
-        error: input.notepadError
+        error: input.notepadError,
+        unsavedModalTabId: input.notepadUnsavedModalTabId
       }),
       bodyHtml: renderNotepadToolBody({
         openTabs: input.notepadOpenTabs,
@@ -454,14 +447,15 @@ export function buildWorkspaceToolViews(input: WorkspaceToolViewInput): Record<s
         replaceQuery: input.notepadReplaceQuery,
         findCaseSensitive: input.notepadFindCaseSensitive,
         lineWrap: input.notepadLineWrap,
-        error: input.notepadError
+        error: input.notepadError,
+        unsavedModalTabId: input.notepadUnsavedModalTabId
       })
-    },
-    sheets: {
+    } } : {}),
+    ...(shouldRender("sheets") ? { sheets: {
       actionsHtml: renderSheetsToolActions(input.sheetsState),
       bodyHtml: renderSheetsToolBody(input.sheetsState)
-    },
-    docs: {
+    } } : {}),
+    ...(shouldRender("docs") ? { docs: {
       actionsHtml: renderDocsToolActions({
         docsRootPath: input.docsRootPath,
         docsSelectedPath: input.docsSelectedPath,
@@ -512,6 +506,6 @@ export function buildWorkspaceToolViews(input: WorkspaceToolViewInput): Record<s
         docsLineWrap: input.docsLineWrap,
         docsError: input.docsError
       })
-    }
+    } } : {})
   };
 }

@@ -61,6 +61,7 @@ export class TerminalManager {
     const terminal = new Terminal({
       convertEol: false,
       cursorBlink: true,
+      cursorStyle: "block",
       scrollback: 10000,
       fontSize: 12,
       fontFamily: "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace",
@@ -158,8 +159,10 @@ export class TerminalManager {
 
     if (!runtime.term.element) {
       runtime.term.open(host);
+      runtime.term.focus();
     } else if (runtime.term.element.parentElement !== host) {
       host.replaceChildren(runtime.term.element);
+      runtime.term.focus();
     }
     this.fitAndResize(sessionId, runtime, host);
 

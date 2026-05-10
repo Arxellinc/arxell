@@ -38,11 +38,15 @@ export function loadPersistedTasksById(): Record<string, TaskRecord> {
         projectId,
         name: row.name,
         description: typeof row.description === "string" ? row.description : "",
+        state: normalizeTaskState((row as any).state),
+        riskLevel: normalizeRiskLevel((row as any).riskLevel),
+        estimatedCostUsd: normalizeEstimatedCostUsd((row as any).estimatedCostUsd),
         createdAtMs: Number.isFinite(row.createdAtMs) ? row.createdAtMs : now,
         updatedAtMs: Number.isFinite(row.updatedAtMs) ? row.updatedAtMs : now,
-        archived: row.archived === true,
+        archived: row.archived === true || (row as any).state === "complete" || (row as any).state === "rejected",
         starred: row.starred === true,
-        agentOwner: typeof row.agentOwner === "string" ? row.agentOwner : "agent"
+        agentOwner: typeof row.agentOwner === "string" ? row.agentOwner : "agent",
+        source: row.source === "user" ? "user" : "agent"
       };
     }
     return result;
@@ -72,11 +76,21 @@ export function createTask(slice: TasksRuntimeSlice): string {
     projectId: "",
     name: `Untitled task ${count}`,
     description: "",
+    state: "draft",
+    riskLevel: "low",
+    estimatedCostUsd: 0,
     createdAtMs: now,
     updatedAtMs: now,
     archived: false,
     starred: false,
-    agentOwner: "agent"
+    agentOwner: "agent",
+    source: "user",
+    scheduledAtMs: null,
+    repeat: "none",
+    repeatTimeOfDayMs: null,
+    repeatTimezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+    isScheduleEnabled: true,
+    nextRunAtMs: null
   };
   slice.tasksSelectedId = id;
   slice.tasksFolder = "inbox";
@@ -119,6 +133,7 @@ export function toggleTaskDone(slice: TasksRuntimeSlice, taskId: string): void {
   const row = slice.tasksById[taskId];
   if (!row) return;
   row.archived = !row.archived;
+  row.state = row.archived ? "complete" : row.projectId.trim() ? "approved" : "draft";
   row.updatedAtMs = Date.now();
   if (slice.tasksFolder === "archive" && !row.archived) {
     slice.tasksSelectedId = null;
@@ -141,6 +156,7 @@ export function archiveSelectedTask(slice: TasksRuntimeSlice): void {
   const selected = getSelectedTask(slice);
   if (!selected) return;
   selected.archived = true;
+  selected.state = "complete";
   selected.updatedAtMs = Date.now();
   slice.tasksFolder = "archive";
   persistTasksById(slice);
@@ -150,6 +166,7 @@ export function unarchiveSelectedTask(slice: TasksRuntimeSlice): void {
   const selected = getSelectedTask(slice);
   if (!selected) return;
   selected.archived = false;
+  selected.state = selected.projectId.trim() ? "approved" : "draft";
   selected.updatedAtMs = Date.now();
   slice.tasksFolder = "inbox";
   persistTasksById(slice);
@@ -165,7 +182,7 @@ export function deleteSelectedTask(slice: TasksRuntimeSlice): void {
 
 export function updateSelectedTaskField(
   slice: TasksRuntimeSlice,
-  field: "name" | "description" | "type" | "projectId" | "agentOwner",
+  field: "name" | "description" | "type" | "projectId" | "agentOwner" | "state" | "riskLevel" | "estimatedCostUsd" | "repeat" | "repeatTimezone" | "scheduledAtMs" | "repeatTimeOfDayMs",
   value: string
 ): void {
   const selected = getSelectedTask(slice);
@@ -174,6 +191,21 @@ export function updateSelectedTaskField(
     selected.projectId = normalizeEditableProjectId(value);
   } else if (field === "type") {
     selected.type = normalizeTaskType(value);
+  } else if (field === "state") {
+    selected.state = normalizeTaskState(value);
+    selected.archived = selected.state === "complete" || selected.state === "rejected";
+  } else if (field === "riskLevel") {
+    selected.riskLevel = normalizeRiskLevel(value);
+  } else if (field === "estimatedCostUsd") {
+    selected.estimatedCostUsd = normalizeEstimatedCostUsd(value);
+  } else if (field === "repeat") {
+    selected.repeat = normalizeRepeat(value);
+  } else if (field === "repeatTimezone") {
+    selected.repeatTimezone = value.trim() || selected.repeatTimezone || Intl.DateTimeFormat().resolvedOptions().timeZone;
+  } else if (field === "scheduledAtMs") {
+    selected.scheduledAtMs = normalizeScheduledAtMs(value);
+  } else if (field === "repeatTimeOfDayMs") {
+    selected.repeatTimeOfDayMs = normalizeRepeatTimeOfDayMs(value);
   } else {
     selected[field] = value;
   }
@@ -215,14 +247,74 @@ export function applySelectedTaskJson(slice: TasksRuntimeSlice, rawJson: string)
     typeof payload.agentOwner === "string" && payload.agentOwner.trim()
       ? payload.agentOwner.trim()
       : selected.agentOwner;
+  selected.state = normalizeTaskState((payload as any).state ?? selected.state);
+  selected.riskLevel = normalizeRiskLevel((payload as any).riskLevel ?? selected.riskLevel);
+  selected.estimatedCostUsd = normalizeEstimatedCostUsd((payload as any).estimatedCostUsd ?? selected.estimatedCostUsd);
   if (typeof payload.archived === "boolean") selected.archived = payload.archived;
   if (typeof payload.starred === "boolean") selected.starred = payload.starred;
+  if ((payload as any).source === "user" || (payload as any).source === "agent") {
+    selected.source = (payload as any).source;
+  }
+  selected.repeat = normalizeRepeat((payload as any).repeat ?? selected.repeat ?? "none");
+  if (typeof (payload as any).repeatTimezone === "string") {
+    selected.repeatTimezone = (payload as any).repeatTimezone.trim() || selected.repeatTimezone;
+  }
+  if ((payload as any).scheduledAtMs == null || Number.isFinite((payload as any).scheduledAtMs)) {
+    selected.scheduledAtMs = (payload as any).scheduledAtMs == null ? null : Number((payload as any).scheduledAtMs);
+  }
+  if ((payload as any).repeatTimeOfDayMs == null || Number.isFinite((payload as any).repeatTimeOfDayMs)) {
+    selected.repeatTimeOfDayMs = (payload as any).repeatTimeOfDayMs == null ? null : Number((payload as any).repeatTimeOfDayMs);
+  }
+  if (typeof (payload as any).isScheduleEnabled === "boolean") {
+    selected.isScheduleEnabled = (payload as any).isScheduleEnabled;
+  }
   if (Number.isFinite(payload.createdAtMs)) {
     selected.createdAtMs = Number(payload.createdAtMs);
   }
   selected.updatedAtMs = Date.now();
   persistTasksById(slice);
   return null;
+}
+
+function normalizeTaskState(value: unknown): TaskRecord["state"] {
+  const raw = typeof value === "string" ? value.trim().toLowerCase() : "";
+  if (raw === "approved" || raw === "complete" || raw === "rejected") return raw;
+  return "draft";
+}
+
+function normalizeRiskLevel(value: unknown): TaskRecord["riskLevel"] {
+  const raw = typeof value === "string" ? value.trim().toLowerCase() : "";
+  if (raw === "medium" || raw === "high") return raw;
+  return "low";
+}
+
+function normalizeEstimatedCostUsd(value: unknown): number {
+  const n = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(n) || n < 0) return 0;
+  return Math.round(n * 10000) / 10000;
+}
+
+function normalizeRepeat(value: unknown): NonNullable<TaskRecord["repeat"]> {
+  const raw = typeof value === "string" ? value.trim().toLowerCase() : "";
+  if (raw === "hourly" || raw === "daily" || raw === "weekly" || raw === "monthly" || raw === "yearly") return raw;
+  return "none";
+}
+
+function normalizeScheduledAtMs(value: string): number | null {
+  if (!value.trim()) return null;
+  const t = new Date(value).getTime();
+  return Number.isFinite(t) ? t : null;
+}
+
+function normalizeRepeatTimeOfDayMs(value: string): number | null {
+  if (!value.trim()) return null;
+  const match = value.match(/^(\d{2}):(\d{2})$/);
+  if (!match) return null;
+  const hh = Number(match[1]);
+  const mm = Number(match[2]);
+  if (!Number.isFinite(hh) || !Number.isFinite(mm)) return null;
+  if (hh < 0 || hh > 23 || mm < 0 || mm > 59) return null;
+  return (hh * 60 + mm) * 60 * 1000;
 }
 
 export function setSelectedTaskStarred(slice: TasksRuntimeSlice, starred: boolean): void {
@@ -238,9 +330,9 @@ export function getTasksForFolder(
   folder: TaskFolder
 ): TaskRecord[] {
   const rows = Object.values(slice.tasksById).filter((row) => {
-    if (folder === "archive") return row.archived;
-    if (folder === "drafts") return !row.archived && !row.projectId.trim();
-    return !row.archived && row.projectId.trim().length > 0;
+    if (folder === "archive") return row.state === "complete" || row.state === "rejected";
+    if (folder === "drafts") return row.state === "draft";
+    return row.state === "approved";
   });
   const direction = slice.tasksSortDirection === "asc" ? 1 : -1;
   rows.sort((a, b) => compareTasks(a, b, slice.tasksSortKey) * direction);

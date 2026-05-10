@@ -6,7 +6,8 @@ import {
   openFilesContextMenu,
   type FilesConflictResolution,
   selectAllFilesInDirectory,
-  setFilesClipboard
+  setFilesClipboard,
+  isImagePath
 } from "./actions";
 import {
   copyText,
@@ -16,7 +17,6 @@ import {
   pickOpenFilePath,
   pickSaveFilePath,
   scheduleNotepadEditorRefresh,
-  refreshNotepadEditorDecorations,
   replaceAllInNotepad,
   replaceOneInNotepad,
   type NotepadDataAttrs
@@ -71,7 +71,6 @@ interface FilesDeps {
   openPathInTerminal: (path: string) => Promise<void>;
 }
 
-type FilesConflictChoice = "replace" | "copy" | "cancel";
 let pendingConflictResolver: ((resolution: FilesConflictResolution) => void) | null = null;
 const FILES_EDITOR_ATTRS: NotepadDataAttrs = {
   action: FILES_DATA_ATTR.action,
@@ -443,6 +442,14 @@ export async function handleFilesClick(
   }
   if (filesAction === "toggle-wrap") {
     slice.filesLineWrap = slice.filesLineWrap !== true;
+    return true;
+  }
+  if (filesAction === "image-zoom-fit") {
+    slice.filesImageViewMode = "fit";
+    return true;
+  }
+  if (filesAction === "image-zoom-actual") {
+    slice.filesImageViewMode = "actual";
     return true;
   }
   if (filesAction === "toggle-root-selector") {

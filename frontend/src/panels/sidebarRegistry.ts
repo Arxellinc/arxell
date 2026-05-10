@@ -19,6 +19,7 @@ export const SIDEBAR_PRIMARY_PANELS: SidebarPanelEntry[] = [
   { tab: "vad", title: "VAD", icon: APP_ICON.sidebar.vad, statusSignal: "stt" },
   { tab: "llama_cpp", title: "llama.cpp", icon: APP_ICON.sidebar.llamaCpp, statusSignal: "llama" },
   { tab: "model_manager", title: "Model Manager", icon: APP_ICON.sidebar.modelManager },
+  { tab: "images", title: "Images", icon: APP_ICON.sidebar.images },
   { tab: "avatar", title: "AI Avatar", icon: APP_ICON.sidebar.avatar, statusSignal: "avatar" },
   { tab: "apis", title: "APIs", icon: APP_ICON.sidebar.apis, statusSignal: "apis" }
 ];

@@ -1,3 +1,8 @@
+#![cfg_attr(
+    all(target_os = "windows", feature = "tauri-runtime"),
+    windows_subsystem = "windows"
+)]
+
 #[cfg(not(feature = "tauri-runtime"))]
 use arxell_lite::app::AppContext;
 #[cfg(not(feature = "tauri-runtime"))]
@@ -22,11 +27,18 @@ use arxell_lite::contracts::{
     CustomItemDeleteResponse, CustomItemUpsertRequest, CustomItemUpsertResponse,
     CustomToolCapabilityInvokeRequest, CustomToolCapabilityInvokeResponse,
     DevicesProbeMicrophoneRequest, DevicesProbeMicrophoneResponse, EventSeverity, EventStage,
-    FilesListDirectoryRequest, FilesListDirectoryResponse, LlamaRuntimeInstallRequest,
+    FilesListDirectoryRequest, FilesListDirectoryResponse, ImageGenerationCancelInstallRequest,
+    ImageGenerationCancelInstallResponse, ImageGenerationCancelGenerateRequest,
+    ImageGenerationCancelGenerateResponse, ImageGenerationGenerateRequest,
+    ImageGenerationGenerateResponse, ImageGenerationInstallRequest, ImageGenerationInstallResponse,
+    ImageGenerationRemovePackagesRequest, ImageGenerationRemovePackagesResponse,
+    ImageGenerationSetDisabledRequest, ImageGenerationSetDisabledResponse,
+    ImageGenerationStatusRequest, ImageGenerationStatusResponse, LlamaRuntimeInstallRequest,
     LlamaRuntimeInstallResponse, LlamaRuntimeStartRequest, LlamaRuntimeStartResponse,
     LlamaRuntimeStatusRequest, LlamaRuntimeStatusResponse, LlamaRuntimeStopRequest,
     LlamaRuntimeStopResponse, LooperPreviewRequest, LooperPreviewResponse, MemoryDeleteRequest,
     MemoryDeleteResponse, MemoryUpsertRequest, MemoryUpsertResponse,
+    ModelManagerCancelDownloadRequest, ModelManagerCancelDownloadResponse,
     ModelManagerDeleteInstalledRequest, ModelManagerDeleteInstalledResponse,
     ModelManagerDownloadHfRequest, ModelManagerDownloadHfResponse,
     ModelManagerListCatalogCsvRequest, ModelManagerListCatalogCsvResponse,
@@ -38,17 +50,17 @@ use arxell_lite::contracts::{
     SystemPromptSetResponse, TerminalCloseSessionRequest, TerminalCloseSessionResponse,
     TerminalInputRequest, TerminalInputResponse, TerminalOpenSessionRequest,
     TerminalOpenSessionResponse, TerminalResizeRequest, TerminalResizeResponse, ToolInvokeRequest,
-    ToolInvokeResponse, TtsDownloadModelRequest, TtsDownloadModelResponse, TtsListVoicesRequest,
-    TtsListVoicesResponse, TtsSelfTestRequest, TtsSelfTestResponse, TtsSettingsGetRequest,
-    TtsSettingsGetResponse, TtsSettingsSetRequest, TtsSettingsSetResponse, TtsSpeakRequest,
-    TtsSpeakResponse, TtsStatusRequest, TtsStatusResponse, TtsStopRequest, TtsStopResponse,
-    UserProjectEnsureRequest, UserProjectEnsureResponse, UserProjectsRootsRequest,
-    UserProjectsRootsResponse, VoiceGetRuntimeDiagnosticsRequest, VoiceGetVadSettingsRequest,
-    VoiceGetVadSettingsResponse, VoiceListVadMethodsRequest, VoiceListVadMethodsResponse,
-    VoiceRequestHandoffRequest, VoiceRuntimeSnapshotResponse, VoiceSetDuplexModeRequest,
-    VoiceSetShadowMethodRequest, VoiceSetVadMethodRequest, VoiceStartSessionRequest,
-    VoiceStartShadowEvalRequest, VoiceStopSessionRequest, VoiceStopShadowEvalRequest,
-    VoiceUpdateVadConfigRequest, VoiceUpdateVadConfigResponse, WebSearchRequest, WebSearchResponse,
+    ToolInvokeResponse, TtsListVoicesRequest, TtsListVoicesResponse, TtsSelfTestRequest,
+    TtsSelfTestResponse, TtsSettingsGetRequest, TtsSettingsGetResponse, TtsSettingsSetRequest,
+    TtsSettingsSetResponse, TtsSpeakRequest, TtsSpeakResponse, TtsSpeakStreamResponse,
+    TtsStatusRequest, TtsStatusResponse, TtsStopRequest, TtsStopResponse, UserProjectEnsureRequest,
+    UserProjectEnsureResponse, UserProjectsRootsRequest, UserProjectsRootsResponse,
+    VoiceGetRuntimeDiagnosticsRequest, VoiceGetVadSettingsRequest, VoiceGetVadSettingsResponse,
+    VoiceListVadMethodsRequest, VoiceListVadMethodsResponse, VoiceRequestHandoffRequest,
+    VoiceRuntimeSnapshotResponse, VoiceSetDuplexModeRequest, VoiceSetShadowMethodRequest,
+    VoiceSetVadMethodRequest, VoiceStartSessionRequest, VoiceStartShadowEvalRequest,
+    VoiceStopSessionRequest, VoiceStopShadowEvalRequest, VoiceUpdateVadConfigRequest,
+    VoiceUpdateVadConfigResponse, WebSearchRequest, WebSearchResponse,
     WorkspaceToolCreateAppPluginRequest, WorkspaceToolCreateAppPluginResponse,
     WorkspaceToolForgetRequest, WorkspaceToolForgetResponse, WorkspaceToolSetEnabledRequest,
     WorkspaceToolSetEnabledResponse, WorkspaceToolSetIconRequest, WorkspaceToolSetIconResponse,
@@ -61,6 +73,8 @@ use arxell_lite::ipc::tauri_bridge::{attach_event_forwarder, TauriBridgeState};
 use arxell_lite::ipc::tool_runtime::{invoke_legacy_tool_command, invoke_tool};
 #[cfg(feature = "tauri-runtime")]
 use arxell_lite::stt::STTState;
+#[cfg(feature = "tauri-runtime")]
+use arxell_lite::tools::invoke::tasks::run_due_scheduled_tasks;
 #[cfg(feature = "tauri-runtime")]
 use arxell_lite::tts::TTSState;
 #[cfg(feature = "tauri-runtime")]
@@ -172,14 +186,25 @@ fn main() {
         permissions: std::sync::Arc::clone(&app_context.permissions),
         model_manager: std::sync::Arc::clone(&app_context.model_manager),
         files: std::sync::Arc::clone(&app_context.files),
+        image_generation: std::sync::Arc::clone(&app_context.image_generation),
+        tasks: std::sync::Arc::clone(&app_context.tasks),
         sheets: std::sync::Arc::clone(&app_context.sheets),
         voice: std::sync::Arc::clone(&app_context.voice),
     };
+    let scheduler_state = state.clone();
 
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .setup(move |app| {
             attach_event_forwarder(app.handle().clone(), hub.clone());
+            let scheduler_state = scheduler_state.clone();
+            tauri::async_runtime::spawn(async move {
+                let mut interval = tokio::time::interval(std::time::Duration::from_secs(15));
+                loop {
+                    interval.tick().await;
+                    let _ = run_due_scheduled_tasks(&scheduler_state, 16).await;
+                }
+            });
             if let Some(window) = app.get_webview_window("main") {
                 restore_window_state(&window);
             }
@@ -277,9 +302,17 @@ fn main() {
             cmd_model_manager_list_installed,
             cmd_model_manager_search_hf,
             cmd_model_manager_download_hf,
+            cmd_model_manager_cancel_download,
             cmd_model_manager_delete_installed,
             cmd_model_manager_list_catalog_csv,
             cmd_model_manager_refresh_unsloth_catalog,
+            cmd_image_generation_status,
+            cmd_image_generation_install,
+            cmd_image_generation_cancel_install,
+            cmd_image_generation_set_disabled,
+            cmd_image_generation_remove_packages,
+            cmd_image_generation_generate,
+            cmd_image_generation_cancel_generate,
             cmd_files_list_directory,
             cmd_tool_invoke,
             cmd_custom_tool_capability_invoke,
@@ -297,15 +330,16 @@ fn main() {
             transcribe_chunk,
             transcribe_partial_chunk,
             stt_stream_reset,
+            stt_stream_configure,
             stt_stream_ingest,
             cmd_tts_status,
             cmd_tts_list_voices,
             cmd_tts_speak,
+            cmd_tts_speak_stream,
             cmd_tts_stop,
             cmd_tts_self_test,
             cmd_tts_settings_get,
             cmd_tts_settings_set,
-            cmd_tts_download_model,
             cmd_voice_list_vad_methods,
             cmd_voice_get_vad_settings,
             cmd_voice_set_vad_method,
@@ -425,6 +459,16 @@ async fn cmd_tts_speak(
 
 #[cfg(feature = "tauri-runtime")]
 #[tauri::command]
+async fn cmd_tts_speak_stream(
+    app: tauri::AppHandle,
+    tts_state: tauri::State<'_, TTSState>,
+    request: TtsSpeakRequest,
+) -> Result<TtsSpeakStreamResponse, String> {
+    arxell_lite::tts::speak_stream(&app, request, &tts_state).await
+}
+
+#[cfg(feature = "tauri-runtime")]
+#[tauri::command]
 async fn cmd_tts_stop(
     tts_state: tauri::State<'_, TTSState>,
     request: TtsStopRequest,
@@ -459,16 +503,6 @@ async fn cmd_tts_settings_set(
     request: TtsSettingsSetRequest,
 ) -> Result<TtsSettingsSetResponse, String> {
     arxell_lite::tts::settings_set(&app, &tts_state, request)
-}
-
-#[cfg(feature = "tauri-runtime")]
-#[tauri::command]
-async fn cmd_tts_download_model(
-    app: tauri::AppHandle,
-    tts_state: tauri::State<'_, TTSState>,
-    request: TtsDownloadModelRequest,
-) -> Result<TtsDownloadModelResponse, String> {
-    arxell_lite::tts::download_model(&app, request, &tts_state).await
 }
 
 #[cfg(feature = "tauri-runtime")]
@@ -605,6 +639,16 @@ async fn transcribe_partial_chunk(
 #[tauri::command]
 async fn stt_stream_reset() -> Result<(), String> {
     arxell_lite::stt::stt_stream_reset().await
+}
+
+#[cfg(feature = "tauri-runtime")]
+#[tauri::command]
+async fn stt_stream_configure(
+    start_frames: Option<u32>,
+    end_frames: Option<u32>,
+    pre_speech_ms: Option<u32>,
+) -> Result<(), String> {
+    arxell_lite::stt::stt_stream_configure(start_frames, end_frames, pre_speech_ms).await
 }
 
 #[cfg(feature = "tauri-runtime")]
@@ -1285,7 +1329,7 @@ async fn cmd_llama_runtime_install_engine(
 #[cfg(feature = "tauri-runtime")]
 #[tauri::command]
 async fn cmd_llama_runtime_start(
-    app: tauri::AppHandle,
+    _app: tauri::AppHandle,
     state: State<'_, TauriBridgeState>,
     request: LlamaRuntimeStartRequest,
 ) -> Result<LlamaRuntimeStartResponse, String> {
@@ -1305,7 +1349,7 @@ async fn cmd_llama_runtime_stop(
 #[cfg(feature = "tauri-runtime")]
 #[tauri::command]
 async fn cmd_model_manager_list_installed(
-    app: tauri::AppHandle,
+    _app: tauri::AppHandle,
     state: State<'_, TauriBridgeState>,
     request: ModelManagerListInstalledRequest,
 ) -> Result<ModelManagerListInstalledResponse, String> {
@@ -1348,7 +1392,7 @@ async fn cmd_model_manager_search_hf(
 #[cfg(feature = "tauri-runtime")]
 #[tauri::command]
 async fn cmd_model_manager_download_hf(
-    app: tauri::AppHandle,
+    _app: tauri::AppHandle,
     state: State<'_, TauriBridgeState>,
     request: ModelManagerDownloadHfRequest,
 ) -> Result<ModelManagerDownloadHfResponse, String> {
@@ -1376,8 +1420,23 @@ async fn cmd_model_manager_download_hf(
 
 #[cfg(feature = "tauri-runtime")]
 #[tauri::command]
+async fn cmd_model_manager_cancel_download(
+    state: State<'_, TauriBridgeState>,
+    request: ModelManagerCancelDownloadRequest,
+) -> Result<ModelManagerCancelDownloadResponse, String> {
+    let service = std::sync::Arc::clone(&state.model_manager);
+    let cancelled = service.cancel_download(request.target_correlation_id.as_str());
+    Ok(ModelManagerCancelDownloadResponse {
+        correlation_id: request.correlation_id,
+        target_correlation_id: request.target_correlation_id,
+        cancelled,
+    })
+}
+
+#[cfg(feature = "tauri-runtime")]
+#[tauri::command]
 async fn cmd_model_manager_delete_installed(
-    app: tauri::AppHandle,
+    _app: tauri::AppHandle,
     state: State<'_, TauriBridgeState>,
     request: ModelManagerDeleteInstalledRequest,
 ) -> Result<ModelManagerDeleteInstalledResponse, String> {
@@ -1426,7 +1485,7 @@ async fn cmd_model_manager_list_catalog_csv(
 #[cfg(feature = "tauri-runtime")]
 #[tauri::command]
 async fn cmd_model_manager_refresh_unsloth_catalog(
-    app: tauri::AppHandle,
+    _app: tauri::AppHandle,
     state: State<'_, TauriBridgeState>,
     request: ModelManagerRefreshUnslothCatalogRequest,
 ) -> Result<ModelManagerRefreshUnslothCatalogResponse, String> {
@@ -1443,6 +1502,127 @@ async fn cmd_model_manager_refresh_unsloth_catalog(
         correlation_id: request.correlation_id,
         rows,
         new_count,
+    })
+}
+
+#[cfg(feature = "tauri-runtime")]
+#[tauri::command]
+async fn cmd_image_generation_status(
+    _app: tauri::AppHandle,
+    state: State<'_, TauriBridgeState>,
+    request: ImageGenerationStatusRequest,
+) -> Result<ImageGenerationStatusResponse, String> {
+    let app_data = app_paths::app_data_dir();
+    let service = std::sync::Arc::clone(&state.image_generation);
+    let correlation_id = request.correlation_id.clone();
+    tokio::task::spawn_blocking(move || service.status(correlation_id.as_str(), app_data.as_path()))
+        .await
+        .map_err(|e| format!("image generation status task failed: {e}"))?
+}
+
+#[cfg(feature = "tauri-runtime")]
+#[tauri::command]
+async fn cmd_image_generation_install(
+    _app: tauri::AppHandle,
+    state: State<'_, TauriBridgeState>,
+    request: ImageGenerationInstallRequest,
+) -> Result<ImageGenerationInstallResponse, String> {
+    let app_data = app_paths::app_data_dir();
+    let service = std::sync::Arc::clone(&state.image_generation);
+    let correlation_id = request.correlation_id.clone();
+    tokio::task::spawn_blocking(move || {
+        service.install_curated_package(correlation_id.as_str(), app_data.as_path())
+    })
+    .await
+    .map_err(|e| format!("image generation install task failed: {e}"))?
+}
+
+#[cfg(feature = "tauri-runtime")]
+#[tauri::command]
+async fn cmd_image_generation_cancel_install(
+    _app: tauri::AppHandle,
+    state: State<'_, TauriBridgeState>,
+    request: ImageGenerationCancelInstallRequest,
+) -> Result<ImageGenerationCancelInstallResponse, String> {
+    let service = std::sync::Arc::clone(&state.image_generation);
+    let cancelled = service.cancel_install(request.target_correlation_id.as_str());
+    Ok(ImageGenerationCancelInstallResponse {
+        correlation_id: request.correlation_id,
+        target_correlation_id: request.target_correlation_id,
+        cancelled,
+    })
+}
+
+#[cfg(feature = "tauri-runtime")]
+#[tauri::command]
+async fn cmd_image_generation_set_disabled(
+    _app: tauri::AppHandle,
+    state: State<'_, TauriBridgeState>,
+    request: ImageGenerationSetDisabledRequest,
+) -> Result<ImageGenerationSetDisabledResponse, String> {
+    let app_data = app_paths::app_data_dir();
+    let service = std::sync::Arc::clone(&state.image_generation);
+    let correlation_id = request.correlation_id.clone();
+    tokio::task::spawn_blocking(move || {
+        service.set_disabled(
+            correlation_id.as_str(),
+            app_data.as_path(),
+            request.disabled,
+        )
+    })
+    .await
+    .map_err(|e| format!("image generation settings task failed: {e}"))?
+}
+
+#[cfg(feature = "tauri-runtime")]
+#[tauri::command]
+async fn cmd_image_generation_remove_packages(
+    _app: tauri::AppHandle,
+    state: State<'_, TauriBridgeState>,
+    request: ImageGenerationRemovePackagesRequest,
+) -> Result<ImageGenerationRemovePackagesResponse, String> {
+    let app_data = app_paths::app_data_dir();
+    let service = std::sync::Arc::clone(&state.image_generation);
+    let correlation_id = request.correlation_id.clone();
+    let removed = tokio::task::spawn_blocking(move || {
+        service.remove_packages(correlation_id.as_str(), app_data.as_path())
+    })
+    .await
+    .map_err(|e| format!("image generation remove task failed: {e}"))??;
+    Ok(ImageGenerationRemovePackagesResponse {
+        correlation_id: request.correlation_id,
+        removed,
+    })
+}
+
+#[cfg(feature = "tauri-runtime")]
+#[tauri::command]
+async fn cmd_image_generation_generate(
+    _app: tauri::AppHandle,
+    state: State<'_, TauriBridgeState>,
+    request: ImageGenerationGenerateRequest,
+) -> Result<ImageGenerationGenerateResponse, String> {
+    let app_data = app_paths::app_data_dir();
+    let service = std::sync::Arc::clone(&state.image_generation);
+    tokio::task::spawn_blocking(move || service.generate(&request, app_data.as_path()))
+        .await
+        .map_err(|e| format!("image generation task failed: {e}"))?
+}
+
+#[cfg(feature = "tauri-runtime")]
+#[tauri::command]
+async fn cmd_image_generation_cancel_generate(
+    _app: tauri::AppHandle,
+    state: State<'_, TauriBridgeState>,
+    request: ImageGenerationCancelGenerateRequest,
+) -> Result<ImageGenerationCancelGenerateResponse, String> {
+    let service = std::sync::Arc::clone(&state.image_generation);
+    let cancelled = tokio::task::spawn_blocking(move || service.cancel_generate())
+        .await
+        .map_err(|e| format!("image generation cancel task failed: {e}"))?;
+    Ok(ImageGenerationCancelGenerateResponse {
+        correlation_id: request.correlation_id,
+        cancelled,
     })
 }
 
@@ -1721,7 +1901,7 @@ struct PersistedWindowState {
 }
 
 #[cfg(feature = "tauri-runtime")]
-fn window_state_path(handle: &tauri::AppHandle) -> PathBuf {
+fn window_state_path(_handle: &tauri::AppHandle) -> PathBuf {
     let base = app_paths::app_data_dir();
     base.join("window-state.json")
 }

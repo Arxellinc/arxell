@@ -6,6 +6,7 @@ import {
   renderNotepadEditorPane,
   renderNotepadFindBar
 } from "../notepad/shared";
+import { isImagePath } from "./actions";
 import { FILES_DATA_ATTR, FILES_UI_ID } from "../ui/constants";
 import { resolveFileTabIcon } from "../ui/fileTabIcons";
 import { renderToolToolbar } from "../ui/toolbar";
@@ -78,7 +79,15 @@ export interface FilesExplorerViewState {
   selectionDragActive?: boolean;
   selectionJustDragged?: boolean;
   selectionGesture?: "single" | "toggle" | "range" | null;
+  imagePreviewUrlByPath?: Record<string, string>;
+  imageViewMode?: "fit" | "actual";
   error: string | null;
+}
+
+export interface FilesTreeEditorRenderConfig {
+  title: string;
+  emptyStateMessage: string;
+  errorClassName?: string;
 }
 
 export interface FilesTreeEditorViewState {
@@ -103,13 +112,9 @@ export interface FilesTreeEditorViewState {
   replaceQuery?: string;
   findCaseSensitive?: boolean;
   lineWrap?: boolean;
+  imagePreviewUrlByPath?: Record<string, string>;
+  imageViewMode?: "fit" | "actual";
   error: string | null;
-}
-
-export interface FilesTreeEditorRenderConfig {
-  title: string;
-  emptyStateMessage: string;
-  errorClassName?: string;
 }
 
 export function renderFilesToolActions(view: FilesExplorerViewState): string {
@@ -267,6 +272,9 @@ export function renderFilesToolBody(view: FilesExplorerViewState): string {
   const findStats = activePath
     ? computeNotepadFindStats(activeContent, findQuery, view.findCaseSensitive === true)
     : { count: 0 };
+  const activeIsImage = activePath ? isImagePath(activePath) : false;
+  const imagePreviewUrl = activePath ? (view.imagePreviewUrlByPath ?? {})[activePath] : undefined;
+  const imageViewMode = view.imageViewMode ?? "fit";
 
   return `<div class="files-tool primary-pane-body ${sidebarCollapsed ? "is-sidebar-collapsed" : ""}" style="${rootStyle}">
     <section class="files-tool-left ${view.rootSelectorOpen ? "is-root-selector-open" : ""}">
@@ -295,23 +303,25 @@ export function renderFilesToolBody(view: FilesExplorerViewState): string {
         }
       </div>
       ${
-        activePath
-          ? renderNotepadEditorPane({
-              documentId: activePath,
-              filePath: activePath,
-              content: activeContent,
-              lineCount: activeLineCount,
-              wrap: lineWrap,
-              readOnly: activeReadOnly,
-              loading: activeLoading,
-              sizeBytes: view.sizeByPath[activePath] ?? 0,
-              dataAttrs: {
-                action: FILES_DATA_ATTR.action,
-                document: FILES_DATA_ATTR.path,
-                path: FILES_DATA_ATTR.path
-              }
-            })
-          : ""
+        activePath && activeIsImage
+          ? renderImagePreview(imagePreviewUrl ?? "", activeLoading, imageViewMode)
+          : activePath
+            ? renderNotepadEditorPane({
+                documentId: activePath,
+                filePath: activePath,
+                content: activeContent,
+                lineCount: activeLineCount,
+                wrap: lineWrap,
+                readOnly: activeReadOnly,
+                loading: activeLoading,
+                sizeBytes: view.sizeByPath[activePath] ?? 0,
+                dataAttrs: {
+                  action: FILES_DATA_ATTR.action,
+                  document: FILES_DATA_ATTR.path,
+                  path: FILES_DATA_ATTR.path
+                }
+              })
+            : ""
       }
       ${
         activePath && findOpen
@@ -386,6 +396,9 @@ export function renderFilesTreeEditorBody(
   const findStats = activePath
     ? computeNotepadFindStats(activeContent, findQuery, view.findCaseSensitive === true)
     : { count: 0 };
+  const activeIsImage = activePath ? isImagePath(activePath) : false;
+  const imagePreviewUrl = activePath ? (view.imagePreviewUrlByPath ?? {})[activePath] : undefined;
+  const imageViewMode = view.imageViewMode ?? "fit";
 
   return `<div class="files-tool primary-pane-body ${sidebarCollapsed ? "is-sidebar-collapsed" : ""}" style="${rootStyle}">
     <section class="files-tool-left">
@@ -413,26 +426,28 @@ export function renderFilesTreeEditorBody(
         }
       </div>
       ${
-        activePath
-          ? renderNotepadEditorPane({
-              documentId: activePath,
-              filePath: activePath,
-              content: activeContent,
-              lineCount: activeLineCount,
-              wrap: lineWrap,
-              readOnly: activeReadOnly,
-              loading: activeLoading,
-              sizeBytes: view.sizeByPath[activePath] ?? 0,
-              dataAttrs: {
-                action: FILES_DATA_ATTR.action,
-                document: FILES_DATA_ATTR.path,
-                path: FILES_DATA_ATTR.path
-              }
-            })
-          : `<div class="notepad-empty-state"><div>${escapeHtml(config.emptyStateMessage)}</div></div>`
+        activePath && activeIsImage
+          ? renderImagePreview(imagePreviewUrl ?? "", activeLoading, imageViewMode)
+          : activePath
+            ? renderNotepadEditorPane({
+                documentId: activePath,
+                filePath: activePath,
+                content: activeContent,
+                lineCount: activeLineCount,
+                wrap: lineWrap,
+                readOnly: activeReadOnly,
+                loading: activeLoading,
+                sizeBytes: view.sizeByPath[activePath] ?? 0,
+                dataAttrs: {
+                  action: FILES_DATA_ATTR.action,
+                  document: FILES_DATA_ATTR.path,
+                  path: FILES_DATA_ATTR.path
+                }
+              })
+            : `<div class="notepad-empty-state"><div>${escapeHtml(config.emptyStateMessage)}</div></div>`
       }
       ${
-        activePath && findOpen
+        activePath && !activeIsImage && findOpen
           ? renderNotepadFindBar({
               query: findQuery,
               replace: replaceQuery,
@@ -448,6 +463,25 @@ export function renderFilesTreeEditorBody(
       }
       ${view.error ? `<div class="${escapeHtml(config.errorClassName ?? "files-tool-error")}">${escapeHtml(view.error)}</div>` : ""}
     </section>
+  </div>`;
+}
+
+function renderImagePreview(imageUrl: string, loading: boolean, viewMode: "fit" | "actual"): string {
+  if (loading) {
+    return '<div class="files-image-preview"><div class="files-image-loading">Loading image...</div></div>';
+  }
+  if (!imageUrl) {
+    return '<div class="files-image-preview"><div class="files-image-loading">Unable to load image.</div></div>';
+  }
+  const isFit = viewMode !== "actual";
+  return `<div class="files-image-preview">
+    <div class="files-image-container ${isFit ? "is-fit" : "is-actual"}">
+      <img src="${escapeHtml(imageUrl)}" alt="Image preview" draggable="false" />
+    </div>
+    <div class="files-image-zoom-bar">
+      <button type="button" class="files-image-zoom-btn${isFit ? " is-active" : ""}" ${FILES_DATA_ATTR.action}="image-zoom-fit" title="Fit to view">Fit</button>
+      <button type="button" class="files-image-zoom-btn${!isFit ? " is-active" : ""}" ${FILES_DATA_ATTR.action}="image-zoom-actual" title="Actual size (100%)">1:1</button>
+    </div>
   </div>`;
 }
 

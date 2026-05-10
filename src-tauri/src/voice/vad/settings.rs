@@ -2,7 +2,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 pub const ENERGY_BASIC_ID: &str = "energy-basic";
-pub const SHERPA_SILERO_ID: &str = "sherpa-silero";
+pub const LEGACY_SHERPA_SILERO_ID: &str = "sherpa-silero";
+pub const ONNX_SILERO_ID: &str = "onnx-silero";
 pub const MICROTURN_V1_ID: &str = "microturn-v1";
 pub const HYBRID_INTERRUPT_ID: &str = "hybrid_interrupt";
 
@@ -28,30 +29,30 @@ impl Default for EnergyBasicConfig {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct SherpaSileroConfig {
+pub struct OnnxSileroConfig {
+    pub model_path: Option<String>,
+    pub probability_threshold: f32,
     pub base_threshold: f32,
     pub start_frames: u32,
     pub end_frames: u32,
     pub dynamic_multiplier: f32,
     pub noise_adaptation_alpha: f32,
-    pub pre_speech_ms: u32,
     pub min_utterance_ms: u32,
     pub max_utterance_s: u32,
-    pub force_flush_s: f32,
 }
 
-impl Default for SherpaSileroConfig {
+impl Default for OnnxSileroConfig {
     fn default() -> Self {
         Self {
+            model_path: None,
+            probability_threshold: 0.35,
             base_threshold: 0.0012,
             start_frames: 2,
             end_frames: 8,
             dynamic_multiplier: 2.4,
             noise_adaptation_alpha: 0.03,
-            pre_speech_ms: 200,
             min_utterance_ms: 200,
             max_utterance_s: 30,
-            force_flush_s: 3.0,
         }
     }
 }
@@ -103,8 +104,8 @@ pub fn default_config_for(method_id: &str) -> Value {
         ENERGY_BASIC_ID => {
             serde_json::to_value(EnergyBasicConfig::default()).unwrap_or_else(|_| json!({}))
         }
-        SHERPA_SILERO_ID => {
-            serde_json::to_value(SherpaSileroConfig::default()).unwrap_or_else(|_| json!({}))
+        ONNX_SILERO_ID => {
+            serde_json::to_value(OnnxSileroConfig::default()).unwrap_or_else(|_| json!({}))
         }
         MICROTURN_V1_ID => {
             serde_json::to_value(MicroturnV1Config::default()).unwrap_or_else(|_| json!({}))

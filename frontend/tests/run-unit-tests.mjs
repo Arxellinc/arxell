@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { spawnSync } from "node:child_process";
 
 const outDir = ".tmp-tests";
+const localTsc = join("node_modules", "typescript", "bin", "tsc");
 
 function run(command, args) {
   const result = spawnSync(command, args, { stdio: "inherit", shell: false });
@@ -28,7 +29,7 @@ function collectTests(dir, out = []) {
 }
 
 rmSync(outDir, { recursive: true, force: true });
-run(process.platform === "win32" ? "npx.cmd" : "npx", ["tsc", "-p", "tsconfig.tests.json"]);
+run(process.execPath, [localTsc, "-p", "tsconfig.tests.json"]);
 
 const tests = collectTests(join(outDir, "tests")).sort();
 if (!tests.length) {

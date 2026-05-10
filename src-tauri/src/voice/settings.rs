@@ -1,5 +1,7 @@
 use crate::voice::handoff::contracts::HandoffSafePoint;
-use crate::voice::vad::settings::{default_config_for, HYBRID_INTERRUPT_ID, SHERPA_SILERO_ID};
+use crate::voice::vad::settings::{
+    default_config_for, HYBRID_INTERRUPT_ID, LEGACY_SHERPA_SILERO_ID, ONNX_SILERO_ID,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
@@ -41,9 +43,9 @@ pub struct PersistedVoiceSettings {
 
 impl Default for PersistedVoiceSettings {
     fn default() -> Self {
-        let selected = SHERPA_SILERO_ID.to_string();
+        let selected = ONNX_SILERO_ID.to_string();
         let mut vad_methods = HashMap::new();
-        vad_methods.insert(selected.clone(), default_config_for(SHERPA_SILERO_ID));
+        vad_methods.insert(selected.clone(), default_config_for(ONNX_SILERO_ID));
         vad_methods.insert(
             HYBRID_INTERRUPT_ID.to_string(),
             default_config_for(HYBRID_INTERRUPT_ID),
@@ -141,10 +143,20 @@ impl VoiceSettingsStore {
             settings.handoff_policy = HandoffPolicy::default();
             settings.speculation = SpeculationConfig::default();
         }
+        if settings.selected_vad_method == LEGACY_SHERPA_SILERO_ID {
+            settings.selected_vad_method = ONNX_SILERO_ID.to_string();
+        }
+        if settings.shadow_vad_method.as_deref() == Some(LEGACY_SHERPA_SILERO_ID) {
+            settings.shadow_vad_method = Some(ONNX_SILERO_ID.to_string());
+        }
         settings
             .vad_methods
             .entry(settings.selected_vad_method.clone())
             .or_insert_with(|| default_config_for(&settings.selected_vad_method));
+        settings
+            .vad_methods
+            .entry(ONNX_SILERO_ID.to_string())
+            .or_insert_with(|| default_config_for(ONNX_SILERO_ID));
         settings
             .vad_methods
             .entry(HYBRID_INTERRUPT_ID.to_string())

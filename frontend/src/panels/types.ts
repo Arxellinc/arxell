@@ -1,5 +1,6 @@
 import type {
   ChatAttachment,
+  ChatStructuredPayload,
   ApiConnectionRecord,
   ApiConnectionType,
   ConversationSummaryRecord,
@@ -10,6 +11,8 @@ import type {
   VadManifest,
   DuplexMode,
   HandoffState,
+  ImageGenerationStatusResponse,
+  MediaAssetRecord,
   SpeculationState,
   VoiceRuntimeState
 } from "../contracts";
@@ -28,6 +31,7 @@ export type SidebarTab =
   | "vad"
   | "llama_cpp"
   | "model_manager"
+  | "images"
   | "avatar"
   | "settings";
 
@@ -48,6 +52,8 @@ export interface UiMessage {
   role: "user" | "assistant";
   text: string;
   correlationId?: string;
+  structuredPayload?: ChatStructuredPayload | null;
+  attachments?: ChatAttachment[];
 }
 
 export interface ChatToolEventRow {
@@ -73,6 +79,8 @@ export interface ChatPanelState {
   chatAttachedFileContent: string | null;
   chatActiveModelId: string;
   chatActiveModelLabel: string;
+  chatModelStatusMessage: string | null;
+  llamaRuntimeBusy: boolean;
   chatActiveModelCapabilities: ChatModelCapabilities;
   chatThinkingEnabled: boolean;
   chatTtsEnabled: boolean;
@@ -130,7 +138,8 @@ export const AVATAR_MESH_GROUPS = [
   { key: "eyes", label: "Eyes" },
   { key: "eyebrows", label: "Eyebrows" },
   { key: "hair", label: "Hair" },
-  { key: "jaw", label: "Jaw" },
+  { key: "jawTop", label: "Jaw Top" },
+  { key: "jawBtm", label: "Jaw Bottom" },
   { key: "tongue", label: "Tongue" },
 ] as const;
 
@@ -138,7 +147,13 @@ export function defaultAvatarMeshes(): AvatarMeshSetting[] {
   return AVATAR_MESH_GROUPS.map((g) => ({
     key: g.key,
     visible: g.key !== "eyebrows" && g.key !== "hair",
-    color: g.key === "wireframe" ? "#00ccff" : g.key === "body" ? "#102527" : g.key === "eyes" ? "#1a88aa" : "#16E9F5",
+    color: g.key === "wireframe"
+      ? "#00ccff"
+      : g.key === "jawTop"
+      ? "#C0BFBC"
+      : g.key === "body" || g.key === "eyes" || g.key === "jawBtm" || g.key === "tongue"
+      ? "#102527"
+      : "#16E9F5",
     opacity: 1,
     textureUrl: "",
     textureName: "",
@@ -164,7 +179,7 @@ export interface AvatarState {
 export interface SttState {
   status: "idle" | "starting" | "running" | "error";
   message: string | null;
-  backend: "whisper_cpp" | "sherpa_onnx";
+  backend: "whisper_cpp";
   isListening: boolean;
   isSpeaking: boolean;
   lastTranscript: string | null;
@@ -198,17 +213,9 @@ export interface TtsState {
   status: "idle" | "ready" | "busy" | "error";
   message: string | null;
   engineId: string;
-  engine: "kokoro" | "piper" | "matcha" | "kitten" | "pocket";
+  engine: "kokoro" | "pocket";
   ready: boolean;
-  runtimeArchivePresent: boolean;
-  availableModelPaths: string[];
   modelPath: string;
-  secondaryPath: string;
-  voicesPath: string;
-  tokensPath: string;
-  dataDir: string;
-  pythonPath: string;
-  scriptPath: string;
   voices: string[];
   selectedVoice: string;
   speed: number;
@@ -217,10 +224,30 @@ export interface TtsState {
   lastDurationMs: number | null;
   lastBytes: number | null;
   lastSampleRate: number | null;
-  downloadReceivedBytes: number | null;
-  downloadTotalBytes: number | null;
-  downloadPercent: number | null;
-  ttsSetupModalOpen: boolean;
+}
+
+export interface ImagesPanelState {
+  status: ImageGenerationStatusResponse | null;
+  recentAssets: MediaAssetRecord[];
+  prompt: string;
+  width: number;
+  height: number;
+  steps: number;
+  guidance: number;
+  seed: string;
+  advancedOpen: boolean;
+  installBusy: boolean;
+  generateBusy: boolean;
+  generateCorrelationId: string | null;
+  removing: boolean;
+  message: string | null;
+  installReceivedBytes: number | null;
+  installTotalBytes: number | null;
+  installPercent: number | null;
+  installSpeedBytesPerSec: number | null;
+  installPhase: string | null;
+  installCurrentFileName: string | null;
+  installCorrelationId: string | null;
 }
 
 export interface ConsoleEntry {
@@ -252,6 +279,9 @@ export interface PrimaryPanelRenderState {
   showBottomContext: boolean;
   showBottomSpeed: boolean;
   showBottomTtsLatency: boolean;
+  enableNotificationChime: boolean;
+  enableChatQuestionChime: boolean;
+  autoSafeEnabled: boolean;
   chat: ChatPanelState;
   chatToolIntentByCorrelation: Record<string, boolean>;
   chatFirstAssistantChunkMsByCorrelation: Record<string, number>;
@@ -272,6 +302,7 @@ export interface PrimaryPanelRenderState {
   llamaRuntime: LlamaRuntimeStatusResponse | null;
   llamaRuntimeSelectedEngineId: string;
   llamaRuntimeModelPath: string;
+  llamaRuntimeActiveModelPath: string;
   llamaRuntimePort: number;
   llamaRuntimeCtxSize: number;
   llamaRuntimeGpuLayers: number;
@@ -311,6 +342,14 @@ export interface PrimaryPanelRenderState {
   modelManagerCollection: string;
   modelManagerSearchResults: ModelManagerHfCandidate[];
   modelManagerBusy: boolean;
+  modelManagerDownloading: boolean;
+  modelManagerActiveDownloadKey: string | null;
+  modelManagerActiveDownloadFileName: string | null;
+  modelManagerActiveDownloadCorrelationId: string | null;
+  modelManagerDownloadReceivedBytes: number | null;
+  modelManagerDownloadTotalBytes: number | null;
+  modelManagerDownloadPercent: number | null;
+  modelManagerDownloadSpeedBytesPerSec: number | null;
   modelManagerMessage: string | null;
   modelManagerUnslothUdCatalog: Array<{
     repoId: string;
@@ -344,15 +383,30 @@ export interface PrimaryPanelRenderState {
   } | null;
   vadMessage: string | null;
   tts: TtsState;
+  images: ImagesPanelState;
   consoleEntries: ConsoleEntry[];
   projectsById: Record<string, ProjectRecord>;
   projectsSelectedId: string | null;
   projectsNameDraft: string;
   projectsModalOpen: boolean;
   avatar: AvatarState;
-  avatarActiveTab: "appearance" | "animation";
+  avatarActiveTab: "appearance" | "animation" | "morphTargets";
   avatarLipSyncStrength: number;
   avatarLipSyncJawBlend: number;
+  avatarLipSyncJawAmp: number;
+  avatarLipSyncPhonemeBoost: number;
+  avatarLipSyncJawMorphScale: number;
+  avatarLipSyncOpenRate: number;
+  avatarLipSyncCloseRate: number;
+  avatarLipSyncFallbackRate: number;
+  avatarJawBtmX: number;
+  avatarJawBtmY: number;
+  avatarJawBtmZ: number;
+  avatarJawBtmValue: number;
+  avatarJawTopX: number;
+  avatarJawTopY: number;
+  avatarJawTopZ: number;
+  avatarJawTopValue: number;
 }
 
 export interface PrimaryPanelDefinition {
@@ -370,6 +424,7 @@ export interface PrimaryPanelBindings {
   onStopCurrentResponse: () => Promise<void>;
   onSpeakLatestAssistantTts: () => Promise<void>;
   onToggleVoiceMode: () => Promise<void>;
+  onToggleAutoMode: () => Promise<void>;
   onToggleThinkingPanel: (correlationId: string) => Promise<void>;
   onCreateConversation: () => Promise<void>;
   onClearChat: () => Promise<void>;
@@ -425,12 +480,26 @@ export interface PrimaryPanelBindings {
   onModelManagerSetCollection: (collection: string) => Promise<void>;
   onModelManagerSearchHf: () => Promise<void>;
   onModelManagerDownloadHf: (args: { repoId: string; fileName: string }) => Promise<void>;
+  onModelManagerCancelDownload: () => Promise<void>;
   onModelManagerSetUdQuant: (args: { repoId: string; fileName: string }) => Promise<void>;
   onModelManagerUseAsLlamaPath: (modelPath: string) => Promise<void>;
   onModelManagerEjectActive: () => Promise<void>;
   onModelManagerDeleteInstalled: (modelId: string) => Promise<void>;
+  onImagesRefresh: () => Promise<void>;
+  onImagesInstall: () => Promise<void>;
+  onImagesCancelInstall: () => Promise<void>;
+  onImagesSetDisabled: (disabled: boolean) => Promise<void>;
+  onImagesRemovePackages: () => Promise<void>;
+  onImagesGenerate: () => Promise<void>;
+  onImagesCancelGenerate: () => Promise<void>;
+  onImagesSetPrompt: (prompt: string) => Promise<void>;
+  onImagesSetSizePreset: (width: number, height: number) => Promise<void>;
+  onImagesSetSteps: (steps: number) => Promise<void>;
+  onImagesSetGuidance: (guidance: number) => Promise<void>;
+  onImagesSetSeed: (seed: string) => Promise<void>;
+  onImagesToggleAdvanced: () => Promise<void>;
   onToggleStt: () => Promise<void>;
-  onSetSttBackend: (backend: "whisper_cpp" | "sherpa_onnx") => Promise<void>;
+  onSetSttBackend: (backend: "whisper_cpp") => Promise<void>;
   onSetSttModel: (model: string) => Promise<void>;
   onSetSttLanguage: (language: string) => Promise<void>;
   onSetSttThreads: (threads: number) => Promise<void>;
@@ -439,15 +508,10 @@ export interface PrimaryPanelBindings {
   onTtsStart: () => Promise<void>;
   onTtsRefresh: () => Promise<void>;
   onTtsSetVoice: (voice: string) => Promise<void>;
-  onTtsSetEngine: (engine: "kokoro" | "piper" | "matcha" | "kitten" | "pocket") => Promise<void>;
-  onTtsSetModelBundle: (modelPath: string) => Promise<void>;
+  onTtsSetEngine: (engine: "kokoro" | "pocket") => Promise<void>;
   onTtsSetSpeed: (speed: number) => Promise<void>;
   onTtsSetTestText: (text: string) => Promise<void>;
   onTtsBrowseModelPath: () => Promise<void>;
-  onTtsBrowseSecondaryPath: () => Promise<void>;
-  onTtsDownloadModel: () => Promise<void>;
-  onTtsDownloadModelWithUrl: (url: string) => Promise<void>;
-  onTtsSetSetupModalOpen: (open: boolean) => void;
   onTtsSpeakTest: () => Promise<void>;
   onTtsStop: () => Promise<void>;
   onTtsSelfTest: () => Promise<void>;
@@ -481,6 +545,8 @@ export interface PrimaryPanelBindings {
   onSetShowBottomContext: (value: boolean) => Promise<void>;
   onSetShowBottomSpeed: (value: boolean) => Promise<void>;
   onSetShowBottomTtsLatency: (value: boolean) => Promise<void>;
+  onSetEnableNotificationChime: (value: boolean) => Promise<void>;
+  onSetEnableChatQuestionChime: (value: boolean) => Promise<void>;
   onToggleAvatar: () => Promise<void>;
   onSetAvatarPlacement: (placement: "chat" | "tools") => Promise<void>;
   onToggleAvatarMaximized: () => Promise<void>;
@@ -490,10 +556,11 @@ export interface PrimaryPanelBindings {
   onAvatarMeshTextureUpload: (key: string) => void;
   onAvatarBorderChange: (size: number, color: string) => Promise<void>;
   onAvatarBgChange: (color: string, opacity: number) => Promise<void>;
-  onAvatarSetActiveTab: (tab: "appearance" | "animation") => Promise<void>;
+  onAvatarSetActiveTab: (tab: "appearance" | "animation" | "morphTargets") => Promise<void>;
   onAvatarMorphChange: (name: string, value: number) => Promise<void>;
   onAvatarBoneChange: (key: string, axis: "x" | "y" | "z", value: number) => Promise<void>;
-  onAvatarLipSyncChange: (strength: number | undefined, jawBlend: number | undefined) => void;
+  onAvatarLipSyncChange: (key: string, value: number) => void;
+  onAvatarLipSyncReset: () => Promise<void>;
   onProjectCreate: (name: string) => Promise<void>;
   onProjectSelect: (id: string | null) => void;
   onProjectDelete: (id: string) => Promise<void>;

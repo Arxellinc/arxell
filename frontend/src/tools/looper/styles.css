@@ -566,6 +566,11 @@
   padding: 0.15rem;
 }
 
+.looper-terminal-host .xterm-screen canvas {
+  -webkit-transform: translateZ(0);
+  transform: translateZ(0);
+}
+
 .looper-prompt-editor {
   border-top: 1px solid var(--line);
   background: var(--surface);

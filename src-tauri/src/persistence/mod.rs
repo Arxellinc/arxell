@@ -1,4 +1,5 @@
 use crate::app_paths;
+use crate::contracts::ChatWorkflowState;
 use crate::contracts::MessageRole;
 use crate::contracts::{ConversationMessageRecord, ConversationSummaryRecord};
 use rusqlite::{params, Connection};
@@ -28,6 +29,11 @@ pub trait ConversationRepository: Send + Sync {
         model_family: &str,
         strategy: &str,
     ) -> Result<(), String>;
+    fn get_chat_workflow_state(
+        &self,
+        conversation_id: &str,
+    ) -> Result<Option<ChatWorkflowState>, String>;
+    fn upsert_chat_workflow_state(&self, state: &ChatWorkflowState) -> Result<(), String>;
     fn delete_conversation(&self, conversation_id: &str) -> Result<bool, String>;
 }
 
@@ -67,6 +73,11 @@ impl SqliteConversationRepository {
             CREATE TABLE IF NOT EXISTS model_family_preferences (
                 model_family TEXT PRIMARY KEY,
                 thinking_disable_strategy TEXT NOT NULL,
+                updated_at_ms INTEGER NOT NULL DEFAULT 0
+            );
+            CREATE TABLE IF NOT EXISTS chat_workflow_states (
+                conversation_id TEXT PRIMARY KEY,
+                state_json TEXT NOT NULL,
                 updated_at_ms INTEGER NOT NULL DEFAULT 0
             );
             "#,
@@ -327,6 +338,48 @@ impl ConversationRepository for SqliteConversationRepository {
         Ok(())
     }
 
+    fn get_chat_workflow_state(
+        &self,
+        conversation_id: &str,
+    ) -> Result<Option<ChatWorkflowState>, String> {
+        let conn = self.open_connection()?;
+        let state_json = conn
+            .query_row(
+                "SELECT state_json
+                 FROM chat_workflow_states
+                 WHERE conversation_id = ?1",
+                params![conversation_id],
+                |r| r.get::<_, String>(0),
+            )
+            .ok();
+        match state_json {
+            Some(raw) => serde_json::from_str::<ChatWorkflowState>(&raw)
+                .map(Some)
+                .map_err(|e| format!("failed parsing chat workflow state: {e}")),
+            None => Ok(None),
+        }
+    }
+
+    fn upsert_chat_workflow_state(&self, state: &ChatWorkflowState) -> Result<(), String> {
+        let _guard = self
+            .write_lock
+            .lock()
+            .map_err(|_| "sqlite conversation write lock poisoned".to_string())?;
+        let conn = self.open_connection()?;
+        let state_json = serde_json::to_string(state)
+            .map_err(|e| format!("failed serializing chat workflow state: {e}"))?;
+        conn.execute(
+            "INSERT INTO chat_workflow_states (conversation_id, state_json, updated_at_ms)
+             VALUES (?1, ?2, ?3)
+             ON CONFLICT(conversation_id) DO UPDATE SET
+                 state_json = excluded.state_json,
+                 updated_at_ms = excluded.updated_at_ms",
+            params![state.conversation_id, state_json, state.updated_at_ms],
+        )
+        .map_err(|e| format!("failed upserting chat workflow state: {e}"))?;
+        Ok(())
+    }
+
     fn delete_conversation(&self, conversation_id: &str) -> Result<bool, String> {
         let _guard = self
             .write_lock
@@ -348,9 +401,15 @@ impl ConversationRepository for SqliteConversationRepository {
                 params![conversation_id],
             )
             .map_err(|e| format!("failed deleting conversation metadata: {e}"))?;
+        let removed_workflow = tx
+            .execute(
+                "DELETE FROM chat_workflow_states WHERE conversation_id = ?1",
+                params![conversation_id],
+            )
+            .map_err(|e| format!("failed deleting chat workflow state: {e}"))?;
         tx.commit()
             .map_err(|e| format!("failed committing sqlite delete transaction: {e}"))?;
-        Ok((removed_messages + removed_metadata) > 0)
+        Ok((removed_messages + removed_metadata + removed_workflow) > 0)
     }
 }
 
@@ -519,6 +578,24 @@ impl ConversationRepository for FileConversationRepository {
         Ok(())
     }
 
+    fn get_chat_workflow_state(
+        &self,
+        conversation_id: &str,
+    ) -> Result<Option<ChatWorkflowState>, String> {
+        let states = read_file_workflow_states(&self.path)?;
+        Ok(states.get(conversation_id).cloned())
+    }
+
+    fn upsert_chat_workflow_state(&self, state: &ChatWorkflowState) -> Result<(), String> {
+        let _guard = self
+            .write_lock
+            .lock()
+            .map_err(|_| "conversation write lock poisoned".to_string())?;
+        let mut states = read_file_workflow_states(&self.path)?;
+        states.insert(state.conversation_id.clone(), state.clone());
+        write_file_workflow_states(&self.path, &states)
+    }
+
     fn delete_conversation(&self, conversation_id: &str) -> Result<bool, String> {
         let _guard = self
             .write_lock
@@ -561,8 +638,43 @@ impl ConversationRepository for FileConversationRepository {
             file.write_all(b"\n")
                 .map_err(|e| format!("failed rewriting conversation newline: {e}"))?;
         }
-        Ok(removed_any)
+        let mut states = read_file_workflow_states(&self.path)?;
+        let removed_workflow = states.remove(conversation_id).is_some();
+        write_file_workflow_states(&self.path, &states)?;
+        Ok(removed_any || removed_workflow)
     }
+}
+
+fn workflow_state_path(path: &Path) -> PathBuf {
+    path.with_extension("workflow-states.json")
+}
+
+fn read_file_workflow_states(path: &Path) -> Result<HashMap<String, ChatWorkflowState>, String> {
+    let state_path = workflow_state_path(path);
+    if !state_path.exists() {
+        return Ok(HashMap::new());
+    }
+    let raw = fs::read_to_string(&state_path)
+        .map_err(|e| format!("failed reading chat workflow state file: {e}"))?;
+    if raw.trim().is_empty() {
+        return Ok(HashMap::new());
+    }
+    serde_json::from_str::<HashMap<String, ChatWorkflowState>>(&raw)
+        .map_err(|e| format!("failed parsing chat workflow state file: {e}"))
+}
+
+fn write_file_workflow_states(
+    path: &Path,
+    states: &HashMap<String, ChatWorkflowState>,
+) -> Result<(), String> {
+    let state_path = workflow_state_path(path);
+    if let Some(parent) = state_path.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|e| format!("failed creating chat workflow state dir: {e}"))?;
+    }
+    let raw = serde_json::to_string_pretty(states)
+        .map_err(|e| format!("failed serializing chat workflow state file: {e}"))?;
+    fs::write(&state_path, raw).map_err(|e| format!("failed writing chat workflow state file: {e}"))
 }
 
 fn truncate_preview(input: &str, max_chars: usize) -> String {

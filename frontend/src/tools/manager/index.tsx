@@ -120,8 +120,7 @@ function isUserTool(tool: WorkspaceToolRecord): boolean {
     "webSearch",
     "flow",
     "tasks",
-    "memory",
-    "skills"
+    "memory"
   ]);
   if (protectedIds.has(tool.toolId)) return false;
   if (tool.core) return false;

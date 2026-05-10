@@ -338,3 +338,45 @@
   color: var(--error);
   font-size: var(--text-xs);
 }
+
+.notepad-unsaved-modal-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(3px);
+}
+
+.notepad-unsaved-modal-box {
+  width: 100%;
+  max-width: 380px;
+  margin: 0 1rem;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel);
+  padding: 1.25rem;
+  display: grid;
+  gap: 0.75rem;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.3);
+}
+
+.notepad-unsaved-modal-title {
+  font-size: var(--text-base);
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.notepad-unsaved-modal-message {
+  font-size: var(--text-sm);
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+.notepad-unsaved-modal-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}

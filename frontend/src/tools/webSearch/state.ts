@@ -28,5 +28,5 @@ export interface WebSearchSlice {
   webSetupApiKey: string;
   webSetupMessage: string | null;
   webSetupBusy: boolean;
-  apiConnections: Array<{ apiType: string; status: string }>;
+  apiConnections: Array<{ id: string; apiType: string; apiUrl: string; name: string; status: string }>;
 }

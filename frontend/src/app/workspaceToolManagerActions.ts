@@ -7,8 +7,7 @@ const PROTECTED_TOOL_IDS = new Set([
   "webSearch",
   "flow",
   "tasks",
-  "memory",
-  "skills"
+  "memory"
 ]);
 
 function isSystemTool(toolId: string): boolean {

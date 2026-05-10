@@ -164,6 +164,57 @@ export function closeSpawnModal(state: OpenCodeToolState): void {
   state.spawnModalOpen = false;
 }
 
+export async function installNow(
+  state: OpenCodeToolState,
+  deps: OpenCodeActionsDeps
+): Promise<void> {
+  if (state.busy) return;
+  state.busy = true;
+  state.installModalOpen = false;
+  deps.renderAndBind();
+
+  try {
+    const session = await deps.terminalManager.createSession({
+      owner: "opencode",
+      title: "OpenCode Install"
+    });
+    const agentId = `opencode-agent-${Date.now()}-${state.nextAgentIndex}`;
+    const agent: OpenCodeAgent = {
+      id: agentId,
+      label: "Install",
+      sessionId: session.sessionId,
+      status: "starting",
+      cwd: ".",
+      startedAtMs: Date.now()
+    };
+    state.agents.push(agent);
+    state.activeAgentId = agentId;
+    state.nextAgentIndex++;
+    deps.renderAndBind();
+
+    await sleep(500);
+    await deps.client.sendTerminalInput({
+      sessionId: session.sessionId,
+      input: INSTALL_COMMAND + "\n",
+      correlationId: deps.nextCorrelationId()
+    });
+    agent.status = "running";
+
+    await sleep(8000);
+    await deps.client.sendTerminalInput({
+      sessionId: session.sessionId,
+      input: "which opencode\n",
+      correlationId: deps.nextCorrelationId()
+    });
+    await sleep(2000);
+  } catch {
+    state.installModalOpen = true;
+  } finally {
+    state.busy = false;
+    deps.renderAndBind();
+  }
+}
+
 export async function recheckAfterInstall(
   state: OpenCodeToolState,
   deps: OpenCodeActionsDeps

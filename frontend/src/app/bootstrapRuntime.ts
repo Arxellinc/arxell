@@ -1,5 +1,16 @@
 import type { ChatIpcClient } from "../ipcClient";
+import { normalizeUserFacingWhisperModels } from "../stt/models";
 import { normalizeVersionLabel } from "../version";
+
+export type TauriResizeEdge =
+  | "East"
+  | "North"
+  | "NorthEast"
+  | "NorthWest"
+  | "South"
+  | "SouthEast"
+  | "SouthWest"
+  | "West";
 
 export type TauriWindowHandle = {
   minimize: () => Promise<void>;
@@ -8,6 +19,7 @@ export type TauriWindowHandle = {
   isMaximized: () => Promise<boolean>;
   close: () => Promise<void>;
   startDragging: () => Promise<void>;
+  startResizeDragging: (edge: TauriResizeEdge) => Promise<void>;
 };
 
 interface BootstrapRuntimeState {
@@ -25,7 +37,7 @@ interface BootstrapRuntimeDeps {
   runtimeMode: string;
   state: BootstrapRuntimeState;
   fallbackAppVersion: string;
-  persistSttBackend: (backend: "whisper_cpp" | "sherpa_onnx") => void;
+  persistSttBackend: (backend: "whisper_cpp") => void;
   persistSttModel: (model: string) => void;
 }
 
@@ -41,12 +53,13 @@ export async function syncBootstrapRuntime(
       tauriWindowHandle = getCurrentWindow() as TauriWindowHandle;
       const { invoke } = await import("@tauri-apps/api/core");
       const backend = await invoke<string>("stt_get_backend");
-      if (backend === "whisper_cpp" || backend === "sherpa_onnx") {
-        deps.state.stt.backend = backend;
-        deps.persistSttBackend(backend);
+      if (backend !== "whisper_cpp") {
+        await invoke("stt_set_backend", { backend: "whisper_cpp" });
       }
+      deps.state.stt.backend = "whisper_cpp";
+      deps.persistSttBackend("whisper_cpp");
       const models = await invoke<string[]>("stt_list_models");
-      deps.state.stt.availableModels = Array.isArray(models) && models.length > 0 ? models : ["auto"];
+      deps.state.stt.availableModels = normalizeUserFacingWhisperModels(Array.isArray(models) ? models : []);
       if (!deps.state.stt.availableModels.includes(deps.state.stt.selectedModel)) {
         deps.state.stt.selectedModel = deps.state.stt.availableModels[0] ?? "auto";
         deps.persistSttModel(deps.state.stt.selectedModel);

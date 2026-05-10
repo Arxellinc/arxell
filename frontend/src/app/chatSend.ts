@@ -1,7 +1,8 @@
-import type { AppEvent, ChatAttachment } from "../contracts.js";
+import type { AppEvent, ChatAttachment, ChatStructuredPayload } from "../contracts.js";
+import { appendAppEvent } from "./events.js";
 
 interface ChatSendState {
-  messages: Array<{ role: string; text: string; correlationId?: string }>;
+  messages: Array<{ role: string; text: string; correlationId?: string; structuredPayload?: ChatStructuredPayload | null; attachments?: ChatAttachment[] }>;
   chatDraft: string;
   chatStreaming: boolean;
   activeChatCorrelationId: string | null;
@@ -9,6 +10,7 @@ interface ChatSendState {
   chatTtsLatencyMs: number | null;
   chatModelOptions: Array<{ id: string; modelName: string }>;
   chatActiveModelId: string;
+  chatModelStatusMessage: string | null;
   conversationId: string;
   chatThinkingEnabled: boolean;
   chatRoutePreference: string;
@@ -30,6 +32,7 @@ interface ChatSendDeps {
       correlationId: string;
       assistantMessage: string;
       assistantThinking?: string | null;
+      structuredPayload?: ChatStructuredPayload | null;
     }>;
   } | null;
   state: ChatSendState;
@@ -44,7 +47,14 @@ interface ChatSendDeps {
   enqueueSpeakableChunk: (text: string, isFinalFlush?: boolean, correlationId?: string | null) => void;
   runChatTtsQueue: (sendMessage: (text: string, attachments?: ChatAttachment[]) => Promise<void>) => Promise<void>;
   refreshConversations: () => Promise<void>;
+  refreshLlamaRuntime: () => Promise<void>;
+  waitForLocalModelReady: () => Promise<boolean>;
   renderAndBind: (sendMessage: (text: string, attachments?: ChatAttachment[]) => Promise<void>) => void;
+}
+
+function isModelLoadingError(error: unknown): boolean {
+  const text = String(error ?? "").toLowerCase();
+  return text.includes("loading model") && text.includes("503");
 }
 
 export function createSendMessageHandler(
@@ -61,12 +71,17 @@ export function createSendMessageHandler(
       return;
     }
     const correlationId = deps.nextCorrelationId();
-    deps.state.messages.push({ role: "user", text: normalizedUserText });
+    deps.state.messages.push(
+      attachments?.length
+        ? { role: "user", text: normalizedUserText, attachments }
+        : { role: "user", text: normalizedUserText }
+    );
     deps.state.chatDraft = "";
     deps.state.chatStreaming = true;
     deps.state.activeChatCorrelationId = correlationId;
     deps.state.chatStreamCompleteByCorrelation[correlationId] = false;
     deps.state.chatTtsLatencyMs = null;
+    deps.state.chatModelStatusMessage = null;
     deps.chatTtsLatencyCapturedByCorrelation.delete(correlationId);
     deps.renderAndBind(sendMessage);
 
@@ -91,25 +106,43 @@ export function createSendMessageHandler(
             attachments
           }
         : requestPayloadBase;
-      const response = await clientRef.sendMessage(
-        deps.state.llamaRuntimeMaxTokens === null
-          ? requestPayload
-          : {
-              ...requestPayload,
-              maxTokens: deps.state.llamaRuntimeMaxTokens
-            }
-      );
+      let response;
+      for (;;) {
+        try {
+          response = await clientRef.sendMessage(
+            deps.state.llamaRuntimeMaxTokens === null
+              ? requestPayload
+              : {
+                  ...requestPayload,
+                  maxTokens: deps.state.llamaRuntimeMaxTokens
+                }
+          );
+          break;
+        } catch (error) {
+          if (!isModelLoadingError(error) || !deps.state.chatActiveModelId.startsWith("local:")) {
+            throw error;
+          }
+          if (!deps.state.chatModelStatusMessage) {
+            deps.state.chatModelStatusMessage = "Waiting for model...";
+            deps.renderAndBind(sendMessage);
+          }
+          await new Promise((resolve) => window.setTimeout(resolve, 2000));
+          await deps.refreshLlamaRuntime();
+        }
+      }
 
       const existing = deps.state.messages.find(
         (m) => m.role === "assistant" && m.correlationId === response.correlationId
       );
       if (existing) {
         existing.text = deps.normalizeChatText(response.assistantMessage);
+        existing.structuredPayload = response.structuredPayload ?? null;
       } else {
         deps.state.messages.push({
           role: "assistant",
           text: deps.normalizeChatText(response.assistantMessage),
-          correlationId: response.correlationId
+          correlationId: response.correlationId,
+          structuredPayload: response.structuredPayload ?? null
         });
       }
       if (response.assistantThinking?.trim()) {
@@ -154,16 +187,36 @@ export function createSendMessageHandler(
       deps.chatTtsSawStreamDeltaByCorrelation.delete(response.correlationId);
       await deps.refreshConversations();
     } catch (error) {
-      deps.state.events.push({
+      deps.state.chatModelStatusMessage = null;
+      const message = error instanceof Error ? error.message : String(error);
+      const existing = deps.state.messages.find(
+        (m) => m.role === "assistant" && m.correlationId === correlationId
+      );
+      const errorText = `Failed to generate response: ${message}`;
+      if (existing) {
+        existing.text = errorText;
+      } else {
+        deps.state.messages.push({
+          role: "assistant",
+          text: errorText,
+          correlationId
+        });
+      }
+      appendAppEvent(deps.state.events, {
         timestampMs: Date.now(),
         correlationId,
         subsystem: "frontend",
         action: "chat.send",
         stage: "error",
         severity: "error",
-        payload: { message: String(error) }
+        payload: { message }
       });
+      if (deps.state.chatTtsEnabled) {
+        deps.enqueueImmediateTtsChunk(errorText, correlationId);
+        void deps.runChatTtsQueue(sendMessage);
+      }
     } finally {
+      deps.state.chatModelStatusMessage = null;
       if (deps.state.activeChatCorrelationId === correlationId) {
         deps.state.activeChatCorrelationId = null;
       }

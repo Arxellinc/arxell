@@ -17,14 +17,21 @@ jobs:
   build:
     name: Build (${{ matrix.platform.name }})
     runs-on: ${{ matrix.platform.os }}
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+      APPIMAGE_EXTRACT_AND_RUN: "1"
+      ARCH: x86_64
+      NO_STRIP: "true"
+      GDK_PIXBUF_MODULEDIR: /usr/lib/x86_64-linux-gnu/gdk-pixbuf-2.0/2.10.0/loaders
+      GDK_PIXBUF_MODULE_FILE: /usr/lib/x86_64-linux-gnu/gdk-pixbuf-2.0/2.10.0/loaders.cache
     strategy:
       fail-fast: false
       matrix:
         platform:
           - name: linux-x64
-            os: ubuntu-latest
+            os: ubuntu-24.04
           - name: macos-x64
-            os: macos-13
+            os: macos-latest
           - name: windows-x64
             os: windows-latest
 
@@ -68,13 +75,26 @@ jobs:
           cache: npm
           cache-dependency-path: frontend/package-lock.json
 
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
       - name: Verify version consistency
         run: node scripts/version-sync.mjs --check
 
       - name: Setup Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Cache Tauri CLI
+        id: cache_tauri_cli
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin/cargo-tauri
+          key: tauri-cli-${{ runner.os }}-v2
+
       - name: Install Tauri CLI
+        if: steps.cache_tauri_cli.outputs.cache-hit != 'true'
         run: cargo install tauri-cli --locked --version "^2.0.0"
 
       - name: Cache Rust build artifacts
@@ -83,17 +103,59 @@ jobs:
           workspaces: src-tauri -> target
 
       - name: Install Linux system dependencies
-        if: matrix.platform.os == 'ubuntu-latest'
+        if: matrix.platform.os == 'ubuntu-24.04'
         run: |
           sudo apt-get update
           sudo apt-get install -y \
             pkg-config \
             libasound2-dev \
             libwebkit2gtk-4.1-dev \
-            libgtk-3-dev \
-            libayatana-appindicator3-dev \
+            libappindicator3-dev \
             librsvg2-dev \
-            patchelf
+            patchelf \
+            libfuse2t64 \
+            libcairo2-dev \
+            libgdk-pixbuf-2.0-dev \
+            libgdk-pixbuf2.0-bin \
+            squashfs-tools \
+            libgstreamer1.0-dev \
+            libgstreamer-plugins-base1.0-dev \
+            libgstreamer-plugins-bad1.0-dev \
+            gtk+3.0 \
+            libgtk-3-dev \
+            librsvg2-common \
+            shared-mime-info
+          sudo /usr/lib/x86_64-linux-gnu/gdk-pixbuf-2.0/gdk-pixbuf-query-loaders --update-cache
+          sudo /usr/lib/x86_64-linux-gnu/libgtk3-nocsd.so.0 || true
+          sudo gtk-query-immodules-3.0 --update-cache 2>/dev/null || true
+          sudo update-mime-database /usr/share/mime 2>/dev/null || true
+
+      - name: Normalize Linux pkg-config metadata
+        if: matrix.platform.os == 'ubuntu-24.04'
+        shell: bash
+        run: |
+          set -euo pipefail
+          overlay_dir="${RUNNER_TEMP}/pkgconfig"
+          mkdir -p "${overlay_dir}"
+
+          pc_path="$(dpkg -L librsvg2-dev | awk '/\/librsvg-2\.0\.pc$/ { print; exit }')"
+          if [[ -z "${pc_path}" ]]; then
+            echo "Could not locate librsvg-2.0.pc from librsvg2-dev" >&2
+            exit 1
+          fi
+          cp "${pc_path}" "${overlay_dir}/librsvg-2.0.pc"
+
+          if [[ -z "$(PKG_CONFIG_PATH="${overlay_dir}${PKG_CONFIG_PATH:+:${PKG_CONFIG_PATH}}" pkg-config --variable=libdir librsvg-2.0)" ]]; then
+            multiarch="$(gcc -print-multiarch)"
+            {
+              echo
+              echo "libdir=/usr/lib/${multiarch}"
+            } >> "${overlay_dir}/librsvg-2.0.pc"
+          fi
+
+          echo "PKG_CONFIG_PATH=${overlay_dir}${PKG_CONFIG_PATH:+:${PKG_CONFIG_PATH}}" >> "${GITHUB_ENV}"
+          pkg-config --modversion librsvg-2.0
+          PKG_CONFIG_PATH="${overlay_dir}${PKG_CONFIG_PATH:+:${PKG_CONFIG_PATH}}" pkg-config --variable=libdir librsvg-2.0
 
       - name: Install frontend dependencies
         working-directory: frontend
@@ -114,7 +176,34 @@ jobs:
         working-directory: frontend
         run: npm run build
 
+      - name: Resolve runtime versions
+        id: runtime_versions
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          llama_tag="$(curl -fsSL -H "Authorization: Bearer ${GITHUB_TOKEN}" https://api.github.com/repos/ggml-org/llama.cpp/releases/latest | python3 -c 'import json,sys; print(json.load(sys.stdin)["tag_name"])')"
+          whisper_tag="$(curl -fsSL -H "Authorization: Bearer ${GITHUB_TOKEN}" https://api.github.com/repos/ggerganov/whisper.cpp/releases/latest | python3 -c 'import json,sys; print(json.load(sys.stdin)["tag_name"])')"
+          kokoro_hash="$(md5sum scripts/prepare_kokoro_runtime.py scripts/verify_kokoro_runtime_archive.py | md5sum | cut -d' ' -f1)"
+          echo "llama_tag=${llama_tag}" >> "${GITHUB_OUTPUT}"
+          echo "whisper_tag=${whisper_tag}" >> "${GITHUB_OUTPUT}"
+          echo "kokoro_hash=${kokoro_hash}" >> "${GITHUB_OUTPUT}"
+          echo "Cache key: llama=${llama_tag} whisper=${whisper_tag} kokoro=${kokoro_hash}"
+
+      - name: Cache bundled runtimes
+        id: cache_runtimes
+        uses: actions/cache@v4
+        with:
+          path: |
+            src-tauri/resources/llama-runtime
+            src-tauri/resources/whisper-server
+            src-tauri/resources/whisper
+            src-tauri/resources/kokoro-runtime
+          key: runtimes-${{ runner.os }}-${{ steps.runtime_versions.outputs.llama_tag }}-${{ steps.runtime_versions.outputs.whisper_tag }}-${{ steps.runtime_versions.outputs.kokoro_hash }}
+
       - name: Prepare bundled llama.cpp runtimes
+        if: steps.cache_runtimes.outputs.cache-hit != 'true'
         shell: bash
         env:
           GITHUB_TOKEN: ${{ github.token }}
@@ -197,10 +286,8 @@ jobs:
 
           if os_key == "linux":
             targets = [
-              ("llama.cpp-cpu", ["ubuntu", "x64"], ["vulkan", "cuda", "rocm", "hip", "aclgraph", "s390x", "cudart"]),
+              ("llama.cpp-cpu", ["ubuntu", "x64"], ["vulkan", "cuda", "rocm", "hip", "openvino", "sycl", "aclgraph", "s390x", "cudart"]),
               ("llama.cpp-vulkan", ["ubuntu", "vulkan", "x64"], ["cuda", "rocm", "hip", "aclgraph", "s390x", "cudart"]),
-              ("llama.cpp-cuda", ["ubuntu", "cuda", "x64"], ["vulkan", "rocm", "hip", "aclgraph", "s390x", "cudart"]),
-              ("llama.cpp-rocm", ["ubuntu", "rocm", "x64"], ["vulkan", "cuda", "aclgraph", "s390x", "cudart"]),
             ]
             required_engines = ["llama.cpp-cpu", "llama.cpp-vulkan"]
           elif os_key == "windows":
@@ -267,6 +354,13 @@ jobs:
             shutil.copy2(binary_src, binary_dest)
             if os_key != "windows":
               binary_dest.chmod(binary_dest.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+            for so_file in extract_dir.rglob("*.so*"):
+              if so_file.is_file():
+                so_dest = engine_dir / so_file.name
+                shutil.copy2(so_file, so_dest)
+                if os_key != "windows":
+                  so_dest.chmod(so_dest.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+                print(f"[llama-runtime] bundled shared library: {so_file.name}")
             print(f"[llama-runtime] prepared {engine_id}: {binary_dest}")
             prepared[engine_id] = {
               "name": name,
@@ -288,6 +382,7 @@ jobs:
           PY
 
       - name: Prepare bundled whisper runtimes
+        if: steps.cache_runtimes.outputs.cache-hit != 'true'
         shell: bash
         env:
           GITHUB_TOKEN: ${{ github.token }}
@@ -472,6 +567,7 @@ jobs:
           PY
 
       - name: Prepare bundled Kokoro runtime archive
+        if: steps.cache_runtimes.outputs.cache-hit != 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -486,6 +582,7 @@ jobs:
           "$PY" scripts/prepare_kokoro_runtime.py
 
       - name: Verify bundled Kokoro runtime archive
+        if: steps.cache_runtimes.outputs.cache-hit != 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -500,6 +597,7 @@ jobs:
           "$PY" scripts/verify_kokoro_runtime_archive.py
 
       - name: Generate Kokoro runtime manifest
+        if: steps.cache_runtimes.outputs.cache-hit != 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -561,27 +659,93 @@ jobs:
 
       - name: Build Tauri app bundle
         working-directory: src-tauri
-        run: cargo tauri build -- --features tauri-runtime
+        shell: bash
+        env:
+          XDG_CACHE_HOME: ${{ runner.temp }}/xdg-cache
+        run: |
+          set -euo pipefail
+          mkdir -p "${XDG_CACHE_HOME}"
+          rm -rf target/release/bundle
+          case "${{ matrix.platform.os }}" in
+            ubuntu-24.04)
+              cargo tauri build --bundles deb -- --features tauri-runtime 2>&1
+              LD_LIBRARY_PATH="" cargo tauri build --bundles appimage -- --features tauri-runtime 2>&1
+              ;;
+            windows-latest)
+              cargo tauri build --bundles msi -- --features tauri-runtime
+              ;;
+            macos-latest)
+              cargo tauri build --bundles dmg -- --features tauri-runtime
+              ;;
+            *)
+              echo "Unsupported platform: ${{ matrix.platform.os }}" >&2
+              exit 1
+              ;;
+          esac
+
+      - name: Verify Linux artifacts
+        if: matrix.platform.os == 'ubuntu-24.04'
+        run: |
+          DEB=$(find src-tauri/target/release/bundle/deb -name "*.deb" | head -1)
+          APPIMAGE=$(find src-tauri/target/release/bundle/appimage -name "*.AppImage" | head -1)
+
+          [ -f "$DEB" ]      || { echo "ERROR: .deb not found";      exit 1; }
+          [ -f "$APPIMAGE" ] || { echo "ERROR: .AppImage not found"; exit 1; }
+
+          echo "deb:      $(du -h "$DEB"      | cut -f1)  $DEB"
+          echo "AppImage: $(du -h "$APPIMAGE" | cut -f1)  $APPIMAGE"
+
+          find src-tauri/target/release/bundle/appimage \
+            -type d -name "*.AppDir" -exec rm -rf {} + 2>/dev/null || true
+
+          SIZE=$(stat -c%s "$APPIMAGE")
+          [ "$SIZE" -gt 10485760 ] || { echo "ERROR: AppImage is ${SIZE} bytes — likely a partial build"; exit 1; }
 
       - name: Verify Tauri bundle output
         shell: bash
+        env:
+          PLATFORM_OS: ${{ matrix.platform.os }}
         run: |
           set -euo pipefail
           test -d src-tauri/target/release/bundle
           python - <<'PY'
+          import os
           import pathlib
+
+          platform_os = os.environ["PLATFORM_OS"]
+          expected_suffixes = {
+              "ubuntu-24.04": {".deb", ".appimage"},
+              "windows-latest": {".msi"},
+              "macos-latest": {".dmg"},
+          }.get(platform_os)
+          if expected_suffixes is None:
+              raise SystemExit(f"Unsupported platform: {platform_os}")
+
           files = [p for p in pathlib.Path("src-tauri/target/release/bundle").rglob("*") if p.is_file()]
-          if not files:
-            raise SystemExit("No Tauri bundle files were produced")
-          for path in files:
-            print(path)
+          package_files = [p for p in files if p.suffix.lower() in expected_suffixes]
+          if not package_files:
+            raise SystemExit("No final Tauri package files were produced")
+          for path in package_files:
+            print(f"{path} ({path.stat().st_size} bytes)")
+
+          produced_suffixes = {p.suffix.lower() for p in package_files}
+          missing_suffixes = expected_suffixes - produced_suffixes
+          if missing_suffixes:
+              raise SystemExit(
+                  f"Missing required bundle output for {platform_os}: "
+                  f"{sorted(missing_suffixes)}"
+              )
           PY
 
       - name: Upload Tauri bundle artifact
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.platform.name }}-v${{ steps.app_version.outputs.version }}-tauri-bundle
-          path: src-tauri/target/release/bundle/**/*
+          path: |
+            src-tauri/target/release/bundle/deb/*.deb
+            src-tauri/target/release/bundle/appimage/*.AppImage
+            src-tauri/target/release/bundle/**/*.dmg
+            src-tauri/target/release/bundle/**/*.msi
           if-no-files-found: error
 
       - name: Upload bundled runtime manifest
@@ -612,86 +776,41 @@ jobs:
           path: src-tauri/resources/kokoro-runtime/kokoro-runtime-*.zip
           if-no-files-found: error
 
-      - name: Package release bundle
-        id: package_release
-        shell: bash
-        env:
-          PLATFORM_NAME: ${{ matrix.platform.name }}
-          APP_VERSION: ${{ steps.app_version.outputs.version }}
-        run: |
-          set -euo pipefail
-          python - <<'PY'
-          import hashlib
-          import os
-          import pathlib
-          import shutil
-
-          platform_name = os.environ["PLATFORM_NAME"]
-          app_version = os.environ["APP_VERSION"]
-          github_output = pathlib.Path(os.environ["GITHUB_OUTPUT"])
-
-          out_root = pathlib.Path("release-assets")
-          out_root.mkdir(parents=True, exist_ok=True)
-          bundle_dir = out_root / f"{platform_name}-v{app_version}"
-          if bundle_dir.exists():
-              shutil.rmtree(bundle_dir)
-          bundle_dir.mkdir(parents=True, exist_ok=True)
-
-          tauri_bundle_dir = pathlib.Path("src-tauri/target/release/bundle")
-          tauri_bundle_files = [p for p in tauri_bundle_dir.rglob("*") if p.is_file()]
-          if not tauri_bundle_files:
-              raise RuntimeError(f"no Tauri bundle files found under {tauri_bundle_dir}")
-          for source in tauri_bundle_files:
-              destination = bundle_dir / "tauri-bundle" / source.relative_to(tauri_bundle_dir)
-              destination.parent.mkdir(parents=True, exist_ok=True)
-              shutil.copy2(source, destination)
-
-          llama_manifest = pathlib.Path("src-tauri/resources/llama-runtime/manifest.json")
-          if llama_manifest.is_file():
-              shutil.copy2(llama_manifest, bundle_dir / "llama-runtime-manifest.json")
-
-          whisper_manifest = pathlib.Path("src-tauri/resources/whisper-server/manifest.json")
-          if whisper_manifest.is_file():
-              shutil.copy2(whisper_manifest, bundle_dir / "whisper-runtime-manifest.json")
-
-          kokoro_manifest = pathlib.Path("src-tauri/resources/kokoro-runtime/manifest.json")
-          if kokoro_manifest.is_file():
-              shutil.copy2(kokoro_manifest, bundle_dir / "kokoro-runtime-manifest.json")
-
-          for kokoro_archive in pathlib.Path("src-tauri/resources/kokoro-runtime").glob("kokoro-runtime-*.zip"):
-              shutil.copy2(kokoro_archive, bundle_dir / kokoro_archive.name)
-
-          archive_base = out_root / f"{platform_name}-v{app_version}"
-          archive_zip = pathlib.Path(
-              shutil.make_archive(str(archive_base), "zip", root_dir=bundle_dir.parent, base_dir=bundle_dir.name)
-          )
-
-          digest = hashlib.sha256(archive_zip.read_bytes()).hexdigest()
-          checksum_file = archive_zip.with_suffix(".zip.sha256")
-          checksum_file.write_text(f"{digest}  {archive_zip.name}\n", encoding="utf-8")
-
-          with github_output.open("a", encoding="utf-8") as f:
-              f.write(f"zip={archive_zip.as_posix()}\n")
-              f.write(f"sha256={checksum_file.as_posix()}\n")
-          PY
-
       - name: Upload release bundle artifact
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.platform.name }}-v${{ steps.app_version.outputs.version }}-release-assets
           path: |
-            ${{ steps.package_release.outputs.zip }}
-            ${{ steps.package_release.outputs.sha256 }}
+            src-tauri/target/release/bundle/deb/*.deb
+            src-tauri/target/release/bundle/appimage/*.AppImage
+            src-tauri/target/release/bundle/**/*.dmg
+            src-tauri/target/release/bundle/**/*.msi
           if-no-files-found: error
 
   publish-release:
     name: Publish Release Assets
-    if: startsWith(github.ref, 'refs/tags/')
+    if: startsWith(github.ref, 'refs/tags/') || startsWith(github.ref, 'refs/heads/release/')
     needs: build
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Read app version
+        id: app_version
+        shell: bash
+        run: |
+          set -euo pipefail
+          if command -v python3 >/dev/null 2>&1; then
+            PY=python3
+          elif command -v python >/dev/null 2>&1; then
+            PY=python
+          fi
+          version="$("$PY" -c 'import pathlib,re,sys; text=pathlib.Path("src-tauri/Cargo.toml").read_text(encoding="utf-8"); section=re.search(r"(?ms)^\[package\]\s*(.*?)(?=^\[|\Z)", text); m=re.search(r"(?m)^\s*version\s*=\s*\"([^\"]+)\"\s*$", section.group(1) if section else ""); print(m.group(1) if m else (sys.stderr.write("Could not find [package].version in src-tauri/Cargo.toml\\n") or sys.exit(1)))')"
+          echo "version=${version}" >> "${GITHUB_OUTPUT}"
+
       - name: Download release bundle artifacts
         uses: actions/download-artifact@v4
         with:
@@ -702,8 +821,11 @@ jobs:
       - name: Publish GitHub Release assets
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: v${{ steps.app_version.outputs.version }}
           files: |
-            release-assets/*.zip
-            release-assets/*.sha256
+            release-assets/**/*.deb
+            release-assets/**/*.AppImage
+            release-assets/**/*.dmg
+            release-assets/**/*.msi
           fail_on_unmatched_files: true
           generate_release_notes: true

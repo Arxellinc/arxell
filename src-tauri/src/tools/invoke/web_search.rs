@@ -11,7 +11,7 @@ pub fn register(registry: &mut InvokeRegistry) {
     registry.register("web", &["search"], invoke_search);
 }
 
-fn invoke_search(state: &TauriBridgeState, payload: Value) -> ToolInvokeFuture {
+fn invoke_search(state: &TauriBridgeState, payload: Value) -> ToolInvokeFuture<'_> {
     let web_search = state.web_search.clone();
     Box::pin(async move {
         let req: WebSearchRequest = decode_payload(payload)?;

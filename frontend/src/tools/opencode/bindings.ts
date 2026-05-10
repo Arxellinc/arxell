@@ -15,6 +15,12 @@ export function handleOpenCodeClick(
       deps.renderAndBind();
       return true;
     }
+    if (actionValue === "install-now") {
+      void import("./actions").then(({ installNow }) => {
+        void installNow(state, deps);
+      });
+      return true;
+    }
     if (actionValue === "recheck-install") {
       void import("./actions").then(({ recheckAfterInstall }) => {
         void recheckAfterInstall(state, deps);

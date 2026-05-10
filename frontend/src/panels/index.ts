@@ -4,6 +4,7 @@ import { bindAvatarPanel, renderAvatarActions, renderAvatarBody } from "./avatar
 import { bindChatPanel, renderChatActions, renderChatBody } from "./chatPanel";
 import { renderDevicesActions, renderDevicesBody } from "./devicesPanel";
 import { bindHistoryPanel, renderHistoryActions, renderHistoryBody } from "./historyPanel";
+import { bindImagesPanel, renderImagesActions, renderImagesBody } from "./imagesPanel";
 import { bindLlamaCppPanel, renderLlamaCppActions, renderLlamaCppBody } from "./llamaCppPanel";
 import {
   bindModelManagerPanel,
@@ -103,7 +104,7 @@ export function getPanelDefinition(
       title: "llama.cpp",
       icon: APP_ICON.sidebar.llamaCpp,
       renderBody: () => renderLlamaCppBody(state),
-      renderActions: renderLlamaCppActions
+      renderActions: () => renderLlamaCppActions(state)
     };
   }
 
@@ -113,6 +114,15 @@ export function getPanelDefinition(
       icon: APP_ICON.sidebar.modelManager,
       renderBody: () => renderModelManagerBody(state),
       renderActions: () => renderModelManagerActions(state)
+    };
+  }
+
+  if (tab === "images") {
+    return {
+      title: "Images",
+      icon: APP_ICON.sidebar.images,
+      renderBody: () => renderImagesBody(state),
+      renderActions: () => renderImagesActions(state)
     };
   }
 
@@ -196,6 +206,12 @@ export function attachPrimaryPanelInteractions(
         await bindings.onToggleAvatar();
       };
     }
+    const chatAutoModeBtn = document.querySelector<HTMLButtonElement>("#chatAutoModeBtn");
+    if (chatAutoModeBtn) {
+      chatAutoModeBtn.onclick = async () => {
+        await bindings.onToggleAutoMode();
+      };
+    }
     const chatSpeakBtn = document.querySelector<HTMLButtonElement>("#chatSpeakBtn");
     if (chatSpeakBtn) {
       chatSpeakBtn.onclick = async () => {
@@ -259,28 +275,6 @@ export function attachPrimaryPanelInteractions(
         await bindings.onTtsStart();
       };
     }
-    const downloadBtn = document.querySelector<HTMLButtonElement>("#ttsDownloadModelBtn");
-    if (downloadBtn) {
-      downloadBtn.onclick = async () => {
-        await bindings.onTtsDownloadModel();
-      };
-    }
-    // Bind Kokoro bundle download buttons (rendered dynamically when Kokoro is selected and model not ready)
-    const kokoroBundleBtns = document.querySelectorAll<HTMLButtonElement>(".kokoro-bundle-btn");
-    kokoroBundleBtns.forEach((btn) => {
-      btn.onclick = async () => {
-        const url = btn.dataset.url;
-        if (url) {
-          await bindings.onTtsDownloadModelWithUrl(url);
-        }
-      };
-    });
-    const setupModalCloseBtns = document.querySelectorAll<HTMLButtonElement>("[data-tts-action=\"close-setup-modal\"]");
-    setupModalCloseBtns.forEach((btn) => {
-      btn.onclick = () => {
-        bindings.onTtsSetSetupModalOpen(false);
-      };
-    });
     const refreshBtn = document.querySelector<HTMLButtonElement>("#ttsRefreshBtn");
     if (refreshBtn) {
       refreshBtn.onclick = async () => {
@@ -297,18 +291,10 @@ export function attachPrimaryPanelInteractions(
     if (engineSelect) {
       engineSelect.onchange = async () => {
         const engine = engineSelect.value;
-        if (engine !== "kokoro" && engine !== "piper" && engine !== "matcha" && engine !== "kitten" && engine !== "pocket") {
+        if (engine !== "kokoro" && engine !== "pocket") {
           return;
         }
         await bindings.onTtsSetEngine(engine);
-      };
-    }
-    const bundleSelect = document.querySelector<HTMLSelectElement>("#ttsBundleSelect");
-    if (bundleSelect) {
-      bundleSelect.onchange = async () => {
-        const modelPath = bundleSelect.value.trim();
-        if (!modelPath) return;
-        await bindings.onTtsSetModelBundle(modelPath);
       };
     }
     const speedInput = document.querySelector<HTMLInputElement>("#ttsSpeedInput");
@@ -329,12 +315,6 @@ export function attachPrimaryPanelInteractions(
     if (browseModelBtn) {
       browseModelBtn.onclick = async () => {
         await bindings.onTtsBrowseModelPath();
-      };
-    }
-    const browseSecondaryBtn = document.querySelector<HTMLButtonElement>("#ttsSecondaryBrowseBtn");
-    if (browseSecondaryBtn) {
-      browseSecondaryBtn.onclick = async () => {
-        await bindings.onTtsBrowseSecondaryPath();
       };
     }
     const speakBtn = document.querySelector<HTMLButtonElement>("#ttsSpeakBtn");
@@ -365,6 +345,12 @@ export function attachPrimaryPanelInteractions(
 
   if (tab === "model_manager") {
     bindModelManagerPanel(bindings);
+    return;
+  }
+
+  if (tab === "images") {
+    bindImagesPanel(bindings);
+    return;
   }
 
   if (tab === "stt" || tab === "vad") {
@@ -379,17 +365,13 @@ export function attachPrimaryPanelInteractions(
       requestMicBtn.onclick = async () => {
         await bindings.onRequestMicrophoneAccess();
         await bindings.onDevicesRefresh();
-        const renderAndBind = (window as any).__renderAndBind;
-        if (renderAndBind) {
-          renderAndBind();
-        }
       };
     }
     const backendSelect = document.querySelector<HTMLSelectElement>("#sttBackendSelect");
     if (backendSelect) {
       backendSelect.onchange = async () => {
         const next = backendSelect.value;
-        if (next !== "whisper_cpp" && next !== "sherpa_onnx") return;
+        if (next !== "whisper_cpp") return;
         await bindings.onSetSttBackend(next);
       };
     }
@@ -577,6 +559,18 @@ export function attachPrimaryPanelInteractions(
     if (showBottomTtsLatencyToggle) {
       showBottomTtsLatencyToggle.onchange = async () => {
         await bindings.onSetShowBottomTtsLatency(showBottomTtsLatencyToggle.checked);
+      };
+    }
+    const enableNotificationChimeToggle = document.querySelector<HTMLInputElement>("#settingsEnableNotificationChimeToggle");
+    if (enableNotificationChimeToggle) {
+      enableNotificationChimeToggle.onchange = async () => {
+        await bindings.onSetEnableNotificationChime(enableNotificationChimeToggle.checked);
+      };
+    }
+    const enableChatQuestionChimeToggle = document.querySelector<HTMLInputElement>("#settingsEnableChatQuestionChimeToggle");
+    if (enableChatQuestionChimeToggle) {
+      enableChatQuestionChimeToggle.onchange = async () => {
+        await bindings.onSetEnableChatQuestionChime(enableChatQuestionChimeToggle.checked);
       };
     }
     return;

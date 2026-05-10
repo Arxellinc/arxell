@@ -48,8 +48,6 @@ import type {
   DevicesProbeMicrophoneResponse,
   TtsListVoicesRequest,
   TtsListVoicesResponse,
-  TtsDownloadModelRequest,
-  TtsDownloadModelResponse,
   TtsSelfTestRequest,
   TtsSelfTestResponse,
   TtsSettingsGetRequest,
@@ -58,6 +56,7 @@ import type {
   TtsSettingsSetResponse,
   TtsSpeakRequest,
   TtsSpeakResponse,
+  TtsSpeakStreamResponse,
   TtsStatusRequest,
   TtsStatusResponse,
   TtsStopRequest,
@@ -86,8 +85,24 @@ import type {
   LlamaRuntimeStatusResponse,
   LlamaRuntimeStopRequest,
   LlamaRuntimeStopResponse,
+  ImageGenerationGenerateRequest,
+  ImageGenerationGenerateResponse,
+  ImageGenerationCancelGenerateRequest,
+  ImageGenerationCancelGenerateResponse,
+  ImageGenerationCancelInstallRequest,
+  ImageGenerationCancelInstallResponse,
+  ImageGenerationInstallRequest,
+  ImageGenerationInstallResponse,
+  ImageGenerationRemovePackagesRequest,
+  ImageGenerationRemovePackagesResponse,
+  ImageGenerationSetDisabledRequest,
+  ImageGenerationSetDisabledResponse,
+  ImageGenerationStatusRequest,
+  ImageGenerationStatusResponse,
   ModelManagerDeleteInstalledRequest,
   ModelManagerDeleteInstalledResponse,
+  ModelManagerCancelDownloadRequest,
+  ModelManagerCancelDownloadResponse,
   ModelManagerDownloadHfRequest,
   ModelManagerDownloadHfResponse,
   ModelManagerListCatalogCsvRequest,
@@ -229,6 +244,9 @@ export interface ChatIpcClient {
   modelManagerDownloadHf(
     request: ModelManagerDownloadHfRequest
   ): Promise<ModelManagerDownloadHfResponse>;
+  modelManagerCancelDownload(
+    request: ModelManagerCancelDownloadRequest
+  ): Promise<ModelManagerCancelDownloadResponse>;
   modelManagerDeleteInstalled(
     request: ModelManagerDeleteInstalledRequest
   ): Promise<ModelManagerDeleteInstalledResponse>;
@@ -238,17 +256,38 @@ export interface ChatIpcClient {
   modelManagerRefreshUnslothCatalog(
     request: ModelManagerRefreshUnslothCatalogRequest
   ): Promise<ModelManagerRefreshUnslothCatalogResponse>;
+  imageGenerationStatus(
+    request: ImageGenerationStatusRequest
+  ): Promise<ImageGenerationStatusResponse>;
+  imageGenerationInstall(
+    request: ImageGenerationInstallRequest
+  ): Promise<ImageGenerationInstallResponse>;
+  imageGenerationCancelInstall(
+    request: ImageGenerationCancelInstallRequest
+  ): Promise<ImageGenerationCancelInstallResponse>;
+  imageGenerationSetDisabled(
+    request: ImageGenerationSetDisabledRequest
+  ): Promise<ImageGenerationSetDisabledResponse>;
+  imageGenerationRemovePackages(
+    request: ImageGenerationRemovePackagesRequest
+  ): Promise<ImageGenerationRemovePackagesResponse>;
+  imageGenerationGenerate(
+    request: ImageGenerationGenerateRequest
+  ): Promise<ImageGenerationGenerateResponse>;
+  imageGenerationCancelGenerate(
+    request: ImageGenerationCancelGenerateRequest
+  ): Promise<ImageGenerationCancelGenerateResponse>;
   probeMicrophoneDevice(
     request: DevicesProbeMicrophoneRequest
   ): Promise<DevicesProbeMicrophoneResponse>;
   ttsStatus(request: TtsStatusRequest): Promise<TtsStatusResponse>;
   ttsListVoices(request: TtsListVoicesRequest): Promise<TtsListVoicesResponse>;
   ttsSpeak(request: TtsSpeakRequest): Promise<TtsSpeakResponse>;
+  ttsSpeakStream(request: TtsSpeakRequest): Promise<TtsSpeakStreamResponse>;
   ttsStop(request: TtsStopRequest): Promise<TtsStopResponse>;
   ttsSelfTest(request: TtsSelfTestRequest): Promise<TtsSelfTestResponse>;
   ttsSettingsGet(request: TtsSettingsGetRequest): Promise<TtsSettingsGetResponse>;
   ttsSettingsSet(request: TtsSettingsSetRequest): Promise<TtsSettingsSetResponse>;
-  ttsDownloadModel(request: TtsDownloadModelRequest): Promise<TtsDownloadModelResponse>;
   voiceListVadMethods(request: VoiceListVadMethodsRequest): Promise<VoiceListVadMethodsResponse>;
   voiceGetVadSettings(request: VoiceGetVadSettingsRequest): Promise<VoiceGetVadSettingsResponse>;
   voiceSetVadMethod(request: VoiceSetVadMethodRequest): Promise<VoiceRuntimeSnapshotResponse>;
@@ -302,7 +341,6 @@ function toPluginCapabilityInvokeResponse(
 
 class TauriChatIpcClient implements ChatIpcClient {
   private listeners: Array<(event: AppEvent) => void> = [];
-  private unlisten: null | (() => void) = null;
 
   constructor(
     private readonly invokeFn: <T>(command: string, args?: Record<string, unknown>) => Promise<T>,
@@ -313,7 +351,7 @@ class TauriChatIpcClient implements ChatIpcClient {
   ) {}
 
   async initialize(): Promise<void> {
-    this.unlisten = await this.listenFn("app:event", (payload) => {
+    await this.listenFn("app:event", (payload) => {
       const event = asAppEvent(payload);
       if (!event) return;
       for (const listener of this.listeners) {
@@ -483,19 +521,6 @@ class TauriChatIpcClient implements ChatIpcClient {
     }).then((response) => toPluginCapabilityInvokeResponse(response));
   }
 
-  private async invokeToolTyped<TResponse>(
-    request: Omit<ToolInvokeRequest, "mode">
-  ): Promise<TResponse> {
-    const response = await this.toolInvoke({
-      ...request,
-      mode: "sandbox"
-    });
-    if (!response.ok) {
-      throw new Error(response.error || `Tool invoke failed: ${request.toolId}.${request.action}`);
-    }
-    return response.data as unknown as TResponse;
-  }
-
   exportWorkspaceTools(
     request: WorkspaceToolsExportRequest
   ): Promise<WorkspaceToolsExportResponse> {
@@ -600,6 +625,14 @@ class TauriChatIpcClient implements ChatIpcClient {
     });
   }
 
+  modelManagerCancelDownload(
+    request: ModelManagerCancelDownloadRequest
+  ): Promise<ModelManagerCancelDownloadResponse> {
+    return this.invokeFn<ModelManagerCancelDownloadResponse>("cmd_model_manager_cancel_download", {
+      request
+    });
+  }
+
   modelManagerDeleteInstalled(
     request: ModelManagerDeleteInstalledRequest
   ): Promise<ModelManagerDeleteInstalledResponse> {
@@ -625,6 +658,48 @@ class TauriChatIpcClient implements ChatIpcClient {
     );
   }
 
+  imageGenerationStatus(
+    request: ImageGenerationStatusRequest
+  ): Promise<ImageGenerationStatusResponse> {
+    return this.invokeFn<ImageGenerationStatusResponse>("cmd_image_generation_status", { request });
+  }
+
+  imageGenerationInstall(
+    request: ImageGenerationInstallRequest
+  ): Promise<ImageGenerationInstallResponse> {
+    return this.invokeFn<ImageGenerationInstallResponse>("cmd_image_generation_install", { request });
+  }
+
+  imageGenerationCancelInstall(
+    request: ImageGenerationCancelInstallRequest
+  ): Promise<ImageGenerationCancelInstallResponse> {
+    return this.invokeFn<ImageGenerationCancelInstallResponse>("cmd_image_generation_cancel_install", { request });
+  }
+
+  imageGenerationSetDisabled(
+    request: ImageGenerationSetDisabledRequest
+  ): Promise<ImageGenerationSetDisabledResponse> {
+    return this.invokeFn<ImageGenerationSetDisabledResponse>("cmd_image_generation_set_disabled", { request });
+  }
+
+  imageGenerationRemovePackages(
+    request: ImageGenerationRemovePackagesRequest
+  ): Promise<ImageGenerationRemovePackagesResponse> {
+    return this.invokeFn<ImageGenerationRemovePackagesResponse>("cmd_image_generation_remove_packages", { request });
+  }
+
+  imageGenerationGenerate(
+    request: ImageGenerationGenerateRequest
+  ): Promise<ImageGenerationGenerateResponse> {
+    return this.invokeFn<ImageGenerationGenerateResponse>("cmd_image_generation_generate", { request });
+  }
+
+  imageGenerationCancelGenerate(
+    request: ImageGenerationCancelGenerateRequest
+  ): Promise<ImageGenerationCancelGenerateResponse> {
+    return this.invokeFn<ImageGenerationCancelGenerateResponse>("cmd_image_generation_cancel_generate", { request });
+  }
+
   probeMicrophoneDevice(
     request: DevicesProbeMicrophoneRequest
   ): Promise<DevicesProbeMicrophoneResponse> {
@@ -645,6 +720,10 @@ class TauriChatIpcClient implements ChatIpcClient {
     return this.invokeFn<TtsSpeakResponse>("cmd_tts_speak", { request });
   }
 
+  ttsSpeakStream(request: TtsSpeakRequest): Promise<TtsSpeakStreamResponse> {
+    return this.invokeFn<TtsSpeakStreamResponse>("cmd_tts_speak_stream", { request });
+  }
+
   ttsStop(request: TtsStopRequest): Promise<TtsStopResponse> {
     return this.invokeFn<TtsStopResponse>("cmd_tts_stop", { request });
   }
@@ -661,9 +740,6 @@ class TauriChatIpcClient implements ChatIpcClient {
     return this.invokeFn<TtsSettingsSetResponse>("cmd_tts_settings_set", { request });
   }
 
-  ttsDownloadModel(request: TtsDownloadModelRequest): Promise<TtsDownloadModelResponse> {
-    return this.invokeFn<TtsDownloadModelResponse>("cmd_tts_download_model", { request });
-  }
 
   voiceListVadMethods(request: VoiceListVadMethodsRequest): Promise<VoiceListVadMethodsResponse> {
     return this.invokeFn<VoiceListVadMethodsResponse>("cmd_voice_list_vad_methods", { request });
@@ -727,6 +803,30 @@ class TauriChatIpcClient implements ChatIpcClient {
 export class MockChatIpcClient implements ChatIpcClient {
   private listeners: Array<(event: AppEvent) => void> = [];
   private readonly flowRuns: FlowListRunsResponse["runs"] = [];
+  private mockImageStatus: ImageGenerationStatusResponse = {
+    correlationId: "mock-image-status",
+      package: {
+        id: "flux-1-schnell-gguf-q4",
+        name: "FLUX.1 Schnell GGUF Q4_0",
+        repoId: "leejet/FLUX.1-schnell-gguf",
+        license: "Apache-2.0",
+        sourceUrl: "https://huggingface.co/leejet/FLUX.1-schnell-gguf",
+        upstreamUrl: "https://huggingface.co/black-forest-labs/FLUX.1-schnell",
+        precisionLabel: "GGUF Q4_0",
+        coreModelBytes: 6400000000,
+        auxiliaryBytes: 5100000000,
+        totalInstallBytes: 11500000000,
+        recommendedSteps: 4,
+        recommendedGuidance: 1
+      },
+    installState: "not_installed",
+    runtimeState: "not_ready",
+    disabled: false,
+    installedPath: null,
+    message: "Mock runtime: package is not installed.",
+    requiredPathsPresent: false,
+    generationReady: false
+  };
   private readonly tools = new Map<string, WorkspaceToolRecord>(
     getAllToolManifests().map((manifest) => [
       manifest.id,
@@ -748,34 +848,26 @@ export class MockChatIpcClient implements ChatIpcClient {
   private readonly apiConnections = new Map<string, ApiConnectionRecord>();
   private readonly apiConnectionSecrets = new Map<string, string>();
   private mockTts: {
-    engine: "kokoro" | "piper" | "matcha" | "kitten" | "pocket";
+    engine: "kokoro" | "pocket";
     voice: string;
     speed: number;
     modelPath: string;
-    secondaryPath: string;
-    voicesPath: string;
-    tokensPath: string;
-    dataDir: string;
   } = {
     engine: "kokoro",
     voice: "af_heart",
     speed: 1,
-    modelPath: "",
-    secondaryPath: "",
-    voicesPath: "",
-    tokensPath: "",
-    dataDir: ""
+    modelPath: ""
   };
 
-  private normalizeMockTtsEngine(value: string | undefined | null): "kokoro" | "piper" | "matcha" | "kitten" | "pocket" {
+  private normalizeMockTtsEngine(value: string | undefined | null): "kokoro" | "pocket" {
     const normalized = (value || "").trim().toLowerCase();
-    if (normalized === "piper" || normalized === "matcha" || normalized === "kitten" || normalized === "pocket") {
+    if (normalized === "pocket") {
       return normalized;
     }
     return "kokoro";
   }
 
-  private mockVoicesForEngine(engine: "kokoro" | "piper" | "matcha" | "kitten" | "pocket"): string[] {
+  private mockVoicesForEngine(engine: "kokoro" | "pocket"): string[] {
     return engine === "kokoro" ? ["af_heart"] : ["speaker_0"];
   }
 
@@ -1765,6 +1857,7 @@ export class MockChatIpcClient implements ChatIpcClient {
       correlationId: request.correlationId,
       state: "idle",
       activeEngineId: null,
+      activeModelPath: null,
       endpoint: null,
       pid: null,
       engines: [
@@ -1890,6 +1983,16 @@ export class MockChatIpcClient implements ChatIpcClient {
     };
   }
 
+  async modelManagerCancelDownload(
+    request: ModelManagerCancelDownloadRequest
+  ): Promise<ModelManagerCancelDownloadResponse> {
+    return {
+      correlationId: request.correlationId,
+      targetCorrelationId: request.targetCorrelationId,
+      cancelled: true
+    };
+  }
+
   async modelManagerDeleteInstalled(
     request: ModelManagerDeleteInstalledRequest
   ): Promise<ModelManagerDeleteInstalledResponse> {
@@ -1918,6 +2021,134 @@ export class MockChatIpcClient implements ChatIpcClient {
       rows: [],
       newCount: 0
     };
+  }
+
+  async imageGenerationStatus(
+    request: ImageGenerationStatusRequest
+  ): Promise<ImageGenerationStatusResponse> {
+    return {
+      ...this.mockImageStatus,
+      correlationId: request.correlationId
+    };
+  }
+
+  async imageGenerationInstall(
+    request: ImageGenerationInstallRequest
+  ): Promise<ImageGenerationInstallResponse> {
+    this.mockImageStatus = {
+      ...this.mockImageStatus,
+      installState: "installed",
+      runtimeState: "ready",
+      disabled: false,
+      installedPath: "/tmp/arxell/models/flux/schnell/q4_0",
+      message:
+        "Mock runtime: FLUX.1 Schnell GGUF Q4_0 installed and ready.",
+      requiredPathsPresent: true,
+      generationReady: true
+    };
+    this.emit({
+      timestampMs: Date.now(),
+      correlationId: request.correlationId,
+      subsystem: "service",
+      action: "image.generation.install",
+      stage: "complete",
+      severity: "info",
+      payload: { packageId: "flux-1-schnell-gguf-q4", phase: "complete" }
+    });
+    return {
+      correlationId: request.correlationId,
+      installedPath: "/tmp/arxell/models/flux/schnell/q4_0",
+      enabled: true
+    };
+  }
+
+  async imageGenerationCancelInstall(
+    request: ImageGenerationCancelInstallRequest
+  ): Promise<ImageGenerationCancelInstallResponse> {
+    this.mockImageStatus = {
+      ...this.mockImageStatus,
+      message: "Mock runtime: image package install cancelled."
+    };
+    this.emit({
+      timestampMs: Date.now(),
+      correlationId: request.targetCorrelationId,
+      subsystem: "service",
+      action: "image.generation.install",
+      stage: "error",
+      severity: "warn",
+      payload: { phase: "download", message: "image package install cancelled by user" }
+    });
+    return {
+      correlationId: request.correlationId,
+      targetCorrelationId: request.targetCorrelationId,
+      cancelled: true
+    };
+  }
+
+  async imageGenerationSetDisabled(
+    request: ImageGenerationSetDisabledRequest
+  ): Promise<ImageGenerationSetDisabledResponse> {
+    this.mockImageStatus = {
+      ...this.mockImageStatus,
+      disabled: request.disabled,
+      message: request.disabled
+        ? "Mock runtime: image generation disabled."
+        : this.mockImageStatus.installState === "installed"
+          ? "Mock runtime: package installed and enabled."
+          : "Mock runtime: package is not installed."
+    };
+    return {
+      correlationId: request.correlationId,
+      disabled: request.disabled
+    };
+  }
+
+  async imageGenerationRemovePackages(
+    request: ImageGenerationRemovePackagesRequest
+  ): Promise<ImageGenerationRemovePackagesResponse> {
+    this.mockImageStatus = {
+      ...this.mockImageStatus,
+      installState: "not_installed",
+      runtimeState: "not_ready",
+      disabled: true,
+      installedPath: null,
+      message: "Mock runtime: package removed.",
+      requiredPathsPresent: false,
+      generationReady: false
+    };
+    return {
+      correlationId: request.correlationId,
+      removed: true
+    };
+  }
+
+  async imageGenerationGenerate(
+    request: ImageGenerationGenerateRequest
+  ): Promise<ImageGenerationGenerateResponse> {
+    const base64 =
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wn7L0YAAAAASUVORK5CYII=";
+    const stamp = Date.now();
+    return {
+      correlationId: request.correlationId,
+      asset: {
+        id: `mock-image-${stamp}`,
+        kind: "image",
+        mime: "image/png",
+        filename: `flux-${stamp}.png`,
+        path: `/mock/flux-${stamp}.png`,
+        width: request.width,
+        height: request.height,
+        sizeBytes: Math.ceil((base64.length * 3) / 4),
+        createdAt: stamp,
+        dataBase64: base64
+      }
+    };
+  }
+
+  async imageGenerationCancelGenerate(
+    request: ImageGenerationCancelGenerateRequest
+  ): Promise<ImageGenerationCancelGenerateResponse> {
+    return { correlationId: request.correlationId, cancelled: true };
   }
 
   async probeMicrophoneDevice(
@@ -1963,19 +2194,11 @@ export class MockChatIpcClient implements ChatIpcClient {
     const fallbackVoice = voices[0] ?? (this.mockTts.engine === "kokoro" ? "af_heart" : "speaker_0");
     return {
       correlationId: request.correlationId,
-      engineId: `sherpa-${this.mockTts.engine}`,
+      engineId: this.mockTts.engine,
       engine: this.mockTts.engine,
       ready: false,
       message: "Mock runtime: TTS unavailable",
       modelPath: this.mockTts.modelPath,
-      secondaryPath: this.mockTts.secondaryPath,
-      voicesPath: this.mockTts.engine === "piper" ? "" : this.mockTts.voicesPath,
-      tokensPath: this.mockTts.tokensPath,
-      dataDir: this.mockTts.dataDir,
-      pythonPath: "",
-      scriptPath: "",
-      runtimeArchivePresent: false,
-      availableModelPaths: this.mockTts.modelPath ? [this.mockTts.modelPath] : [],
       availableVoices: voices,
       selectedVoice: voices.includes(this.mockTts.voice) ? this.mockTts.voice : fallbackVoice,
       speed: this.mockTts.speed,
@@ -2015,10 +2238,10 @@ export class MockChatIpcClient implements ChatIpcClient {
         defaultConfig: { threshold: 0.0012, minSpeechMs: 120, minSilenceMs: 240, hangoverMs: 80 }
       },
       {
-        id: "sherpa-silero",
-        displayName: "Sherpa Silero",
+        id: "onnx-silero",
+        displayName: "ONNX Silero",
         status: "stable" as const,
-        description: "Production-compatible endpointing adapter.",
+        description: "Direct ONNX Runtime Silero VAD with production-compatible endpointing.",
         capabilities: {
           supportsEndpointing: true,
           supportsInterruptionSignals: true,
@@ -2030,15 +2253,15 @@ export class MockChatIpcClient implements ChatIpcClient {
           supportsSpeculativeOnset: false
         },
         defaultConfig: {
+          modelPath: null,
+          probabilityThreshold: 0.35,
           baseThreshold: 0.0012,
           startFrames: 2,
           endFrames: 8,
           dynamicMultiplier: 2.4,
           noiseAdaptationAlpha: 0.03,
-          preSpeechMs: 200,
           minUtteranceMs: 200,
-          maxUtteranceS: 30,
-          forceFlushS: 3
+          maxUtteranceS: 30
         }
       },
       {
@@ -2086,7 +2309,7 @@ export class MockChatIpcClient implements ChatIpcClient {
     return {
       correlationId: request.correlationId,
       methods,
-      selectedVadMethod: "sherpa-silero",
+      selectedVadMethod: "onnx-silero",
       state: "idle"
     };
   }
@@ -2099,22 +2322,22 @@ export class MockChatIpcClient implements ChatIpcClient {
       state: "idle",
       settings: {
         version: 1,
-        selectedVadMethod: "sherpa-silero",
+        selectedVadMethod: "onnx-silero",
         shadowVadMethod: "microturn-v1",
         duplexMode: "single_turn",
         globalVoiceConfig: { sampleRateHz: 16000 },
         speculation: { enabled: false, maxPrefixMs: 800, cancelOnUserContinuation: true },
         vadMethods: {
-          "sherpa-silero": {
+          "onnx-silero": {
+            modelPath: null,
+            probabilityThreshold: 0.35,
             baseThreshold: 0.0012,
             startFrames: 2,
             endFrames: 8,
             dynamicMultiplier: 2.4,
             noiseAdaptationAlpha: 0.03,
-            preSpeechMs: 200,
             minUtteranceMs: 200,
-            maxUtteranceS: 30,
-            forceFlushS: 3
+            maxUtteranceS: 30
           }
         }
       }
@@ -2152,14 +2375,14 @@ export class MockChatIpcClient implements ChatIpcClient {
   ): Promise<VoiceRuntimeSnapshotResponse> {
     return {
       correlationId: request.correlationId,
-      snapshot: this.mockVoiceSnapshot("running_single", "sherpa-silero", "mock-voice")
+      snapshot: this.mockVoiceSnapshot("running_single", "onnx-silero", "mock-voice")
     };
   }
 
   async voiceStopSession(request: VoiceStopSessionRequest): Promise<VoiceRuntimeSnapshotResponse> {
     return {
       correlationId: request.correlationId,
-      snapshot: this.mockVoiceSnapshot("idle", "sherpa-silero")
+      snapshot: this.mockVoiceSnapshot("idle", "onnx-silero")
     };
   }
 
@@ -2178,7 +2401,7 @@ export class MockChatIpcClient implements ChatIpcClient {
     return {
       correlationId: request.correlationId,
       snapshot: {
-        ...this.mockVoiceSnapshot("idle", "sherpa-silero"),
+        ...this.mockVoiceSnapshot("idle", "onnx-silero"),
         shadowVadMethodId: request.methodId ?? null
       }
     };
@@ -2190,7 +2413,7 @@ export class MockChatIpcClient implements ChatIpcClient {
     return {
       correlationId: request.correlationId,
       snapshot: {
-        ...this.mockVoiceSnapshot("running_dual", "sherpa-silero", "mock-voice"),
+        ...this.mockVoiceSnapshot("running_dual", "onnx-silero", "mock-voice"),
         shadowVadMethodId: "microturn-v1"
       }
     };
@@ -2201,7 +2424,7 @@ export class MockChatIpcClient implements ChatIpcClient {
   ): Promise<VoiceRuntimeSnapshotResponse> {
     return {
       correlationId: request.correlationId,
-      snapshot: this.mockVoiceSnapshot("running_single", "sherpa-silero", "mock-voice")
+      snapshot: this.mockVoiceSnapshot("running_single", "onnx-silero", "mock-voice")
     };
   }
 
@@ -2210,7 +2433,7 @@ export class MockChatIpcClient implements ChatIpcClient {
   ): Promise<VoiceRuntimeSnapshotResponse> {
     return {
       correlationId: request.correlationId,
-      snapshot: { ...this.mockVoiceSnapshot("idle", "sherpa-silero"), duplexMode: request.duplexMode }
+      snapshot: { ...this.mockVoiceSnapshot("idle", "onnx-silero"), duplexMode: request.duplexMode }
     };
   }
 
@@ -2219,7 +2442,7 @@ export class MockChatIpcClient implements ChatIpcClient {
   ): Promise<VoiceRuntimeSnapshotResponse> {
     return {
       correlationId: request.correlationId,
-      snapshot: this.mockVoiceSnapshot("idle", "sherpa-silero")
+      snapshot: this.mockVoiceSnapshot("idle", "onnx-silero")
     };
   }
 
@@ -2247,6 +2470,16 @@ export class MockChatIpcClient implements ChatIpcClient {
     throw new Error("Mock runtime does not synthesize TTS audio.");
   }
 
+  async ttsSpeakStream(request: TtsSpeakRequest): Promise<TtsSpeakStreamResponse> {
+    return {
+      correlationId: request.correlationId,
+      accepted: false,
+      engineId: this.mockTts.engine,
+      voice: this.mockTts.voice,
+      speed: this.mockTts.speed
+    };
+  }
+
   async ttsStop(request: TtsStopRequest): Promise<TtsStopResponse> {
     return {
       correlationId: request.correlationId,
@@ -2271,16 +2504,11 @@ export class MockChatIpcClient implements ChatIpcClient {
     const voice = voices.includes(this.mockTts.voice) ? this.mockTts.voice : fallbackVoice;
     return {
       correlationId: request.correlationId,
-      engineId: `sherpa-${this.mockTts.engine}`,
+      engineId: this.mockTts.engine,
       engine: this.mockTts.engine,
       voice,
       speed: this.mockTts.speed,
-      modelPath: this.mockTts.modelPath,
-      secondaryPath: this.mockTts.secondaryPath,
-      voicesPath: this.mockTts.engine === "piper" ? "" : this.mockTts.voicesPath,
-      tokensPath: this.mockTts.tokensPath,
-      dataDir: this.mockTts.dataDir,
-      pythonPath: ""
+      modelPath: this.mockTts.modelPath
     };
   }
 
@@ -2290,10 +2518,6 @@ export class MockChatIpcClient implements ChatIpcClient {
     if (engineChanged) {
       this.mockTts.engine = nextEngine;
       this.mockTts.modelPath = "";
-      this.mockTts.secondaryPath = "";
-      this.mockTts.voicesPath = "";
-      this.mockTts.tokensPath = "";
-      this.mockTts.dataDir = "";
       this.mockTts.speed = 1;
       this.mockTts.voice = this.mockVoicesForEngine(nextEngine)[0] ?? (nextEngine === "kokoro" ? "af_heart" : "speaker_0");
     }
@@ -2309,28 +2533,6 @@ export class MockChatIpcClient implements ChatIpcClient {
     if (typeof request.modelPath === "string") {
       this.mockTts.modelPath = request.modelPath.trim();
     }
-    if (typeof request.secondaryPath === "string") {
-      this.mockTts.secondaryPath = request.secondaryPath.trim();
-      if (this.mockTts.engine !== "piper") {
-        this.mockTts.voicesPath = this.mockTts.secondaryPath;
-      }
-    }
-    if (typeof request.voicesPath === "string") {
-      const value = request.voicesPath.trim();
-      if (this.mockTts.engine === "piper") {
-        this.mockTts.secondaryPath = value;
-        this.mockTts.voicesPath = "";
-      } else {
-        this.mockTts.voicesPath = value;
-        this.mockTts.secondaryPath = value;
-      }
-    }
-    if (typeof request.tokensPath === "string") {
-      this.mockTts.tokensPath = request.tokensPath.trim();
-    }
-    if (typeof request.dataDir === "string") {
-      this.mockTts.dataDir = request.dataDir.trim();
-    }
     const voices = this.mockVoicesForEngine(this.mockTts.engine);
     if (!voices.includes(this.mockTts.voice)) {
       this.mockTts.voice = voices[0] ?? (this.mockTts.engine === "kokoro" ? "af_heart" : "speaker_0");
@@ -2342,18 +2544,6 @@ export class MockChatIpcClient implements ChatIpcClient {
       engine: this.mockTts.engine,
       voice: this.mockTts.voice,
       speed: this.mockTts.speed
-    };
-  }
-
-  async ttsDownloadModel(request: TtsDownloadModelRequest): Promise<TtsDownloadModelResponse> {
-    return {
-      correlationId: request.correlationId,
-      ok: false,
-      message: "Mock runtime cannot download TTS models.",
-      modelPath: "",
-      voicesPath: "",
-      tokensPath: "",
-      dataDir: ""
     };
   }
 

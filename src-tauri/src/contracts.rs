@@ -33,6 +33,187 @@ pub struct ChatSendResponse {
     pub assistant_message: String,
     pub assistant_thinking: Option<String>,
     pub correlation_id: String,
+    pub structured_payload: Option<ChatStructuredPayload>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ChatWorkflowMode {
+    Normal,
+    PlanningOffered,
+    Discovery,
+    AwaitingPlanApproval,
+    DelegatedExecution,
+    Blocked,
+    Completed,
+    Failed,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ClarificationOption {
+    pub id: String,
+    pub label: String,
+    pub summary: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ClarificationQuestion {
+    pub id: String,
+    pub title: String,
+    pub prompt: String,
+    pub options: Vec<ClarificationOption>,
+    pub recommended_option_id: Option<String>,
+    pub allow_custom: bool,
+    pub required: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ClarificationAnswer {
+    pub question_id: String,
+    pub selected_option_id: Option<String>,
+    pub freeform_text: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum PlanRiskTier {
+    Low,
+    Medium,
+    High,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum PlanDelegationMode {
+    None,
+    Looper,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct PlanArtifact {
+    pub id: String,
+    pub version: u32,
+    pub objective: String,
+    pub project_folder: String,
+    pub scope: Vec<String>,
+    pub non_goals: Vec<String>,
+    pub assumptions: Vec<String>,
+    pub deliverables: Vec<String>,
+    pub allowed_tools: Vec<String>,
+    pub data_policy: String,
+    pub acceptance_checks: Vec<String>,
+    pub risk_tier: PlanRiskTier,
+    pub delegation_mode: PlanDelegationMode,
+    pub created_at_ms: i64,
+    pub source_conversation_id: String,
+    pub plan_hash: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct PlanApprovalRequest {
+    pub conversation_id: String,
+    pub correlation_id: String,
+    pub plan_id: String,
+    pub plan_version: u32,
+    pub plan_hash: String,
+    pub approved: bool,
+    pub revision_request: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct DelegationStartRequest {
+    pub conversation_id: String,
+    pub correlation_id: String,
+    pub approved_plan: PlanArtifact,
+    pub approved_plan_hash: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum DelegationRunStatus {
+    Starting,
+    Planner,
+    Executor,
+    Validator,
+    Critic,
+    Blocked,
+    Completed,
+    Failed,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct DelegationStatusCard {
+    pub conversation_id: String,
+    pub plan_id: String,
+    pub loop_id: Option<String>,
+    pub status: DelegationRunStatus,
+    pub phase: Option<String>,
+    pub checkpoint_summary: Option<String>,
+    pub updated_at_ms: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum PlanDeltaStatus {
+    Proposed,
+    Approved,
+    Rejected,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct PlanDelta {
+    pub id: String,
+    pub plan_id: String,
+    pub conversation_id: String,
+    pub reason: String,
+    pub requested_changes: Vec<String>,
+    pub acceptance_check_changes: Vec<String>,
+    pub status: PlanDeltaStatus,
+    pub created_at_ms: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ChatStructuredPayload {
+    PlannerOffer {
+        title: String,
+        prompt: String,
+        reasons: Vec<String>,
+    },
+    Clarification {
+        title: String,
+        questions: Vec<ClarificationQuestion>,
+    },
+    PlanApproval {
+        plan: PlanArtifact,
+    },
+    DelegationStatus {
+        status: DelegationStatusCard,
+    },
+    PlanDelta {
+        delta: PlanDelta,
+    },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ChatWorkflowState {
+    pub conversation_id: String,
+    pub mode: ChatWorkflowMode,
+    pub original_user_message: Option<String>,
+    pub active_plan_id: Option<String>,
+    pub active_plan_hash: Option<String>,
+    pub active_loop_id: Option<String>,
+    pub pending_reason: Option<String>,
+    pub updated_at_ms: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -956,6 +1137,7 @@ pub struct LlamaRuntimeStatusResponse {
     pub correlation_id: String,
     pub state: String,
     pub active_engine_id: Option<String>,
+    pub active_model_path: Option<String>,
     pub endpoint: Option<String>,
     pub pid: Option<u32>,
     pub engines: Vec<LlamaRuntimeEngine>,
@@ -1085,6 +1267,21 @@ pub struct ModelManagerDownloadHfResponse {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct ModelManagerCancelDownloadRequest {
+    pub correlation_id: String,
+    pub target_correlation_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ModelManagerCancelDownloadResponse {
+    pub correlation_id: String,
+    pub target_correlation_id: String,
+    pub cancelled: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ModelManagerDeleteInstalledRequest {
     pub correlation_id: String,
     pub model_id: String,
@@ -1137,6 +1334,164 @@ pub struct ModelManagerRefreshUnslothCatalogResponse {
     pub correlation_id: String,
     pub rows: Vec<ModelManagerCatalogCsvRow>,
     pub new_count: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImagePackageMetadata {
+    pub id: String,
+    pub name: String,
+    pub repo_id: String,
+    pub license: String,
+    pub source_url: String,
+    pub upstream_url: Option<String>,
+    pub precision_label: String,
+    pub core_model_bytes: u64,
+    pub auxiliary_bytes: u64,
+    pub total_install_bytes: u64,
+    pub recommended_steps: u32,
+    pub recommended_guidance: f32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ImageGenerationInstallState {
+    NotInstalled,
+    Installing,
+    Installed,
+    Error,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ImageGenerationRuntimeState {
+    NotReady,
+    ProbeOnly,
+    Ready,
+    Error,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImageGenerationStatusRequest {
+    pub correlation_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImageGenerationStatusResponse {
+    pub correlation_id: String,
+    pub package: ImagePackageMetadata,
+    pub install_state: ImageGenerationInstallState,
+    pub runtime_state: ImageGenerationRuntimeState,
+    pub disabled: bool,
+    pub installed_path: Option<String>,
+    pub message: Option<String>,
+    pub required_paths_present: bool,
+    pub generation_ready: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImageGenerationInstallRequest {
+    pub correlation_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImageGenerationInstallResponse {
+    pub correlation_id: String,
+    pub installed_path: String,
+    pub enabled: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImageGenerationCancelInstallRequest {
+    pub correlation_id: String,
+    pub target_correlation_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImageGenerationCancelInstallResponse {
+    pub correlation_id: String,
+    pub target_correlation_id: String,
+    pub cancelled: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImageGenerationSetDisabledRequest {
+    pub correlation_id: String,
+    pub disabled: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImageGenerationSetDisabledResponse {
+    pub correlation_id: String,
+    pub disabled: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImageGenerationRemovePackagesRequest {
+    pub correlation_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImageGenerationRemovePackagesResponse {
+    pub correlation_id: String,
+    pub removed: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MediaAssetRecord {
+    pub id: String,
+    pub kind: String,
+    pub mime: String,
+    pub filename: String,
+    pub path: String,
+    pub width: Option<u32>,
+    pub height: Option<u32>,
+    pub size_bytes: u64,
+    pub created_at: i64,
+    pub data_base64: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImageGenerationGenerateRequest {
+    pub correlation_id: String,
+    pub prompt: String,
+    pub width: u32,
+    pub height: u32,
+    pub steps: u32,
+    pub guidance: f32,
+    pub seed: Option<u64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImageGenerationGenerateResponse {
+    pub correlation_id: String,
+    pub asset: MediaAssetRecord,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImageGenerationCancelGenerateRequest {
+    pub correlation_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImageGenerationCancelGenerateResponse {
+    pub correlation_id: String,
+    pub cancelled: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1715,14 +2070,6 @@ pub struct TtsStatusResponse {
     pub ready: bool,
     pub message: String,
     pub model_path: String,
-    pub secondary_path: String,
-    pub voices_path: String,
-    pub tokens_path: String,
-    pub data_dir: String,
-    pub python_path: String,
-    pub script_path: String,
-    pub runtime_archive_present: bool,
-    pub available_model_paths: Vec<String>,
     pub available_voices: Vec<String>,
     pub selected_voice: String,
     pub speed: f32,
@@ -1762,6 +2109,17 @@ pub struct TtsSpeakResponse {
     pub sample_rate: u32,
     pub duration_ms: u32,
     pub audio_bytes: Vec<u8>,
+    pub phonemes: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TtsSpeakStreamResponse {
+    pub correlation_id: String,
+    pub accepted: bool,
+    pub engine_id: String,
+    pub voice: String,
+    pub speed: f32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1809,11 +2167,6 @@ pub struct TtsSettingsGetResponse {
     pub voice: String,
     pub speed: f32,
     pub model_path: String,
-    pub secondary_path: String,
-    pub voices_path: String,
-    pub tokens_path: String,
-    pub data_dir: String,
-    pub python_path: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1824,11 +2177,6 @@ pub struct TtsSettingsSetRequest {
     pub voice: Option<String>,
     pub speed: Option<f32>,
     pub model_path: Option<String>,
-    pub secondary_path: Option<String>,
-    pub voices_path: Option<String>,
-    pub tokens_path: Option<String>,
-    pub data_dir: Option<String>,
-    pub python_path: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1839,25 +2187,6 @@ pub struct TtsSettingsSetResponse {
     pub engine: String,
     pub voice: String,
     pub speed: f32,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct TtsDownloadModelRequest {
-    pub correlation_id: String,
-    pub url: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct TtsDownloadModelResponse {
-    pub correlation_id: String,
-    pub ok: bool,
-    pub message: String,
-    pub model_path: String,
-    pub voices_path: String,
-    pub tokens_path: String,
-    pub data_dir: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

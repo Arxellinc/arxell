@@ -126,21 +126,12 @@ export function renderChatHeaderModelSelect(input: {
 export function resolveTtsLoadedHeaderSuffix(input: {
   sidebarTab: string;
   ttsReady: boolean;
-  ttsEngine: "kokoro" | "piper" | "matcha" | "kitten" | "pocket";
+  ttsEngine: "kokoro" | "pocket";
 }): string {
   if (input.sidebarTab !== "tts" || !input.ttsReady) {
     return "";
   }
-  const engineLabel =
-    input.ttsEngine === "piper"
-      ? "Piper"
-      : input.ttsEngine === "matcha"
-        ? "Matcha"
-        : input.ttsEngine === "kitten"
-          ? "KittenTTS"
-          : input.ttsEngine === "pocket"
-            ? "PocketTTS"
-            : "Kokoro";
+  const engineLabel = input.ttsEngine === "pocket" ? "PocketTTS" : "Kokoro";
   return `<span class="pane-title-note">(${escapeHtml(engineLabel)} Ready ✓)</span>`;
 }
 
@@ -153,7 +144,7 @@ export function renderPanelTitleIcon(input: {
   chatPaneId: string;
   scopeId?: string;
   ttsReady: boolean;
-  ttsEngine: "kokoro" | "piper" | "matcha" | "kitten" | "pocket";
+  ttsEngine: "kokoro" | "pocket";
 }): string {
   const ttsSuffix = resolveTtsLoadedHeaderSuffix({
     sidebarTab: input.sidebarTab,
@@ -406,12 +397,22 @@ export function composeAppFrameHtml(input: {
   micPermissionBubbleHtml: string;
   appBodyHtml: string;
   bottombarHtml: string;
+  notificationsHtml?: string;
 }): string {
   return `
     <main class="app-frame" style="--chat-pane-percent: ${input.chatPanePercent}; --portrait-workspace-percent: ${input.portraitWorkspacePercent};">
+      <div class="window-resize-edge is-top" data-resize-edge="top"></div>
+      <div class="window-resize-edge is-bottom" data-resize-edge="bottom"></div>
+      <div class="window-resize-edge is-left" data-resize-edge="left"></div>
+      <div class="window-resize-edge is-right" data-resize-edge="right"></div>
+      <div class="window-resize-edge is-top-left" data-resize-edge="top-left"></div>
+      <div class="window-resize-edge is-top-right" data-resize-edge="top-right"></div>
+      <div class="window-resize-edge is-bottom-left" data-resize-edge="bottom-left"></div>
+      <div class="window-resize-edge is-bottom-right" data-resize-edge="bottom-right"></div>
       ${input.topbarHtml}
       ${input.micPermissionBubbleHtml}
       ${input.appBodyHtml}
+      ${input.notificationsHtml ?? ""}
       ${input.bottombarHtml}
     </main>
   `;

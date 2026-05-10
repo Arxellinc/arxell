@@ -43,6 +43,158 @@ export interface ChatSendResponse {
   assistantMessage: string;
   assistantThinking?: string;
   correlationId: string;
+  structuredPayload?: ChatStructuredPayload | null;
+}
+
+export type ChatWorkflowMode =
+  | "normal"
+  | "planning_offered"
+  | "discovery"
+  | "awaiting_plan_approval"
+  | "delegated_execution"
+  | "blocked"
+  | "completed"
+  | "failed";
+
+export interface ClarificationOption {
+  id: string;
+  label: string;
+  summary?: string | null;
+}
+
+export interface ClarificationQuestion {
+  id: string;
+  title: string;
+  prompt: string;
+  options: ClarificationOption[];
+  recommendedOptionId?: string | null;
+  allowCustom: boolean;
+  required: boolean;
+}
+
+export interface ClarificationAnswer {
+  questionId: string;
+  selectedOptionId?: string | null;
+  freeformText?: string | null;
+}
+
+export type PlanRiskTier = "low" | "medium" | "high";
+
+export type PlanDelegationMode = "none" | "looper";
+
+export interface PlanArtifact {
+  id: string;
+  version: number;
+  objective: string;
+  projectFolder: string;
+  scope: string[];
+  nonGoals: string[];
+  assumptions: string[];
+  deliverables: string[];
+  allowedTools: string[];
+  dataPolicy: string;
+  acceptanceChecks: string[];
+  riskTier: PlanRiskTier;
+  delegationMode: PlanDelegationMode;
+  createdAtMs: number;
+  sourceConversationId: string;
+  planHash: string;
+}
+
+export interface PlanApprovalRequest {
+  conversationId: string;
+  correlationId: string;
+  planId: string;
+  planVersion: number;
+  planHash: string;
+  approved: boolean;
+  revisionRequest?: string | null;
+}
+
+export interface DelegationStartRequest {
+  conversationId: string;
+  correlationId: string;
+  approvedPlan: PlanArtifact;
+  approvedPlanHash: string;
+}
+
+export type DelegationRunStatus =
+  | "starting"
+  | "planner"
+  | "executor"
+  | "validator"
+  | "critic"
+  | "blocked"
+  | "completed"
+  | "failed";
+
+export interface DelegationStatusCard {
+  conversationId: string;
+  planId: string;
+  loopId?: string | null;
+  status: DelegationRunStatus;
+  phase?: string | null;
+  checkpointSummary?: string | null;
+  updatedAtMs: number;
+}
+
+export type PlanDeltaStatus = "proposed" | "approved" | "rejected";
+
+export interface PlanDelta {
+  id: string;
+  planId: string;
+  conversationId: string;
+  reason: string;
+  requestedChanges: string[];
+  acceptanceCheckChanges: string[];
+  status: PlanDeltaStatus;
+  createdAtMs: number;
+}
+
+export type ChatStructuredPayload =
+  | ChatPlannerOfferPayload
+  | ChatClarificationPayload
+  | ChatPlanApprovalPayload
+  | ChatDelegationStatusPayload
+  | ChatPlanDeltaPayload;
+
+export interface ChatPlannerOfferPayload {
+  kind: "planner_offer";
+  title: string;
+  prompt: string;
+  reasons: string[];
+}
+
+export interface ChatClarificationPayload {
+  kind: "clarification";
+  title: string;
+  questions: ClarificationQuestion[];
+}
+
+export interface ChatPlanApprovalPayload {
+  kind: "plan_approval";
+  plan: PlanArtifact;
+}
+
+export interface ChatDelegationStatusPayload {
+  kind: "delegation_status";
+  status: DelegationStatusCard;
+}
+
+export interface ChatPlanDeltaPayload {
+  kind: "plan_delta";
+  delta: PlanDelta;
+}
+
+export interface ChatWorkflowState {
+  conversationId: string;
+  mode: ChatWorkflowMode;
+  originalUserMessage?: string | null;
+  activePlanId?: string | null;
+  activePlanHash?: string | null;
+  activeLoopId?: string | null;
+  pendingReason?: string | null;
+  updatedAtMs: number;
 }
 
 export interface ChatCancelRequest {
@@ -668,6 +820,7 @@ export interface LlamaRuntimeStatusResponse {
   correlationId: string;
   state: string;
   activeEngineId: string | null;
+  activeModelPath: string | null;
   endpoint: string | null;
   pid: number | null;
   engines: LlamaRuntimeEngine[];
@@ -767,6 +920,17 @@ export interface ModelManagerDownloadHfResponse {
   model: ModelManagerInstalledModel;
 }
 
+export interface ModelManagerCancelDownloadRequest {
+  correlationId: string;
+  targetCorrelationId: string;
+}
+
+export interface ModelManagerCancelDownloadResponse {
+  correlationId: string;
+  targetCorrelationId: string;
+  cancelled: boolean;
+}
+
 export interface ModelManagerDeleteInstalledRequest {
   correlationId: string;
   modelId: string;
@@ -807,6 +971,117 @@ export interface ModelManagerRefreshUnslothCatalogResponse {
   correlationId: string;
   rows: ModelManagerCatalogCsvRow[];
   newCount: number;
+}
+
+export interface ImagePackageMetadata {
+  id: string;
+  name: string;
+  repoId: string;
+  license: string;
+  sourceUrl: string;
+  upstreamUrl?: string | null;
+  precisionLabel: string;
+  coreModelBytes: number;
+  auxiliaryBytes: number;
+  totalInstallBytes: number;
+  recommendedSteps: number;
+  recommendedGuidance: number;
+}
+
+export type ImageGenerationInstallState = "not_installed" | "installing" | "installed" | "error";
+export type ImageGenerationRuntimeState = "not_ready" | "probe_only" | "ready" | "error";
+
+export interface ImageGenerationStatusRequest {
+  correlationId: string;
+}
+
+export interface ImageGenerationStatusResponse {
+  correlationId: string;
+  package: ImagePackageMetadata;
+  installState: ImageGenerationInstallState;
+  runtimeState: ImageGenerationRuntimeState;
+  disabled: boolean;
+  installedPath: string | null;
+  message: string | null;
+  requiredPathsPresent: boolean;
+  generationReady: boolean;
+}
+
+export interface ImageGenerationInstallRequest {
+  correlationId: string;
+}
+
+export interface ImageGenerationInstallResponse {
+  correlationId: string;
+  installedPath: string;
+  enabled: boolean;
+}
+
+export interface ImageGenerationCancelInstallRequest {
+  correlationId: string;
+  targetCorrelationId: string;
+}
+
+export interface ImageGenerationCancelInstallResponse {
+  correlationId: string;
+  targetCorrelationId: string;
+  cancelled: boolean;
+}
+
+export interface ImageGenerationSetDisabledRequest {
+  correlationId: string;
+  disabled: boolean;
+}
+
+export interface ImageGenerationSetDisabledResponse {
+  correlationId: string;
+  disabled: boolean;
+}
+
+export interface ImageGenerationRemovePackagesRequest {
+  correlationId: string;
+}
+
+export interface ImageGenerationRemovePackagesResponse {
+  correlationId: string;
+  removed: boolean;
+}
+
+export interface MediaAssetRecord {
+  id: string;
+  kind: string;
+  mime: string;
+  filename: string;
+  path: string;
+  width: number | null;
+  height: number | null;
+  sizeBytes: number;
+  createdAt: number;
+  dataBase64?: string | null;
+}
+
+export interface ImageGenerationGenerateRequest {
+  correlationId: string;
+  prompt: string;
+  width: number;
+  height: number;
+  steps: number;
+  guidance: number;
+  seed?: number;
+}
+
+export interface ImageGenerationGenerateResponse {
+  correlationId: string;
+  asset: MediaAssetRecord;
+}
+
+export interface ImageGenerationCancelGenerateRequest {
+  correlationId: string;
+}
+
+export interface ImageGenerationCancelGenerateResponse {
+  correlationId: string;
+  cancelled: boolean;
 }
 
 export interface DevicesProbeMicrophoneRequest {
@@ -998,14 +1273,6 @@ export interface TtsStatusResponse {
   ready: boolean;
   message: string;
   modelPath: string;
-  secondaryPath: string;
-  voicesPath: string;
-  tokensPath: string;
-  dataDir: string;
-  pythonPath: string;
-  scriptPath: string;
-  runtimeArchivePresent: boolean;
-  availableModelPaths: string[];
   availableVoices: string[];
   selectedVoice: string;
   speed: number;
@@ -1037,6 +1304,15 @@ export interface TtsSpeakResponse {
   sampleRate: number;
   durationMs: number;
   audioBytes: number[];
+  phonemes?: string | null;
+}
+
+export interface TtsSpeakStreamResponse {
+  correlationId: string;
+  accepted: boolean;
+  engineId: string;
+  voice: string;
+  speed: number;
 }
 
 export interface TtsStopRequest {
@@ -1072,11 +1348,6 @@ export interface TtsSettingsGetResponse {
   voice: string;
   speed: number;
   modelPath: string;
-  secondaryPath: string;
-  voicesPath: string;
-  tokensPath: string;
-  dataDir: string;
-  pythonPath: string;
 }
 
 export interface TtsSettingsSetRequest {
@@ -1085,11 +1356,6 @@ export interface TtsSettingsSetRequest {
   voice?: string;
   speed?: number;
   modelPath?: string;
-  secondaryPath?: string;
-  voicesPath?: string;
-  tokensPath?: string;
-  dataDir?: string;
-  pythonPath?: string;
 }
 
 export interface TtsSettingsSetResponse {
@@ -1098,21 +1364,6 @@ export interface TtsSettingsSetResponse {
   engine: string;
   voice: string;
   speed: number;
-}
-
-export interface TtsDownloadModelRequest {
-  correlationId: string;
-  url?: string;
-}
-
-export interface TtsDownloadModelResponse {
-  correlationId: string;
-  ok: boolean;
-  message: string;
-  modelPath: string;
-  voicesPath: string;
-  tokensPath: string;
-  dataDir: string;
 }
 
 export interface AppVersionResponse {

@@ -96,11 +96,14 @@ export function renderOpenCodeInstallModal(state: OpenCodeToolState): string {
       <h2>${iconHtml("bot-message-square", { size: 16, tone: "dark" })} OpenCode CLI Required</h2>
       <p>OpenCode needs the CLI tool installed on your system. Run this command in the <strong>Terminal</strong> tab to install:</p>
       <div class="opencode-install-cmd">${escapeHtml(cmd)}</div>
-      <p>After installation completes, click <strong>I've Installed It</strong> below.</p>
+      <p>After installation completes, click <strong>I've Installed It</strong> or let it install automatically.</p>
       <div class="opencode-modal-actions">
         <button type="button" ${OPENCODE_DATA_ATTR.action}="dismiss-install">Cancel</button>
-        <button type="button" class="is-primary" ${OPENCODE_DATA_ATTR.action}="recheck-install" ${state.installChecking ? "disabled" : ""}>
+        <button type="button" ${OPENCODE_DATA_ATTR.action}="recheck-install" ${state.installChecking ? "disabled" : ""}>
           ${state.installChecking ? "Checking..." : "I've Installed It"}
+        </button>
+        <button type="button" class="is-primary" ${OPENCODE_DATA_ATTR.action}="install-now" ${state.installChecking ? "disabled" : ""}>
+          Install Now
         </button>
       </div>
     </div>

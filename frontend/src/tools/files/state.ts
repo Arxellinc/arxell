@@ -67,5 +67,7 @@ export interface FilesToolStateSlice {
   filesSelectionDragActive: boolean;
   filesSelectionJustDragged: boolean;
   filesSelectionGesture: "single" | "toggle" | "range" | null;
+  filesImagePreviewUrlByPath: Record<string, string>;
+  filesImageViewMode: "fit" | "actual";
   filesError: string | null;
 }

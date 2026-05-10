@@ -17,4 +17,5 @@ export interface NotepadToolStateSlice {
   notepadFindCaseSensitive: boolean;
   notepadLineWrap: boolean;
   notepadError: string | null;
+  notepadUnsavedModalTabId: string | null;
 }

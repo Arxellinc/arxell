@@ -17,6 +17,7 @@ import {
 } from "../webSearch/bindings";
 import { handleChartClick, handleChartInput } from "../chart/bindings";
 import { handleTasksChange, handleTasksClick, handleTasksInput } from "../tasks/bindings";
+import type { ChatIpcClient } from "../../ipcClient";
 import { handleOpenCodeClick } from "../opencode/bindings";
 import type { OpenCodeToolState } from "../opencode/state";
 import type { OpenCodeActionsDeps } from "../opencode/actions";
@@ -173,6 +174,10 @@ export interface WorkspaceToolDispatchDeps {
     state: LooperToolState;
     actionsDeps: LooperActionsDeps;
   };
+  tasks: {
+    client: ChatIpcClient | null;
+    nextCorrelationId: () => string;
+  };
 }
 
 export async function dispatchWorkspaceToolClick(
@@ -189,7 +194,7 @@ export async function dispatchWorkspaceToolClick(
   if (await handleSheetsClick(target, (state as any).sheetsState, deps.sheets)) {
     return true;
   }
-  if (await handleTasksClick(target, state as any)) {
+  if (await handleTasksClick(target, state as any, deps.tasks)) {
     return true;
   }
   if (await handleChartClick(target, state as any)) {

@@ -66,6 +66,7 @@ import x from "./x.svg?raw";
 import replace from "./replace.svg?raw";
 import botMessageSquare from "./bot-message-square.svg?raw";
 import refreshCw from "./refresh-cw.svg?raw";
+import rocket from "./rocket.svg?raw";
 import info from "./info.svg?raw";
 import code from "./code.svg?raw";
 import eye from "./eye.svg?raw";
@@ -98,6 +99,7 @@ import listFilterPlus from "./list-filter-plus.svg?raw";
 import funnelPlus from "./funnel-plus.svg?raw";
 import panelTop from "./panel-top.svg?raw";
 import link from "./link.svg?raw";
+import squareFunction from "./square-function.svg?raw";
 
 const ICON_SVGS = {
   bot,
@@ -170,6 +172,7 @@ const ICON_SVGS = {
   "table-2": table2,
   "bot-message-square": botMessageSquare,
   "refresh-cw": refreshCw,
+  rocket,
   info,
   code,
   eye,
@@ -199,7 +202,8 @@ const ICON_SVGS = {
   "list-filter-plus": listFilterPlus,
   "funnel-plus": funnelPlus,
   "panel-top": panelTop,
-  link
+  link,
+  "square-function": squareFunction
 } as const;
 
 export type IconName = keyof typeof ICON_SVGS;

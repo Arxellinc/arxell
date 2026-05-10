@@ -18,3 +18,8 @@
   height: 100%;
   padding: 0.25rem;
 }
+
+.terminal-host .xterm-screen canvas {
+  -webkit-transform: translateZ(0);
+  transform: translateZ(0);
+}

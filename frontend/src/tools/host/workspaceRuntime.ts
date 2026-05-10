@@ -10,6 +10,7 @@ import {
   deleteFilesPath,
   duplicateActiveFilesTab,
   ensureFilesExplorerLoaded,
+  initFilesImageHelpers,
   listFilesDirectory,
   openFilesFile,
   pasteFilesClipboard,
@@ -47,7 +48,7 @@ import {
   updateNotepadBuffer
 } from "../notepad/actions";
 import { createNewDocsFile } from "../docs/actions";
-import { createNewSkillsFile } from "../skills/actions";
+
 import {
   createNewSheet,
   deleteColumns as deleteSheetsColumns,
@@ -161,7 +162,6 @@ export interface WorkspaceToolsRuntime {
   deleteRows: (index: number, count?: number) => Promise<void>;
   deleteColumns: (index: number, count?: number) => Promise<void>;
   createNewDocsFile: (path: string) => Promise<void>;
-  createNewSkillsFile: (path: string) => Promise<void>;
   createAndActivateWebTab: () => void;
   runWebSearch: () => Promise<void>;
   saveWebSearchSetup: () => Promise<void>;
@@ -177,6 +177,7 @@ export function createWorkspaceToolsRuntime(
     },
     nextCorrelationId: deps.nextCorrelationId
   };
+  initFilesImageHelpers(deps.nextCorrelationId, () => deps.getClient());
 
   const webDeps = {
     get client() {
@@ -216,14 +217,14 @@ export function createWorkspaceToolsRuntime(
     stopFlowRun: async () => {},
     setFlowPaused: async (_paused) => {},
     nudgeFlowRun: async (_message) => {},
-    getActiveWebTab: () => getActiveWebTab(state),
+    getActiveWebTab: () => getActiveWebTab(state as any),
     withActiveWebTab: (mutator) => {
-      withActiveWebTab(state, mutator);
+      withActiveWebTab(state as any, mutator);
     },
     ensureWebTabs: () => {
-      ensureWebTabs(state, { createWebTab: deps.createWebTab });
+      ensureWebTabs(state as any, { createWebTab: deps.createWebTab });
     },
-    hasVerifiedSearchConnection: () => hasVerifiedSearchConnection(state),
+    hasVerifiedSearchConnection: () => hasVerifiedSearchConnection(state as any),
     listFilesDirectory: async (path) => {
       await listFilesDirectory(state, filesDeps, path);
     },
@@ -363,17 +364,14 @@ export function createWorkspaceToolsRuntime(
     createNewDocsFile: async (path) => {
       await createNewDocsFile(state as never, notepadDeps as never, path);
     },
-    createNewSkillsFile: async (path) => {
-      await createNewSkillsFile(state as never, notepadDeps as never, path);
-    },
     createAndActivateWebTab: () => {
-      createAndActivateWebTab(state, { createWebTab: deps.createWebTab });
+      createAndActivateWebTab(state as any, { createWebTab: deps.createWebTab });
     },
     runWebSearch: async () => {
-      await runWebSearch(state, webDeps);
+      await runWebSearch(state as any, webDeps);
     },
     saveWebSearchSetup: async () => {
-      await saveWebSearchSetup(state, webDeps);
+      await saveWebSearchSetup(state as any, webDeps);
     }
   };
 }
