@@ -31,14 +31,14 @@ export function selectPreferredLlamaEngineId(
 ): string {
   const current = runtime.engines.find((engine) => engine.engineId === currentEngineId);
 
-  const preferredRocm = runtime.engines.find(
-    (engine) => engine.backend === "rocm" && isSelectableGpu(engine)
-  );
   const preferredVulkan = runtime.engines.find(
     (engine) => engine.backend === "vulkan" && isSelectableGpu(engine)
   );
+  const preferredRocm = runtime.engines.find(
+    (engine) => engine.backend === "rocm" && isSelectableGpu(engine)
+  );
   const preferredAnyGpu = runtime.engines.find((engine) => isSelectableGpu(engine));
-  const preferredGpu = preferredRocm ?? preferredVulkan ?? preferredAnyGpu ?? null;
+  const preferredGpu = preferredVulkan ?? preferredRocm ?? preferredAnyGpu ?? null;
 
   if (preferredGpu) {
     const isCurrentCpu = current?.backend === "cpu";

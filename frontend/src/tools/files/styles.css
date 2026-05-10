@@ -621,6 +621,9 @@
   z-index: 120;
   display: grid;
   gap: 0.15rem;
+  grid-column: 1 / -1;
+  grid-row: 1;
+  pointer-events: auto;
 }
 
 .files-context-item {
@@ -667,6 +670,9 @@
   z-index: 130;
   display: grid;
   place-items: center;
+  grid-column: 1 / -1;
+  grid-row: 1;
+  pointer-events: auto;
 }
 
 .files-conflict-modal {

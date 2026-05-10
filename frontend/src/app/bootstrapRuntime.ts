@@ -2,6 +2,16 @@ import type { ChatIpcClient } from "../ipcClient";
 import { normalizeUserFacingWhisperModels } from "../stt/models";
 import { normalizeVersionLabel } from "../version";
 
+export type TauriResizeEdge =
+  | "East"
+  | "North"
+  | "NorthEast"
+  | "NorthWest"
+  | "South"
+  | "SouthEast"
+  | "SouthWest"
+  | "West";
+
 export type TauriWindowHandle = {
   minimize: () => Promise<void>;
   maximize: () => Promise<void>;
@@ -9,6 +19,7 @@ export type TauriWindowHandle = {
   isMaximized: () => Promise<boolean>;
   close: () => Promise<void>;
   startDragging: () => Promise<void>;
+  startResizeDragging: (edge: TauriResizeEdge) => Promise<void>;
 };
 
 interface BootstrapRuntimeState {
