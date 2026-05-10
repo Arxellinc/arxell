@@ -401,6 +401,14 @@ export function composeAppFrameHtml(input: {
 }): string {
   return `
     <main class="app-frame" style="--chat-pane-percent: ${input.chatPanePercent}; --portrait-workspace-percent: ${input.portraitWorkspacePercent};">
+      <div class="window-resize-edge is-top" data-resize-edge="top"></div>
+      <div class="window-resize-edge is-bottom" data-resize-edge="bottom"></div>
+      <div class="window-resize-edge is-left" data-resize-edge="left"></div>
+      <div class="window-resize-edge is-right" data-resize-edge="right"></div>
+      <div class="window-resize-edge is-top-left" data-resize-edge="top-left"></div>
+      <div class="window-resize-edge is-top-right" data-resize-edge="top-right"></div>
+      <div class="window-resize-edge is-bottom-left" data-resize-edge="bottom-left"></div>
+      <div class="window-resize-edge is-bottom-right" data-resize-edge="bottom-right"></div>
       ${input.topbarHtml}
       ${input.micPermissionBubbleHtml}
       ${input.appBodyHtml}

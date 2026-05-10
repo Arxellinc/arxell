@@ -1,0 +1,65 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 520 320" fill="none">
+  <defs>
+    <linearGradient id="ring-g" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#6366f1"/>
+      <stop offset="100%" stop-color="#a78bfa"/>
+    </linearGradient>
+  </defs>
+  <!-- Background circle -->
+  <circle cx="260" cy="160" r="140" fill="none" stroke="#e5e7eb" stroke-width="1" stroke-dasharray="4 4"/>
+  <!-- Skill nodes on ring -->
+  <!-- Core Orchestrator (top) -->
+  <g transform="translate(260, 30)">
+    <circle r="28" fill="url(#ring-g)" opacity="0.9"/>
+    <text text-anchor="middle" y="1" font-size="7" fill="#e0e7ff" font-family="sans-serif" font-weight="600">CORE</text>
+    <text text-anchor="middle" y="9" font-size="5.5" fill="#c4b5fd" font-family="sans-serif">Orchestrator</text>
+  </g>
+  <!-- Planning & Specs (top-right) -->
+  <g transform="translate(395, 70)">
+    <circle r="28" fill="#8b5cf6" opacity="0.85"/>
+    <text text-anchor="middle" y="1" font-size="6.5" fill="#e0e7ff" font-family="sans-serif" font-weight="600">Planning</text>
+    <text text-anchor="middle" y="9" font-size="5.5" fill="#c4b5fd" font-family="sans-serif">&amp; Specs</text>
+  </g>
+  <!-- Frontend Engineer (right) -->
+  <g transform="translate(430, 160)">
+    <circle r="28" fill="#6366f1" opacity="0.85"/>
+    <text text-anchor="middle" y="1" font-size="6.5" fill="#e0e7ff" font-family="sans-serif" font-weight="600">Frontend</text>
+    <text text-anchor="middle" y="9" font-size="5.5" fill="#c4b5fd" font-family="sans-serif">Engineer</text>
+  </g>
+  <!-- Backend Engineer (bottom-right) -->
+  <g transform="translate(395, 250)">
+    <circle r="28" fill="#8b5cf6" opacity="0.85"/>
+    <text text-anchor="middle" y="1" font-size="6.5" fill="#e0e7ff" font-family="sans-serif" font-weight="600">Backend</text>
+    <text text-anchor="middle" y="9" font-size="5.5" fill="#c4b5fd" font-family="sans-serif">Engineer</text>
+  </g>
+  <!-- Database Engineer (bottom) -->
+  <g transform="translate(260, 290)">
+    <circle r="28" fill="#6366f1" opacity="0.85"/>
+    <text text-anchor="middle" y="1" font-size="6.5" fill="#e0e7ff" font-family="sans-serif" font-weight="600">Database</text>
+    <text text-anchor="middle" y="9" font-size="5.5" fill="#c4b5fd" font-family="sans-serif">Engineer</text>
+  </g>
+  <!-- Guardrails (bottom-left) -->
+  <g transform="translate(125, 250)">
+    <circle r="28" fill="#8b5cf6" opacity="0.85"/>
+    <text text-anchor="middle" y="1" font-size="6.5" fill="#e0e7ff" font-family="sans-serif" font-weight="600">Guardrails</text>
+    <text text-anchor="middle" y="9" font-size="5.5" fill="#c4b5fd" font-family="sans-serif">&amp; Evals</text>
+  </g>
+  <!-- Product Designer (left) -->
+  <g transform="translate(90, 160)">
+    <circle r="28" fill="#6366f1" opacity="0.85"/>
+    <text text-anchor="middle" y="1" font-size="6.5" fill="#e0e7ff" font-family="sans-serif" font-weight="600">Product</text>
+    <text text-anchor="middle" y="9" font-size="5.5" fill="#c4b5fd" font-family="sans-serif">Designer</text>
+  </g>
+  <!-- Product Vision (top-left) -->
+  <g transform="translate(125, 70)">
+    <circle r="28" fill="#8b5cf6" opacity="0.85"/>
+    <text text-anchor="middle" y="1" font-size="6.5" fill="#e0e7ff" font-family="sans-serif" font-weight="600">Product</text>
+    <text text-anchor="middle" y="9" font-size="5.5" fill="#c4b5fd" font-family="sans-serif">Vision</text>
+  </g>
+  <!-- Connecting ring lines -->
+  <circle cx="260" cy="160" r="130" fill="none" stroke="url(#ring-g)" stroke-width="1.5" opacity="0.3"/>
+  <!-- Center label -->
+  <circle cx="260" cy="160" r="40" fill="#1e1b4b" opacity="0.08"/>
+  <text x="260" y="157" text-anchor="middle" font-size="9" fill="#6366f1" font-family="sans-serif" font-weight="700">AGENT</text>
+  <text x="260" y="168" text-anchor="middle" font-size="7" fill="#8b5cf6" font-family="sans-serif">SKILLS</text>
+</svg>

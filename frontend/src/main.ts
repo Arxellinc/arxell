@@ -290,7 +290,7 @@ import {
 } from "./app/events";
 import { createSendMessageHandler } from "./app/chatSend";
 import { installTauriSttListeners, registerClientEventBridge } from "./app/bootstrapEvents";
-import { syncBootstrapRuntime, type TauriWindowHandle } from "./app/bootstrapRuntime";
+import { syncBootstrapRuntime, type TauriWindowHandle, type TauriResizeEdge } from "./app/bootstrapRuntime";
 import { initializeSendMessageBinding } from "./app/sendMessageBootstrap";
 import { createWorkspaceToolManagerActions } from "./app/workspaceToolManagerActions";
 import {
@@ -7344,6 +7344,28 @@ function attachTopbarInteractions(sendMessage: (text: string) => Promise<void>):
       void tauriWindowHandle?.startDragging();
     };
   }
+  const resizeEdgeMap: Record<string, TauriResizeEdge> = {
+    top: "North",
+    bottom: "South",
+    left: "West",
+    right: "East",
+    "top-left": "NorthWest",
+    "top-right": "NorthEast",
+    "bottom-left": "SouthWest",
+    "bottom-right": "SouthEast"
+  };
+  const resizeEdges = document.querySelectorAll<HTMLElement>("[data-resize-edge]");
+  resizeEdges.forEach((edge) => {
+    const key = edge.getAttribute("data-resize-edge") ?? "";
+    const direction = resizeEdgeMap[key];
+    if (!direction) return;
+    edge.onpointerdown = (event: PointerEvent) => {
+      if (event.button !== 0) return;
+      event.preventDefault();
+      event.stopPropagation();
+      void tauriWindowHandle?.startResizeDragging(direction);
+    };
+  });
   const toggle = document.querySelector<HTMLButtonElement>("#displayModeToggle");
   if (toggle) {
     toggle.onclick = () => {
