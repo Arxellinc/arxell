@@ -89,9 +89,6 @@ Arxell ships with 11 built-in workspace tools — each one a full-featured panel
 
 Eight specialised agent skills ship out of the box, giving the AI structured playbooks for complex software-engineering workflows:
 
-<p align="center">
-  <img src="docs/icons/skills-ring.svg" width="520" alt="Agent skills overview" />
-</p>
 
 | Skill | Purpose |
 |-------|---------|
