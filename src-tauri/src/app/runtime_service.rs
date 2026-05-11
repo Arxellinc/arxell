@@ -843,8 +843,8 @@ fn kill_orphaned_llama_server(_port: u16) {
                 continue;
             }
             let pid = line
-                .rsplit_whitespace()
-                .next()
+                .split_whitespace()
+                .last()
                 .and_then(|s| s.parse::<u32>().ok());
             if let Some(pid) = pid {
                 let _ = Command::new("taskkill")
