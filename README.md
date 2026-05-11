@@ -221,7 +221,7 @@ cd src-tauri && cargo tauri build
 ### Run a Local Model
 
 1. Open the **Model Manager** (sidebar)
-2. Browse the Unsloth Dynamic Quants catalog (auto-updated from HuggingFace)
+2. Browse catalog (Unsloth UD Quants auto-updated from HuggingFace, more to come)
 3. Download a GGUF model
 4. Configure the LLaMA runtime (context size, GPU layers)
 5. Start inference — no API key needed
