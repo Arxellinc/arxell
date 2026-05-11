@@ -1,6 +1,32 @@
 # Agent Instructions
 - Architecture and App information documents are available in the /docs folder
 
+## Git Workflow
+
+### Branching Model
+- `main` is the default branch and source of truth. It should always build and remain releasable.
+- **Never commit directly to `main`.** All changes go through branches and pull requests.
+- Create a short-lived branch from `main` for each change using prefixes: `feature/`, `fix/`, `docs/`, `refactor/`, `test/`, `ci/`.
+- Delete the branch after the PR is merged.
+
+### Workflow for Every Change
+1. `git checkout main && git pull`
+2. `git checkout -b <prefix>/<short-description>`
+3. Make changes.
+4. Verify: `cd frontend && npm run build && npm run lint` (and `cd src-tauri && cargo check` for Rust changes).
+5. `git add -A && git commit -m "<descriptive message>"`
+6. `git push -u origin <branch-name>`
+7. `gh pr create --title "<title>" --body "<description>"`
+8. Merge via GitHub (squash and merge).
+9. `git checkout main && git pull && git branch -d <branch-name>`
+
+### Releasing
+1. Bump version in `src-tauri/Cargo.toml`.
+2. Run `node scripts/version-sync.mjs` to sync across all config files.
+3. `git add -A && git commit -m "Release v0.3.0"`
+4. `git tag v0.3.0 && git push origin main --tags`
+5. CI builds artifacts automatically on `v*` tags.
+
 
 ## Build & Dev Commands
 - `cd frontend && npm run dev` — start dev server
