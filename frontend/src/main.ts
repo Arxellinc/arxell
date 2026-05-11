@@ -856,6 +856,7 @@ const state: {
   displayModePreference: DisplayModePreference;
   autoSafeEnabled: boolean;
   appVersion: string;
+  updateCheckDismissedVersion: string | null;
   chatThinkingEnabled: boolean;
   chatRoutePreference: ChatRoutePreference;
   showAppResourceCpu: boolean;
@@ -1152,6 +1153,7 @@ const state: {
   displayModePreference: "dark",
   autoSafeEnabled: loadPersistedAutoSafeEnabled(),
   appVersion: FALLBACK_APP_VERSION,
+  updateCheckDismissedVersion: null as string | null,
   chatThinkingEnabled: false,
   chatRoutePreference: loadPersistedChatRoutePreference(),
   showAppResourceCpu: loadPersistedShowAppResourcesCpu(),
@@ -3229,6 +3231,30 @@ function render(): void {
       if (notifyId) {
         state.taskNotifications = state.taskNotifications.map((row) => row.id === notifyId ? { ...row, read: true } : row);
         void markNotificationReadInBackend(notifyId, true);
+      }
+      renderAndBind(appResourceRenderSendMessageRef ?? (async () => {}));
+    };
+  });
+  const notifyLinks = app.querySelectorAll<HTMLAnchorElement>(".app-notify-link[href]");
+  notifyLinks.forEach((link) => {
+    link.onclick = (e) => {
+      e.preventDefault();
+      const url = link.getAttribute("href");
+      if (!url) return;
+      try {
+        if ((window as any).__TAURI_INTERNALS__) {
+          void (window as any).__TAURI_INTERNALS__.invoke("plugin:shell|open", { path: url });
+        } else {
+          window.open(url, "_blank");
+        }
+      } catch {
+        window.open(url, "_blank");
+      }
+      const notifyEl = link.closest("[data-notify-id]");
+      const notifyId = notifyEl?.getAttribute("data-notify-id");
+      if (notifyId) {
+        state.taskNotifications = state.taskNotifications.filter((row) => row.id !== notifyId);
+        void dismissNotificationInBackend(notifyId);
       }
       renderAndBind(appResourceRenderSendMessageRef ?? (async () => {}));
     };
@@ -9226,6 +9252,25 @@ async function bootstrap(): Promise<void> {
       renderAndBind(sendMessage);
     });
   }
+
+  window.setTimeout(() => {
+    void (async () => {
+      if (!clientRef || runtimeMode !== "tauri") return;
+      try {
+        const resp = await clientRef.checkForUpdates();
+        if (!resp.hasUpdate) return;
+        if (state.updateCheckDismissedVersion === resp.latestVersion) return;
+        pushAppNotification({
+          title: "Update available",
+          description: `Arxell v${resp.latestVersion} is available (you have v${resp.currentVersion}).`,
+          tone: "info",
+          actions: resp.htmlUrl
+            ? [{ id: "download-update", label: "Download", href: resp.htmlUrl }]
+            : []
+        });
+      } catch {}
+    })();
+  }, 60_000);
 }
 
 function installConsoleCapture(): void {

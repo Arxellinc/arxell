@@ -294,6 +294,7 @@ fn main() {
             cmd_web_search,
             cmd_devices_probe_microphone,
             cmd_app_version,
+            cmd_check_for_updates,
             cmd_app_resource_usage,
             cmd_llama_runtime_status,
             cmd_llama_runtime_install_engine,
@@ -1222,6 +1223,40 @@ async fn cmd_app_version() -> Result<AppVersionResponse, String> {
     Ok(AppVersionResponse {
         version: env!("CARGO_PKG_VERSION").to_string(),
     })
+}
+
+#[cfg(feature = "tauri-runtime")]
+#[tauri::command]
+async fn cmd_check_for_updates() -> Result<CheckForUpdatesResponse, String> {
+    use arxell_lite::app_paths::APP_USER_AGENT;
+    let current = env!("CARGO_PKG_VERSION").to_string();
+    let result = tokio::task::spawn_blocking(move || -> Result<CheckForUpdatesResponse, String> {
+        let client = reqwest::blocking::Client::builder()
+            .connect_timeout(std::time::Duration::from_secs(6))
+            .timeout(std::time::Duration::from_secs(10))
+            .build()
+            .map_err(|e| format!("failed creating HTTP client: {e}"))?;
+        let release: serde_json::Value = client
+            .get("https://api.github.com/repos/Arxellinc/arxell/releases/latest")
+            .header("User-Agent", APP_USER_AGENT)
+            .send()
+            .map_err(|e| format!("update check request failed: {e}"))?
+            .json()
+            .map_err(|e| format!("update check parse failed: {e}"))?;
+        let tag = release["tag_name"].as_str().unwrap_or("").trim();
+        let html_url = release["html_url"].as_str().unwrap_or("").to_string();
+        let latest = tag.trim_start_matches('v').to_string();
+        let has_update = !latest.is_empty() && latest != current && latest > current;
+        Ok(CheckForUpdatesResponse {
+            has_update,
+            current_version: current,
+            latest_version: latest,
+            html_url,
+        })
+    })
+    .await
+    .map_err(|e| format!("update check task failed: {e}"))?;
+    result
 }
 
 #[cfg(feature = "tauri-runtime")]

@@ -1519,6 +1519,15 @@ pub struct AppVersionResponse {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct CheckForUpdatesResponse {
+    pub has_update: bool,
+    pub current_version: String,
+    pub latest_version: String,
+    pub html_url: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct AppResourceUsageRequest {
     pub correlation_id: String,
 }

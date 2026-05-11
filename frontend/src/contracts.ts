@@ -1370,6 +1370,13 @@ export interface AppVersionResponse {
   version: string;
 }
 
+export interface CheckForUpdatesResponse {
+  hasUpdate: boolean;
+  currentVersion: string;
+  latestVersion: string;
+  htmlUrl: string;
+}
+
 export interface AppResourceUsageRequest {
   correlationId: string;
 }
