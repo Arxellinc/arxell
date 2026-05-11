@@ -20,7 +20,7 @@ use arxell_lite::contracts::{
     ApiConnectionUpdateResponse, ApiConnectionsExportRequest, ApiConnectionsExportResponse,
     ApiConnectionsImportRequest, ApiConnectionsImportResponse, ApiConnectionsListRequest,
     ApiConnectionsListResponse, AppResourceUsageRequest, AppResourceUsageResponse,
-    AppVersionResponse, ChatCancelRequest, ChatCancelResponse, ChatDeleteConversationRequest,
+    AppVersionResponse, CheckForUpdatesResponse, ChatCancelRequest, ChatCancelResponse, ChatDeleteConversationRequest,
     ChatDeleteConversationResponse, ChatGetMessagesRequest, ChatGetMessagesResponse,
     ChatInspectContextRequest, ChatInspectContextResponse, ChatListConversationsRequest,
     ChatListConversationsResponse, ChatSendRequest, ChatSendResponse, CustomItemDeleteRequest,
