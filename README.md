@@ -27,17 +27,17 @@
 
 ## Why Arxell?
 
-Most AI tools funnel your data through cloud services you don't control. Arxell flips that model: everything stays on your hardware. Your API keys live in your OS keychain. Your conversations stay on your disk. Your voice never leaves your microphone.
+Arxell brings frontier AI performance into secure local infrastructure, letting teams run language, image, voice, and document intelligence on-prem or offline without sending sensitive data to third-party clouds. With Arxell everything stays on your hardware. Your API keys live in your OS keychain. Your conversations stay on your disk. Even your voice never leaves the app. Arxell is fully functional even when 100% offline.
 
 <table>
   <tr>
     <td width="50%">
-      <h3>&#x1F6E1;&#xFE0F; Zero Telemetry</h3>
-      <p>No analytics. No tracking pixels. No phone-home. The network is used only when <em>you</em> choose to call an LLM provider.</p>
+      <h3>&#x1F6E1;&#xFE0F; Zero Cloud</h3>
+      <p>No analytics. No tracking pixels. No phone-home. The network is used only if and when <em>you</em> choose to optionally setup and call a cloud API provider.</p>
     </td>
     <td width="50%">
-      <h3>&#x1F5A5;&#xFE0F; Native Desktop</h3>
-      <p>Built on <strong>Tauri 2</strong> (Rust + WebView) for a lean, fast, cross-platform experience. Small bundle. Low memory. No Electron.</p>
+           <h3>&#x1F399;&#xFE0F; Full Voice Stack</h3>
+      <p>Speech-to-text (Whisper), text-to-speech (Kokoro, Piper, Matcha, Kitten), and live VAD with duplex modes — all local.</p>
     </td>
   </tr>
   <tr>
@@ -46,8 +46,8 @@ Most AI tools funnel your data through cloud services you don't control. Arxell 
       <p>Orchestrate Planner &rarr; Executor &rarr; Validator &rarr; Critic cycles with the built-in Looper tool for iterative, self-correcting workflows.</p>
     </td>
     <td>
-      <h3>&#x1F399;&#xFE0F; Full Voice Stack</h3>
-      <p>Speech-to-text (Whisper), text-to-speech (Kokoro, Piper, Matcha, Kitten), and live VAD with duplex modes — all local.</p>
+       <h3>&#x1F5A5;&#xFE0F; Native Desktop</h3>
+      <p>Built on <strong>Tauri 2</strong> (Rust + WebView) for a lean, fast, cross-platform experience. Small bundle. Low memory. No Electron.</p>
     </td>
   </tr>
   <tr>
@@ -61,17 +61,14 @@ Most AI tools funnel your data through cloud services you don't control. Arxell 
     </td>
   </tr>
 </table>
-
+...and much much more!
 ---
 
 ## Workspace Tools
 
 Arxell ships with 11 built-in workspace tools — each one a full-featured panel in the UI, and several are also available as agent capabilities.
 
-<p align="center">
-  <img src="docs/icons/tools-banner.svg" width="720" alt="Arxell workspace tools" />
-</p>
-
+ 
 | | Tool | Description |
 |---|------|-------------|
 | <img src="docs/icons/ico-terminal.svg" width="20"> | **Terminal** | Full PTY shell sessions — bash, zsh, PowerShell. Run anything you'd run in a terminal, right inside the workspace. |
@@ -79,8 +76,8 @@ Arxell ships with 11 built-in workspace tools — each one a full-featured panel
 | <img src="docs/icons/ico-looper.svg" width="20"> | **Looper** | Multi-agent loop orchestration with Planner, Executor, Validator, and Critic phases. Run iterative build cycles with interactive checkpoints. |
 | <img src="docs/icons/ico-files.svg" width="20"> | **Files** | Browse directories, read and edit files, create folders — all through a permission-checked filesystem interface. |
 | <img src="docs/icons/ico-notepad.svg" width="20"> | **Notepad** | A tabbed text editor for workspace files and scratch buffers with syntax highlighting. |
-| <img src="docs/icons/ico-sheets.svg" width="20"> | **Sheets** | A backend-powered spreadsheet editor. Open CSV and XLSX workbooks, edit cells, and save structured data. |
-| <img src="docs/icons/ico-search.svg" width="20"> | **WebSearch** | Search the web and pull live context into your workspace. Route queries through your configured search API. |
+| <img src="docs/icons/ico-sheets.svg" width="20"> | **Sheets** | A AI-powered spreadsheet editor. Open CSV, Json/L, and XLSX workbooks, leverage over 20 common formulars/functions, and save structured data. |
+| <img src="docs/icons/ico-search.svg" width="20"> | **WebSearch** | Use Serper to Search the web and pull live context into your workspace. Route queries through your configured search API. |
 | <img src="docs/icons/ico-chart.svg" width="20"> | **Chart** | Render Mermaid flowcharts, sequence diagrams, and more — visualised directly in the workspace pane. |
 | <img src="docs/icons/ico-tasks.svg" width="20"> | **Tasks** | Plan, track, and status-check work items. Works standalone or as an agent-accessible task board. |
 | <img src="docs/icons/ico-memory.svg" width="20"> | **Memory** | Persistent context references the agent can read and write across sessions. Long-term memory, local-first. |
@@ -204,7 +201,7 @@ Every layer communicates through typed contracts with correlation IDs, structure
 
 ```bash
 # Clone the repository
-git clone https://github.com/anomalyco/arxell.git
+git clone https://github.com/arxellinc/arxell.git
 cd arxell
 
 # Install frontend dependencies
