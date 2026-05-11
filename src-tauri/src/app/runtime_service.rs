@@ -18,7 +18,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 const DEFAULT_PORT: u16 = 1420;
 const DEFAULT_CTX: u32 = 8192;
 const DEFAULT_N_GPU_LAYERS: i32 = 999;
-const HEALTH_TIMEOUT_SECS: u64 = 45;
+const HEALTH_TIMEOUT_SECS: u64 = 90;
 
 #[derive(Debug, Deserialize)]
 struct GithubRelease {
@@ -378,6 +378,7 @@ impl LlamaRuntimeService {
         let disable_thinking_for_qwen =
             should_disable_thinking_for_model(request.model_path.as_str());
         command
+            .current_dir(&engine_dir)
             .arg("--model")
             .arg(request.model_path.as_str())
             .arg("--host")
@@ -389,7 +390,8 @@ impl LlamaRuntimeService {
             .arg("-ngl")
             .arg(ngl.to_string())
             .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
+            .stderr(Stdio::piped())
+            .stdin(Stdio::null());
         if let Some(v) = threads {
             command.arg("--threads").arg(v.to_string());
         }
@@ -741,11 +743,12 @@ fn wait_for_port(port: u16, timeout_secs: u64) -> bool {
 
 fn query_health_progress(port: u16) -> Option<f64> {
     let url = format!("http://127.0.0.1:{}/health", port);
-    let resp = std::process::Command::new("curl")
-        .args(["-s", "-m", "2", &url])
-        .output()
+    let client = reqwest::blocking::Client::builder()
+        .timeout(std::time::Duration::from_secs(2))
+        .build()
         .ok()?;
-    let body = String::from_utf8_lossy(&resp.stdout);
+    let resp = client.get(&url).send().ok()?;
+    let body = resp.text().ok()?;
     let trimmed = body.trim();
     if trimmed.contains("\"status\":\"ok\"") || trimmed.contains("\"status\": \"ok\"") {
         return Some(1.0);
@@ -818,7 +821,43 @@ fn kill_orphaned_llama_server(port: u16) {
 }
 
 #[cfg(not(unix))]
-fn kill_orphaned_llama_server(_port: u16) {}
+fn kill_orphaned_llama_server(_port: u16) {
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        let output = match Command::new("netstat")
+            .args(["-ano", "-p", "TCP"])
+            .creation_flags(CREATE_NO_WINDOW)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .output()
+        {
+            Ok(o) => o,
+            Err(_) => return,
+        };
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let needle = format!(":{}", _port);
+        for line in stdout.lines() {
+            if !line.contains(&needle) {
+                continue;
+            }
+            let pid = line
+                .rsplit_whitespace()
+                .next()
+                .and_then(|s| s.parse::<u32>().ok());
+            if let Some(pid) = pid {
+                let _ = Command::new("taskkill")
+                    .args(["/F", "/T", "/PID", &pid.to_string()])
+                    .creation_flags(CREATE_NO_WINDOW)
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::null())
+                    .status();
+                std::thread::sleep(Duration::from_millis(200));
+            }
+        }
+    }
+}
 
 fn spawn_output_forwarder<R>(
     hub: EventHub,

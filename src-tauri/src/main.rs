@@ -1334,7 +1334,10 @@ async fn cmd_llama_runtime_start(
     request: LlamaRuntimeStartRequest,
 ) -> Result<LlamaRuntimeStartResponse, String> {
     let app_data = app_paths::app_data_dir();
-    state.runtime.start(&request, app_data.as_path())
+    let service = std::sync::Arc::clone(&state.runtime);
+    tokio::task::spawn_blocking(move || service.start(&request, app_data.as_path()))
+        .await
+        .map_err(|e| format!("llama runtime start task failed: {e}"))?
 }
 
 #[cfg(feature = "tauri-runtime")]

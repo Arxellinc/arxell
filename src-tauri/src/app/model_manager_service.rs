@@ -454,10 +454,18 @@ impl ModelManagerService {
             json!({ "listName": trimmed }),
         );
 
-        let base = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../model-lists");
-        let file = base.join(format!("{trimmed}.csv"));
-        let raw = std::fs::read_to_string(&file)
-            .map_err(|e| format!("failed reading catalog csv {}: {e}", file.to_string_lossy()))?;
+        let manifest_base = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../model-lists");
+        let resource_base = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("resources/model-lists");
+        let filename = format!("{trimmed}.csv");
+        let file = manifest_base.join(&filename);
+        let raw = match std::fs::read_to_string(&file) {
+            Ok(content) => content,
+            Err(_) => {
+                let alt = resource_base.join(&filename);
+                std::fs::read_to_string(&alt)
+                    .map_err(|e| format!("failed reading catalog csv {}: {e}", alt.to_string_lossy()))?
+            }
+        };
         let mut rows: Vec<ModelManagerCatalogCsvRow> = Vec::new();
         for (idx, line) in raw.lines().enumerate() {
             if idx == 0 || line.trim().is_empty() {
