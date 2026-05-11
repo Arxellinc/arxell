@@ -16,7 +16,7 @@ use crate::app_paths;
 #[cfg(feature = "tauri-runtime")]
 use crate::stt::events::{PipelineErrorPayload, STTStatusPayload};
 use log::{info, warn};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::Arc;
@@ -44,6 +44,18 @@ const WHISPER_BINARY: &str = "whisper-server-linux-x86_64";
     all(target_os = "linux", target_arch = "x86_64")
 )))]
 const WHISPER_BINARY: &str = "whisper-server-unknown";
+
+fn strip_unc_prefix(path: &Path) -> PathBuf {
+    #[cfg(target_os = "windows")]
+    {
+        let s = path.to_string_lossy();
+        PathBuf::from(s.strip_prefix(r"\\?\").unwrap_or(&s))
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        path.to_path_buf()
+    }
+}
 
 /// Status of the supervisor
 #[derive(Debug, Clone)]
@@ -375,10 +387,11 @@ fn find_free_port() -> Result<u32, String> {
 /// Resolve the path to the whisper.cpp binary.
 fn resolve_whisper_binary(app: &AppHandle) -> Result<PathBuf, String> {
     let app_data_dir = app_paths::app_data_dir();
-    let resource_dir = app
+    let raw_resource_dir = app
         .path()
         .resource_dir()
         .map_err(|e| format!("Failed to get resource directory: {}", e))?;
+    let resource_dir = strip_unc_prefix(&raw_resource_dir);
 
     let candidates = [
         app_data_dir

@@ -2,7 +2,16 @@ import type { TerminalManager } from "../terminal/index";
 import type { ChatIpcClient } from "../../ipcClient";
 import type { OpenCodeAgent, OpenCodeToolState } from "./state";
 
-const INSTALL_COMMAND = "curl -fsSL https://opencode.ai/install | bash";
+const INSTALL_COMMAND_UNIX = "curl -fsSL https://opencode.ai/install | bash";
+const INSTALL_COMMAND_WIN = "powershell -Command \"irm https://opencode.ai/install.ps1 | iex\"";
+
+function isWindows(): boolean {
+  return /Windows/i.test(navigator.userAgent);
+}
+
+export function getInstallCommand(): string {
+  return isWindows() ? INSTALL_COMMAND_WIN : INSTALL_COMMAND_UNIX;
+}
 
 export interface OpenCodeActionsDeps {
   terminalManager: TerminalManager;
@@ -23,7 +32,7 @@ export async function checkOpenCodeInstalled(
   try {
     const correlationId = deps.nextCorrelationId();
     const probe = await deps.terminalManager.createSession({
-      shell: "/bin/sh",
+      ...(isWindows() ? {} : { shell: "/bin/sh" }),
       owner: "opencode",
       title: "OpenCode Probe"
     });
@@ -42,7 +51,7 @@ export async function checkOpenCodeInstalled(
 
     await deps.client.sendTerminalInput({
       sessionId: probeId,
-      input: "which opencode\n",
+      input: isWindows() ? "where opencode\n" : "which opencode\n",
       correlationId
     });
 
@@ -195,7 +204,7 @@ export async function installNow(
     await sleep(500);
     await deps.client.sendTerminalInput({
       sessionId: session.sessionId,
-      input: INSTALL_COMMAND + "\n",
+      input: getInstallCommand() + "\n",
       correlationId: deps.nextCorrelationId()
     });
     agent.status = "running";
@@ -203,7 +212,7 @@ export async function installNow(
     await sleep(8000);
     await deps.client.sendTerminalInput({
       sessionId: session.sessionId,
-      input: "which opencode\n",
+      input: isWindows() ? "where opencode\n" : "which opencode\n",
       correlationId: deps.nextCorrelationId()
     });
     await sleep(2000);
@@ -224,10 +233,6 @@ export async function recheckAfterInstall(
     state.installModalOpen = false;
     await spawnAgent(state, deps, { label: "Agent 1" });
   }
-}
-
-export function getInstallCommand(): string {
-  return INSTALL_COMMAND;
 }
 
 function sleep(ms: number): Promise<void> {

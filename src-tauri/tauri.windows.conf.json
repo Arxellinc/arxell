@@ -6,6 +6,7 @@
       "resources/kokoro-runtime/*",
       "resources/kokoro-runtime/**/*",
       "resources/kokoro/*",
+      "resources/model-lists/*",
       "resources/voice/*",
       "resources/voice/**/*",
       "resources/whisper/*",

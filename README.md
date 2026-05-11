@@ -1,10 +1,8 @@
 <p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/icons/banner-dark.svg">
-    <source media="(prefers-color-scheme: light)" srcset="docs/icons/banner-light.svg">
-    <img width="480" alt="Arxell — Your AI Workspace" src="docs/icons/banner-light.svg">
-  </picture>
+  <img width="96" src="docs/icons/logo.svg" alt="Arxell">
 </p>
+
+<h1 align="center">Arxell</h1>
 
 <p align="center">
   <strong>The private, fully-local AI workspace.</strong><br>

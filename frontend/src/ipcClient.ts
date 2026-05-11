@@ -20,6 +20,7 @@ import type {
   AppResourceUsageResponse,
   AppEvent,
   AppVersionResponse,
+  CheckForUpdatesResponse,
   ChatCancelRequest,
   ChatCancelResponse,
   ChatDeleteConversationRequest,
@@ -172,6 +173,7 @@ import { getAllToolManifests } from "./tools/registry";
 
 export interface ChatIpcClient {
   getAppVersion(): Promise<AppVersionResponse>;
+  checkForUpdates(): Promise<CheckForUpdatesResponse>;
   getAppResourceUsage(request: AppResourceUsageRequest): Promise<AppResourceUsageResponse>;
   sendMessage(request: ChatSendRequest): Promise<ChatSendResponse>;
   cancelMessage(request: ChatCancelRequest): Promise<ChatCancelResponse>;
@@ -369,6 +371,10 @@ class TauriChatIpcClient implements ChatIpcClient {
 
   getAppVersion(): Promise<AppVersionResponse> {
     return this.invokeFn<AppVersionResponse>("cmd_app_version");
+  }
+
+  checkForUpdates(): Promise<CheckForUpdatesResponse> {
+    return this.invokeFn<CheckForUpdatesResponse>("cmd_check_for_updates");
   }
 
   getAppResourceUsage(request: AppResourceUsageRequest): Promise<AppResourceUsageResponse> {
@@ -873,6 +879,10 @@ export class MockChatIpcClient implements ChatIpcClient {
 
   async getAppVersion(): Promise<AppVersionResponse> {
     return { version: APP_BUILD_VERSION };
+  }
+
+  async checkForUpdates(): Promise<CheckForUpdatesResponse> {
+    return { hasUpdate: false, currentVersion: APP_BUILD_VERSION, latestVersion: "", htmlUrl: "" };
   }
 
   async getAppResourceUsage(request: AppResourceUsageRequest): Promise<AppResourceUsageResponse> {

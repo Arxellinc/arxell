@@ -173,7 +173,7 @@ body {
   width: 100%;
   display: grid;
   grid-template-rows: var(--global-bar-h) 1fr var(--bottom-bar-h);
-  contain: layout style;
+  contain: style;
   position: relative;
 }
 
@@ -243,7 +243,7 @@ body {
   display: grid;
   grid-template-columns: var(--sidebar-w) 1fr;
   overflow: hidden;
-  contain: layout style;
+  contain: style;
 }
 
 .app-body.app-body-portrait {
@@ -828,7 +828,7 @@ body {
 .app-frame select {
   border: 1px solid var(--line);
   border-radius: 4px;
-  background: var(--surface-soft);
+  background-color: var(--surface-soft);
   color: var(--ink);
   min-height: 26px;
   font-size: 0.75rem;
@@ -841,6 +841,10 @@ body {
   background-repeat: no-repeat;
   background-position: right 0.5rem center;
   background-size: 10px 6px;
+}
+
+.app-frame select {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%23c7d2d3' stroke-width='1.5' stroke-linecap='round'/%3E%3C/svg%3E");
 }
 
 .app-frame select:focus {
@@ -998,7 +1002,7 @@ body {
   height: 100%;
   display: grid;
   grid-template-rows: 1fr;
-  contain: layout style;
+  contain: style;
 }
 
 .global-topbar {

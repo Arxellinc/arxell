@@ -237,7 +237,7 @@ function readStageConfig(stage: HTMLElement): AvatarStageConfig | null {
     assetUrl,
     assetName: stage.dataset.avatarAssetName?.trim() || (assetKind === "image" ? "Avatar image" : "Avatar model"),
     meshSettings,
-    bgColor: stage.dataset.avatarBgColor?.trim() || "#000000",
+    bgColor: stage.dataset.avatarBgColor?.trim() || "#0d1115",
     bgOpacity: parseFloat(stage.dataset.avatarBgOpacity ?? "50") / 100,
     morphs,
     armBones
@@ -284,6 +284,9 @@ function mountGlb(stage: HTMLElement, config: AvatarStageConfig): () => void {
   liveStages.set(stage, { config, renderer });
   renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
   renderer.setClearColor(new THREE.Color(config.bgColor), config.bgOpacity);
+  renderer.domElement.style.display = "block";
+  renderer.domElement.style.width = "100%";
+  renderer.domElement.style.height = "100%";
   stage.appendChild(renderer.domElement);
 
   const settingsMap = new Map<string, MeshSettingInput>();
@@ -441,7 +444,8 @@ function mountGlb(stage: HTMLElement, config: AvatarStageConfig): () => void {
       maxDim = Math.max(tmpSize.x, tmpSize.y, tmpSize.z, 0.5);
     },
     undefined,
-    () => {
+    (error) => {
+      console.error("[avatar] Failed to load GLB:", config.assetUrl, error);
       stage.dataset.avatarError = "true";
     }
   );

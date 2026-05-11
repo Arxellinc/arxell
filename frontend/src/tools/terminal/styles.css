@@ -20,6 +20,5 @@
 }
 
 .terminal-host .xterm-screen canvas {
-  -webkit-transform: translateZ(0);
-  transform: translateZ(0);
+  position: relative;
 }

@@ -171,7 +171,20 @@ fn default_workspace_root() -> PathBuf {
 
 fn canonical_workspace_root(root: &Path) -> Result<PathBuf, String> {
     root.canonicalize()
+        .map(strip_unc)
         .map_err(|e| format!("failed resolving workspace root: {e}"))
+}
+
+fn strip_unc(path: PathBuf) -> PathBuf {
+    #[cfg(target_os = "windows")]
+    {
+        let s = path.to_string_lossy();
+        PathBuf::from(s.strip_prefix(r"\\?\").unwrap_or(&s))
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        path
+    }
 }
 
 fn resolve_requested_path(canonical_root: &Path, requested: &str) -> PathBuf {
@@ -203,6 +216,7 @@ fn resolve_existing_target_path(root: &Path, requested: Option<&str>) -> Result<
     let joined = resolve_requested_path(canonical_root.as_path(), requested);
     let canonical_target = joined
         .canonicalize()
+        .map(strip_unc)
         .map_err(|e| format!("failed resolving requested path: {e}"))?;
     if !canonical_target.starts_with(canonical_root.as_path()) {
         return Err("requested path is outside workspace root".to_string());
@@ -280,5 +294,13 @@ fn list_directory_entries(path: &Path) -> Result<Vec<FilesListDirectoryEntry>, S
 }
 
 fn path_to_string(path: &Path) -> String {
-    path.to_string_lossy().to_string()
+    let s = path.to_string_lossy().to_string();
+    #[cfg(target_os = "windows")]
+    {
+        s.strip_prefix(r"\\?\").unwrap_or(&s).to_string()
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        s
+    }
 }
