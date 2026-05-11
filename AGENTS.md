@@ -1,5 +1,5 @@
 # Agent Instructions
-- Architecture and App information documents are available in the /docs folder
+- Architecture and app information documents are available in the /docs folder
 
 ## Git Workflow
 
@@ -13,8 +13,10 @@
 1. `git checkout main && git pull`
 2. `git checkout -b <prefix>/<short-description>`
 3. Make changes.
-4. Verify: `cd frontend && npm run build && npm run lint` (and `cd src-tauri && cargo check` for Rust changes).
-5. `git add -A && git commit -m "<descriptive message>"`
+4. Verify:
+   - Frontend: `cd frontend && npm run build && npm run lint && npm test`
+   - Rust (if changed): `cd src-tauri && cargo check`
+5. `git add -A && git commit -m "<type>: <descriptive message>"`<br>   Types: `feat`, `fix`, `refactor`, `test`, `docs`, `ci`, `chore`
 6. `git push -u origin <branch-name>`
 7. `gh pr create --title "<title>" --body "<description>"`
 8. Merge via GitHub (squash and merge).
@@ -122,6 +124,7 @@ Always prefer these over tool-specific equivalents.
 | `.icon-btn` | Small icon button (24px, border, rounded) |
 | `.icon-btn-sm` | Smaller icon button variant (20px) |
 | `.icon-btn.is-danger` | Icon button with danger hover state |
+| `.tool-action-btn` | Tool action button (22px, flat, borderless) |
 
 #### Split Panes
 | Class | Purpose |
@@ -160,6 +163,4 @@ Always prefer these over tool-specific equivalents.
 5. **Scope all tool classes** with the tool name prefix (e.g., `.flow-*`, `.files-*`, `.tasks-*`).
 6. **Keep tool CSS minimal** — only styles unique to that tool that don't already exist in `styles.css`.
 7. **Tool-specific button styles** should use `.tool-action-btn` (22px) or `.icon-btn` (24px) as base — don't recreate button styles.
-
-### Known Issues
 

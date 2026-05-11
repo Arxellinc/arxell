@@ -360,6 +360,12 @@ jobs:
                 if os_key != "windows":
                   so_dest.chmod(so_dest.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
                 print(f"[llama-runtime] bundled shared library: {so_file.name}")
+            if os_key == "windows":
+              for dll_file in extract_dir.rglob("*.dll"):
+                if dll_file.is_file():
+                  dll_dest = engine_dir / dll_file.name
+                  shutil.copy2(dll_file, dll_dest)
+                  print(f"[llama-runtime] bundled DLL: {dll_file.name}")
             print(f"[llama-runtime] prepared {engine_id}: {binary_dest}")
             prepared[engine_id] = {
               "name": name,
