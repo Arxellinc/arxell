@@ -4,16 +4,16 @@
 )]
 
 #[cfg(not(feature = "tauri-runtime"))]
-use arxell_lite::app::AppContext;
+use arxell::app::AppContext;
 #[cfg(not(feature = "tauri-runtime"))]
-use arxell_lite::contracts::ChatSendRequest;
+use arxell::contracts::ChatSendRequest;
 
 #[cfg(feature = "tauri-runtime")]
-use arxell_lite::app::AppContext;
+use arxell::app::AppContext;
 #[cfg(feature = "tauri-runtime")]
-use arxell_lite::app_paths;
+use arxell::app_paths;
 #[cfg(feature = "tauri-runtime")]
-use arxell_lite::contracts::{
+use arxell::contracts::{
     ApiConnectionCreateRequest, ApiConnectionCreateResponse, ApiConnectionDeleteRequest,
     ApiConnectionDeleteResponse, ApiConnectionProbeRequest, ApiConnectionProbeResponse,
     ApiConnectionReverifyRequest, ApiConnectionReverifyResponse, ApiConnectionUpdateRequest,
@@ -68,15 +68,15 @@ use arxell_lite::contracts::{
     WorkspaceToolsImportResponse, WorkspaceToolsListRequest, WorkspaceToolsListResponse,
 };
 #[cfg(feature = "tauri-runtime")]
-use arxell_lite::ipc::tauri_bridge::{attach_event_forwarder, TauriBridgeState};
+use arxell::ipc::tauri_bridge::{attach_event_forwarder, TauriBridgeState};
 #[cfg(feature = "tauri-runtime")]
-use arxell_lite::ipc::tool_runtime::{invoke_legacy_tool_command, invoke_tool};
+use arxell::ipc::tool_runtime::{invoke_legacy_tool_command, invoke_tool};
 #[cfg(feature = "tauri-runtime")]
-use arxell_lite::stt::STTState;
+use arxell::stt::STTState;
 #[cfg(feature = "tauri-runtime")]
-use arxell_lite::tools::invoke::tasks::run_due_scheduled_tasks;
+use arxell::tools::invoke::tasks::run_due_scheduled_tasks;
 #[cfg(feature = "tauri-runtime")]
-use arxell_lite::tts::TTSState;
+use arxell::tts::TTSState;
 #[cfg(feature = "tauri-runtime")]
 use serde::{Deserialize, Serialize};
 #[cfg(feature = "tauri-runtime")]
@@ -361,21 +361,21 @@ fn main() {
 #[cfg(feature = "tauri-runtime")]
 #[tauri::command]
 async fn start_stt(app: tauri::AppHandle, state: tauri::State<'_, STTState>) -> Result<(), String> {
-    arxell_lite::stt::start_stt(app, state).await
+    arxell::stt::start_stt(app, state).await
 }
 
 #[cfg(feature = "tauri-runtime")]
 #[tauri::command]
 async fn stop_stt(state: tauri::State<'_, STTState>) -> Result<(), String> {
-    arxell_lite::stt::stop_stt(state).await
+    arxell::stt::stop_stt(state).await
 }
 
 #[cfg(feature = "tauri-runtime")]
 #[tauri::command]
 async fn stt_status(
     state: tauri::State<'_, STTState>,
-) -> Result<arxell_lite::stt::events::STTStatusPayload, String> {
-    arxell_lite::stt::stt_status(state).await
+) -> Result<arxell::stt::events::STTStatusPayload, String> {
+    arxell::stt::stt_status(state).await
 }
 
 #[cfg(feature = "tauri-runtime")]
@@ -384,13 +384,13 @@ async fn stt_set_backend(
     state: tauri::State<'_, STTState>,
     backend: String,
 ) -> Result<String, String> {
-    arxell_lite::stt::stt_set_backend(state, backend).await
+    arxell::stt::stt_set_backend(state, backend).await
 }
 
 #[cfg(feature = "tauri-runtime")]
 #[tauri::command]
 async fn stt_get_backend(state: tauri::State<'_, STTState>) -> Result<String, String> {
-    arxell_lite::stt::stt_get_backend(state).await
+    arxell::stt::stt_get_backend(state).await
 }
 
 #[cfg(feature = "tauri-runtime")]
@@ -400,19 +400,19 @@ async fn stt_download_model(
     state: tauri::State<'_, STTState>,
     file_name: String,
 ) -> Result<String, String> {
-    arxell_lite::stt::stt_download_model(app, state, file_name).await
+    arxell::stt::stt_download_model(app, state, file_name).await
 }
 
 #[cfg(feature = "tauri-runtime")]
 #[tauri::command]
 async fn stt_list_models(app: tauri::AppHandle) -> Result<Vec<String>, String> {
-    arxell_lite::stt::stt_list_models(app).await
+    arxell::stt::stt_list_models(app).await
 }
 
 #[cfg(feature = "tauri-runtime")]
 #[tauri::command]
 async fn stt_set_model(state: tauri::State<'_, STTState>, model: String) -> Result<String, String> {
-    arxell_lite::stt::stt_set_model(state, model).await
+    arxell::stt::stt_set_model(state, model).await
 }
 
 #[cfg(feature = "tauri-runtime")]
@@ -421,13 +421,13 @@ async fn stt_set_language(
     state: tauri::State<'_, STTState>,
     language: String,
 ) -> Result<String, String> {
-    arxell_lite::stt::stt_set_language(state, language).await
+    arxell::stt::stt_set_language(state, language).await
 }
 
 #[cfg(feature = "tauri-runtime")]
 #[tauri::command]
 async fn stt_set_threads(state: tauri::State<'_, STTState>, threads: i32) -> Result<i32, String> {
-    arxell_lite::stt::stt_set_threads(state, threads).await
+    arxell::stt::stt_set_threads(state, threads).await
 }
 
 #[cfg(feature = "tauri-runtime")]
@@ -436,7 +436,7 @@ async fn cmd_tts_status(
     app: tauri::AppHandle,
     request: TtsStatusRequest,
 ) -> Result<TtsStatusResponse, String> {
-    arxell_lite::tts::status(&app, request)
+    arxell::tts::status(&app, request)
 }
 
 #[cfg(feature = "tauri-runtime")]
@@ -445,7 +445,7 @@ async fn cmd_tts_list_voices(
     app: tauri::AppHandle,
     request: TtsListVoicesRequest,
 ) -> Result<TtsListVoicesResponse, String> {
-    arxell_lite::tts::list_voices(&app, request)
+    arxell::tts::list_voices(&app, request)
 }
 
 #[cfg(feature = "tauri-runtime")]
@@ -455,7 +455,7 @@ async fn cmd_tts_speak(
     tts_state: tauri::State<'_, TTSState>,
     request: TtsSpeakRequest,
 ) -> Result<TtsSpeakResponse, String> {
-    arxell_lite::tts::speak(&app, request, &tts_state).await
+    arxell::tts::speak(&app, request, &tts_state).await
 }
 
 #[cfg(feature = "tauri-runtime")]
@@ -465,7 +465,7 @@ async fn cmd_tts_speak_stream(
     tts_state: tauri::State<'_, TTSState>,
     request: TtsSpeakRequest,
 ) -> Result<TtsSpeakStreamResponse, String> {
-    arxell_lite::tts::speak_stream(&app, request, &tts_state).await
+    arxell::tts::speak_stream(&app, request, &tts_state).await
 }
 
 #[cfg(feature = "tauri-runtime")]
@@ -474,7 +474,7 @@ async fn cmd_tts_stop(
     tts_state: tauri::State<'_, TTSState>,
     request: TtsStopRequest,
 ) -> Result<TtsStopResponse, String> {
-    arxell_lite::tts::stop(request, &tts_state)
+    arxell::tts::stop(request, &tts_state)
 }
 
 #[cfg(feature = "tauri-runtime")]
@@ -484,7 +484,7 @@ async fn cmd_tts_self_test(
     tts_state: tauri::State<'_, TTSState>,
     request: TtsSelfTestRequest,
 ) -> Result<TtsSelfTestResponse, String> {
-    arxell_lite::tts::self_test(&app, request, &tts_state).await
+    arxell::tts::self_test(&app, request, &tts_state).await
 }
 
 #[cfg(feature = "tauri-runtime")]
@@ -493,7 +493,7 @@ async fn cmd_tts_settings_get(
     app: tauri::AppHandle,
     request: TtsSettingsGetRequest,
 ) -> Result<TtsSettingsGetResponse, String> {
-    arxell_lite::tts::settings_get(&app, request)
+    arxell::tts::settings_get(&app, request)
 }
 
 #[cfg(feature = "tauri-runtime")]
@@ -503,7 +503,7 @@ async fn cmd_tts_settings_set(
     tts_state: tauri::State<'_, TTSState>,
     request: TtsSettingsSetRequest,
 ) -> Result<TtsSettingsSetResponse, String> {
-    arxell_lite::tts::settings_set(&app, &tts_state, request)
+    arxell::tts::settings_set(&app, &tts_state, request)
 }
 
 #[cfg(feature = "tauri-runtime")]
@@ -622,7 +622,7 @@ async fn transcribe_chunk(
     pcm_samples: Vec<f32>,
     utterance_id: String,
 ) -> Result<(), String> {
-    arxell_lite::stt::transcribe_chunk(app, state, pcm_samples, utterance_id).await
+    arxell::stt::transcribe_chunk(app, state, pcm_samples, utterance_id).await
 }
 
 #[cfg(feature = "tauri-runtime")]
@@ -633,13 +633,13 @@ async fn transcribe_partial_chunk(
     pcm_samples: Vec<f32>,
     utterance_id: String,
 ) -> Result<(), String> {
-    arxell_lite::stt::transcribe_partial_chunk(app, state, pcm_samples, utterance_id).await
+    arxell::stt::transcribe_partial_chunk(app, state, pcm_samples, utterance_id).await
 }
 
 #[cfg(feature = "tauri-runtime")]
 #[tauri::command]
 async fn stt_stream_reset() -> Result<(), String> {
-    arxell_lite::stt::stt_stream_reset().await
+    arxell::stt::stt_stream_reset().await
 }
 
 #[cfg(feature = "tauri-runtime")]
@@ -649,7 +649,7 @@ async fn stt_stream_configure(
     end_frames: Option<u32>,
     pre_speech_ms: Option<u32>,
 ) -> Result<(), String> {
-    arxell_lite::stt::stt_stream_configure(start_frames, end_frames, pre_speech_ms).await
+    arxell::stt::stt_stream_configure(start_frames, end_frames, pre_speech_ms).await
 }
 
 #[cfg(feature = "tauri-runtime")]
@@ -659,7 +659,7 @@ async fn stt_stream_ingest(
     state: tauri::State<'_, STTState>,
     pcm_samples: Vec<f32>,
 ) -> Result<(), String> {
-    arxell_lite::stt::stt_stream_ingest(app, state, pcm_samples).await
+    arxell::stt::stt_stream_ingest(app, state, pcm_samples).await
 }
 
 #[cfg(feature = "tauri-runtime")]
@@ -1001,11 +1001,11 @@ async fn cmd_user_projects_roots(
     let roots = state.user_projects.ensure_roots()?;
     Ok(UserProjectsRootsResponse {
         correlation_id: request.correlation_id,
-        content_root: arxell_lite::app::user_projects_service::path_to_string(&roots.content_root),
-        projects_root: arxell_lite::app::user_projects_service::path_to_string(
+        content_root: arxell::app::user_projects_service::path_to_string(&roots.content_root),
+        projects_root: arxell::app::user_projects_service::path_to_string(
             &roots.projects_root,
         ),
-        tools_root: arxell_lite::app::user_projects_service::path_to_string(&roots.tools_root),
+        tools_root: arxell::app::user_projects_service::path_to_string(&roots.tools_root),
     })
 }
 
@@ -1020,11 +1020,11 @@ async fn cmd_user_project_ensure(
         correlation_id: request.correlation_id,
         project_name: project.project_name,
         project_slug: project.project_slug,
-        root_path: arxell_lite::app::user_projects_service::path_to_string(&project.root_path),
-        tasks_path: arxell_lite::app::user_projects_service::path_to_string(&project.tasks_path),
-        sheets_path: arxell_lite::app::user_projects_service::path_to_string(&project.sheets_path),
-        looper_path: arxell_lite::app::user_projects_service::path_to_string(&project.looper_path),
-        files_path: arxell_lite::app::user_projects_service::path_to_string(&project.files_path),
+        root_path: arxell::app::user_projects_service::path_to_string(&project.root_path),
+        tasks_path: arxell::app::user_projects_service::path_to_string(&project.tasks_path),
+        sheets_path: arxell::app::user_projects_service::path_to_string(&project.sheets_path),
+        looper_path: arxell::app::user_projects_service::path_to_string(&project.looper_path),
+        files_path: arxell::app::user_projects_service::path_to_string(&project.files_path),
     })
 }
 
@@ -1089,7 +1089,7 @@ async fn cmd_api_connection_create(
 ) -> Result<ApiConnectionCreateResponse, String> {
     let connection = state
         .api_registry
-        .create_and_verify(arxell_lite::api_registry::NewApiConnectionInput {
+        .create_and_verify(arxell::api_registry::NewApiConnectionInput {
             api_type: request.api_type,
             api_url: request.api_url,
             name: request.name,
@@ -1154,7 +1154,7 @@ async fn cmd_api_connection_update(
 ) -> Result<ApiConnectionUpdateResponse, String> {
     let connection = state.api_registry.update(
         request.id.as_str(),
-        arxell_lite::api_registry::UpdateApiConnectionInput {
+        arxell::api_registry::UpdateApiConnectionInput {
             api_type: request.api_type,
             api_url: request.api_url,
             name: request.name,
@@ -1228,7 +1228,7 @@ async fn cmd_app_version() -> Result<AppVersionResponse, String> {
 #[cfg(feature = "tauri-runtime")]
 #[tauri::command]
 async fn cmd_check_for_updates() -> Result<CheckForUpdatesResponse, String> {
-    use arxell_lite::app_paths::APP_USER_AGENT;
+    use arxell::app_paths::APP_USER_AGENT;
     let current = env!("CARGO_PKG_VERSION").to_string();
     let result = tokio::task::spawn_blocking(move || -> Result<CheckForUpdatesResponse, String> {
         let client = reqwest::blocking::Client::builder()
@@ -1907,7 +1907,7 @@ async fn cmd_files_list_directory(
 fn resolve_bundled_engine_binary(app: &tauri::AppHandle, engine_id: &str) -> Option<PathBuf> {
     let os = std::env::consts::OS;
     let arch = std::env::consts::ARCH;
-    let binary_name = arxell_lite::app::runtime_service::engine_binary_filename();
+    let binary_name = arxell::app::runtime_service::engine_binary_filename();
     let rel_candidates = [
         format!("llama-runtime/{engine_id}/{binary_name}"),
         format!("resources/llama-runtime/{engine_id}/{binary_name}"),

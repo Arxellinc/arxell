@@ -4,7 +4,7 @@ version = "0.2.12"
 edition = "2021"
 
 [lib]
-name = "arxell_lite"
+name = "arxell"
 
 [features]
 default = []
