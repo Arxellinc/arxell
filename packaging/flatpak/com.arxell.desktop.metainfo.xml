@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>com.arxell.desktop</id>
+  <name>Arxell</name>
+  <summary>Private desktop AI workspace</summary>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>Proprietary</project_license>
+  <description>
+    <p>
+      Arxell is a desktop AI workspace focused on local-first operation and user-controlled providers.
+    </p>
+  </description>
+  <launchable type="desktop-id">com.arxell.desktop.desktop</launchable>
+  <developer id="com.arxell">
+    <name>Arxell Inc.</name>
+  </developer>
+</component>

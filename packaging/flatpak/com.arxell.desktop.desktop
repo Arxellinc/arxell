@@ -1,0 +1,9 @@
+[Desktop Entry]
+Name=Arxell
+Comment=Private desktop AI workspace
+Exec=arxell
+Icon=com.arxell.desktop
+Terminal=false
+Type=Application
+Categories=Utility;Development;
+StartupNotify=true

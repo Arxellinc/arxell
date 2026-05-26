@@ -194,6 +194,11 @@ Every layer communicates through typed contracts with correlation IDs, structure
 - [Node.js](https://nodejs.org/) >= 18
 - Platform-specific WebView2 (Windows) / WebKit (macOS &mdash; built-in) / webkit2gtk (Linux)
 
+Linux package notes:
+- `.deb` packages declare required GTK/WebKit runtime dependencies so supported Debian/Ubuntu systems install them automatically.
+- `AppImage` still relies on host desktop runtime libraries (notably GTK/WebKit). Prefer `.deb` on Debian/Ubuntu for the most reliable out-of-box install.
+- `Flatpak` is the recommended cross-distro Linux install format for the most consistent runtime behavior.
+
 ### Build from Source
 
 ```bash

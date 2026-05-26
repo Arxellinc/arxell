@@ -43,6 +43,18 @@
     ],
     "useLocalToolsDir": false,
     "linux": {
+      "deb": {
+        "depends": [
+          "libgtk-3-0",
+          "libwebkit2gtk-4.1-0",
+          "libjavascriptcoregtk-4.1-0",
+          "libsoup-3.0-0",
+          "libgdk-pixbuf-2.0-0",
+          "libpango-1.0-0",
+          "libcairo2",
+          "libasound2"
+        ]
+      },
       "appimage": {
         "bundleMediaFramework": false
       }

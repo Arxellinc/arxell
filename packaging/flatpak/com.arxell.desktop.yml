@@ -1,0 +1,36 @@
+app-id: com.arxell.desktop
+runtime: org.gnome.Platform
+runtime-version: "47"
+sdk: org.gnome.Sdk
+sdk-extensions:
+  - org.freedesktop.Sdk.Extension.rust-stable
+command: arxell
+finish-args:
+  - --share=network
+  - --share=ipc
+  - --socket=fallback-x11
+  - --socket=wayland
+  - --socket=pulseaudio
+  - --device=dri
+  - --talk-name=org.freedesktop.secrets
+  - --filesystem=xdg-download
+  - --filesystem=xdg-documents
+  - --filesystem=xdg-pictures
+  - --filesystem=xdg-videos
+  - --filesystem=xdg-music
+modules:
+  - name: arxell
+    buildsystem: simple
+    build-commands:
+      - export PATH="/usr/lib/sdk/rust-stable/bin:${PATH}"
+      - cargo --version
+      - npm --version || true
+      - cargo build --manifest-path src-tauri/Cargo.toml --release --features tauri-runtime
+      - install -Dm755 src-tauri/target/release/arxell /app/bin/arxell
+      - cp -R src-tauri/resources /app/lib/arxell/resources
+      - install -Dm644 packaging/flatpak/com.arxell.desktop.desktop /app/share/applications/com.arxell.desktop.desktop
+      - install -Dm644 packaging/flatpak/com.arxell.desktop.metainfo.xml /app/share/metainfo/com.arxell.desktop.metainfo.xml
+      - install -Dm644 src-tauri/icons/128x128.png /app/share/icons/hicolor/128x128/apps/com.arxell.desktop.png
+    sources:
+      - type: dir
+        path: ../../
