@@ -743,6 +743,37 @@ jobs:
 
           echo "Smoke launch passed (exit code $code)"
 
+      - name: Smoke test Linux AppImage launch
+        if: matrix.platform.os == 'ubuntu-24.04'
+        shell: bash
+        env:
+          APPIMAGE_EXTRACT_AND_RUN: "1"
+        run: |
+          set -euo pipefail
+          APPIMAGE_PATH="$(python3 - <<'PY'
+          import pathlib
+          items = sorted(pathlib.Path('src-tauri/target/release/bundle/appimage').rglob('*.AppImage'))
+          if not items:
+            raise SystemExit('No AppImage artifact found')
+          print(items[0])
+          PY
+          )"
+
+          chmod +x "$APPIMAGE_PATH"
+          ./scripts/check-appimage-runtime.sh
+
+          set +e
+          xvfb-run -a timeout 20s "$APPIMAGE_PATH"
+          code=$?
+          set -e
+
+          if [[ "$code" -ne 0 && "$code" -ne 124 ]]; then
+            echo "AppImage smoke launch failed with exit code: $code" >&2
+            exit "$code"
+          fi
+
+          echo "AppImage smoke launch passed (exit code $code)"
+
       - name: Verify Tauri bundle output
         shell: bash
         env:
