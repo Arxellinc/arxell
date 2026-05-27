@@ -36,7 +36,7 @@ use arxell::contracts::{
     ImageGenerationStatusRequest, ImageGenerationStatusResponse, LlamaRuntimeInstallRequest,
     LlamaRuntimeInstallResponse, LlamaRuntimeStartRequest, LlamaRuntimeStartResponse,
     LlamaRuntimeStatusRequest, LlamaRuntimeStatusResponse, LlamaRuntimeStopRequest,
-    LlamaRuntimeStopResponse, LooperPreviewRequest, LooperPreviewResponse, MemoryDeleteRequest,
+    LlamaRuntimeStopResponse, LlamaRuntimeUpdateCheckResponse, LooperPreviewRequest, LooperPreviewResponse, MemoryDeleteRequest,
     MemoryDeleteResponse, MemoryUpsertRequest, MemoryUpsertResponse,
     ModelManagerCancelDownloadRequest, ModelManagerCancelDownloadResponse,
     ModelManagerDeleteInstalledRequest, ModelManagerDeleteInstalledResponse,
@@ -295,6 +295,7 @@ fn main() {
             cmd_devices_probe_microphone,
             cmd_app_version,
             cmd_check_for_updates,
+            cmd_check_llama_runtime_updates,
             cmd_app_resource_usage,
             cmd_llama_runtime_status,
             cmd_llama_runtime_install_engine,
@@ -1261,6 +1262,72 @@ async fn cmd_check_for_updates() -> Result<CheckForUpdatesResponse, String> {
 
 #[cfg(feature = "tauri-runtime")]
 #[tauri::command]
+async fn cmd_check_llama_runtime_updates() -> Result<LlamaRuntimeUpdateCheckResponse, String> {
+    use arxell::app::runtime_service::{detect_installed_runtime_version, fetch_latest_release_metadata};
+
+    let app_data = app_paths::app_data_dir();
+    let current_version = tokio::task::spawn_blocking(move || {
+        detect_installed_runtime_version(app_data.as_path()).unwrap_or_default()
+    })
+    .await
+    .map_err(|e| format!("llama version detection task failed: {e}"))?;
+
+    let release = tokio::task::spawn_blocking(fetch_latest_release_metadata)
+        .await
+        .map_err(|e| format!("llama update check task failed: {e}"))??;
+
+    let latest = release.tag_name.trim().trim_start_matches('v').to_string();
+    let has_update = is_newer_runtime_version(current_version.as_str(), latest.as_str());
+    Ok(LlamaRuntimeUpdateCheckResponse {
+        has_update,
+        current_version,
+        latest_version: latest,
+        html_url: format!(
+            "https://github.com/ggml-org/llama.cpp/releases/tag/{}",
+            release.tag_name
+        ),
+    })
+}
+
+fn is_newer_runtime_version(current: &str, latest: &str) -> bool {
+    if current.is_empty() || latest.is_empty() {
+        return false;
+    }
+    if let (Some(c), Some(l)) = (parse_build_tag(current), parse_build_tag(latest)) {
+        return l > c;
+    }
+    if let (Some(c), Some(l)) = (parse_numeric_version(current), parse_numeric_version(latest)) {
+        return l > c;
+    }
+    false
+}
+
+fn parse_build_tag(value: &str) -> Option<u64> {
+    let trimmed = value.trim().trim_start_matches('v');
+    if !trimmed.starts_with('b') {
+        return None;
+    }
+    trimmed[1..].parse::<u64>().ok()
+}
+
+fn parse_numeric_version(value: &str) -> Option<Vec<u64>> {
+    let trimmed = value.trim().trim_start_matches('v');
+    let mut out = Vec::new();
+    for piece in trimmed.split('.') {
+        if piece.is_empty() {
+            return None;
+        }
+        let digits: String = piece.chars().take_while(|c| c.is_ascii_digit()).collect();
+        if digits.is_empty() {
+            return None;
+        }
+        out.push(digits.parse::<u64>().ok()?);
+    }
+    Some(out)
+}
+
+#[cfg(feature = "tauri-runtime")]
+#[tauri::command]
 async fn cmd_app_resource_usage(
     request: AppResourceUsageRequest,
     state: State<'_, AppResourceUsageState>,
@@ -1325,10 +1392,13 @@ async fn cmd_llama_runtime_status(
     state: State<'_, TauriBridgeState>,
     request: LlamaRuntimeStatusRequest,
 ) -> Result<LlamaRuntimeStatusResponse, String> {
+    use arxell::app::runtime_service::{detect_installed_runtime_version, migrate_legacy_runtime_layout};
     let app_data = app_paths::app_data_dir();
+    let _ = migrate_legacy_runtime_layout(app_data.as_path());
     let mut status = state
         .runtime
         .status(request.correlation_id.as_str(), app_data.as_path());
+    status.current_version = detect_installed_runtime_version(app_data.as_path()).unwrap_or_default();
     for engine in status.engines.iter_mut() {
         engine.is_bundled =
             resolve_bundled_engine_binary(&app, engine.engine_id.as_str()).is_some();
@@ -1343,7 +1413,9 @@ async fn cmd_llama_runtime_install_engine(
     state: State<'_, TauriBridgeState>,
     request: LlamaRuntimeInstallRequest,
 ) -> Result<LlamaRuntimeInstallResponse, String> {
+    use arxell::app::runtime_service::migrate_legacy_runtime_layout;
     let app_data = app_paths::app_data_dir();
+    let _ = migrate_legacy_runtime_layout(app_data.as_path());
     let bundled = resolve_bundled_engine_binary(&app, request.engine_id.as_str());
     let runtime = std::sync::Arc::clone(&state.runtime);
     let correlation_id = request.correlation_id.clone();
@@ -1355,6 +1427,7 @@ async fn cmd_llama_runtime_install_engine(
             engine_id.as_str(),
             app_data_owned.as_path(),
             bundled,
+            request.force_refresh.unwrap_or(false),
         )
     })
     .await
@@ -1368,7 +1441,9 @@ async fn cmd_llama_runtime_start(
     state: State<'_, TauriBridgeState>,
     request: LlamaRuntimeStartRequest,
 ) -> Result<LlamaRuntimeStartResponse, String> {
+    use arxell::app::runtime_service::migrate_legacy_runtime_layout;
     let app_data = app_paths::app_data_dir();
+    let _ = migrate_legacy_runtime_layout(app_data.as_path());
     let service = std::sync::Arc::clone(&state.runtime);
     tokio::task::spawn_blocking(move || service.start(&request, app_data.as_path()))
         .await

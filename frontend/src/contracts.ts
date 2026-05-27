@@ -819,6 +819,7 @@ export interface LlamaRuntimeEngine {
 export interface LlamaRuntimeStatusResponse {
   correlationId: string;
   state: string;
+  currentVersion: string;
   activeEngineId: string | null;
   activeModelPath: string | null;
   endpoint: string | null;
@@ -829,6 +830,7 @@ export interface LlamaRuntimeStatusResponse {
 export interface LlamaRuntimeInstallRequest {
   correlationId: string;
   engineId: string;
+  forceRefresh?: boolean;
 }
 
 export interface LlamaRuntimeInstallResponse {
@@ -1371,6 +1373,13 @@ export interface AppVersionResponse {
 }
 
 export interface CheckForUpdatesResponse {
+  hasUpdate: boolean;
+  currentVersion: string;
+  latestVersion: string;
+  htmlUrl: string;
+}
+
+export interface LlamaRuntimeUpdateCheckResponse {
   hasUpdate: boolean;
   currentVersion: string;
   latestVersion: string;
