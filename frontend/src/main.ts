@@ -902,9 +902,6 @@ const state: {
   llamaRuntimeTokensPerSecond: number | null;
   llamaRuntimeUpdateBusy: boolean;
   llamaRuntimeCurrentVersion: string;
-  llamaRuntimeUpdateModalOpen: boolean;
-  llamaRuntimeUpdateModalMessage: string;
-  llamaRuntimeUpdateModalDone: boolean;
   firstRunOnboardingOpen: boolean;
   firstRunOnboardingStep: FirstRunOnboardingStep;
   firstRunSelectedModelId: string;
@@ -1205,9 +1202,6 @@ const state: {
   llamaRuntimeTokensPerSecond: null,
   llamaRuntimeUpdateBusy: false,
   llamaRuntimeCurrentVersion: "",
-  llamaRuntimeUpdateModalOpen: false,
-  llamaRuntimeUpdateModalMessage: "Preparing update...",
-  llamaRuntimeUpdateModalDone: false,
   firstRunOnboardingOpen: !loadFirstRunOnboardingDismissed(),
   firstRunOnboardingStep: "welcome",
   firstRunSelectedModelId: FIRST_RUN_MODEL_OPTIONS[0]?.id ?? "",
@@ -3219,7 +3213,7 @@ function render(): void {
       micPermissionBubbleDismissed: state.micPermissionBubbleDismissed
     }),
     appBodyHtml,
-    notificationsHtml: `${renderNotificationToasts()}${renderLlamaRuntimeUpdateModal()}`,
+    notificationsHtml: renderNotificationToasts(),
     bottombarHtml: `${renderGlobalBottombar(currentBottomStatus())}${renderFirstRunOnboardingModal(state, FIRST_RUN_MODEL_OPTIONS)}`
   });
   const closeButtons = app.querySelectorAll<HTMLButtonElement>("button[data-notify-close]");
@@ -3281,23 +3275,6 @@ function render(): void {
       renderAndBind(appResourceRenderSendMessageRef ?? (async () => {}));
     };
   });
-  const restartLaterBtn = app.querySelector<HTMLButtonElement>("#llamaUpdateRestartLaterBtn");
-  if (restartLaterBtn) {
-    restartLaterBtn.onclick = () => {
-      state.llamaRuntimeUpdateModalOpen = false;
-      renderAndBind(appResourceRenderSendMessageRef ?? (async () => {}));
-    };
-  }
-  const restartNowBtn = app.querySelector<HTMLButtonElement>("#llamaUpdateRestartNowBtn");
-  if (restartNowBtn) {
-    restartNowBtn.onclick = () => {
-      try {
-        window.location.reload();
-      } catch {
-        state.llamaRuntimeUpdateModalOpen = false;
-      }
-    };
-  }
   restoreAvatarPreviewAfterRender(preservedAvatarPreview);
   restoreEditableFocusAfterRender(preservedEditableFocus);
   if (isChatStreaming) {
@@ -3342,26 +3319,6 @@ function renderNotificationToasts(): string {
       ${actions}
     </article>`;
   }).join("")}</div>`;
-}
-
-function renderLlamaRuntimeUpdateModal(): string {
-  if (!state.llamaRuntimeUpdateModalOpen) return "";
-  const title = state.llamaRuntimeUpdateModalDone
-    ? "llama.cpp update complete"
-    : "Updating llama.cpp runtime";
-  const message = state.llamaRuntimeUpdateModalMessage || "Working...";
-  const actions = state.llamaRuntimeUpdateModalDone
-    ? `<button type="button" class="modal-btn" id="llamaUpdateRestartLaterBtn">Restart Later</button>
-       <button type="button" class="modal-btn modal-btn-danger" id="llamaUpdateRestartNowBtn">Restart App</button>`
-    : `<button type="button" class="modal-btn" disabled>Installing...</button>`;
-  return `<div class="modal-backdrop-fixed">
-    <div class="modal-box-fixed">
-      <div class="modal-title">${escapeHtml(title)}</div>
-      <div style="font-size:var(--text-sm);color:var(--ink);margin-top:8px;">${escapeHtml(message)}</div>
-      ${state.llamaRuntimeUpdateModalDone ? `<div style="font-size:var(--text-xs);color:var(--muted);margin-top:8px;">Please restart Arxell to ensure the new runtime is used everywhere.</div>` : ""}
-      <div class="modal-actions">${actions}</div>
-    </div>
-  </div>`;
 }
 
 function pushAppNotification(input: {
@@ -4939,45 +4896,58 @@ async function autoStartLlamaRuntimeIfConfigured(): Promise<void> {
 async function installLlamaRuntimeUpdateFromNotification(): Promise<void> {
   if (!clientRef || state.llamaRuntimeUpdateBusy) return;
   state.llamaRuntimeUpdateBusy = true;
-  state.llamaRuntimeUpdateModalOpen = true;
-  state.llamaRuntimeUpdateModalDone = false;
-  state.llamaRuntimeUpdateModalMessage = "Preparing runtime update...";
   try {
+    const appDataBefore = state.llamaRuntime;
+    const activeEngineIdBefore = appDataBefore?.activeEngineId?.trim() ?? "";
+    const selectedEngineIdBefore = state.llamaRuntimeSelectedEngineId.trim();
+    pushAppNotification({
+      title: "Updating llama.cpp runtime",
+      description: "Download and install started in background.",
+      tone: "info"
+    });
     await refreshLlamaRuntime();
+    const previousVersion = state.llamaRuntimeCurrentVersion;
     const engines = state.llamaRuntime?.engines ?? [];
-    const selected = state.llamaRuntimeSelectedEngineId.trim();
+    const selected = selectedEngineIdBefore;
     const engine =
+      (activeEngineIdBefore
+        ? engines.find((item) => item.engineId === activeEngineIdBefore && item.isApplicable)
+        : undefined) ||
       engines.find((item) => item.engineId === selected && item.isApplicable) ||
+      engines.find((item) => item.engineId === "llama.cpp-vulkan" && item.isApplicable) ||
       engines.find((item) => item.backend === "cpu" && item.isApplicable) ||
       engines.find((item) => item.isApplicable);
     if (!engine) {
       throw new Error("No compatible llama.cpp runtime engine available for this platform.");
     }
-    state.llamaRuntimeUpdateModalMessage = `Downloading and installing latest runtime for ${engine.label}...`;
-    renderAndBind(appResourceRenderSendMessageRef ?? (async () => {}));
     await clientRef.installLlamaRuntimeEngine({
       correlationId: nextCorrelationId(),
       engineId: engine.engineId,
       forceRefresh: true
     });
-    state.llamaRuntimeUpdateModalMessage = "Finalizing updated runtime files...";
     await refreshLlamaRuntime();
+    let currentVersionAfter = previousVersion;
     try {
       const versionResp = await clientRef.checkLlamaRuntimeUpdates();
       if (versionResp.currentVersion) {
         state.llamaRuntimeCurrentVersion = versionResp.currentVersion;
+        currentVersionAfter = versionResp.currentVersion;
       }
     } catch {}
-    pushAppNotification({
-      title: "llama.cpp runtime updated",
-      description: `Runtime files were refreshed for ${engine.label}.`,
-      tone: "success"
-    });
-    state.llamaRuntimeUpdateModalDone = true;
-    state.llamaRuntimeUpdateModalMessage = `Update complete for ${engine.label}.`;
+    if (currentVersionAfter && previousVersion && currentVersionAfter !== previousVersion) {
+      pushAppNotification({
+        title: "llama.cpp runtime updated",
+        description: `${engine.engineId}: ${previousVersion} -> ${currentVersionAfter}. Restart recommended.`,
+        tone: "success"
+      });
+    } else {
+      pushAppNotification({
+        title: "llama.cpp runtime refresh complete",
+        description: `No version change detected for ${engine.engineId}${currentVersionAfter ? ` (current: ${currentVersionAfter})` : ""}.`,
+        tone: "info"
+      });
+    }
   } catch (error) {
-    state.llamaRuntimeUpdateModalDone = true;
-    state.llamaRuntimeUpdateModalMessage = `Update failed: ${String(error)}`;
     pushAppNotification({
       title: "llama.cpp update failed",
       description: String(error),

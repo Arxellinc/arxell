@@ -87,9 +87,6 @@ export function handleCoreAppEvent(
     state: {
       llamaRuntimeLogs: string[];
       llamaRuntimeBusy: boolean;
-      llamaRuntimeUpdateModalOpen: boolean;
-      llamaRuntimeUpdateModalDone: boolean;
-      llamaRuntimeUpdateModalMessage: string;
       modelManagerBusy: boolean;
       modelManagerMessage: string | null;
       flowPaused: boolean;
@@ -200,29 +197,6 @@ export function handleCoreAppEvent(
   }
 
   if (event.action.startsWith("llama.runtime")) {
-    if (event.action === "llama.runtime.install") {
-      if (event.stage === "start") {
-        deps.state.llamaRuntimeUpdateModalOpen = true;
-        deps.state.llamaRuntimeUpdateModalDone = false;
-        deps.state.llamaRuntimeUpdateModalMessage = "Starting runtime update...";
-        deps.renderAndBind();
-      } else if (event.stage === "progress") {
-        const p = payloadAsRecord(event.payload);
-        const msg = typeof p?.message === "string" ? p.message : null;
-        if (msg) {
-          deps.state.llamaRuntimeUpdateModalOpen = true;
-          deps.state.llamaRuntimeUpdateModalMessage = msg;
-          deps.renderAndBind();
-        }
-      } else if (event.stage === "error") {
-        const p = payloadAsRecord(event.payload);
-        const msg = typeof p?.message === "string" ? p.message : "Runtime update failed.";
-        deps.state.llamaRuntimeUpdateModalOpen = true;
-        deps.state.llamaRuntimeUpdateModalDone = true;
-        deps.state.llamaRuntimeUpdateModalMessage = msg;
-        deps.renderAndBind();
-      }
-    }
     const processLine = deps.extractRuntimeProcessLine(event);
     if (processLine) {
       deps.updateRuntimeMetricsFromLine(processLine);
