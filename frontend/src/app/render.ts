@@ -139,6 +139,7 @@ export function renderPanelTitleIcon(input: {
   icon: IconName;
   title: string;
   sidebarTab: string;
+  llamaRuntimeVersion?: string;
   chatModelOptions: HeaderModelOption[];
   chatActiveModelId: string;
   chatPaneId: string;
@@ -151,6 +152,12 @@ export function renderPanelTitleIcon(input: {
     ttsReady: input.ttsReady,
     ttsEngine: input.ttsEngine
   });
+  const llamaVersionRaw = (input.llamaRuntimeVersion || "").trim();
+  const llamaVersionLabel = llamaVersionRaw || "v.unknown";
+  const llamaVersionSuffix =
+    input.sidebarTab === "llama_cpp"
+      ? `<span class="pane-title-note">(${escapeHtml(llamaVersionLabel)})</span>`
+      : "";
   const chatModelSelect =
     input.sidebarTab === "chat"
       ? renderChatHeaderModelSelect(
@@ -168,7 +175,7 @@ export function renderPanelTitleIcon(input: {
               }
         )
       : "";
-  return `${iconHtml(input.icon, { size: 16, tone: "dark" })}<span>${input.title}</span>${chatModelSelect}${ttsSuffix}`;
+  return `${iconHtml(input.icon, { size: 16, tone: "dark" })}<span>${input.title}</span>${llamaVersionSuffix}${chatModelSelect}${ttsSuffix}`;
 }
 
 export function shouldShowMicPermissionBubble(input: {

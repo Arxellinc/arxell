@@ -1381,9 +1381,14 @@ export interface CheckForUpdatesResponse {
 
 export interface LlamaRuntimeUpdateCheckResponse {
   hasUpdate: boolean;
+  engineId: string;
   currentVersion: string;
   latestVersion: string;
   htmlUrl: string;
+}
+
+export interface LlamaRuntimeUpdateCheckRequest {
+  engineId?: string;
 }
 
 export interface AppResourceUsageRequest {

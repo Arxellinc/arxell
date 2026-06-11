@@ -36,7 +36,7 @@ use arxell::contracts::{
     ImageGenerationStatusRequest, ImageGenerationStatusResponse, LlamaRuntimeInstallRequest,
     LlamaRuntimeInstallResponse, LlamaRuntimeStartRequest, LlamaRuntimeStartResponse,
     LlamaRuntimeStatusRequest, LlamaRuntimeStatusResponse, LlamaRuntimeStopRequest,
-    LlamaRuntimeStopResponse, LlamaRuntimeUpdateCheckResponse, LooperPreviewRequest, LooperPreviewResponse, MemoryDeleteRequest,
+    LlamaRuntimeStopResponse, LlamaRuntimeUpdateCheckRequest, LlamaRuntimeUpdateCheckResponse, LooperPreviewRequest, LooperPreviewResponse, MemoryDeleteRequest,
     MemoryDeleteResponse, MemoryUpsertRequest, MemoryUpsertResponse,
     ModelManagerCancelDownloadRequest, ModelManagerCancelDownloadResponse,
     ModelManagerDeleteInstalledRequest, ModelManagerDeleteInstalledResponse,
@@ -1262,12 +1262,28 @@ async fn cmd_check_for_updates() -> Result<CheckForUpdatesResponse, String> {
 
 #[cfg(feature = "tauri-runtime")]
 #[tauri::command]
-async fn cmd_check_llama_runtime_updates() -> Result<LlamaRuntimeUpdateCheckResponse, String> {
-    use arxell::app::runtime_service::{detect_installed_runtime_version, fetch_latest_release_metadata};
+async fn cmd_check_llama_runtime_updates(
+    request: Option<LlamaRuntimeUpdateCheckRequest>,
+) -> Result<LlamaRuntimeUpdateCheckResponse, String> {
+    use arxell::app::runtime_service::{
+        detect_engine_runtime_version, detect_installed_runtime_version, fetch_latest_release_metadata,
+    };
+
+    let requested_engine_id = request
+        .and_then(|r| r.engine_id)
+        .unwrap_or_else(|| "".to_string())
+        .trim()
+        .to_string();
 
     let app_data = app_paths::app_data_dir();
+    let requested_engine_id_for_detect = requested_engine_id.clone();
     let current_version = tokio::task::spawn_blocking(move || {
-        detect_installed_runtime_version(app_data.as_path()).unwrap_or_default()
+        if requested_engine_id_for_detect.is_empty() {
+            detect_installed_runtime_version(app_data.as_path()).unwrap_or_default()
+        } else {
+            detect_engine_runtime_version(app_data.as_path(), requested_engine_id_for_detect.as_str())
+                .unwrap_or_default()
+        }
     })
     .await
     .map_err(|e| format!("llama version detection task failed: {e}"))?;
@@ -1280,6 +1296,7 @@ async fn cmd_check_llama_runtime_updates() -> Result<LlamaRuntimeUpdateCheckResp
     let has_update = is_newer_runtime_version(current_version.as_str(), latest.as_str());
     Ok(LlamaRuntimeUpdateCheckResponse {
         has_update,
+        engine_id: requested_engine_id,
         current_version,
         latest_version: latest,
         html_url: format!(
