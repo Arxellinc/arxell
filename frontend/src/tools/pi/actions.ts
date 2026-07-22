@@ -1,77 +1,65 @@
 import type { TerminalManager } from "../terminal/index";
 import type { ChatIpcClient } from "../../ipcClient";
-import type { OpenCodeAgent, OpenCodeToolState } from "./state";
+import type { PiAgent, PiToolState } from "./state";
 
-const INSTALL_COMMAND_UNIX = "curl -fsSL https://opencode.ai/install | bash";
-const INSTALL_COMMAND_WIN = "powershell -Command \"irm https://opencode.ai/install.ps1 | iex\"";
+const INSTALL_COMMAND = "npm install -g --ignore-scripts @earendil-works/pi-coding-agent";
 
 function isWindows(): boolean {
   return /Windows/i.test(navigator.userAgent);
 }
 
-export function getInstallCommand(): string {
-  return isWindows() ? INSTALL_COMMAND_WIN : INSTALL_COMMAND_UNIX;
+function getLaunchCommand(): string {
+  return isWindows()
+    ? "set PI_TELEMETRY=0&& set PI_SKIP_VERSION_CHECK=1&& pi"
+    : "PI_TELEMETRY=0 PI_SKIP_VERSION_CHECK=1 pi";
 }
 
-export interface OpenCodeActionsDeps {
+export function getInstallCommand(): string {
+  return INSTALL_COMMAND;
+}
+
+export interface PiActionsDeps {
   terminalManager: TerminalManager;
   client: ChatIpcClient;
   nextCorrelationId: () => string;
   renderAndBind: () => void;
-  defaultCwd?: string;
+  defaultCwd?: string | undefined;
 }
 
-export async function checkOpenCodeInstalled(
-  state: OpenCodeToolState,
-  deps: OpenCodeActionsDeps
+export async function checkPiInstalled(
+  state: PiToolState,
+  deps: PiActionsDeps
 ): Promise<boolean> {
   state.installChecking = true;
   state.installed = null;
+  state.error = null;
   deps.renderAndBind();
 
   try {
     const correlationId = deps.nextCorrelationId();
-    const probe = await deps.terminalManager.createSession({
-      ...(isWindows() ? {} : { shell: "/bin/sh" }),
-      owner: "opencode",
-      title: "OpenCode Probe"
+    const invokeResponse = await deps.client.toolInvoke({
+      correlationId,
+      toolId: "looper",
+      action: "check-pi",
+      mode: "sandbox",
+      payload: { correlationId }
     });
-    const probeId = probe.sessionId;
-
-    let outputBuffer = "";
-
-    const cleanup = deps.client.onEvent((event) => {
-      if (event.action === "terminal.output") {
-        const payload = event.payload as Record<string, unknown>;
-        if (payload?.sessionId === probeId && typeof payload?.data === "string") {
-          outputBuffer += payload.data;
-        }
-      }
-    });
-
-    await deps.client.sendTerminalInput({
-      sessionId: probeId,
-      input: isWindows() ? "where opencode\n" : "which opencode\n",
-      correlationId
-    });
-
-    await sleep(2000);
-    cleanup();
-
-    const found =
-      outputBuffer.includes("/") &&
-      !outputBuffer.includes("not found") &&
-      !outputBuffer.includes("which: no");
-
-    await deps.terminalManager.closeSession(probeId);
-
-    state.installed = found;
-    if (!found) {
-      state.installModalOpen = true;
+    if (!invokeResponse.ok) {
+      throw new Error(invokeResponse.error || "Pi runtime probe failed.");
     }
+    const response = invokeResponse.data as {
+      installed?: boolean;
+      version?: string | null;
+    };
+    const found = response.installed === true;
+    state.installed = found;
+    state.version = typeof response.version === "string" ? response.version : null;
+    state.installModalOpen = !found;
     return found;
-  } catch {
+  } catch (error) {
     state.installed = false;
+    state.version = null;
+    state.error = error instanceof Error ? error.message : "Pi runtime probe failed.";
     state.installModalOpen = true;
     return false;
   } finally {
@@ -81,8 +69,8 @@ export async function checkOpenCodeInstalled(
 }
 
 export async function spawnAgent(
-  state: OpenCodeToolState,
-  deps: OpenCodeActionsDeps,
+  state: PiToolState,
+  deps: PiActionsDeps,
   opts: { label: string; cwd?: string; prompt?: string }
 ): Promise<void> {
   if (state.busy) return;
@@ -90,7 +78,7 @@ export async function spawnAgent(
   deps.renderAndBind();
 
   const agentIndex = state.nextAgentIndex;
-  const agentId = `opencode-agent-${Date.now()}-${agentIndex}`;
+  const agentId = `pi-agent-${Date.now()}-${agentIndex}`;
   const label = opts.label.trim() || `Agent ${agentIndex}`;
   const cwd = opts.cwd?.trim() || deps.defaultCwd || undefined;
 
@@ -100,10 +88,10 @@ export async function spawnAgent(
 
     const session = await deps.terminalManager.createSession({
       ...createOpts,
-      owner: "opencode",
+      owner: "pi",
       title: label
     });
-    const agent: OpenCodeAgent = {
+    const agent: PiAgent = {
       id: agentId,
       label,
       sessionId: session.sessionId,
@@ -123,13 +111,23 @@ export async function spawnAgent(
 
     await deps.client.sendTerminalInput({
       sessionId: session.sessionId,
-      input: "opencode\n",
+      input: `${getLaunchCommand()}\n`,
       correlationId: deps.nextCorrelationId()
     });
 
+    if (opts.prompt?.trim()) {
+      await sleep(1000);
+      await deps.client.sendTerminalInput({
+        sessionId: session.sessionId,
+        input: `${opts.prompt.trim()}\n`,
+        correlationId: deps.nextCorrelationId()
+      });
+    }
+
     agent.status = "running";
-  } catch {
+  } catch (error) {
     state.agents = state.agents.filter((a) => a.id !== agentId);
+    state.error = error instanceof Error ? error.message : "Failed to launch Pi.";
   } finally {
     state.busy = false;
     deps.renderAndBind();
@@ -137,7 +135,7 @@ export async function spawnAgent(
 }
 
 export function switchAgent(
-  state: OpenCodeToolState,
+  state: PiToolState,
   agentId: string
 ): void {
   if (state.activeAgentId === agentId) return;
@@ -145,23 +143,29 @@ export function switchAgent(
 }
 
 export async function closeAgent(
-  state: OpenCodeToolState,
-  deps: OpenCodeActionsDeps,
+  state: PiToolState,
+  deps: PiActionsDeps,
   agentId: string
 ): Promise<void> {
   const agent = state.agents.find((a) => a.id === agentId);
   if (!agent) return;
 
-  await deps.terminalManager.closeSession(agent.sessionId);
-  state.agents = state.agents.filter((a) => a.id !== agentId);
+  try {
+    await deps.terminalManager.closeSession(agent.sessionId);
+    state.agents = state.agents.filter((a) => a.id !== agentId);
 
-  if (state.activeAgentId === agentId) {
-    const next = state.agents[state.agents.length - 1];
-    state.activeAgentId = next?.id ?? null;
+    if (state.activeAgentId === agentId) {
+      const next = state.agents[state.agents.length - 1];
+      state.activeAgentId = next?.id ?? null;
+    }
+  } catch (error) {
+    state.error = error instanceof Error ? error.message : "Failed to close Pi session.";
+  } finally {
+    deps.renderAndBind();
   }
 }
 
-export function openSpawnModal(state: OpenCodeToolState): void {
+export function openSpawnModal(state: PiToolState): void {
   const nextIndex = state.nextAgentIndex;
   state.spawnLabelDraft = `Agent ${nextIndex}`;
   state.spawnCwdDraft = "";
@@ -169,13 +173,13 @@ export function openSpawnModal(state: OpenCodeToolState): void {
   state.spawnModalOpen = true;
 }
 
-export function closeSpawnModal(state: OpenCodeToolState): void {
+export function closeSpawnModal(state: PiToolState): void {
   state.spawnModalOpen = false;
 }
 
 export async function installNow(
-  state: OpenCodeToolState,
-  deps: OpenCodeActionsDeps
+  state: PiToolState,
+  deps: PiActionsDeps
 ): Promise<void> {
   if (state.busy) return;
   state.busy = true;
@@ -184,11 +188,11 @@ export async function installNow(
 
   try {
     const session = await deps.terminalManager.createSession({
-      owner: "opencode",
-      title: "OpenCode Install"
+      owner: "pi",
+      title: "Pi Install"
     });
-    const agentId = `opencode-agent-${Date.now()}-${state.nextAgentIndex}`;
-    const agent: OpenCodeAgent = {
+    const agentId = `pi-agent-${Date.now()}-${state.nextAgentIndex}`;
+    const agent: PiAgent = {
       id: agentId,
       label: "Install",
       sessionId: session.sessionId,
@@ -209,14 +213,13 @@ export async function installNow(
     });
     agent.status = "running";
 
-    await sleep(8000);
-    await deps.client.sendTerminalInput({
-      sessionId: session.sessionId,
-      input: isWindows() ? "where opencode\n" : "which opencode\n",
-      correlationId: deps.nextCorrelationId()
-    });
-    await sleep(2000);
-  } catch {
+    await sleep(10000);
+    const installed = await checkPiInstalled(state, deps);
+    if (installed) {
+      state.installModalOpen = false;
+    }
+  } catch (error) {
+    state.error = error instanceof Error ? error.message : "Failed to install Pi.";
     state.installModalOpen = true;
   } finally {
     state.busy = false;
@@ -225,10 +228,10 @@ export async function installNow(
 }
 
 export async function recheckAfterInstall(
-  state: OpenCodeToolState,
-  deps: OpenCodeActionsDeps
+  state: PiToolState,
+  deps: PiActionsDeps
 ): Promise<void> {
-  const installed = await checkOpenCodeInstalled(state, deps);
+  const installed = await checkPiInstalled(state, deps);
   if (installed) {
     state.installModalOpen = false;
     await spawnAgent(state, deps, { label: "Agent 1" });

@@ -41,7 +41,7 @@ export const TOOL_REGISTRY: Record<string, ToolManifest> = buildRegistry();
 
 const PREFERRED_TOOL_ORDER = [
   "terminal",
-  "opencode",
+  "pi",
   "looper",
   "files",
   "notepad",
@@ -67,7 +67,9 @@ function buildToolOrder(): string[] {
 export const TOOL_ORDER = buildToolOrder();
 
 function canonicalToolId(toolId: string): string {
-  return toolId === "web" ? "webSearch" : toolId;
+  if (toolId === "web") return "webSearch";
+  if (toolId === "opencode") return "pi";
+  return toolId;
 }
 
 export function getToolManifest(toolId: string): ToolManifest | null {

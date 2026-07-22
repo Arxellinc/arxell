@@ -49,7 +49,7 @@ Core chat orchestration: message handling, agent loop, tool binding, streaming. 
 PTY-based terminal sessions: open, input, resize, close. Emits `terminal.output` streaming events.
 
 ### Looper Handler (`src-tauri/src/tools/looper_handler.rs`)
-PRD/build loop orchestration with multi-phase execution, interactive questions, and OpenCode integration. Routed through `cmd_tool_invoke`.
+PRD/build loop orchestration with multi-phase execution, interactive questions, and Pi integration. Routed through `cmd_tool_invoke`.
 
 ### Model Manager Service (`src-tauri/src/app/model_manager_service.rs`)
 Local model lifecycle: list installed GGUF models, search HuggingFace, download, delete, and browse catalog CSV lists. The Unsloth UD Quants catalog auto-updates from the HuggingFace Collections API — on startup, the app fetches the collection at `huggingface.co/api/collections/unsloth/unsloth-dynamic-20-quants`, diffs against the bundled CSV, and fetches details only for new repos. Discovered rows are cached locally in `{app_data_dir}/catalog-cache/unsloth-ud.json` so subsequent startups are instant. Falls back to the bundled CSV when offline.

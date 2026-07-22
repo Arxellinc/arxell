@@ -353,17 +353,19 @@ fn test_empty_project_name_handled() {
 }
 
 #[test]
-fn test_check_opencode_response_serialization() {
-    use crate::contracts::LooperCheckOpenCodeResponse;
+fn test_check_pi_response_serialization() {
+    use crate::contracts::LooperCheckPiResponse;
 
-    let installed_response = LooperCheckOpenCodeResponse {
+    let installed_response = LooperCheckPiResponse {
         correlation_id: "corr-1".to_string(),
         installed: true,
+        version: Some("0.81.1".to_string()),
     };
 
-    let not_installed_response = LooperCheckOpenCodeResponse {
+    let not_installed_response = LooperCheckPiResponse {
         correlation_id: "corr-1".to_string(),
         installed: false,
+        version: None,
     };
 
     let json_installed = serde_json::to_string(&installed_response).unwrap();

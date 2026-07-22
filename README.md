@@ -72,7 +72,7 @@ Arxell ships with 11 built-in workspace tools — each one a full-featured panel
 | | Tool | Description |
 |---|------|-------------|
 | <img src="docs/icons/ico-terminal.svg" width="20"> | **Terminal** | Full PTY shell sessions — bash, zsh, PowerShell. Run anything you'd run in a terminal, right inside the workspace. |
-| <img src="docs/icons/ico-opencode.svg" width="20"> | **OpenCode** | An AI-powered coding agent embedded in your terminal. Ask it to write, refactor, debug, or explain code. |
+| <img src="docs/icons/ico-pi.svg" width="20"> | **Pi** | An AI-powered coding agent embedded in your terminal. Ask it to write, refactor, debug, or explain code. |
 | <img src="docs/icons/ico-looper.svg" width="20"> | **Looper** | Multi-agent loop orchestration with Planner, Executor, Validator, and Critic phases. Run iterative build cycles with interactive checkpoints. |
 | <img src="docs/icons/ico-files.svg" width="20"> | **Files** | Browse directories, read and edit files, create folders — all through a permission-checked filesystem interface. |
 | <img src="docs/icons/ico-notepad.svg" width="20"> | **Notepad** | A tabbed text editor for workspace files and scratch buffers with syntax highlighting. |

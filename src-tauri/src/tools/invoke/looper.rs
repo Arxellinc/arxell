@@ -10,7 +10,7 @@
 //! transitions. The frontend observes state via events emitted by this handler.
 
 use crate::contracts::{
-    LooperAdvanceRequest, LooperCheckOpenCodeRequest, LooperCloseAllRequest, LooperCloseRequest,
+    LooperAdvanceRequest, LooperCheckPiRequest, LooperCloseAllRequest, LooperCloseRequest,
     LooperImportRequest, LooperListRequest, LooperPauseRequest, LooperPreviewRequest,
     LooperStartRequest, LooperStatusRequest, LooperStopRequest, LooperSubmitQuestionsRequest,
 };
@@ -30,8 +30,8 @@ pub fn register(registry: &mut InvokeRegistry) {
     registry.register("looper", &["import"], invoke_import);
     registry.register(
         "looper",
-        &["check-opencode", "checkOpenCode"],
-        invoke_check_opencode,
+        &["check-pi", "checkPi", "check-opencode", "checkOpenCode"],
+        invoke_check_pi,
     );
     registry.register(
         "looper",
@@ -120,13 +120,13 @@ fn invoke_close(state: &TauriBridgeState, payload: Value) -> ToolInvokeFuture<'_
     })
 }
 
-fn invoke_check_opencode(state: &TauriBridgeState, payload: Value) -> ToolInvokeFuture<'_> {
+fn invoke_check_pi(state: &TauriBridgeState, payload: Value) -> ToolInvokeFuture<'_> {
     let handler = state.looper_handler.clone();
     Box::pin(async move {
-        let req: LooperCheckOpenCodeRequest = decode_payload(payload)?;
-        let result = handler.check_opencode(req).await?;
+        let req: LooperCheckPiRequest = decode_payload(payload)?;
+        let result = handler.check_pi(req).await?;
         serde_json::to_value(result)
-            .map_err(|e| format!("failed serializing looper check-opencode response: {e}"))
+            .map_err(|e| format!("failed serializing looper check-pi response: {e}"))
     })
 }
 

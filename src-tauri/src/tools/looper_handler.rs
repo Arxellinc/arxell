@@ -9,7 +9,7 @@
 //!   - Terminal session management (creates one session per phase)
 //!   - Phase state machine transitions
 //!   - Loop iteration control
-//!   - OpenCode CLI availability checking
+//!   - Pi CLI availability checking
 //!
 //! The frontend observes state through events emitted by this handler:
 //!   - `looper.loop.start` — iteration begins
@@ -33,13 +33,13 @@ use crate::app::web_search_service::{
 };
 use crate::contracts::{
     ApiConnectionType, EventSeverity, EventStage, LooperAdvanceRequest, LooperAdvanceResponse,
-    LooperCheckOpenCodeRequest, LooperCheckOpenCodeResponse, LooperCloseAllRequest,
-    LooperCloseAllResponse, LooperCloseRequest, LooperCloseResponse, LooperImportRequest,
-    LooperImportResponse, LooperListRequest, LooperListResponse, LooperLoopRecord,
-    LooperLoopStatus, LooperLoopType, LooperPauseRequest, LooperPauseResponse, LooperPhaseState,
-    LooperPhaseStatus, LooperPreviewRequest, LooperPreviewResponse, LooperPreviewStateRecord,
-    LooperQuestion, LooperStartRequest, LooperStartResponse, LooperStatusRequest,
-    LooperStatusResponse, LooperStopRequest, LooperStopResponse, LooperSubStepStatus, Subsystem,
+    LooperCheckPiRequest, LooperCheckPiResponse, LooperCloseAllRequest, LooperCloseAllResponse,
+    LooperCloseRequest, LooperCloseResponse, LooperImportRequest, LooperImportResponse,
+    LooperListRequest, LooperListResponse, LooperLoopRecord, LooperLoopStatus, LooperLoopType,
+    LooperPauseRequest, LooperPauseResponse, LooperPhaseState, LooperPhaseStatus,
+    LooperPreviewRequest, LooperPreviewResponse, LooperPreviewStateRecord, LooperQuestion,
+    LooperStartRequest, LooperStartResponse, LooperStatusRequest, LooperStatusResponse,
+    LooperStopRequest, LooperStopResponse, LooperSubStepStatus, Subsystem,
     TerminalCloseSessionRequest, TerminalInputRequest, TerminalOpenSessionRequest,
 };
 use crate::observability::EventHub;
@@ -1175,26 +1175,29 @@ impl LooperHandler {
         })
     }
 
-    /// Checks if the OpenCode CLI is installed on the system.
-    pub async fn check_opencode(
+    /// Checks if the Pi CLI is installed on the system.
+    pub async fn check_pi(
         &self,
-        req: LooperCheckOpenCodeRequest,
-    ) -> Result<LooperCheckOpenCodeResponse, String> {
-        let installed = check_opencode_installed();
+        req: LooperCheckPiRequest,
+    ) -> Result<LooperCheckPiResponse, String> {
+        let version = probe_pi_version();
+        let installed = version.is_some();
 
         self.emit_event(
             &req.correlation_id,
-            "looper.check-opencode.result",
+            "looper.check-pi.result",
             EventStage::Complete,
             EventSeverity::Info,
             json!({
                 "installed": installed,
+                "version": version,
             }),
         );
 
-        Ok(LooperCheckOpenCodeResponse {
+        Ok(LooperCheckPiResponse {
             correlation_id: req.correlation_id,
             installed,
+            version,
         })
     }
 
@@ -1247,17 +1250,13 @@ impl LooperHandler {
     }
 
     async fn create_phase_session(&self, loop_id: &str, phase: &str) -> Result<String, String> {
-        let (cwd_raw, raw_model) = {
+        let cwd_raw = {
             let loops = self.loops.read().map_err(|e| e.to_string())?;
             let loopy = loops
                 .get(loop_id)
                 .ok_or_else(|| format!("loop not found: {}", loop_id))?;
-            (loopy.cwd.clone(), loopy.phase_models.get(phase).cloned())
+            loopy.cwd.clone()
         };
-
-        let model = raw_model
-            .as_deref()
-            .and_then(|m| self.resolve_model_name(m));
 
         let cwd = if cwd_raw.is_empty() || cwd_raw == "." {
             None
@@ -1269,9 +1268,9 @@ impl LooperHandler {
             correlation_id: format!("looper-{}-{}", loop_id, phase),
             cols: Some(120),
             rows: Some(24),
-            shell: Some("/bin/sh".to_string()),
+            shell: Some(pi_shell()),
             cwd,
-            model,
+            model: None,
         };
 
         let response = self.terminal.open_session(open_req)?;
@@ -1301,7 +1300,7 @@ impl LooperHandler {
         }
     }
 
-    /// Starts a specific phase by sending opencode + prompt to its terminal.
+    /// Starts a specific phase by sending pi + prompt to its terminal.
     async fn start_phase(
         &self,
         loop_id: &str,
@@ -1410,15 +1409,19 @@ impl LooperHandler {
             }),
         );
 
-        // Start OpenCode with the selected model and the phase prompt so the
-        // first phase begins immediately without waiting for manual submit.
-        let mut command = String::from("opencode");
+        // Pi print mode is used as the transition runner until the dedicated
+        // RPC process service lands. It exits only after the agent settles,
+        // preserving Looper's phase-transition behavior without an interactive TUI.
+        let mut command = format!(
+            "PI_TELEMETRY=0 PI_SKIP_VERSION_CHECK=1 {} -p --no-session --no-approve",
+            shell_quote(&pi_executable())
+        );
         if let Some(model_name) = resolved_model.as_ref().filter(|v| !v.trim().is_empty()) {
             command.push_str(" --model ");
             command.push_str(&shell_quote(model_name));
         }
         if !prompt.trim().is_empty() {
-            command.push_str(" --prompt ");
+            command.push(' ');
             command.push_str(&shell_quote(&prompt));
         }
         command.push('\n');
@@ -2328,12 +2331,66 @@ fn shell_quote(value: &str) -> String {
     format!("'{}'", escaped)
 }
 
-fn check_opencode_installed() -> bool {
-    std::process::Command::new("sh")
-        .args(["-c", "command -v opencode"])
+fn pi_executable() -> String {
+    std::env::var("ARXELL_PI_EXECUTABLE")
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| "pi".to_string())
+}
+
+fn probe_pi_version() -> Option<String> {
+    let executable = pi_executable();
+
+    #[cfg(target_os = "windows")]
+    let output = if executable.contains('\\') || executable.contains('/') {
+        std::process::Command::new(&executable)
+            .arg("--version")
+            .output()
+            .ok()?
+    } else {
+        std::process::Command::new("cmd")
+            .args(["/C", executable.as_str(), "--version"])
+            .output()
+            .ok()?
+    };
+
+    #[cfg(not(target_os = "windows"))]
+    let output = std::process::Command::new(&executable)
+        .arg("--version")
         .output()
-        .map(|out| out.status.success())
-        .unwrap_or(false)
+        .ok()?;
+
+    if !output.status.success() {
+        return None;
+    }
+    let version = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    (!version.is_empty()).then_some(version)
+}
+
+fn pi_shell() -> String {
+    if let Ok(shell) = std::env::var("ARXELL_PI_SHELL") {
+        if !shell.trim().is_empty() {
+            return shell;
+        }
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        let program_files =
+            std::env::var("ProgramFiles").unwrap_or_else(|_| "C:\\Program Files".to_string());
+        let git_bash = PathBuf::from(program_files)
+            .join("Git")
+            .join("bin")
+            .join("bash.exe");
+        if git_bash.is_file() {
+            return git_bash.to_string_lossy().into_owned();
+        }
+        "bash.exe".to_string()
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        "/bin/sh".to_string()
+    }
 }
 
 #[cfg(feature = "tauri-runtime")]

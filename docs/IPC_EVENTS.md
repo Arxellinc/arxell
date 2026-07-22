@@ -1,6 +1,6 @@
 # IPC and Event Contracts
 
-Contract version: `foundation-v5` (see `CONTRACT_VERSION.md`)
+Contract version: `foundation-v6` (see `CONTRACT_VERSION.md`)
 
 ## Event Channel
 - `app:event`
@@ -216,7 +216,7 @@ Additional file operations via `cmd_tool_invoke` (`toolId: "files"`):
 | `status` | `LooperStatusRequest` | `LooperStatusResponse` |
 | `list` | `LooperListRequest` | `LooperListResponse` |
 | `close` | `LooperCloseRequest` | `LooperCloseResponse` |
-| `check-opencode` | `LooperCheckOpenCodeRequest` | `LooperCheckOpenCodeResponse` |
+| `check-pi` | `LooperCheckPiRequest` | `LooperCheckPiResponse` |
 | `submit-questions` | `LooperSubmitQuestionsRequest` | `LooperSubmitQuestionsResponse` |
 
 ---

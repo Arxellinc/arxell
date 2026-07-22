@@ -1,4 +1,4 @@
-export interface OpenCodeAgent {
+export interface PiAgent {
   id: string;
   label: string;
   sessionId: string;
@@ -7,12 +7,14 @@ export interface OpenCodeAgent {
   startedAtMs: number;
 }
 
-export interface OpenCodeToolState {
-  agents: OpenCodeAgent[];
+export interface PiToolState {
+  agents: PiAgent[];
   activeAgentId: string | null;
   installModalOpen: boolean;
   installChecking: boolean;
   installed: boolean | null;
+  version: string | null;
+  error: string | null;
   busy: boolean;
   spawnModalOpen: boolean;
   spawnLabelDraft: string;
@@ -21,13 +23,15 @@ export interface OpenCodeToolState {
   nextAgentIndex: number;
 }
 
-export function getInitialOpenCodeState(): OpenCodeToolState {
+export function getInitialPiState(): PiToolState {
   return {
     agents: [],
     activeAgentId: null,
     installModalOpen: false,
     installChecking: false,
     installed: null,
+    version: null,
+    error: null,
     busy: false,
     spawnModalOpen: false,
     spawnLabelDraft: "",

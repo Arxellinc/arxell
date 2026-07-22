@@ -1,5 +1,5 @@
 import type {
-  LooperCheckOpenCodeResponse,
+  LooperCheckPiResponse,
   LooperCloseAllResponse,
   LooperCloseResponse,
   LooperImportResponse,
@@ -95,12 +95,12 @@ export async function refreshLooperState(
   registerLoopSessions(state, deps);
 }
 
-async function checkOpenCodeInstalled(
+async function checkPiInstalled(
   state: LooperToolState,
   deps: LooperActionsDeps
 ): Promise<boolean> {
   state.installChecking = true;
-  state.statusMessage = "Checking OpenCode availability...";
+  state.statusMessage = "Checking Pi availability...";
   deps.renderAndBind();
 
   try {
@@ -108,14 +108,14 @@ async function checkOpenCodeInstalled(
     const invokeResponse = await deps.client.toolInvoke({
       correlationId,
       toolId: "looper",
-      action: "check-opencode",
+      action: "check-pi",
       mode: "sandbox",
       payload: { correlationId }
     });
     if (!invokeResponse.ok) {
-      throw new Error(invokeResponse.error || "OpenCode check failed.");
+      throw new Error(invokeResponse.error || "Pi check failed.");
     }
-    const response = invokeResponse.data as unknown as LooperCheckOpenCodeResponse;
+    const response = invokeResponse.data as unknown as LooperCheckPiResponse;
     state.installed = response.installed;
     state.installModalOpen = !response.installed;
     return response.installed;
@@ -141,7 +141,7 @@ export async function ensureLooperInit(
     };
   }
   if (state.installed === null) {
-    await checkOpenCodeInstalled(state, deps);
+    await checkPiInstalled(state, deps);
   }
   await refreshLooperState(state, deps);
   deps.renderAndBind();
@@ -255,7 +255,7 @@ export async function startLoop(
   if (!loop || loop.status === "running") return;
 
   if (state.installed !== true) {
-    const installed = await checkOpenCodeInstalled(state, deps);
+    const installed = await checkPiInstalled(state, deps);
     if (!installed) {
       state.installModalOpen = true;
       deps.renderAndBind();
@@ -609,7 +609,7 @@ export async function recheckInstall(
   state: LooperToolState,
   deps: LooperActionsDeps
 ): Promise<void> {
-  const installed = await checkOpenCodeInstalled(state, deps);
+  const installed = await checkPiInstalled(state, deps);
   if (installed) {
     await refreshLooperState(state, deps);
     state.installModalOpen = false;

@@ -18,9 +18,9 @@ import {
 import { handleChartClick, handleChartInput } from "../chart/bindings";
 import { handleTasksChange, handleTasksClick, handleTasksInput } from "../tasks/bindings";
 import type { ChatIpcClient } from "../../ipcClient";
-import { handleOpenCodeClick } from "../opencode/bindings";
-import type { OpenCodeToolState } from "../opencode/state";
-import type { OpenCodeActionsDeps } from "../opencode/actions";
+import { handlePiClick, handlePiInput } from "../pi/bindings";
+import type { PiToolState } from "../pi/state";
+import type { PiActionsDeps } from "../pi/actions";
 import { handleLooperClick, handleLooperInput } from "../looper/bindings";
 import type { LooperToolState } from "../looper/state";
 import type { LooperActionsDeps } from "../looper/actions";
@@ -35,7 +35,7 @@ import {
   MANAGER_DATA_ATTR,
   MANAGER_UI_ID,
   NOTEPAD_DATA_ATTR,
-  OPENCODE_DATA_ATTR,
+  PI_DATA_ATTR,
   SHEETS_DATA_ATTR,
   TASKS_DATA_ATTR,
   TERMINAL_DATA_ATTR,
@@ -70,8 +70,8 @@ export const WORKSPACE_TOOL_TARGET_SELECTOR = [
   "#memoryRefreshBtn",
   "[data-memory-action]",
   "[data-chart-action]",
-  `[${OPENCODE_DATA_ATTR.action}]`,
-  `[${OPENCODE_DATA_ATTR.closeAgentId}]`,
+  `[${PI_DATA_ATTR.action}]`,
+  `[${PI_DATA_ATTR.closeAgentId}]`,
   `[${LOOPER_DATA_ATTR.action}]`,
   `[${LOOPER_DATA_ATTR.closeLoopId}]`,
   `[${LOOPER_DATA_ATTR.loopId}]`,
@@ -166,9 +166,9 @@ export interface WorkspaceToolDispatchDeps {
     withActiveWebTab: (mutator: any) => void;
     saveWebSearchSetup: () => Promise<void>;
   };
-  opencode: {
-    state: OpenCodeToolState;
-    actionsDeps: OpenCodeActionsDeps;
+  pi: {
+    state: PiToolState;
+    actionsDeps: PiActionsDeps;
   };
   looper: {
     state: LooperToolState;
@@ -203,7 +203,7 @@ export async function dispatchWorkspaceToolClick(
   if (await handleWebClick(target, state as any, deps.web as any)) {
     return true;
   }
-  if (handleOpenCodeClick(target, deps.opencode.state, deps.opencode.actionsDeps)) {
+  if (handlePiClick(target, deps.pi.state, deps.pi.actionsDeps)) {
     return true;
   }
   if (handleLooperClick(target, deps.looper.state, deps.looper.actionsDeps)) {
@@ -236,6 +236,7 @@ export function dispatchWorkspaceToolInput(
   const tasksHandled = handleTasksInput(target, state as any);
   const webHandled = handleWebInput(target, state as any, { withActiveWebTab: deps.web.withActiveWebTab as any });
   const chartResult = handleChartInput(target, state as any);
+  const piResult = handlePiInput(target, deps.pi.state);
   const looperResult = handleLooperInput(target, deps.looper.state);
   return {
     handled:
@@ -245,6 +246,7 @@ export function dispatchWorkspaceToolInput(
       tasksHandled ||
       webHandled ||
       chartResult.handled ||
+      piResult.handled ||
       looperResult.handled,
     rerender:
       filesResult.rerender ||
@@ -252,6 +254,7 @@ export function dispatchWorkspaceToolInput(
       notepadResult.rerender ||
       tasksHandled ||
       chartResult.rerender ||
+      piResult.rerender ||
       looperResult.rerender
   };
 }

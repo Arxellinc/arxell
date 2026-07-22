@@ -44,7 +44,7 @@ export function selectWorkspaceViewState(args: {
     flowTerminalPhases: [...flowTerminalPhases],
     terminalSessions,
     filteredFlowEvents: filteredFlowForRender,
-    opencodeState: state.opencodeState,
+    piState: state.piState,
     looperState: state.looperState
   };
 }

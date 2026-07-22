@@ -1,0 +1,83 @@
+.pi-workspace {
+  min-height: 0;
+  height: 100%;
+  display: grid;
+  grid-template-rows: auto 1fr;
+}
+
+.pi-workspace.is-empty {
+  grid-template-rows: 1fr;
+}
+
+.pi-breadcrumb {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-height: 28px;
+  padding: 4px 12px;
+  overflow: hidden;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: var(--text-xs);
+  white-space: nowrap;
+}
+
+.pi-breadcrumb-segment {
+  color: var(--muted);
+}
+
+.pi-breadcrumb-segment:last-child {
+  color: var(--ink);
+  font-weight: 500;
+}
+
+.pi-breadcrumb-sep {
+  margin: 0 1px;
+  color: var(--muted);
+  opacity: 0.5;
+}
+
+.pi-host {
+  min-height: 0;
+  overflow: hidden;
+  background: var(--surface-strong);
+}
+
+.pi-host .xterm {
+  height: 100%;
+  padding: 0.25rem;
+}
+
+.pi-host .xterm-screen canvas {
+  position: relative;
+}
+
+.pi-placeholder {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  height: 100%;
+  color: var(--muted);
+  font-size: var(--text-lg);
+}
+
+.pi-install-cmd {
+  padding: 0.75rem 1rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-strong);
+  color: var(--ink);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: var(--text-md);
+  user-select: all;
+  word-break: break-all;
+}
+
+.pi-error {
+  color: var(--error);
+  font-size: var(--text-md);
+}

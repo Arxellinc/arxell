@@ -89,11 +89,11 @@ import {
 } from "./tools/webSearch/runtime";
 import type { WebSearchHistoryItem, WebTabState } from "./tools/webSearch/state";
 import type { FilesDeleteUndoEntry } from "./tools/files/state";
-import { getInitialOpenCodeState } from "./tools/opencode/state";
-import type { OpenCodeToolState } from "./tools/opencode/state";
-import { checkOpenCodeInstalled, spawnAgent } from "./tools/opencode/actions";
-import type { OpenCodeActionsDeps } from "./tools/opencode/actions";
-import { OPENCODE_UI_ID } from "./tools/ui/constants";
+import { getInitialPiState } from "./tools/pi/state";
+import type { PiToolState } from "./tools/pi/state";
+import { checkPiInstalled, spawnAgent } from "./tools/pi/actions";
+import type { PiActionsDeps } from "./tools/pi/actions";
+import { PI_UI_ID } from "./tools/ui/constants";
 import { getInitialLooperState } from "./tools/looper/state";
 import type { LooperToolState } from "./tools/looper/state";
 import { ensureLooperInit } from "./tools/looper/actions";
@@ -659,8 +659,8 @@ const state: {
   layoutOrientation: LayoutOrientation;
   activeTerminalSessionId: string | null;
   terminalShellProfile: TerminalShellProfile;
-  opencodeState: OpenCodeToolState;
-  opencodeNeedsInit: boolean;
+  piState: PiToolState;
+  piNeedsInit: boolean;
   looperState: LooperToolState;
   looperNeedsInit: boolean;
   conversations: ConversationSummaryRecord[];
@@ -1107,8 +1107,8 @@ const state: {
   layoutOrientation: "landscape",
   activeTerminalSessionId: null,
   terminalShellProfile: "default",
-  opencodeState: getInitialOpenCodeState(),
-  opencodeNeedsInit: true,
+  piState: getInitialPiState(),
+  piNeedsInit: true,
   looperState: getInitialLooperState(),
   looperNeedsInit: true,
   conversations: [],
@@ -8275,13 +8275,16 @@ function attachWorkspaceInteractions(sendMessage: (text: string) => Promise<void
         withActiveWebTab: workspaceToolsRuntime.withActiveWebTab,
         saveWebSearchSetup: workspaceToolsRuntime.saveWebSearchSetup
       },
-      opencode: {
-        state: state.opencodeState,
+      pi: {
+        state: state.piState,
         actionsDeps: {
           terminalManager,
           client: clientRef!,
           nextCorrelationId,
-          renderAndBind: () => renderAndBind(sendMessage)
+          renderAndBind: () => renderAndBind(sendMessage),
+          defaultCwd: state.projectsSelectedId
+            ? state.projectsById[state.projectsSelectedId]?.rootPath
+            : state.filesScopeRootPath ?? state.filesRootPath ?? undefined
         }
       },
       looper: {
@@ -8319,16 +8322,19 @@ function attachWorkspaceInteractions(sendMessage: (text: string) => Promise<void
               ensureSheetReady: workspaceToolsRuntime.ensureSheetReady,
               ensureMemoryLoaded: loadMemoryContext,
               refreshFlowRuns,
-             ensureOpenCodeInit: async () => {
-              const opencodeDeps: OpenCodeActionsDeps = {
+             ensurePiInit: async () => {
+              const piDeps: PiActionsDeps = {
                 terminalManager,
                 client: clientRef!,
                 nextCorrelationId,
-                renderAndBind: () => renderAndBind(sendMessage)
+                renderAndBind: () => renderAndBind(sendMessage),
+                defaultCwd: state.projectsSelectedId
+                  ? state.projectsById[state.projectsSelectedId]?.rootPath
+                  : state.filesScopeRootPath ?? state.filesRootPath ?? undefined
               };
-              const installed = await checkOpenCodeInstalled(state.opencodeState, opencodeDeps);
+              const installed = await checkPiInstalled(state.piState, piDeps);
               if (installed) {
-                await spawnAgent(state.opencodeState, opencodeDeps, { label: "Agent 1" });
+                await spawnAgent(state.piState, piDeps, { label: "Agent 1" });
               }
             },
 ensureLooperInit: async () => {
@@ -8776,14 +8782,14 @@ if (workspaceTab === "tasks-tool") {
 
   mountWorkspaceTerminalHosts(state, terminalManager, persistFlowPhaseSessionMap);
 
-  if (state.workspaceTab === "opencode-tool") {
-    const activeAgent = state.opencodeState.agents.find(
-      (a: { id: string }) => a.id === state.opencodeState.activeAgentId
+  if (state.workspaceTab === "pi-tool") {
+    const activeAgent = state.piState.agents.find(
+      (a: { id: string }) => a.id === state.piState.activeAgentId
     );
     if (activeAgent) {
-      const opencodeHost = document.querySelector<HTMLElement>(`#${OPENCODE_UI_ID.terminalHost}`);
-      if (opencodeHost) {
-        terminalManager.mountSession(activeAgent.sessionId, opencodeHost);
+      const piHost = document.querySelector<HTMLElement>(`#${PI_UI_ID.terminalHost}`);
+      if (piHost) {
+        terminalManager.mountSession(activeAgent.sessionId, piHost);
       }
     }
   }
@@ -8920,6 +8926,17 @@ async function bootstrap(): Promise<void> {
       }
       handleModelManagerDownloadProgressEvent(event, () => renderAndBind(sendMessage));
       handleImageGenerationInstallProgressEvent(event, () => renderAndBind(sendMessage));
+      if (event.action === "terminal.exit") {
+        const payload = payloadAsRecord(event.payload);
+        const sessionId = typeof payload?.sessionId === "string" ? payload.sessionId : null;
+        const agent = sessionId
+          ? state.piState.agents.find((item) => item.sessionId === sessionId)
+          : null;
+        if (agent) {
+          agent.status = "done";
+          renderAndBind(sendMessage);
+        }
+      }
       if (event.action === "chart.definition.set") {
         const payload = payloadAsRecord(event.payload);
         const definition = typeof payload?.definition === "string" ? payload.definition.trim() : "";
@@ -9200,16 +9217,19 @@ async function bootstrap(): Promise<void> {
       ensureSheetReady: workspaceToolsRuntime.ensureSheetReady,
       ensureMemoryLoaded: loadMemoryContext,
       refreshFlowRuns,
-      ensureOpenCodeInit: async () => {
-        const opencodeDeps: OpenCodeActionsDeps = {
+      ensurePiInit: async () => {
+        const piDeps: PiActionsDeps = {
           terminalManager,
           client: clientRef!,
           nextCorrelationId,
-          renderAndBind: () => renderAndBind(sendMessage)
+          renderAndBind: () => renderAndBind(sendMessage),
+          defaultCwd: state.projectsSelectedId
+            ? state.projectsById[state.projectsSelectedId]?.rootPath
+            : state.filesScopeRootPath ?? state.filesRootPath ?? undefined
         };
-        const installed = await checkOpenCodeInstalled(state.opencodeState, opencodeDeps);
+        const installed = await checkPiInstalled(state.piState, piDeps);
         if (installed) {
-          await spawnAgent(state.opencodeState, opencodeDeps, { label: "Agent 1" });
+          await spawnAgent(state.piState, piDeps, { label: "Agent 1" });
         }
       },
       ensureLooperInit: async () => {
