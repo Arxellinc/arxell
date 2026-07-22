@@ -7,10 +7,10 @@ use crate::contracts::{
     EventSeverity, EventStage, LooperAdvanceRequest, LooperAdvanceResponse, LooperCheckPiRequest,
     LooperCheckPiResponse, LooperCloseAllRequest, LooperCloseAllResponse, LooperCloseRequest,
     LooperCloseResponse, LooperImportRequest, LooperImportResponse, LooperListRequest,
-    LooperListResponse, LooperPauseRequest, LooperPauseResponse, LooperPreviewRequest,
-    LooperPreviewResponse, LooperStartRequest, LooperStartResponse, LooperStatusRequest,
-    LooperStatusResponse, LooperStopRequest, LooperStopResponse, LooperSubmitQuestionsRequest,
-    LooperSubmitQuestionsResponse, Subsystem,
+    LooperListResponse, LooperPauseRequest, LooperPauseResponse, LooperPiApprovalRequest,
+    LooperPiApprovalResponse, LooperPreviewRequest, LooperPreviewResponse, LooperStartRequest,
+    LooperStartResponse, LooperStatusRequest, LooperStatusResponse, LooperStopRequest,
+    LooperStopResponse, LooperSubmitQuestionsRequest, LooperSubmitQuestionsResponse, Subsystem,
 };
 use crate::observability::EventHub;
 use crate::tools::looper_handler::LooperHandler;
@@ -26,6 +26,10 @@ pub struct LooperCommandHandler {
 impl LooperCommandHandler {
     pub fn new(hub: EventHub, handler: Arc<LooperHandler>) -> Self {
         Self { hub, handler }
+    }
+
+    pub fn shutdown(&self) {
+        self.handler.shutdown();
     }
 
     pub async fn start(&self, req: LooperStartRequest) -> Result<LooperStartResponse, String> {
@@ -132,6 +136,35 @@ impl LooperCommandHandler {
                 json!({ "error": error }),
             )),
         }
+        result
+    }
+
+    pub fn submit_pi_approval(
+        &self,
+        req: LooperPiApprovalRequest,
+    ) -> Result<LooperPiApprovalResponse, String> {
+        let result = self.handler.submit_pi_approval(req.clone());
+        self.hub.emit(self.hub.make_event(
+            &req.correlation_id,
+            Subsystem::Ipc,
+            "cmd.looper.pi-approval",
+            if result.is_ok() {
+                EventStage::Complete
+            } else {
+                EventStage::Error
+            },
+            if result.is_ok() {
+                EventSeverity::Info
+            } else {
+                EventSeverity::Error
+            },
+            json!({
+                "loopId": req.loop_id,
+                "requestId": req.request_id,
+                "confirmed": req.confirmed,
+                "accepted": result.is_ok(),
+            }),
+        ));
         result
     }
 

@@ -151,19 +151,11 @@ struct WorkspaceToolsState {
 }
 
 fn canonical_tool_id(tool_id: &str) -> &str {
-    if tool_id == "opencode" {
-        "pi"
-    } else {
-        tool_id
-    }
+    tool_id
 }
 
 fn snapshot_setting(settings: &HashMap<String, bool>, tool_id: &str) -> Option<bool> {
-    settings.get(tool_id).copied().or_else(|| {
-        (tool_id == "pi")
-            .then(|| settings.get("opencode").copied())
-            .flatten()
-    })
+    settings.get(tool_id).copied()
 }
 
 pub struct WorkspaceToolsService {

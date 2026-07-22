@@ -68,7 +68,6 @@ export const TOOL_ORDER = buildToolOrder();
 
 function canonicalToolId(toolId: string): string {
   if (toolId === "web") return "webSearch";
-  if (toolId === "opencode") return "pi";
   return toolId;
 }
 

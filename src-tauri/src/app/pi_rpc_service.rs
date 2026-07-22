@@ -14,8 +14,9 @@ const DEFAULT_MAX_RECORD_BYTES: usize = 4 * 1024 * 1024;
 const DEFAULT_MAX_FINAL_TEXT_BYTES: usize = 1024 * 1024;
 const MAX_STDERR_BYTES: usize = 64 * 1024;
 const SHUTDOWN_GRACE: Duration = Duration::from_secs(2);
+const EXTENSION_UI_TIMEOUT: Duration = Duration::from_secs(30);
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct PiRpcConfig {
     pub executable: PathBuf,
     pub cwd: PathBuf,
@@ -85,6 +86,14 @@ pub struct PiRpcExtensionUiRequest {
 }
 
 #[derive(Debug, Clone)]
+pub struct PiRpcUiResponse {
+    pub id: String,
+    pub confirmed: Option<bool>,
+    pub value: Option<String>,
+    pub cancelled: bool,
+}
+
+#[derive(Debug, Clone)]
 pub enum PiRpcRecord {
     Response(PiRpcResponse),
     Event(PiRpcEvent),
@@ -129,10 +138,20 @@ impl PiRpcService {
         config: PiRpcConfig,
         prompt: String,
         events: Option<mpsc::UnboundedSender<PiRpcRecord>>,
+        cancellation: Option<watch::Receiver<bool>>,
+    ) -> Result<PiRpcRunResult, PiRpcError> {
+        Self::run_prompt_with_control(config, prompt, events, cancellation, None).await
+    }
+
+    pub async fn run_prompt_with_control(
+        config: PiRpcConfig,
+        prompt: String,
+        events: Option<mpsc::UnboundedSender<PiRpcRecord>>,
         mut cancellation: Option<watch::Receiver<bool>>,
+        ui_responses: Option<mpsc::UnboundedReceiver<PiRpcUiResponse>>,
     ) -> Result<PiRpcRunResult, PiRpcError> {
         let run_timeout = config.timeout;
-        let mut session = PiRpcSession::spawn(config, events).await?;
+        let mut session = PiRpcSession::spawn(config, events, ui_responses).await?;
         let outcome = {
             let run = timeout(run_timeout, session.run_prompt(&prompt));
             tokio::pin!(run);
@@ -174,12 +193,15 @@ struct PiRpcSession {
     event_count: usize,
     max_final_text_bytes: usize,
     agent_error: Option<String>,
+    ui_responses: Option<mpsc::UnboundedReceiver<PiRpcUiResponse>>,
+    pending_ui_responses: HashMap<String, PiRpcUiResponse>,
 }
 
 impl PiRpcSession {
     async fn spawn(
         config: PiRpcConfig,
         event_sink: Option<mpsc::UnboundedSender<PiRpcRecord>>,
+        ui_responses: Option<mpsc::UnboundedReceiver<PiRpcUiResponse>>,
     ) -> Result<Self, PiRpcError> {
         let args = build_args(&config);
         let mut command = pi_command(&config.executable, &args);
@@ -191,6 +213,8 @@ impl PiRpcSession {
             .kill_on_drop(true)
             .env("PI_TELEMETRY", "0")
             .env("PI_SKIP_VERSION_CHECK", "1");
+        #[cfg(unix)]
+        command.process_group(0);
 
         if let Some(profile_dir) = &config.profile_dir {
             command.env("PI_CODING_AGENT_DIR", profile_dir);
@@ -251,6 +275,8 @@ impl PiRpcSession {
             event_count: 0,
             max_final_text_bytes: config.max_final_text_bytes,
             agent_error: None,
+            ui_responses,
+            pending_ui_responses: HashMap::new(),
         })
     }
 
@@ -322,7 +348,7 @@ impl PiRpcSession {
                     self.events.push_back(event);
                 }
                 PiRpcRecord::ExtensionUiRequest(request) => {
-                    self.reject_extension_ui(request).await?;
+                    self.handle_extension_ui(request).await?;
                 }
                 PiRpcRecord::Stderr(_) => {}
             }
@@ -346,30 +372,67 @@ impl PiRpcSession {
                     }
                 }
                 PiRpcRecord::ExtensionUiRequest(request) => {
-                    self.reject_extension_ui(request).await?;
+                    self.handle_extension_ui(request).await?;
                 }
                 PiRpcRecord::Stderr(_) => {}
             }
         }
     }
 
-    async fn reject_extension_ui(
+    async fn handle_extension_ui(
         &mut self,
         request: PiRpcExtensionUiRequest,
     ) -> Result<(), PiRpcError> {
         self.forward(PiRpcRecord::ExtensionUiRequest(request.clone()));
-        if matches!(
+        if !matches!(
             request.method.as_str(),
             "select" | "confirm" | "input" | "editor"
         ) {
-            self.write_value(&json!({
+            return Ok(());
+        }
+
+        let response = self.wait_for_ui_response(&request.id).await;
+        let payload = match response {
+            Some(response) if !response.cancelled => {
+                let mut payload = json!({
+                    "type": "extension_ui_response",
+                    "id": request.id,
+                });
+                if let Some(confirmed) = response.confirmed {
+                    payload["confirmed"] = Value::Bool(confirmed);
+                }
+                if let Some(value) = response.value {
+                    payload["value"] = Value::String(value);
+                }
+                payload
+            }
+            _ => json!({
                 "type": "extension_ui_response",
                 "id": request.id,
                 "cancelled": true
-            }))
-            .await?;
+            }),
+        };
+        self.write_value(&payload).await
+    }
+
+    async fn wait_for_ui_response(&mut self, request_id: &str) -> Option<PiRpcUiResponse> {
+        if let Some(response) = self.pending_ui_responses.remove(request_id) {
+            return Some(response);
         }
-        Ok(())
+        let receiver = self.ui_responses.as_mut()?;
+        timeout(EXTENSION_UI_TIMEOUT, async {
+            while let Some(response) = receiver.recv().await {
+                if response.id == request_id {
+                    return Some(response);
+                }
+                self.pending_ui_responses
+                    .insert(response.id.clone(), response);
+            }
+            None
+        })
+        .await
+        .ok()
+        .flatten()
     }
 
     async fn read_record(&mut self) -> Result<PiRpcRecord, PiRpcError> {
@@ -459,7 +522,27 @@ impl PiRpcSession {
                 Err(_) => break,
             }
         }
+        self.kill_process_tree().await;
+    }
+
+    async fn kill_process_tree(&mut self) {
+        let Some(process_id) = self.child.id() else {
+            let _ = self.child.kill().await;
+            return;
+        };
+        #[cfg(unix)]
+        unsafe {
+            libc::kill(-(process_id as i32), libc::SIGKILL);
+        }
+        #[cfg(target_os = "windows")]
+        {
+            let _ = Command::new("taskkill")
+                .args(["/PID", &process_id.to_string(), "/T", "/F"])
+                .output()
+                .await;
+        }
         let _ = self.child.kill().await;
+        let _ = self.child.wait().await;
     }
 
     async fn shutdown(&mut self) -> Result<(), PiRpcError> {
@@ -472,10 +555,7 @@ impl PiRpcSession {
             }),
             Ok(Err(error)) => Err(PiRpcError::Io(error.to_string())),
             Err(_) => {
-                self.child
-                    .kill()
-                    .await
-                    .map_err(|error| PiRpcError::Io(error.to_string()))?;
+                self.kill_process_tree().await;
                 Ok(())
             }
         }
@@ -915,6 +995,35 @@ mod tests {
                     if id == "approval-1" && method == "confirm"
             ))
         );
+    }
+
+    #[tokio::test]
+    async fn fake_pi_forwards_matching_extension_approval() {
+        let Some((config, wrapper)) = fake_config("approved-extension", Duration::from_secs(5))
+        else {
+            return;
+        };
+        let (approval_sender, approval_receiver) = mpsc::unbounded_channel();
+        approval_sender
+            .send(PiRpcUiResponse {
+                id: "approval-1".to_string(),
+                confirmed: Some(true),
+                value: None,
+                cancelled: false,
+            })
+            .unwrap();
+
+        let result = PiRpcService::run_prompt_with_control(
+            config,
+            "extension".to_string(),
+            None,
+            None,
+            Some(approval_receiver),
+        )
+        .await;
+        cleanup_wrapper(wrapper);
+
+        assert!(result.is_ok(), "approval run failed: {result:?}");
     }
 
     #[tokio::test]

@@ -11,6 +11,8 @@ test("Pi tool starts without sessions or stale setup state", () => {
   assert.equal(state.activeAgentId, null);
   assert.equal(state.installed, null);
   assert.equal(state.version, null);
+  assert.equal(state.executablePath, null);
+  assert.equal(state.runtimeStatus, null);
   assert.equal(state.error, null);
   assert.equal(state.nextAgentIndex, 1);
 });
@@ -18,6 +20,6 @@ test("Pi tool starts without sessions or stale setup state", () => {
 test("Pi installation uses the official npm package without lifecycle scripts", () => {
   assert.equal(
     getInstallCommand(),
-    "npm install -g --ignore-scripts @earendil-works/pi-coding-agent"
+    "npm install -g --ignore-scripts @earendil-works/pi-coding-agent@0.81.1"
   );
 });

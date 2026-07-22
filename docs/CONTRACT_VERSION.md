@@ -1,7 +1,7 @@
 # Contract Version
 
 ## Current Version
-- `foundation-v6`
+- `foundation-v7`
 
 ## Scope
 This version pins the shared contracts between the TypeScript frontend (`frontend/src/contracts.ts`) and the Rust backend (`src-tauri/src/contracts.rs`).
@@ -162,4 +162,5 @@ This version pins the shared contracts between the TypeScript frontend (`fronten
 | `foundation-v3` | Streaming action expansion |
 | `foundation-v4` | Event channel, persistence actions |
 | `foundation-v5` | Terminal, workspace tools, API connections, files, llama runtime, flow, looper, STT, TTS, voice/VAD, devices, app meta, catalog CSV, tool invoke, custom tool/plugin capabilities, reasoning chunk streaming |
-| `foundation-v6` | Replaced OpenCode contracts and workspace integration with Pi; Pi runtime probes now report the detected version. |
+| `foundation-v6` | Replaced OpenCode contracts and workspace integration with Pi; Pi runtime probes report the detected version. |
+| `foundation-v7` | Added typed Pi runtime readiness diagnostics, executable selection, RPC approval responses, and Pi-backed provider metadata. |

@@ -10,6 +10,12 @@ export function handleLooperClick(
   const actionEl = target.closest(`[${LOOPER_DATA_ATTR.action}]`);
   if (actionEl) {
     const actionValue = (actionEl as HTMLElement).getAttribute(LOOPER_DATA_ATTR.action);
+    if (actionValue === "allow-pi-approval" || actionValue === "deny-pi-approval") {
+      void import("./actions").then(({ submitPiApproval }) => {
+        void submitPiApproval(state, deps, actionValue === "allow-pi-approval");
+      });
+      return true;
+    }
     if (actionValue === "launch-loop") {
       void import("./actions").then(({ createAndStartLoop }) => {
         void createAndStartLoop(state, deps);

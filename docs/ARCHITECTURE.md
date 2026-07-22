@@ -48,6 +48,9 @@ Core chat orchestration: message handling, agent loop, tool binding, streaming. 
 ### Terminal Service (`src-tauri/src/app/terminal_service.rs`)
 PTY-based terminal sessions: open, input, resize, close. Emits `terminal.output` streaming events.
 
+### Pi Runtime Service (`src-tauri/src/app/pi_runtime_service.rs`)
+Cross-platform Pi discovery and readiness checks. It resolves explicit, managed, PATH, npm, pnpm, Yarn, and Bun locations; enforces the supported `>=0.81.0,<0.82.0` range; and reports typed Node/npm/Bash diagnostics without shell `which`/`where` parsing.
+
 ### Pi RPC Service (`src-tauri/src/app/pi_rpc_service.rs`)
 Headless Pi process integration over strict JSONL stdin/stdout. It owns RPC command correlation, event streaming, settlement detection, bounded output, timeout/abort behavior, and fail-closed extension UI responses. Automated runs explicitly load the bundled `src-tauri/resources/pi/arxell-policy.ts` extension, which validates standard file-tool paths against the canonical project root, protects sensitive paths, and gates destructive shell patterns. This policy is defense in depth rather than an OS sandbox.
 
@@ -61,7 +64,7 @@ Local model lifecycle: list installed GGUF models, search HuggingFace, download,
 Local inference runtime management: engine discovery, installation, start/stop with configurable parameters (context size, GPU layers, sampling).
 
 ### API Registry Service (`src-tauri/src/api_registry.rs`)
-API connection CRUD: create, probe, verify, update, delete, import/export. Stores connection metadata in app data and stores raw API keys through the secret storage abstraction.
+API connection CRUD: create, probe, verify, update, delete, import/export. Stores connection metadata in app data and stores raw API keys through the secret storage abstraction. Portable exports omit credentials; imported connections without credentials require key re-entry and verification.
 
 ### Secret Storage (`src-tauri/src/secrets/`)
 API keys use OS-backed credential storage via the `keyring` crate by default. If OS credential storage is unavailable, writes fail unless the user explicitly acknowledges plaintext fallback; fallback secrets are stored separately from the normal API registry metadata file and warnings avoid including raw key values.

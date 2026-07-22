@@ -114,12 +114,13 @@ The breadcrumb renders the active agent's `cwd`:
 
 ## Install Check
 
-Uses a probe PTY session to avoid false positives:
+Uses the backend runtime service without opening a PTY:
 
-1. Opens `/bin/sh` (not login shell, avoids RC file side effects)
-2. Runs `pi --version` without opening a PTY
-3. Returns installed status and detected version through a typed response
-4. Opens setup UI when Pi is unavailable
+1. Resolves explicit, managed, PATH, npm, pnpm, Yarn, and Bun candidates
+2. Runs the selected executable with `--version`
+3. Enforces the supported `>=0.81.0,<0.82.0` range and checks Windows Bash readiness
+4. Returns typed path, version, Node/npm/Bash, and recovery diagnostics
+5. Opens setup UI with recheck and explicit-path controls when Pi is unavailable
 
 ## Terminal Session
 

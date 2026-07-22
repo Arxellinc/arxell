@@ -11,6 +11,8 @@ export interface LooperPhaseState {
   status: "idle" | "running" | "complete" | "error" | "blocked";
   agentId: string | null;
   sessionId: string | null;
+  runId: string | null;
+  provider: string | null;
   substeps: LooperSubStep[];
   prompt: string;
   promptDraft: string;
@@ -89,6 +91,7 @@ export interface LooperToolState {
   installChecking: boolean;
   installed: boolean | null;
   statusMessage: string | null;
+  pendingPiApproval: { loopId: string; phase: LooperPhase; requestId: string; method: string } | null;
   directoryPreviewRoots: { projectsRoot: string; toolsRoot: string } | null;
 }
 
@@ -173,6 +176,8 @@ function createPhaseState(phase: LooperPhase, projectContext?: string): LooperPh
     status: "idle",
     agentId: null,
     sessionId: null,
+    runId: null,
+    provider: null,
     substeps: DEFAULT_SUBSTEPS[phase].map((s) => ({ ...s, status: "pending" as const })),
     prompt,
     promptDraft: prompt,
@@ -259,6 +264,7 @@ export function getInitialLooperState(): LooperToolState {
     installChecking: false,
     installed: null,
     statusMessage: null,
+    pendingPiApproval: null,
     directoryPreviewRoots: getDefaultLooperDirectoryPreviewRoots()
   };
 }

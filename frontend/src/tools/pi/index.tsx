@@ -95,8 +95,15 @@ export function renderPiInstallModal(state: PiToolState): string {
   return `<div class="modal-backdrop-fixed" id="${PI_UI_ID.installModalOverlay}">
     <div class="modal-box-fixed">
       <div class="modal-title">${iconHtml("bot-message-square", { size: 16, tone: "dark" })} Pi CLI Required</div>
-      <p>Install the Pi coding harness with npm, then recheck availability.</p>
+      <p>Install the supported Pi coding harness with npm, then recheck availability.</p>
       <div class="pi-install-cmd">${escapeHtml(cmd)}</div>
+      <label class="field">Pi executable path (optional)
+        <input class="field-input-soft" type="text" value="${escapeHtml(state.executablePathDraft)}" placeholder="Auto-detect from PATH, npm, pnpm, Yarn, or Bun" ${PI_DATA_ATTR.action}="pi-executable-path" />
+      </label>
+      ${state.version ? `<p>Detected Pi ${escapeHtml(state.version)}${state.executablePath ? ` at ${escapeHtml(state.executablePath)}` : ""}</p>` : ""}
+      ${state.nodeAvailable === false ? `<p class="pi-error">Node.js is missing or cannot be launched.</p>` : ""}
+      ${state.npmAvailable === false ? `<p class="pi-error">npm is unavailable; use another package manager or select an existing Pi executable.</p>` : ""}
+      ${state.runtimeStatus === "missing_bash" ? `<p class="pi-error">Git Bash is required on Windows.</p>` : ""}
       ${state.error ? `<p class="pi-error">${escapeHtml(state.error)}</p>` : ""}
       <div class="modal-actions">
         <button type="button" class="modal-btn" ${PI_DATA_ATTR.action}="dismiss-install">Cancel</button>

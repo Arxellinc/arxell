@@ -13,10 +13,10 @@ input.on("line", (line) => {
     return;
   }
   if (command.type === "extension_ui_response") {
-    if (command.cancelled === true) {
+    if (command.cancelled === true || typeof command.confirmed === "boolean") {
       send({ type: "agent_settled" });
     } else {
-      process.stderr.write("extension request was not rejected\n");
+      process.stderr.write("extension request response was invalid\n");
       process.exit(8);
     }
     return;
@@ -24,7 +24,7 @@ input.on("line", (line) => {
   if (command.type !== "prompt") return;
 
   send({ id: command.id, type: "response", command: "prompt", success: true });
-  if (command.message === "timeout") return;
+  if (command.message === "timeout" || command.message.includes("__ARXELL_TIMEOUT__")) return;
   if (command.message === "malformed") {
     process.stdout.write("not-json\n");
     return;

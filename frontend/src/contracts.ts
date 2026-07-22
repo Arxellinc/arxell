@@ -1547,6 +1547,11 @@ export interface LooperPhaseRecord {
   phase: string;
   status: LooperPhaseStatus;
   sessionId: string | null;
+  runId?: string | null;
+  provider?: string | null;
+  model?: string | null;
+  inputTokens?: number;
+  outputTokens?: number;
   substeps: LooperSubStepStatus[];
   prompt: string;
 }
@@ -1701,12 +1706,33 @@ export interface LooperImportResponse {
 
 export interface LooperCheckPiRequest {
   correlationId: string;
+  executablePath?: string | null;
 }
 
 export interface LooperCheckPiResponse {
   correlationId: string;
   installed: boolean;
+  compatible: boolean;
   version?: string | null;
+  executablePath?: string | null;
+  bashPath?: string | null;
+  nodeAvailable: boolean;
+  npmAvailable: boolean;
+  status: "ready" | "not_found" | "incompatible_version" | "missing_bash" | "launch_failed";
+  errorCode?: string | null;
+  errorMessage?: string | null;
+}
+
+export interface LooperPiApprovalRequest {
+  correlationId: string;
+  loopId: string;
+  requestId: string;
+  confirmed: boolean;
+}
+
+export interface LooperPiApprovalResponse {
+  correlationId: string;
+  accepted: boolean;
 }
 
 export interface LooperQuestionAnswer {

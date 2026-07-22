@@ -240,6 +240,7 @@ fn main() {
                     if matches!(event, WindowEvent::CloseRequested { .. }) {
                         if let Some(state) = window.try_state::<TauriBridgeState>() {
                             state.runtime.shutdown("app-window-close");
+                            state.looper_handler.shutdown();
                         }
                         if let Some(tts_state) = window.try_state::<TTSState>() {
                             tts_state.shutdown();

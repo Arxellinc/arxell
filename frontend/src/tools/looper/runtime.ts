@@ -51,14 +51,16 @@ function normalizePhaseRecord(phase: LooperPhase, record?: LooperPhaseRecord): L
     status: record?.status ?? "idle",
     agentId: null,
     sessionId: record?.sessionId ?? null,
+    runId: record?.runId ?? null,
+    provider: record?.provider ?? null,
     substeps: normalizeSubsteps(record?.substeps ?? []),
     prompt: record?.prompt ?? "",
     promptDraft: record?.prompt ?? "",
     promptEditing: false,
     output: "",
-    model: null,
-    inputTokens: 0,
-    outputTokens: 0
+    model: record?.model ?? null,
+    inputTokens: record?.inputTokens ?? 0,
+    outputTokens: record?.outputTokens ?? 0
   };
 }
 
@@ -129,6 +131,8 @@ function createEventPlaceholderLoop(loopId: string, iteration: number, timestamp
     status: "idle",
     agentId: null,
     sessionId: null,
+    runId: null,
+    provider: null,
     substeps: [],
     prompt: "",
     promptDraft: "",
@@ -255,6 +259,8 @@ function applyPiEvent(state: LooperToolState, event: AppEvent): boolean {
 
   if (event.action === "pi.message.delta" && typeof payload.text === "string") {
     appendPhaseOutput(phase, payload.text);
+  } else if (event.action === "pi.message.final" && typeof payload.text === "string" && !phase.output.trim()) {
+    appendPhaseOutput(phase, payload.text);
   } else if (event.action === "pi.tool.start") {
     const tool = typeof payload.toolName === "string" ? payload.toolName : "tool";
     appendPhaseOutput(phase, `\n[Pi tool] ${tool} started\n`);
@@ -264,8 +270,21 @@ function applyPiEvent(state: LooperToolState, event: AppEvent): boolean {
     appendPhaseOutput(phase, `\n[Pi tool] ${tool} ${status}\n`);
   } else if (event.action === "pi.agent.status" && typeof payload.status === "string") {
     appendPhaseOutput(phase, `\n[Pi] ${payload.status.replaceAll("_", " ")}\n`);
+  } else if (event.action === "pi.approval.requested") {
+    if (typeof payload.requestId === "string") {
+      state.pendingPiApproval = {
+        loopId: payload.loopId,
+        phase: payload.phase as LooperPhase,
+        requestId: payload.requestId,
+        method: typeof payload.method === "string" ? payload.method : "confirm"
+      };
+      appendPhaseOutput(phase, "\n[Pi] Waiting for approval of a potentially destructive command.\n");
+    }
   } else if (event.action === "pi.approval.blocked") {
+    state.pendingPiApproval = null;
     appendPhaseOutput(phase, "\n[Pi] An interactive approval request was blocked.\n");
+  } else if (event.action === "pi.agent.settled" || event.action === "pi.agent.cancelled") {
+    if (state.pendingPiApproval?.loopId === payload.loopId) state.pendingPiApproval = null;
   } else if (event.action === "pi.usage") {
     phase.inputTokens = typeof payload.inputTokens === "number" ? payload.inputTokens : phase.inputTokens;
     phase.outputTokens = typeof payload.outputTokens === "number" ? payload.outputTokens : phase.outputTokens;
@@ -280,8 +299,14 @@ export function applyLooperEvent(state: LooperToolState, event: AppEvent): void 
   if (event.action === "looper.check-pi.result") {
     const payload = payloadAsRecord(event.payload);
     if (typeof payload?.installed === "boolean") {
-      state.installed = payload.installed;
-      state.installModalOpen = !payload.installed;
+      const ready = payload.installed === true && payload.compatible === true && payload.status === "ready";
+      state.installed = ready;
+      state.installModalOpen = !ready;
+      state.statusMessage = ready
+        ? `Pi ${typeof payload.version === "string" ? payload.version : ""} is ready.`.trim()
+        : typeof payload.errorMessage === "string"
+          ? payload.errorMessage
+          : "Pi runtime is not ready.";
       state.installChecking = false;
     }
     return;
@@ -341,6 +366,8 @@ export function applyLooperEvent(state: LooperToolState, event: AppEvent): void 
     loop.activePhase = phasePayload.phase;
     phaseState.status = "running";
     phaseState.output = "";
+    phaseState.runId = typeof payload?.runId === "string" ? payload.runId : null;
+    phaseState.provider = typeof payload?.provider === "string" ? payload.provider : null;
     phaseState.model = typeof payload?.model === "string" ? payload.model : null;
     phaseState.inputTokens = 0;
     phaseState.outputTokens = 0;
@@ -381,6 +408,7 @@ export function applyLooperEvent(state: LooperToolState, event: AppEvent): void 
 
   if (event.action === "looper.phase.error") {
     phaseState.status = "error";
+    if (state.pendingPiApproval?.loopId === phasePayload.loopId) state.pendingPiApproval = null;
     markRunningSubsteps(phaseState, "error");
   }
 }

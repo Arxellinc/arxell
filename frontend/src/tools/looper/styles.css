@@ -674,6 +674,11 @@
   line-height: 1.5;
 }
 
+.looper-install-error {
+  color: var(--error);
+  font-size: var(--text-sm);
+}
+
 .looper-install-cmd {
   background: var(--surface-strong);
   border: 1px solid var(--line);

@@ -92,6 +92,11 @@ export function handlePiInput(
   if (!action) return { handled: false, rerender: false };
 
   const actionValue = (action as HTMLElement).getAttribute(PI_DATA_ATTR.action);
+  if (actionValue === "pi-executable-path") {
+    const input = target as HTMLInputElement;
+    state.executablePathDraft = input.value;
+    return { handled: true, rerender: false };
+  }
   if (actionValue === "spawn-label") {
     const input = target as HTMLInputElement;
     state.spawnLabelDraft = input.value;
