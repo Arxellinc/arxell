@@ -383,16 +383,16 @@ Acceptance:
 
 ## Phase 4: Arxell Pi Policy Extension
 
-Status: `not started`
+Status: `in progress`
 
-- [ ] Add a bundled TypeScript extension under an Arxell-owned resource path.
-- [ ] Load it explicitly; disable unrelated extension auto-discovery for automated runs.
-- [ ] Enforce canonical project-folder boundaries for read/write/edit operations.
-- [ ] Protect `.git`, secret files, runtime/config roots, and other configured paths.
-- [ ] Detect destructive Bash patterns and request confirmation through `ctx.ui`.
-- [ ] Map RPC `extension_ui_request` to Arxell modal/notification contracts.
-- [ ] Fail closed when confirmation is unavailable or times out.
-- [ ] Emit safe operation metadata and policy decisions.
+- [x] Add a bundled TypeScript extension under an Arxell-owned resource path and install a versioned copy into Arxell state.
+- [x] Load it explicitly; disable unrelated extension auto-discovery for automated runs.
+- [x] Enforce canonical project-folder boundaries for read/write/edit operations, including symlink-aware ancestor resolution.
+- [x] Protect `.git`, Pi config, SSH, environment, credential, and private-key paths from standard file tools and recognizable Bash access.
+- [x] Detect destructive Bash patterns and request confirmation through `ctx.ui`.
+- [x] Map RPC `extension_ui_request` to safe Arxell policy events; a user-facing approval modal remains a follow-up.
+- [x] Fail closed when confirmation is unavailable or times out.
+- [x] Emit safe operation metadata and policy decisions without command, argument, or file contents.
 - [ ] Add an optional terminating structured-output tool for phase summaries.
 
 Acceptance:

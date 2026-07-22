@@ -397,6 +397,7 @@ pub struct LooperHandler {
     data_path: Arc<RwLock<Option<PathBuf>>>,
     active_runs: Arc<Mutex<HashMap<String, ActivePiRun>>>,
     pi_executable_override: Arc<RwLock<Option<PathBuf>>>,
+    pi_policy_path: Arc<RwLock<Option<PathBuf>>>,
 }
 
 struct ActivePiRun {
@@ -470,6 +471,9 @@ impl LooperHandler {
         web_search: Arc<WebSearchService>,
         api_registry: Arc<ApiRegistryService>,
     ) -> Self {
+        let pi_policy_path = install_pi_policy_extension(&workspace_tools.state_root_path())
+            .map_err(|error| eprintln!("looper: failed to install Pi policy extension: {error}"))
+            .ok();
         Self {
             hub,
             terminal,
@@ -480,6 +484,7 @@ impl LooperHandler {
             data_path: Arc::new(RwLock::new(None)),
             active_runs: Arc::new(Mutex::new(HashMap::new())),
             pi_executable_override: Arc::new(RwLock::new(None)),
+            pi_policy_path: Arc::new(RwLock::new(pi_policy_path)),
         }
     }
 
@@ -1386,6 +1391,14 @@ impl LooperHandler {
                     config.executable = executable.clone();
                 }
             }
+            let policy_path = self
+                .pi_policy_path
+                .read()
+                .map_err(|error| error.to_string())?
+                .clone()
+                .filter(|path| path.is_file())
+                .ok_or_else(|| "Arxell Pi policy extension is unavailable".to_string())?;
+            config.extensions.push(policy_path);
 
             let handler = self.clone();
             let loop_id = loop_id.to_string();
@@ -2574,6 +2587,18 @@ pub fn now_ms() -> i64 {
         .unwrap_or(0)
 }
 
+fn install_pi_policy_extension(state_root: &Path) -> Result<PathBuf, String> {
+    const POLICY_SOURCE: &str = include_str!("../../resources/pi/arxell-policy.ts");
+    let policy_dir = state_root.join("pi");
+    fs::create_dir_all(&policy_dir).map_err(|error| error.to_string())?;
+    let policy_path = policy_dir.join("arxell-policy.ts");
+    let current = fs::read_to_string(&policy_path).ok();
+    if current.as_deref() != Some(POLICY_SOURCE) {
+        fs::write(&policy_path, POLICY_SOURCE).map_err(|error| error.to_string())?;
+    }
+    Ok(policy_path)
+}
+
 fn truncate_utf8(value: &str, max_bytes: usize) -> &str {
     if value.len() <= max_bytes {
         return value;
@@ -2758,6 +2783,22 @@ mod tests {
             questions_answered: vec![],
             preview: None,
         }
+    }
+
+    #[test]
+    fn installs_versioned_pi_policy_with_boundary_and_destructive_guards() {
+        let root = std::env::temp_dir().join(format!("arxell-pi-policy-test-{}", now_ms()));
+        let first = install_pi_policy_extension(&root).unwrap();
+        let second = install_pi_policy_extension(&root).unwrap();
+        let source = fs::read_to_string(&first).unwrap();
+
+        assert_eq!(first, second);
+        assert!(source.contains("canonicalCandidate"));
+        assert!(source.contains("isInside"));
+        assert!(source.contains("DESTRUCTIVE_BASH_PATTERNS"));
+        assert!(source.contains("ctx.ui.confirm"));
+        assert!(source.contains("blocked access outside"));
+        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
