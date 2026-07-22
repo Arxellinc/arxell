@@ -113,6 +113,15 @@ test("applyLooperEvent renders bounded Pi RPC phase output and usage without a t
       outputTokens: 4
     })
   );
+  applyLooperEvent(
+    state,
+    makeEvent("pi.approval.requested", {
+      loopId: loop.id,
+      phase: "planner",
+      requestId: "approval-1",
+      method: "confirm"
+    })
+  );
 
   assert.equal(loop.phases.planner.sessionId, null);
   assert.equal(loop.phases.planner.model, "openai/gpt-5");
@@ -120,6 +129,7 @@ test("applyLooperEvent renders bounded Pi RPC phase output and usage without a t
   assert.match(loop.phases.planner.output, /read started/);
   assert.equal(loop.phases.planner.inputTokens, 12);
   assert.equal(loop.phases.planner.outputTokens, 4);
+  assert.equal(state.pendingPiApproval?.requestId, "approval-1");
 });
 
 test("applyLooperEvent accepts backend transition payloads that send toPhase", () => {

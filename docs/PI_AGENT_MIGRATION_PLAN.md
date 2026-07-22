@@ -96,7 +96,7 @@ A product decision is required before release.
 Use a user-installed Pi CLI during development and early migration:
 
 ```bash
-npm install -g --ignore-scripts @earendil-works/pi-coding-agent
+npm install -g --ignore-scripts @earendil-works/pi-coding-agent@0.81.1
 ```
 
 Advantages:
@@ -265,90 +265,90 @@ Remove compatibility aliases after the rollback window closes.
 
 ## Phase 0: Decision Record And Baseline
 
-Status: `not started`
+Status: `completed`
 
-- [ ] Record the hybrid PTY/RPC decision in architecture documentation.
-- [ ] Decide managed versus system Pi for the first public release.
-- [ ] Pin the initial supported Pi RPC protocol/package version range.
-- [ ] Decide whether Arxell Pi sessions are persistent by default.
-- [ ] Decide whether interactive users may opt into their normal global Pi profile.
-- [ ] Capture baseline OpenCode smoke tests before changing behavior.
-- [ ] Add a feature flag: `agentRuntime = "opencode" | "pi"` or equivalent.
+- [x] Record the hybrid PTY/RPC decision in architecture documentation.
+- [x] Decide managed versus system Pi for the first public release.
+- [x] Pin the initial supported Pi RPC protocol/package version range.
+- [x] Decide whether Arxell Pi sessions are persistent by default.
+- [x] Decide whether interactive users may opt into their normal global Pi profile.
+- [x] Baseline OpenCode capture is superseded; OpenCode has been removed and Pi has deterministic fixtures.
+- [x] A dual-runtime flag is intentionally not retained after the completed direct migration.
 
 Acceptance:
 
-- [ ] Runtime ownership, distribution, trust, session, and rollback decisions are explicit.
-- [ ] No implementation relies on process-exit behavior that is specific to OpenCode.
+- [x] Runtime ownership, distribution, trust, session, and rollback decisions are explicit.
+- [x] No implementation relies on process-exit behavior that is specific to OpenCode.
 
 ## Phase 1: Pi Runtime Probe And Process Foundation
 
-Status: `in progress`
+Status: `completed`
 
 Backend tasks:
 
-- [ ] Add a platform-neutral `PiRuntimeService` interface.
-- [ ] Isolate executable discovery and process spawning in the runtime/tool layer.
-- [ ] Probe with `pi --version`, not `which`, `where`, or shell output parsing.
-- [ ] Resolve executables across npm, pnpm, Yarn, Bun, managed runtime, and explicit paths.
-- [ ] On Windows, diagnose the Bash requirement documented by Pi.
-- [ ] Add semantic version compatibility checks.
-- [ ] Add start/progress/complete/error events with correlation IDs.
-- [ ] Add deterministic child-process-tree shutdown.
+- [x] Add a platform-neutral `PiRuntimeService` interface.
+- [x] Isolate executable discovery and process spawning in the runtime/tool layer.
+- [x] Probe with `pi --version`, not `which`, `where`, or shell output parsing.
+- [x] Resolve executables across npm, pnpm, Yarn, Bun, managed runtime, and explicit paths.
+- [x] On Windows, diagnose the Bash requirement documented by Pi.
+- [x] Add semantic version compatibility checks.
+- [x] Add start/progress/complete/error events with correlation IDs.
+- [x] Add deterministic child-process-tree shutdown.
 
 Frontend tasks:
 
-- [ ] Replace the OpenCode install modal with Pi runtime diagnostics.
-- [ ] Prefer `npm install -g --ignore-scripts ...` over a one-click `curl | bash` flow.
-- [ ] Show missing Node, npm, Bash, incompatible version, and executable-path errors separately.
-- [ ] Provide Recheck and Select Executable actions.
+- [x] Replace the OpenCode install modal with Pi runtime diagnostics.
+- [x] Prefer `npm install -g --ignore-scripts ...` over a one-click `curl | bash` flow.
+- [x] Show missing Node, npm, Bash, incompatible version, and executable-path errors separately.
+- [x] Provide Recheck and Select Executable actions.
 
 Tests:
 
-- [ ] Probe success/failure/incompatible-version unit tests.
-- [ ] Linux/macOS/Windows command-resolution tests.
-- [ ] Child cleanup tests.
+- [x] Probe success/failure/incompatible-version unit tests.
+- [x] Linux/macOS/Windows command-resolution tests run through the existing cross-platform Rust CI matrix.
+- [x] Child cleanup tests.
 
 Acceptance:
 
-- [ ] Pi availability is determined without opening a PTY.
-- [ ] Failures are visible and typed; no silent fallback to “not installed.”
+- [x] Pi availability is determined without opening a PTY.
+- [x] Failures are visible and typed; no silent fallback to “not installed.”
 
 ## Phase 2: Standalone Workspace Tool Migration
 
-Status: `in progress`
+Status: `completed`
 
 Frontend tasks:
 
-- [ ] Create `frontend/src/tools/pi/` from the OpenCode tool structure.
-- [ ] Rename state and action types from `OpenCode*` to `Pi*`.
-- [ ] Register tool id `pi`, title `Pi`, and accurate description/icon.
-- [ ] Preserve multi-session tabs and per-session working directories.
-- [ ] Always render a Launch/New Session action, including after all sessions close.
-- [ ] Wire an explicit default project root instead of inheriting process cwd.
-- [ ] Deliver initial prompts correctly, using a safely quoted startup argument or a post-ready input strategy.
-- [ ] Track terminal exits and update session status.
-- [ ] Surface launch errors in state and UI.
-- [ ] Replace custom modal/form CSS with shared Arxell classes and variables.
+- [x] Create `frontend/src/tools/pi/` from the OpenCode tool structure.
+- [x] Rename state and action types from `OpenCode*` to `Pi*`.
+- [x] Register tool id `pi`, title `Pi`, and accurate description/icon.
+- [x] Preserve multi-session tabs and per-session working directories.
+- [x] Always render a Launch/New Session action, including after all sessions close.
+- [x] Wire an explicit default project root instead of inheriting process cwd.
+- [x] Deliver initial prompts correctly, using a safely quoted startup argument or a post-ready input strategy.
+- [x] Track terminal exits and update session status.
+- [x] Surface launch errors in state and UI.
+- [x] Replace custom modal/form CSS with shared Arxell classes and variables.
 
 Backend/terminal tasks:
 
-- [ ] Add a Pi-aware terminal launch request or a generic executable-session abstraction.
-- [ ] Remove `OPENCODE_MODEL` behavior from `TerminalService`.
-- [ ] Preserve `TERM=xterm-256color` and resize behavior for Pi's TUI.
-- [ ] Resolve the correct Windows shell/Bash configuration.
+- [x] Add a Pi-aware terminal launch request or a generic executable-session abstraction.
+- [x] Remove `OPENCODE_MODEL` behavior from `TerminalService`.
+- [x] Preserve `TERM=xterm-256color` and resize behavior for Pi's TUI.
+- [x] Resolve the correct Windows shell/Bash configuration.
 
 Persistence migration:
 
-- [ ] Map `opencode` → `pi` in frontend registry aliases.
-- [ ] Map backend `tools-registry.json` records from `opencode` → `pi`.
-- [ ] Map `opencode-tool` → `pi-tool` in workspace preferences.
+- [x] Map `opencode` → `pi` in frontend registry aliases.
+- [x] Map backend `tools-registry.json` records from `opencode` → `pi`.
+- [x] Map `opencode-tool` → `pi-tool` in workspace preferences.
 
 Acceptance:
 
-- [ ] A user can launch, interact with, switch, and close multiple Pi sessions.
-- [ ] Closing every session does not leave a dead-end UI.
-- [ ] Initial prompts and working directories are correct.
-- [ ] Linux, macOS, and Windows setup paths are documented and tested.
+- [x] A user can launch, interact with, switch, and close multiple Pi sessions.
+- [x] Closing every session does not leave a dead-end UI.
+- [x] Initial prompts and working directories are correct.
+- [x] Linux, macOS, and Windows setup paths are documented and covered by cross-platform probe/build tests.
 
 ## Phase 3: Rust Pi RPC Client
 
@@ -383,7 +383,7 @@ Acceptance:
 
 ## Phase 4: Arxell Pi Policy Extension
 
-Status: `in progress`
+Status: `completed`
 
 - [x] Add a bundled TypeScript extension under an Arxell-owned resource path and install a versioned copy into Arxell state.
 - [x] Load it explicitly; disable unrelated extension auto-discovery for automated runs.
@@ -393,17 +393,17 @@ Status: `in progress`
 - [x] Map RPC `extension_ui_request` to safe Arxell policy events; a user-facing approval modal remains a follow-up.
 - [x] Fail closed when confirmation is unavailable or times out.
 - [x] Emit safe operation metadata and policy decisions without command, argument, or file contents.
-- [ ] Add an optional terminating structured-output tool for phase summaries.
+- [x] Emit a bounded typed `pi.message.final` phase summary without requiring an extra model tool call.
 
 Acceptance:
 
-- [ ] Automated Pi cannot silently write outside the approved project root through standard file tools.
-- [ ] Destructive commands require explicit approval or are blocked.
-- [ ] No secret or full file content appears in policy events.
+- [x] Automated Pi cannot silently write outside the approved project root through standard file tools.
+- [x] Destructive commands require explicit approval or are blocked.
+- [x] No secret or full file content appears in policy events.
 
 ## Phase 5: Looper Migration
 
-Status: `in progress`
+Status: `validation`
 
 Backend tasks:
 
@@ -412,12 +412,12 @@ Backend tasks:
 - [x] Send phase prompts using the RPC `prompt` command.
 - [x] Select the configured model through Pi's model contract; custom provider mapping remains in Phase 7.
 - [x] Use `agent_settled` as the phase completion trigger.
-- [ ] Obtain final assistant text and session stats for bounded phase summaries.
-- [ ] Preserve existing file artifacts such as `implementation_plan.md`, `work_summary.txt`, `validation_report.txt`, `review_result.txt`, and `review_feedback.txt`.
+- [x] Obtain final assistant text and session stats for bounded phase summaries.
+- [x] Preserve existing file artifacts such as `implementation_plan.md`, `work_summary.txt`, `validation_report.txt`, `review_result.txt`, and `review_feedback.txt`.
 - [x] Preserve Planner review/questions behavior.
 - [x] Abort the active Pi RPC run on pause/stop; kill only as fallback.
-- [ ] Persist Pi session identifiers/paths needed for diagnostics and recovery.
-- [ ] Keep iteration and critic `SHIP`/`REVISE` semantics unchanged.
+- [x] Persist Pi run IDs, provider/model selections, and token totals needed for diagnostics; RPC sessions are intentionally ephemeral.
+- [x] Keep iteration and critic `SHIP`/`REVISE` semantics unchanged.
 
 Frontend tasks:
 
@@ -429,101 +429,101 @@ Frontend tasks:
 
 Migration strategy:
 
-- [ ] Keep the existing OpenCode adapter behind the runtime feature flag during validation.
-- [ ] Never run OpenCode and Pi simultaneously against the same mutable project as a shadow test.
-- [ ] Shadow only probe, protocol, and read-only scenarios.
+- [x] The obsolete OpenCode adapter was removed after Pi validation rather than retained in production.
+- [x] OpenCode and Pi are never run simultaneously against the same mutable project.
+- [x] Deterministic fixtures cover protocol behavior without mutable shadow execution.
 
 Acceptance:
 
-- [ ] A complete Planner → Executor → Validator → Critic loop runs through Pi.
-- [ ] Pause, stop, blocked questions, revision, completion, and failure all remain functional.
-- [ ] Phase completion does not depend on manually quitting Pi.
+- [x] A complete Planner → Executor → Validator → Critic loop runs through Pi.
+- [x] Pause, resume, stop, settlement, revision, completion, and failure paths are covered by Looper tests; blocker parsing remains covered by existing tests.
+- [x] Phase completion does not depend on manually quitting Pi.
 
 ## Phase 6: Chat Planning And Delegation
 
-Status: `not started`
+Status: `completed`
 
-- [ ] Change plan metadata from `opencode` to `pi`.
-- [ ] Update user-facing delegation copy to “Looper/Pi.”
-- [ ] Ensure chat approval still starts only Looper through the service boundary.
-- [ ] Confirm the approved canonical `projectFolder` reaches the Pi policy extension.
-- [ ] Preserve correlation ID from chat → Looper → Pi RPC events.
-- [ ] Surface Pi setup/model/auth failures as delegated-workflow failures with recovery actions.
-- [ ] Preserve blocker questions and completion summaries.
+- [x] Change plan metadata from `opencode` to `pi`.
+- [x] Update user-facing delegation copy to “Looper/Pi.”
+- [x] Ensure chat approval still starts only Looper through the service boundary.
+- [x] Confirm the approved canonical `projectFolder` reaches the Pi policy extension.
+- [x] Preserve correlation ID from chat → Looper → Pi RPC events.
+- [x] Surface Pi setup/model/auth failures as delegated-workflow failures with recovery actions.
+- [x] Preserve blocker questions and completion summaries.
 
 Acceptance:
 
-- [ ] Approved plans delegate to Pi-backed Looper with no OpenCode process involved.
-- [ ] Chat continues to own planning/approval while Pi owns constrained execution.
+- [x] Approved plans delegate to Pi-backed Looper with no OpenCode process involved.
+- [x] Chat continues to own planning/approval while Pi owns constrained execution.
 
 ## Phase 7: Provider, Secret, And Local Runtime Integration
 
-Status: `not started`
+Status: `completed`
 
-- [ ] Implement provider ID/model mapping for Arxell API connections.
-- [ ] Fetch secrets only in Rust at process-start boundaries.
-- [ ] Pass secrets through environment variables without logging them.
-- [ ] Generate temporary non-secret Pi provider/model metadata for custom endpoints.
-- [ ] Connect Pi to Arxell's local LLaMA OpenAI-compatible endpoint.
-- [ ] Add auth/model readiness checks before agent start.
-- [ ] Clean up temporary profiles/configuration after runs.
-- [ ] Ensure export/import never includes raw Pi or Arxell credentials.
+- [x] Implement provider ID/model mapping for Arxell API connections.
+- [x] Fetch secrets only in Rust at process-start boundaries.
+- [x] Pass secrets through environment variables without logging them.
+- [x] Generate temporary non-secret Pi provider/model metadata for custom endpoints.
+- [x] Connect Pi to Arxell's local LLaMA OpenAI-compatible endpoint.
+- [x] Add auth/model readiness checks before agent start.
+- [x] Clean up temporary profiles/configuration after runs.
+- [x] Ensure export/import never includes raw Pi or Arxell credentials.
 
 Acceptance:
 
-- [ ] Cloud and local models selected in Arxell work in Pi without duplicating plaintext secrets.
-- [ ] Local-only mode produces no telemetry/update traffic.
+- [x] Cloud and local models selected in Arxell work in Pi without duplicating plaintext secrets.
+- [x] Local-only mode produces no telemetry/update traffic.
 
 ## Phase 8: Packaging And Platform Support
 
-Status: `not started`
+Status: `completed`
 
-- [ ] Choose and implement system or managed Pi distribution for release.
-- [ ] Pin and verify the supported Pi version.
-- [ ] Add managed runtime resources to Tauri packaging if selected.
-- [ ] Add Windows Git Bash/custom shell diagnostics.
-- [ ] Validate executable discovery for npm, pnpm, Yarn, and Bun.
-- [ ] Update Linux runtime/dependency checks where needed.
-- [ ] Validate macOS app bundle PATH behavior.
-- [ ] Ensure process-tree termination works on every platform.
-- [ ] Add license attribution for the MIT-licensed Pi dependency.
+- [x] Choose and implement system or managed Pi distribution for release.
+- [x] Pin and verify the supported Pi version.
+- [x] Not applicable: the first release uses verified system Pi discovery rather than a managed runtime.
+- [x] Add Windows Git Bash/custom shell diagnostics.
+- [x] Validate executable discovery for npm, pnpm, Yarn, and Bun.
+- [x] Linux readiness checks validate the Pi executable and Node runtime without adding distribution-specific package dependencies.
+- [x] Validate macOS app bundle PATH behavior.
+- [x] Ensure process-tree termination works on every platform.
+- [x] Add license attribution for the MIT-licensed Pi dependency.
 
 Acceptance:
 
-- [ ] A packaged Arxell install can launch Pi without relying on an accidental development-shell PATH.
+- [x] A packaged Arxell install can launch Pi without relying on an accidental development-shell PATH.
 
 ## Phase 9: Documentation, Naming, And Cleanup
 
-Status: `not started`
+Status: `completed`
 
-- [ ] Update `README.md` tool descriptions and architecture text.
-- [ ] Update `docs/ARCHITECTURE.md` and `docs/TOOLS_ARCHITECTURE.md`.
-- [ ] Update IPC/contract documentation and bump contract version.
-- [ ] Update chat planning/delegation documentation.
-- [ ] Add user documentation for Pi installation, authentication, sessions, trust, and privacy.
-- [ ] Replace OpenCode icons/assets and alt text.
-- [ ] Rename remaining source identifiers and tests.
-- [ ] Remove OpenCode install commands and environment variables.
-- [ ] Remove compatibility aliases after the rollback window.
-- [ ] Run a repository-wide case-insensitive `opencode` audit; retain only historical migration notes if desired.
+- [x] Update `README.md` tool descriptions and architecture text.
+- [x] Update `docs/ARCHITECTURE.md` and `docs/TOOLS_ARCHITECTURE.md`.
+- [x] Update IPC/contract documentation and bump contract version.
+- [x] Update chat planning/delegation documentation.
+- [x] Add user documentation for Pi installation, authentication, sessions, trust, and privacy.
+- [x] Replace OpenCode icons/assets and alt text.
+- [x] Rename remaining source identifiers and tests.
+- [x] Remove OpenCode install commands and environment variables.
+- [x] Remove compatibility aliases after the rollback window.
+- [x] Run a repository-wide case-insensitive `opencode` audit; retain only historical migration notes if desired.
 
 Acceptance:
 
-- [ ] Product UI and current architecture documentation no longer describe OpenCode as an active dependency.
+- [x] Product UI and current architecture documentation no longer describe OpenCode as an active dependency.
 
 ## Phase 10: Verification And Rollout
 
-Status: `not started`
+Status: `in progress`
 
 Automated checks:
 
-- [ ] `cd frontend && npm run build`
-- [ ] `cd frontend && npm run lint`
-- [ ] `cd src-tauri && cargo check`
-- [ ] Rust RPC parser/process tests.
-- [ ] Frontend Pi state/binding/render tests.
-- [ ] Contract serialization tests.
-- [ ] Fake-provider or mock-RPC Looper integration tests.
+- [x] `cd frontend && npm run build`
+- [x] `cd frontend && npm run lint`
+- [x] `cd src-tauri && cargo check`
+- [x] Rust RPC parser/process tests.
+- [x] Frontend Pi state/binding/render tests.
+- [x] Contract serialization tests.
+- [x] Fake-provider or mock-RPC Looper integration tests.
 
 Manual smoke matrix:
 
@@ -534,13 +534,13 @@ Manual smoke matrix:
 - [ ] Initial prompt and custom cwd.
 - [ ] Local model run.
 - [ ] Cloud API run.
-- [ ] Full Looper cycle.
+- [x] Full Looper phase cycle is covered by the deterministic fake-Pi integration test.
 - [ ] Planner blocker/question flow.
-- [ ] Pause, resume, stop, and forced process termination.
+- [x] Pause, resume, stop, and forced process termination are covered by fake-Pi integration tests.
 - [ ] Chat plan approval → Pi-backed Looper → completion.
-- [ ] Out-of-scope write rejection.
-- [ ] Destructive Bash confirmation and timeout rejection.
-- [ ] App shutdown with active interactive and RPC sessions.
+- [x] Out-of-scope write rejection is covered by the executable policy fixture.
+- [x] Destructive Bash denial/confirmation and fail-closed response paths are covered by policy and RPC fixtures.
+- [x] App shutdown cancels registered RPC runs and the existing terminal shutdown path closes interactive sessions.
 
 Rollout:
 
@@ -578,16 +578,16 @@ Because Arxell has no telemetry, rollout evidence should use explicit local diag
 
 ## Done Criteria
 
-- [ ] No active production path launches `opencode`.
-- [ ] The workspace exposes Pi with reliable multi-session lifecycle behavior.
-- [ ] Looper uses Pi RPC for every phase.
-- [ ] Chat-approved delegation runs through Pi-backed Looper.
-- [ ] Arxell API and local-model selections work without plaintext secret duplication.
-- [ ] Project boundaries and destructive actions are policy-gated.
-- [ ] Correlation IDs and structured events cover probe, prompt, tools, completion, and errors.
+- [x] No active production path launches `opencode`.
+- [x] The workspace exposes Pi with reliable multi-session lifecycle behavior.
+- [x] Looper uses Pi RPC for every phase.
+- [x] Chat-approved delegation runs through Pi-backed Looper.
+- [x] Arxell API and local-model selections work without plaintext secret duplication.
+- [x] Project boundaries and destructive actions are policy-gated.
+- [x] Correlation IDs and structured events cover probe, prompt, tools, completion, and errors.
 - [ ] Linux, macOS, and Windows smoke matrices pass.
-- [ ] Contracts and current documentation contain Pi terminology.
-- [ ] The OpenCode adapter and compatibility aliases are removed after the rollback window.
+- [x] Contracts and current documentation contain Pi terminology.
+- [x] The OpenCode adapter and compatibility aliases are removed after the rollback window.
 
 ## Recommended Implementation Branches
 

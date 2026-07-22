@@ -2,16 +2,24 @@ import type { TerminalManager } from "../terminal/index";
 import type { ChatIpcClient } from "../../ipcClient";
 import type { PiAgent, PiToolState } from "./state";
 
-const INSTALL_COMMAND = "npm install -g --ignore-scripts @earendil-works/pi-coding-agent";
+const INSTALL_COMMAND = "npm install -g --ignore-scripts @earendil-works/pi-coding-agent@0.81.1";
 
 function isWindows(): boolean {
   return /Windows/i.test(navigator.userAgent);
 }
 
-function getLaunchCommand(): string {
+function quoteExecutable(path: string): string {
+  if (isWindows()) {
+    return `"${path.replaceAll('"', '""')}"`;
+  }
+  return `'${path.replaceAll("'", `'"'"'`)}'`;
+}
+
+function getLaunchCommand(executablePath: string | null): string {
+  const executable = executablePath ? quoteExecutable(executablePath) : "pi";
   return isWindows()
-    ? "set PI_TELEMETRY=0&& set PI_SKIP_VERSION_CHECK=1&& pi"
-    : "PI_TELEMETRY=0 PI_SKIP_VERSION_CHECK=1 pi";
+    ? `set PI_TELEMETRY=0&& set PI_SKIP_VERSION_CHECK=1&& ${executable}`
+    : `PI_TELEMETRY=0 PI_SKIP_VERSION_CHECK=1 ${executable}`;
 }
 
 export function getInstallCommand(): string {
@@ -42,20 +50,37 @@ export async function checkPiInstalled(
       toolId: "looper",
       action: "check-pi",
       mode: "sandbox",
-      payload: { correlationId }
+      payload: {
+        correlationId,
+        executablePath: state.executablePathDraft.trim() || undefined
+      }
     });
     if (!invokeResponse.ok) {
       throw new Error(invokeResponse.error || "Pi runtime probe failed.");
     }
     const response = invokeResponse.data as {
       installed?: boolean;
+      compatible?: boolean;
       version?: string | null;
+      executablePath?: string | null;
+      bashPath?: string | null;
+      nodeAvailable?: boolean;
+      npmAvailable?: boolean;
+      status?: string;
+      errorMessage?: string | null;
     };
-    const found = response.installed === true;
-    state.installed = found;
+    const ready = response.installed === true && response.compatible === true && response.status === "ready";
+    state.installed = response.installed === true;
     state.version = typeof response.version === "string" ? response.version : null;
-    state.installModalOpen = !found;
-    return found;
+    state.executablePath = typeof response.executablePath === "string" ? response.executablePath : null;
+    if (state.executablePath) state.executablePathDraft = state.executablePath;
+    state.bashPath = typeof response.bashPath === "string" ? response.bashPath : null;
+    state.nodeAvailable = typeof response.nodeAvailable === "boolean" ? response.nodeAvailable : null;
+    state.npmAvailable = typeof response.npmAvailable === "boolean" ? response.npmAvailable : null;
+    state.runtimeStatus = typeof response.status === "string" ? response.status : null;
+    state.error = ready ? null : response.errorMessage || "Pi runtime is not ready.";
+    state.installModalOpen = !ready;
+    return ready;
   } catch (error) {
     state.installed = false;
     state.version = null;
@@ -111,7 +136,7 @@ export async function spawnAgent(
 
     await deps.client.sendTerminalInput({
       sessionId: session.sessionId,
-      input: `${getLaunchCommand()}\n`,
+      input: `${getLaunchCommand(state.executablePath)}\n`,
       correlationId: deps.nextCorrelationId()
     });
 

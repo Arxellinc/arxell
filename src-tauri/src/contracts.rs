@@ -1792,6 +1792,16 @@ pub struct LooperPhaseState {
     pub phase: String,
     pub status: LooperPhaseStatus,
     pub session_id: Option<String>,
+    #[serde(default)]
+    pub run_id: Option<String>,
+    #[serde(default)]
+    pub provider: Option<String>,
+    #[serde(default)]
+    pub model: Option<String>,
+    #[serde(default)]
+    pub input_tokens: u64,
+    #[serde(default)]
+    pub output_tokens: u64,
     pub substeps: Vec<LooperSubStepStatus>,
     pub prompt: String,
 }
@@ -1985,6 +1995,8 @@ pub struct LooperCloseResponse {
 #[serde(rename_all = "camelCase")]
 pub struct LooperCheckPiRequest {
     pub correlation_id: String,
+    #[serde(default)]
+    pub executable_path: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1992,7 +2004,31 @@ pub struct LooperCheckPiRequest {
 pub struct LooperCheckPiResponse {
     pub correlation_id: String,
     pub installed: bool,
+    pub compatible: bool,
     pub version: Option<String>,
+    pub executable_path: Option<String>,
+    pub bash_path: Option<String>,
+    pub node_available: bool,
+    pub npm_available: bool,
+    pub status: String,
+    pub error_code: Option<String>,
+    pub error_message: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LooperPiApprovalRequest {
+    pub correlation_id: String,
+    pub loop_id: String,
+    pub request_id: String,
+    pub confirmed: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LooperPiApprovalResponse {
+    pub correlation_id: String,
+    pub accepted: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

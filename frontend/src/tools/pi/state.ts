@@ -14,6 +14,12 @@ export interface PiToolState {
   installChecking: boolean;
   installed: boolean | null;
   version: string | null;
+  executablePath: string | null;
+  executablePathDraft: string;
+  runtimeStatus: string | null;
+  nodeAvailable: boolean | null;
+  npmAvailable: boolean | null;
+  bashPath: string | null;
   error: string | null;
   busy: boolean;
   spawnModalOpen: boolean;
@@ -31,6 +37,12 @@ export function getInitialPiState(): PiToolState {
     installChecking: false,
     installed: null,
     version: null,
+    executablePath: null,
+    executablePathDraft: "",
+    runtimeStatus: null,
+    nodeAvailable: null,
+    npmAvailable: null,
+    bashPath: null,
     error: null,
     busy: false,
     spawnModalOpen: false,

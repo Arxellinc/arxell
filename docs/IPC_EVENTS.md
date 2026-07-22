@@ -1,6 +1,6 @@
 # IPC and Event Contracts
 
-Contract version: `foundation-v6` (see `CONTRACT_VERSION.md`)
+Contract version: `foundation-v7` (see `CONTRACT_VERSION.md`)
 
 ## Event Channel
 - `app:event`
@@ -217,6 +217,7 @@ Additional file operations via `cmd_tool_invoke` (`toolId: "files"`):
 | `list` | `LooperListRequest` | `LooperListResponse` |
 | `close` | `LooperCloseRequest` | `LooperCloseResponse` |
 | `check-pi` | `LooperCheckPiRequest` | `LooperCheckPiResponse` |
+| `pi-approval` | `LooperPiApprovalRequest` | `LooperPiApprovalResponse` |
 | `submit-questions` | `LooperSubmitQuestionsRequest` | `LooperSubmitQuestionsResponse` |
 
 Looper phases emit lifecycle events (`looper.phase.start`, `looper.phase.complete`, `looper.phase.error`, and `looper.phase.transition`) with a Pi RPC `runId` rather than a terminal session ID. Headless Pi progress uses:
@@ -227,7 +228,7 @@ Looper phases emit lifecycle events (`looper.phase.start`, `looper.phase.complet
 | `pi.tool.start` / `pi.tool.end` | `loopId`, `phase`, `toolCallId`, `toolName`, `isError?` |
 | `pi.agent.status` / `pi.agent.settled` / `pi.agent.cancelled` | `loopId`, `phase`, `runId?`, status/count metadata |
 | `pi.usage` | `loopId`, `phase`, token counts |
-| `pi.approval.blocked` | `loopId`, `phase`, request ID/method, fail-closed decision |
+| `pi.approval.requested` | `loopId`, `phase`, request ID/method, pending decision |
 
 Tool arguments, tool output, raw stderr, secrets, and complete file contents are not copied into Pi progress metadata.
 

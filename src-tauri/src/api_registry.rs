@@ -341,7 +341,9 @@ impl ApiRegistryService {
                     api_type: record.api_type.clone(),
                     api_url: record.api_url.clone(),
                     name: record.name.clone(),
-                    api_key: self.record_api_key(record)?,
+                    // Portable exports intentionally exclude credentials. Secrets remain in the
+                    // OS keychain and must be re-entered on another device.
+                    api_key: String::new(),
                     model_name: record.model_name.clone(),
                     cost_per_month_usd: record.cost_per_month_usd,
                     api_standard_path: record.api_standard_path.clone(),
@@ -386,7 +388,9 @@ impl ApiRegistryService {
             let api_url = normalize_required(item.api_url.as_str(), "apiUrl")?;
             validate_url(api_url.as_str())?;
             let api_key = normalize_api_key(item.api_key.as_str());
-            validate_api_key(api_key.as_str())?;
+            if !api_key.is_empty() {
+                validate_api_key(api_key.as_str())?;
+            }
             let created_ms = item.created_ms.unwrap_or_else(now_ms);
             let id = item
                 .id
@@ -395,18 +399,29 @@ impl ApiRegistryService {
                 .unwrap_or_else(|| format!("api-{}", Uuid::new_v4()));
 
             let existing = connections.get(&id);
-            let status = existing
-                .map(|record| record.status.clone())
-                .unwrap_or(ApiConnectionStatus::Pending);
-            let status_message = existing
-                .map(|record| record.status_message.clone())
-                .unwrap_or_else(|| "Imported connection. Verify to confirm status.".to_string());
+            let status = if api_key.is_empty() && existing.is_none() {
+                ApiConnectionStatus::Warning
+            } else {
+                existing
+                    .map(|record| record.status.clone())
+                    .unwrap_or(ApiConnectionStatus::Pending)
+            };
+            let status_message = if api_key.is_empty() && existing.is_none() {
+                "Imported without credentials. Re-enter the API key and verify this connection."
+                    .to_string()
+            } else {
+                existing
+                    .map(|record| record.status_message.clone())
+                    .unwrap_or_else(|| "Imported connection. Verify to confirm status.".to_string())
+            };
             let last_checked_ms = existing.and_then(|record| record.last_checked_ms);
             let available_models = existing
                 .map(|record| record.available_models.clone())
                 .unwrap_or_default();
 
-            self.store_api_key(id.as_str(), api_key.as_str())?;
+            if !api_key.is_empty() {
+                self.store_api_key(id.as_str(), api_key.as_str())?;
+            }
 
             let record = ApiConnectionSecretRecord {
                 id: id.clone(),

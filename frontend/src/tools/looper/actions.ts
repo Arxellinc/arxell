@@ -95,6 +95,43 @@ export async function refreshLooperState(
   registerLoopSessions(state, deps);
 }
 
+export async function submitPiApproval(
+  state: LooperToolState,
+  deps: LooperActionsDeps,
+  confirmed: boolean
+): Promise<void> {
+  const approval = state.pendingPiApproval;
+  if (!approval || state.busy) return;
+  state.busy = true;
+  state.pendingPiApproval = null;
+  deps.renderAndBind();
+  try {
+    const correlationId = deps.nextCorrelationId();
+    const response = await deps.client.toolInvoke({
+      correlationId,
+      toolId: "looper",
+      action: "pi-approval",
+      mode: "sandbox",
+      payload: {
+        correlationId,
+        loopId: approval.loopId,
+        requestId: approval.requestId,
+        confirmed
+      }
+    });
+    if (!response.ok) {
+      throw new Error(response.error || "Pi approval response failed.");
+    }
+    state.statusMessage = confirmed ? "Pi command approved once." : "Pi command denied.";
+  } catch (error) {
+    state.pendingPiApproval = approval;
+    state.statusMessage = error instanceof Error ? error.message : "Pi approval response failed.";
+  } finally {
+    state.busy = false;
+    deps.renderAndBind();
+  }
+}
+
 async function checkPiInstalled(
   state: LooperToolState,
   deps: LooperActionsDeps
@@ -116,11 +153,16 @@ async function checkPiInstalled(
       throw new Error(invokeResponse.error || "Pi check failed.");
     }
     const response = invokeResponse.data as unknown as LooperCheckPiResponse;
-    state.installed = response.installed;
-    state.installModalOpen = !response.installed;
-    return response.installed;
-  } catch {
+    const ready = response.installed && response.compatible && response.status === "ready";
+    state.installed = ready;
+    state.statusMessage = ready
+      ? `Pi ${response.version ?? ""} is ready.`.trim()
+      : response.errorMessage || "Pi runtime is not ready.";
+    state.installModalOpen = !ready;
+    return ready;
+  } catch (error) {
     state.installed = false;
+    state.statusMessage = error instanceof Error ? error.message : "Pi check failed.";
     state.installModalOpen = true;
     return false;
   } finally {

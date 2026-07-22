@@ -11,8 +11,9 @@
 
 use crate::contracts::{
     LooperAdvanceRequest, LooperCheckPiRequest, LooperCloseAllRequest, LooperCloseRequest,
-    LooperImportRequest, LooperListRequest, LooperPauseRequest, LooperPreviewRequest,
-    LooperStartRequest, LooperStatusRequest, LooperStopRequest, LooperSubmitQuestionsRequest,
+    LooperImportRequest, LooperListRequest, LooperPauseRequest, LooperPiApprovalRequest,
+    LooperPreviewRequest, LooperStartRequest, LooperStatusRequest, LooperStopRequest,
+    LooperSubmitQuestionsRequest,
 };
 use crate::ipc::tauri_bridge::TauriBridgeState;
 use crate::tools::invoke::registry::{decode_payload, InvokeRegistry, ToolInvokeFuture};
@@ -28,16 +29,13 @@ pub fn register(registry: &mut InvokeRegistry) {
     registry.register("looper", &["close"], invoke_close);
     registry.register("looper", &["close-all"], invoke_close_all);
     registry.register("looper", &["import"], invoke_import);
-    registry.register(
-        "looper",
-        &["check-pi", "checkPi", "check-opencode", "checkOpenCode"],
-        invoke_check_pi,
-    );
+    registry.register("looper", &["check-pi", "checkPi"], invoke_check_pi);
     registry.register(
         "looper",
         &["submit-questions", "submitQuestions"],
         invoke_submit_questions,
     );
+    registry.register("looper", &["pi-approval", "piApproval"], invoke_pi_approval);
     registry.register(
         "looper",
         &["start-preview", "startPreview"],
@@ -127,6 +125,16 @@ fn invoke_check_pi(state: &TauriBridgeState, payload: Value) -> ToolInvokeFuture
         let result = handler.check_pi(req).await?;
         serde_json::to_value(result)
             .map_err(|e| format!("failed serializing looper check-pi response: {e}"))
+    })
+}
+
+fn invoke_pi_approval(state: &TauriBridgeState, payload: Value) -> ToolInvokeFuture<'_> {
+    let handler = state.looper_handler.clone();
+    Box::pin(async move {
+        let req: LooperPiApprovalRequest = decode_payload(payload)?;
+        let result = handler.submit_pi_approval(req)?;
+        serde_json::to_value(result)
+            .map_err(|e| format!("failed serializing Pi approval response: {e}"))
     })
 }
 

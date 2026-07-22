@@ -27,7 +27,10 @@
 //! produces a `SHIP` or `REVISE` decision which controls iteration looping.
 
 use crate::api_registry::ApiRegistryService;
-use crate::app::pi_rpc_service::{PiRpcConfig, PiRpcError, PiRpcEvent, PiRpcRecord, PiRpcService};
+use crate::app::pi_rpc_service::{
+    PiRpcConfig, PiRpcError, PiRpcEvent, PiRpcRecord, PiRpcService, PiRpcUiResponse,
+};
+use crate::app::pi_runtime_service::PiRuntimeService;
 use crate::app::terminal_service::TerminalService;
 use crate::app::web_search_service::{
     WebSearchRequest as ServiceWebSearchRequest, WebSearchResult, WebSearchService,
@@ -398,12 +401,21 @@ pub struct LooperHandler {
     active_runs: Arc<Mutex<HashMap<String, ActivePiRun>>>,
     pi_executable_override: Arc<RwLock<Option<PathBuf>>>,
     pi_policy_path: Arc<RwLock<Option<PathBuf>>>,
+    pi_runtime: Arc<PiRuntimeService>,
 }
 
 struct ActivePiRun {
     id: String,
     phase: String,
     cancel: watch::Sender<bool>,
+    approval: mpsc::UnboundedSender<PiRpcUiResponse>,
+}
+
+struct PiModelSelection {
+    provider: Option<String>,
+    model: Option<String>,
+    base_url: Option<String>,
+    api_key: Option<String>,
 }
 
 struct LooperLoop {
@@ -436,6 +448,11 @@ struct PhaseState {
     phase: String,
     status: LooperPhaseStatus,
     session_id: Option<String>,
+    run_id: Option<String>,
+    provider: Option<String>,
+    model: Option<String>,
+    input_tokens: u64,
+    output_tokens: u64,
     substeps: Vec<SubStepState>,
     prompt: String,
 }
@@ -471,9 +488,12 @@ impl LooperHandler {
         web_search: Arc<WebSearchService>,
         api_registry: Arc<ApiRegistryService>,
     ) -> Self {
-        let pi_policy_path = install_pi_policy_extension(&workspace_tools.state_root_path())
+        let state_root = workspace_tools.state_root_path();
+        cleanup_stale_pi_profiles(&state_root);
+        let pi_policy_path = install_pi_policy_extension(&state_root)
             .map_err(|error| eprintln!("looper: failed to install Pi policy extension: {error}"))
             .ok();
+        let pi_runtime = Arc::new(PiRuntimeService::new(state_root));
         Self {
             hub,
             terminal,
@@ -485,7 +505,12 @@ impl LooperHandler {
             active_runs: Arc::new(Mutex::new(HashMap::new())),
             pi_executable_override: Arc::new(RwLock::new(None)),
             pi_policy_path: Arc::new(RwLock::new(pi_policy_path)),
+            pi_runtime,
         }
+    }
+
+    pub fn shutdown(&self) {
+        self.cancel_all_active_runs();
     }
 
     pub fn set_data_path(&self, path: PathBuf) {
@@ -659,6 +684,11 @@ impl LooperHandler {
                     phase: phase_name.to_string(),
                     status: LooperPhaseStatus::Idle,
                     session_id: None,
+                    run_id: None,
+                    provider: None,
+                    model: None,
+                    input_tokens: 0,
+                    output_tokens: 0,
                     substeps,
                     prompt,
                 },
@@ -1198,24 +1228,66 @@ impl LooperHandler {
         &self,
         req: LooperCheckPiRequest,
     ) -> Result<LooperCheckPiResponse, String> {
-        let version = probe_pi_version();
-        let installed = version.is_some();
+        let probe = self.pi_runtime.probe(req.executable_path.as_deref());
+        let status = probe.status.as_str().to_string();
 
         self.emit_event(
             &req.correlation_id,
             "looper.check-pi.result",
             EventStage::Complete,
-            EventSeverity::Info,
+            if probe.status.as_str() == "ready" {
+                EventSeverity::Info
+            } else {
+                EventSeverity::Warn
+            },
             json!({
-                "installed": installed,
-                "version": version,
+                "installed": probe.installed,
+                "compatible": probe.compatible,
+                "version": probe.version,
+                "executablePath": probe.executable_path,
+                "bashPath": probe.bash_path,
+                "nodeAvailable": probe.node_available,
+                "npmAvailable": probe.npm_available,
+                "status": status,
+                "errorCode": probe.error_code,
+                "errorMessage": probe.error_message,
             }),
         );
 
         Ok(LooperCheckPiResponse {
             correlation_id: req.correlation_id,
-            installed,
-            version,
+            installed: probe.installed,
+            compatible: probe.compatible,
+            version: probe.version,
+            executable_path: probe.executable_path,
+            bash_path: probe.bash_path,
+            node_available: probe.node_available,
+            npm_available: probe.npm_available,
+            status,
+            error_code: probe.error_code,
+            error_message: probe.error_message,
+        })
+    }
+
+    pub fn submit_pi_approval(
+        &self,
+        req: crate::contracts::LooperPiApprovalRequest,
+    ) -> Result<crate::contracts::LooperPiApprovalResponse, String> {
+        let runs = self.active_runs.lock().map_err(|error| error.to_string())?;
+        let run = runs
+            .get(&req.loop_id)
+            .ok_or_else(|| "No active Pi run is waiting for approval".to_string())?;
+        run.approval
+            .send(PiRpcUiResponse {
+                id: req.request_id,
+                confirmed: Some(req.confirmed),
+                value: None,
+                cancelled: false,
+            })
+            .map_err(|_| "The active Pi approval channel is closed".to_string())?;
+        Ok(crate::contracts::LooperPiApprovalResponse {
+            correlation_id: req.correlation_id,
+            accepted: true,
         })
     }
 
@@ -1223,37 +1295,72 @@ impl LooperHandler {
     // Internal helpers
     // -------------------------------------------------------------------------
 
-    fn resolve_model_name(&self, raw_model_id: &str) -> Option<String> {
-        let id = raw_model_id.trim();
+    fn resolve_pi_model(&self, raw_model_id: Option<&str>) -> Result<PiModelSelection, String> {
+        let id = raw_model_id.unwrap_or("auto").trim();
         if id.is_empty() || id == "auto" {
-            return None;
+            return Ok(PiModelSelection {
+                provider: None,
+                model: None,
+                base_url: None,
+                api_key: None,
+            });
         }
+
         if let Some(rest) = id.strip_prefix("api:") {
-            let conn_id = rest.split(':').next().unwrap_or("").trim();
-            if !conn_id.is_empty() {
-                if let Some(conn) = self
-                    .api_registry
-                    .verified_for_agent()
-                    .into_iter()
-                    .find(|r| r.id == conn_id && matches!(r.api_type, ApiConnectionType::Llm))
-                {
-                    return Some(
-                        conn.model_name.unwrap_or_else(|| {
-                            rest.splitn(3, ':').nth(2).unwrap_or(id).to_string()
-                        }),
-                    );
-                }
-            }
-            return Some(rest.splitn(3, ':').nth(2).unwrap_or(id).to_string());
+            let mut parts = rest.splitn(2, ':');
+            let connection_id = parts.next().unwrap_or_default().trim();
+            let requested_model = parts
+                .next()
+                .map(str::trim)
+                .filter(|value| !value.is_empty());
+            let connection = self
+                .api_registry
+                .verified_for_agent()
+                .into_iter()
+                .find(|record| {
+                    record.id == connection_id && matches!(record.api_type, ApiConnectionType::Llm)
+                })
+                .ok_or_else(|| format!("Verified LLM connection not found: {connection_id}"))?;
+            let model = requested_model
+                .map(str::to_string)
+                .or(connection.model_name)
+                .ok_or_else(|| "The selected API connection has no model configured".to_string())?;
+            return Ok(PiModelSelection {
+                provider: Some(format!("arxell-{}", sanitize_tool_id(connection_id))),
+                model: Some(model),
+                base_url: Some(pi_openai_base_url(
+                    &connection.api_url,
+                    connection.api_standard_path.as_deref(),
+                )),
+                api_key: Some(connection.api_key),
+            });
         }
-        if let Some(local_name) = id.strip_prefix("local:") {
-            let name = local_name.trim();
-            if !name.is_empty() {
-                return Some(name.to_string());
-            }
-            return None;
+
+        if let Some(local_model) = id.strip_prefix("local:") {
+            let model = local_model.trim();
+            let model = if model.is_empty() {
+                std::env::var("FOUNDATION_LLM_MODEL").unwrap_or_else(|_| "local-model".to_string())
+            } else {
+                model.to_string()
+            };
+            let endpoint = std::env::var("FOUNDATION_LLM_ENDPOINT")
+                .unwrap_or_else(|_| "http://127.0.0.1:1420/v1/chat/completions".to_string());
+            return Ok(PiModelSelection {
+                provider: Some("arxell-local".to_string()),
+                model: Some(model),
+                base_url: Some(pi_openai_base_url(&endpoint, None)),
+                api_key: Some(
+                    std::env::var("OPENAI_API_KEY").unwrap_or_else(|_| "local".to_string()),
+                ),
+            });
         }
-        Some(id.to_string())
+
+        Ok(PiModelSelection {
+            provider: None,
+            model: Some(id.to_string()),
+            base_url: None,
+            api_key: None,
+        })
     }
 
     /// Closes phase sessions retained by legacy persisted loop records.
@@ -1316,9 +1423,7 @@ impl LooperHandler {
                 ));
             }
 
-            let resolved_model = raw_model
-                .as_deref()
-                .and_then(|model| self.resolve_model_name(model));
+            let model_selection = self.resolve_pi_model(raw_model.as_deref())?;
 
             let mut prompt = prompt;
             if phase == "planner" {
@@ -1350,6 +1455,11 @@ impl LooperHandler {
                     .ok_or_else(|| format!("phase not found: {}", phase))?;
                 phase_state.status = LooperPhaseStatus::Running;
                 phase_state.session_id = None;
+                phase_state.run_id = Some(run_id.clone());
+                phase_state.provider = model_selection.provider.clone();
+                phase_state.model = model_selection.model.clone();
+                phase_state.input_tokens = 0;
+                phase_state.output_tokens = 0;
                 if let Some(first) = phase_state.substeps.first_mut() {
                     first.status = "running".to_string();
                 }
@@ -1358,6 +1468,7 @@ impl LooperHandler {
 
             self.cancel_active_run(loop_id);
             let (cancel, cancellation) = watch::channel(false);
+            let (approval, approval_responses) = mpsc::unbounded_channel();
             self.active_runs
                 .lock()
                 .map_err(|error| error.to_string())?
@@ -1367,6 +1478,7 @@ impl LooperHandler {
                         id: run_id.clone(),
                         phase: phase.to_string(),
                         cancel,
+                        approval,
                     },
                 );
 
@@ -1379,18 +1491,53 @@ impl LooperHandler {
                     "loopId": loop_id,
                     "phase": phase,
                     "runId": run_id,
-                    "model": resolved_model,
+                    "provider": model_selection.provider,
+                    "model": model_selection.model,
                     "runtime": "pi-rpc",
                 }),
             );
 
             let mut config = PiRpcConfig::ephemeral(project_root);
-            config.model = resolved_model;
-            if let Ok(executable) = self.pi_executable_override.read() {
-                if let Some(executable) = executable.as_ref() {
-                    config.executable = executable.clone();
-                }
+            config.provider = model_selection.provider.clone();
+            config.model = model_selection.model.clone();
+            let profile_dir = if model_selection.base_url.is_some() {
+                Some(create_pi_run_profile(
+                    &self.workspace_tools.state_root_path(),
+                    &run_id,
+                    &model_selection,
+                )?)
+            } else {
+                None
+            };
+            if let Some(profile_dir) = &profile_dir {
+                config.profile_dir = Some(profile_dir.clone());
             }
+            if let Some(api_key) = model_selection.api_key {
+                config
+                    .environment
+                    .insert("ARXELL_PI_API_KEY".to_string(), api_key);
+            }
+            let test_override = self
+                .pi_executable_override
+                .read()
+                .ok()
+                .and_then(|executable| executable.clone());
+            let executable = if let Some(executable) = test_override {
+                executable
+            } else if let Some(executable) = self.pi_runtime.selected_executable() {
+                executable
+            } else {
+                let probe = self.pi_runtime.probe(None);
+                if probe.status.as_str() != "ready" {
+                    return Err(probe
+                        .error_message
+                        .unwrap_or_else(|| "Pi runtime is not ready".to_string()));
+                }
+                self.pi_runtime
+                    .selected_executable()
+                    .ok_or_else(|| "Pi runtime probe did not select an executable".to_string())?
+            };
+            config.executable = executable;
             let policy_path = self
                 .pi_policy_path
                 .read()
@@ -1421,13 +1568,17 @@ impl LooperHandler {
                     }
                 });
 
-                let result = PiRpcService::run_prompt_with_cancel(
+                let result = PiRpcService::run_prompt_with_control(
                     config,
                     prompt,
                     Some(event_sender),
                     Some(cancellation),
+                    Some(approval_responses),
                 )
                 .await;
+                if let Some(profile_dir) = profile_dir {
+                    let _ = fs::remove_dir_all(profile_dir);
+                }
 
                 if !handler.finish_active_run(&loop_id, &run_id) {
                     return;
@@ -1435,6 +1586,17 @@ impl LooperHandler {
 
                 match result {
                     Ok(result) => {
+                        handler.emit_event(
+                            &correlation_id,
+                            "pi.message.final",
+                            EventStage::Complete,
+                            EventSeverity::Info,
+                            json!({
+                                "loopId": loop_id,
+                                "phase": phase,
+                                "text": truncate_utf8(&result.final_text, 16 * 1024),
+                            }),
+                        );
                         handler.emit_event(
                             &correlation_id,
                             "pi.agent.settled",
@@ -1478,15 +1640,15 @@ impl LooperHandler {
             PiRpcRecord::Event(event) => self.emit_pi_event(loop_id, phase, correlation_id, event),
             PiRpcRecord::ExtensionUiRequest(request) => self.emit_event(
                 correlation_id,
-                "pi.approval.blocked",
-                EventStage::Complete,
+                "pi.approval.requested",
+                EventStage::Start,
                 EventSeverity::Warn,
                 json!({
                     "loopId": loop_id,
                     "phase": phase,
                     "requestId": request.id,
                     "method": request.method,
-                    "decision": "cancelled",
+                    "decision": "pending",
                 }),
             ),
             PiRpcRecord::Stderr(_) | PiRpcRecord::Response(_) => {}
@@ -1545,6 +1707,15 @@ impl LooperHandler {
             "message_end" => {
                 let usage = &event.payload["message"]["usage"];
                 if usage.is_object() {
+                    if let Ok(mut loops) = self.loops.write() {
+                        if let Some(phase_state) = loops
+                            .get_mut(loop_id)
+                            .and_then(|loopy| loopy.phases.get_mut(phase))
+                        {
+                            phase_state.input_tokens = usage["input"].as_u64().unwrap_or(0);
+                            phase_state.output_tokens = usage["output"].as_u64().unwrap_or(0);
+                        }
+                    }
                     self.emit_event(
                         correlation_id,
                         "pi.usage",
@@ -2243,6 +2414,11 @@ impl LooperLoop {
                     phase: phase.phase,
                     status,
                     session_id: None,
+                    run_id: phase.run_id,
+                    provider: phase.provider,
+                    model: phase.model,
+                    input_tokens: phase.input_tokens,
+                    output_tokens: phase.output_tokens,
                     substeps: phase
                         .substeps
                         .into_iter()
@@ -2303,6 +2479,11 @@ impl LooperLoop {
                     phase: phase.phase.clone(),
                     status: phase.status.clone(),
                     session_id: phase.session_id.clone(),
+                    run_id: phase.run_id.clone(),
+                    provider: phase.provider.clone(),
+                    model: phase.model.clone(),
+                    input_tokens: phase.input_tokens,
+                    output_tokens: phase.output_tokens,
                     substeps,
                     prompt: phase.prompt.clone(),
                 },
@@ -2587,6 +2768,108 @@ pub fn now_ms() -> i64 {
         .unwrap_or(0)
 }
 
+fn cleanup_stale_pi_profiles(state_root: &Path) {
+    let runs = state_root.join("pi").join("runs");
+    if runs.is_dir() {
+        let _ = fs::remove_dir_all(runs);
+    }
+}
+
+fn pi_openai_base_url(api_url: &str, api_standard_path: Option<&str>) -> String {
+    let mut endpoint = api_url.trim().trim_end_matches('/').to_string();
+    if let Some(path) = api_standard_path
+        .map(str::trim)
+        .filter(|path| !path.is_empty())
+    {
+        let path = path.trim_start_matches('/');
+        if !endpoint.ends_with(path) {
+            let suffix = if endpoint.ends_with("/v1") {
+                path.strip_prefix("v1/").unwrap_or(path)
+            } else {
+                path
+            };
+            endpoint.push('/');
+            endpoint.push_str(suffix);
+        }
+    }
+    for suffix in ["/chat/completions", "/responses", "/completions"] {
+        if endpoint.ends_with(suffix) {
+            endpoint.truncate(endpoint.len() - suffix.len());
+            break;
+        }
+    }
+    endpoint.trim_end_matches('/').to_string()
+}
+
+fn create_pi_run_profile(
+    state_root: &Path,
+    run_id: &str,
+    selection: &PiModelSelection,
+) -> Result<PathBuf, String> {
+    let provider = selection
+        .provider
+        .as_deref()
+        .ok_or_else(|| "Pi provider is missing".to_string())?;
+    let model = selection
+        .model
+        .as_deref()
+        .ok_or_else(|| "Pi model is missing".to_string())?;
+    let base_url = selection
+        .base_url
+        .as_deref()
+        .ok_or_else(|| "Pi provider endpoint is missing".to_string())?;
+    let profile_dir = state_root.join("pi").join("runs").join(run_id);
+    fs::create_dir_all(&profile_dir).map_err(|error| error.to_string())?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut permissions = fs::metadata(&profile_dir)
+            .map_err(|error| error.to_string())?
+            .permissions();
+        permissions.set_mode(0o700);
+        fs::set_permissions(&profile_dir, permissions).map_err(|error| error.to_string())?;
+    }
+
+    let models = json!({
+        "providers": {
+            (provider): {
+                "baseUrl": base_url,
+                "api": "openai-completions",
+                "apiKey": "$ARXELL_PI_API_KEY",
+                "authHeader": true,
+                "compat": {
+                    "supportsDeveloperRole": false,
+                    "supportsReasoningEffort": false
+                },
+                "models": [{
+                    "id": model,
+                    "name": model,
+                    "reasoning": false,
+                    "input": ["text"],
+                    "contextWindow": 131072,
+                    "maxTokens": 32768,
+                    "cost": { "input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0 }
+                }]
+            }
+        }
+    });
+    let settings = json!({
+        "enableInstallTelemetry": false,
+        "defaultProjectTrust": "never"
+    });
+    fs::write(
+        profile_dir.join("models.json"),
+        serde_json::to_vec_pretty(&models).map_err(|error| error.to_string())?,
+    )
+    .map_err(|error| error.to_string())?;
+    fs::write(
+        profile_dir.join("settings.json"),
+        serde_json::to_vec_pretty(&settings).map_err(|error| error.to_string())?,
+    )
+    .map_err(|error| error.to_string())?;
+    Ok(profile_dir)
+}
+
 fn install_pi_policy_extension(state_root: &Path) -> Result<PathBuf, String> {
     const POLICY_SOURCE: &str = include_str!("../../resources/pi/arxell-policy.ts");
     let policy_dir = state_root.join("pi");
@@ -2622,42 +2905,6 @@ fn safe_pi_error(error: &PiRpcError) -> String {
         _ => error.to_string(),
     };
     truncate_utf8(&message, 500).to_string()
-}
-
-fn pi_executable() -> String {
-    std::env::var("ARXELL_PI_EXECUTABLE")
-        .ok()
-        .filter(|value| !value.trim().is_empty())
-        .unwrap_or_else(|| "pi".to_string())
-}
-
-fn probe_pi_version() -> Option<String> {
-    let executable = pi_executable();
-
-    #[cfg(target_os = "windows")]
-    let output = if executable.contains('\\') || executable.contains('/') {
-        std::process::Command::new(&executable)
-            .arg("--version")
-            .output()
-            .ok()?
-    } else {
-        std::process::Command::new("cmd")
-            .args(["/C", executable.as_str(), "--version"])
-            .output()
-            .ok()?
-    };
-
-    #[cfg(not(target_os = "windows"))]
-    let output = std::process::Command::new(&executable)
-        .arg("--version")
-        .output()
-        .ok()?;
-
-    if !output.status.success() {
-        return None;
-    }
-    let version = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    (!version.is_empty()).then_some(version)
 }
 
 #[cfg(feature = "tauri-runtime")]
@@ -2719,6 +2966,11 @@ mod tests {
                 phase: "planner".to_string(),
                 status: LooperPhaseStatus::Running,
                 session_id: Some("term-1".to_string()),
+                run_id: None,
+                provider: None,
+                model: None,
+                input_tokens: 0,
+                output_tokens: 0,
                 substeps: vec![SubStepState {
                     id: "p-1".to_string(),
                     label: "Read task".to_string(),
@@ -2733,6 +2985,11 @@ mod tests {
                 phase: "executor".to_string(),
                 status: LooperPhaseStatus::Idle,
                 session_id: Some("term-2".to_string()),
+                run_id: None,
+                provider: None,
+                model: None,
+                input_tokens: 0,
+                output_tokens: 0,
                 substeps: vec![],
                 prompt: "executor prompt".to_string(),
             },
@@ -2743,6 +3000,11 @@ mod tests {
                 phase: "validator".to_string(),
                 status: LooperPhaseStatus::Idle,
                 session_id: Some("term-3".to_string()),
+                run_id: None,
+                provider: None,
+                model: None,
+                input_tokens: 0,
+                output_tokens: 0,
                 substeps: vec![],
                 prompt: "validator prompt".to_string(),
             },
@@ -2753,6 +3015,11 @@ mod tests {
                 phase: "critic".to_string(),
                 status: LooperPhaseStatus::Idle,
                 session_id: Some("term-4".to_string()),
+                run_id: None,
+                provider: None,
+                model: None,
+                input_tokens: 0,
+                output_tokens: 0,
                 substeps: vec![],
                 prompt: "critic prompt".to_string(),
             },
@@ -2783,6 +3050,74 @@ mod tests {
             questions_answered: vec![],
             preview: None,
         }
+    }
+
+    #[test]
+    fn temporary_pi_profile_references_environment_without_plaintext_secret() {
+        let root = std::env::temp_dir().join(format!("arxell-pi-profile-test-{}", now_ms()));
+        let selection = PiModelSelection {
+            provider: Some("arxell-test".to_string()),
+            model: Some("test-model".to_string()),
+            base_url: Some("https://example.test/v1".to_string()),
+            api_key: Some("super-secret-key".to_string()),
+        };
+        let profile = create_pi_run_profile(&root, "run-1", &selection).unwrap();
+        let models = fs::read_to_string(profile.join("models.json")).unwrap();
+
+        assert!(models.contains("$ARXELL_PI_API_KEY"));
+        assert!(models.contains("arxell-test"));
+        assert!(models.contains("test-model"));
+        assert!(!models.contains("super-secret-key"));
+        assert_eq!(
+            pi_openai_base_url("https://example.test/v1/chat/completions", None),
+            "https://example.test/v1"
+        );
+        assert_eq!(
+            pi_openai_base_url("https://example.test/v1", Some("/v1/chat/completions")),
+            "https://example.test/v1"
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn pi_policy_blocks_boundary_secret_and_destructive_operations() {
+        if Command::new("node")
+            .arg("--experimental-strip-types")
+            .arg("--version")
+            .output()
+            .ok()
+            .filter(|output| output.status.success())
+            .is_none()
+        {
+            return;
+        }
+        let root = std::env::temp_dir().join(format!("arxell-pi-policy-runtime-{}", now_ms()));
+        let project = root.join("project");
+        fs::create_dir_all(&project).unwrap();
+        let policy = install_pi_policy_extension(&root).unwrap();
+        let fixture =
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/test_pi_policy.mjs");
+        let output = Command::new("node")
+            .arg("--experimental-strip-types")
+            .arg(fixture)
+            .arg(policy)
+            .arg(&project)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "policy fixture failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let result: serde_json::Value =
+            serde_json::from_slice(&fs::read(project.join("policy-result.json")).unwrap()).unwrap();
+        assert_eq!(result["outsideBlocked"], true);
+        assert_eq!(result["protectedReadBlocked"], true);
+        assert_eq!(result["protectedBashBlocked"], true);
+        assert_eq!(result["destructiveBlocked"], true);
+        assert_eq!(result["confirmationCount"], 1);
+        assert_eq!(result["safeAllowed"], true);
+        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
@@ -2994,6 +3329,139 @@ mod tests {
         }
         assert_eq!(settled, 4);
         assert_eq!(completed, 4);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn shutdown_cancels_all_registered_pi_runs() {
+        let handler = sample_handler();
+        let (cancel, mut cancellation) = watch::channel(false);
+        let (approval, _approval_receiver) = mpsc::unbounded_channel();
+        handler.active_runs.lock().unwrap().insert(
+            "shutdown-loop".to_string(),
+            ActivePiRun {
+                id: "shutdown-run".to_string(),
+                phase: "planner".to_string(),
+                cancel,
+                approval,
+            },
+        );
+
+        handler.shutdown();
+
+        cancellation.changed().await.unwrap();
+        assert!(*cancellation.borrow());
+        assert!(handler.active_runs.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn pi_rpc_pause_resume_and_stop_cancel_active_runs() {
+        if Command::new("node")
+            .arg("--version")
+            .output()
+            .ok()
+            .filter(|output| output.status.success())
+            .is_none()
+        {
+            return;
+        }
+        let root = std::env::temp_dir().join(format!("arxell-looper-cancel-{}", now_ms()));
+        fs::create_dir_all(&root).unwrap();
+        let fixture =
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/fake_pi_rpc.js");
+        let wrapper = root.join(if cfg!(target_os = "windows") {
+            "fake-pi.cmd"
+        } else {
+            "fake-pi.sh"
+        });
+        let script = if cfg!(target_os = "windows") {
+            format!("@node \"{}\" %*\r\n", fixture.display())
+        } else {
+            format!("#!/bin/sh\nexec node \"{}\" \"$@\"\n", fixture.display())
+        };
+        fs::write(&wrapper, script).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut permissions = fs::metadata(&wrapper).unwrap().permissions();
+            permissions.set_mode(0o700);
+            fs::set_permissions(&wrapper, permissions).unwrap();
+        }
+
+        let handler = sample_handler();
+        *handler.pi_executable_override.write().unwrap() = Some(wrapper);
+        handler
+            .start(LooperStartRequest {
+                correlation_id: "cancel-start".to_string(),
+                loop_id: "cancel-loop".to_string(),
+                iteration: 1,
+                loop_type: LooperLoopType::Build,
+                cwd: root.to_string_lossy().into_owned(),
+                task_path: "task.md".to_string(),
+                specs_glob: "specs/*.md".to_string(),
+                max_iterations: 1,
+                phase_models: None,
+                phase_prompts: Some(HashMap::from([(
+                    "planner".to_string(),
+                    "__ARXELL_TIMEOUT__".to_string(),
+                )])),
+                project_name: "Cancellation Test".to_string(),
+                project_type: "standalone-app".to_string(),
+                project_icon: String::new(),
+                project_description: String::new(),
+                review_before_execute: false,
+            })
+            .await
+            .unwrap();
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        handler
+            .pause(LooperPauseRequest {
+                correlation_id: "cancel-pause".to_string(),
+                loop_id: "cancel-loop".to_string(),
+                paused: true,
+            })
+            .await
+            .unwrap();
+        assert_eq!(
+            handler.loops.read().unwrap()["cancel-loop"].status,
+            LooperLoopStatus::Paused
+        );
+        assert!(!handler
+            .active_runs
+            .lock()
+            .unwrap()
+            .contains_key("cancel-loop"));
+
+        handler
+            .pause(LooperPauseRequest {
+                correlation_id: "cancel-resume".to_string(),
+                loop_id: "cancel-loop".to_string(),
+                paused: false,
+            })
+            .await
+            .unwrap();
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        assert!(handler
+            .active_runs
+            .lock()
+            .unwrap()
+            .contains_key("cancel-loop"));
+        handler
+            .stop(LooperStopRequest {
+                correlation_id: "cancel-stop".to_string(),
+                loop_id: "cancel-loop".to_string(),
+            })
+            .await
+            .unwrap();
+        assert_eq!(
+            handler.loops.read().unwrap()["cancel-loop"].status,
+            LooperLoopStatus::Failed
+        );
+        assert!(!handler
+            .active_runs
+            .lock()
+            .unwrap()
+            .contains_key("cancel-loop"));
         let _ = fs::remove_dir_all(root);
     }
 

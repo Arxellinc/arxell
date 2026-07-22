@@ -83,6 +83,8 @@ Arxell ships with 11 built-in workspace tools — each one a full-featured panel
 | <img src="docs/icons/ico-memory.svg" width="20"> | **Memory** | Persistent context references the agent can read and write across sessions. Long-term memory, local-first. |
 | <img src="docs/icons/ico-docs.svg" width="20"> | **Docs** | Browse and read documentation files without leaving the workspace. |
 
+See [Pi Coding Harness](docs/PI_CODING_HARNESS.md) for supported versions, installation, authentication, privacy, trust, and automation policy details.
+
 ---
 
 ## Agent Skills

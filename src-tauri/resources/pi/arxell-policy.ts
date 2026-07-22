@@ -1,7 +1,5 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-
 const PATH_TOOLS = new Set(["read", "write", "edit"]);
 const PROTECTED_SEGMENTS = new Set([".git", ".pi", ".env", ".ssh"]);
 const PROTECTED_NAMES = new Set([
@@ -46,14 +44,14 @@ const BOUNDARY_ESCAPE_PATTERNS = [
   /(?:^|[\s"'=])\/(?:etc|home|root|Users|private|var|tmp|opt|usr|bin|sbin|dev|proc|sys)(?:[\\/]|\b)/
 ];
 
-function canonicalRoot(cwd: string): string {
+function canonicalRoot(cwd) {
   return fs.realpathSync.native(path.resolve(cwd));
 }
 
-function canonicalCandidate(root: string, inputPath: string): string {
+function canonicalCandidate(root, inputPath) {
   const absolute = path.resolve(root, inputPath);
   let ancestor = absolute;
-  const suffix: string[] = [];
+  const suffix = [];
 
   while (!fs.existsSync(ancestor)) {
     const parent = path.dirname(ancestor);
@@ -66,12 +64,12 @@ function canonicalCandidate(root: string, inputPath: string): string {
   return path.resolve(canonicalAncestor, ...suffix);
 }
 
-function isInside(root: string, candidate: string): boolean {
+function isInside(root, candidate) {
   const relative = path.relative(root, candidate);
   return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
 }
 
-function isProtected(candidate: string, root: string): boolean {
+function isProtected(candidate, root) {
   const relative = path.relative(root, candidate);
   const segments = relative.split(path.sep).filter(Boolean);
   const lowerSegments = segments.map((segment) => segment.toLowerCase());
@@ -83,15 +81,15 @@ function isProtected(candidate: string, root: string): boolean {
   return /\.(?:pem|key|p12|pfx)$/i.test(name);
 }
 
-function pathInput(input: Record<string, unknown>): string | null {
+function pathInput(input) {
   const value = input.path ?? input.filePath ?? input.file_path;
   return typeof value === "string" && value.trim() ? value : null;
 }
 
-export default function arxellPolicy(pi: ExtensionAPI) {
+export default function arxellPolicy(pi) {
   pi.on("tool_call", async (event, ctx) => {
     if (PATH_TOOLS.has(event.toolName)) {
-      const requestedPath = pathInput(event.input as Record<string, unknown>);
+      const requestedPath = pathInput(event.input);
       if (!requestedPath) {
         return { block: true, reason: "Arxell policy requires an explicit project-relative path." };
       }
@@ -112,7 +110,7 @@ export default function arxellPolicy(pi: ExtensionAPI) {
     }
 
     if (event.toolName !== "bash") return undefined;
-    const command = (event.input as Record<string, unknown>).command;
+    const command = event.input.command;
     if (typeof command !== "string" || !command.trim()) {
       return { block: true, reason: "Arxell policy requires an explicit shell command." };
     }

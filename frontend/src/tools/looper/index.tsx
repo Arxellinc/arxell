@@ -241,7 +241,8 @@ export function renderLooperToolBody(state: LooperToolState, projectsById: Recor
       </div>
     </div>
     ${renderConfigModal(state)}
-    ${renderInstallModal(state)}`;
+    ${renderInstallModal(state)}
+    ${renderPiApprovalModal(state)}`;
   }
 
   const loop = state.loops.find((l) => l.id === state.activeLoopId);
@@ -258,7 +259,24 @@ export function renderLooperToolBody(state: LooperToolState, projectsById: Recor
     ${renderTerminalGrid(loop, state)}
   </div>
     ${renderConfigModal(state)}
-    ${renderInstallModal(state)}`;
+    ${renderInstallModal(state)}
+    ${renderPiApprovalModal(state)}`;
+}
+
+function renderPiApprovalModal(state: LooperToolState): string {
+  const approval = state.pendingPiApproval;
+  if (!approval) return "";
+  return `<div class="modal-backdrop-fixed">
+    <div class="modal-box-fixed">
+      <div class="modal-title">${iconHtml("triangle-alert", { size: 16, tone: "dark" })} Pi command approval</div>
+      <p>Pi requested a potentially destructive command during the ${esc(LOOPER_PHASE_LABELS[approval.phase])} phase.</p>
+      <p>The command and arguments are intentionally omitted from application events. Approve only if you expect this phase to perform destructive work.</p>
+      <div class="modal-actions">
+        <button type="button" class="modal-btn" ${LOOPER_DATA_ATTR.action}="deny-pi-approval">Deny</button>
+        <button type="button" class="modal-btn modal-btn-danger" ${LOOPER_DATA_ATTR.action}="allow-pi-approval">Allow once</button>
+      </div>
+    </div>
+  </div>`;
 }
 
 function renderPreviewBanner(loop: LooperLoopRun): string {
@@ -370,7 +388,7 @@ function renderTerminalGrid(loop: LooperLoopRun, state: LooperToolState): string
     ].join(" ");
 
     const stats = ps.model
-      ? `${esc(ps.model)}${ps.inputTokens || ps.outputTokens ? ` · ${ps.inputTokens} in / ${ps.outputTokens} out` : ""}`
+      ? `${ps.provider ? `${esc(ps.provider)}/` : ""}${esc(ps.model)}${ps.inputTokens || ps.outputTokens ? ` · ${ps.inputTokens} in / ${ps.outputTokens} out` : ""}`
       : "Pi RPC";
 
     return `<div class="${cls}" data-looper-phase-terminal="${phase}">
@@ -439,7 +457,8 @@ function renderInstallModal(state: LooperToolState): string {
     <div class="looper-modal">
       <h2>${iconHtml("refresh-cw", { size: 16, tone: "dark" })} Pi CLI Required</h2>
       <p>Looper needs the Pi coding harness installed. Run in the Terminal tab:</p>
-      <div class="looper-install-cmd">npm install -g --ignore-scripts @earendil-works/pi-coding-agent</div>
+      <div class="looper-install-cmd">npm install -g --ignore-scripts @earendil-works/pi-coding-agent@0.81.1</div>
+      ${state.statusMessage ? `<p class="looper-install-error">${esc(state.statusMessage)}</p>` : ""}
       <p>After installation, click <strong>I've Installed It</strong>.</p>
       <div class="looper-modal-actions">
         <button type="button" ${LOOPER_DATA_ATTR.action}="dismiss-install">Cancel</button>
