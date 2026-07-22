@@ -20,7 +20,7 @@ export interface TerminalSessionMeta {
   shell: string;
   createdAtMs: number;
   status: "running" | "exited";
-  owner: "terminal" | "opencode" | "looper";
+  owner: "terminal" | "pi" | "looper";
 }
 
 interface SessionRuntime {
@@ -46,7 +46,7 @@ export class TerminalManager {
     shell?: string;
     createdAtMs?: number;
     status?: "running" | "exited";
-    owner?: "terminal" | "opencode" | "looper";
+    owner?: "terminal" | "pi" | "looper";
   }): TerminalSessionMeta {
     const existing = this.sessions.get(meta.sessionId);
     if (existing) {

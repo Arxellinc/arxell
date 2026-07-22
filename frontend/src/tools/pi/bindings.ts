@@ -1,15 +1,15 @@
-import type { OpenCodeToolState } from "./state";
-import type { OpenCodeActionsDeps } from "./actions";
-import { OPENCODE_DATA_ATTR, OPENCODE_UI_ID } from "../ui/constants";
+import type { PiToolState } from "./state";
+import type { PiActionsDeps } from "./actions";
+import { PI_DATA_ATTR, PI_UI_ID } from "../ui/constants";
 
-export function handleOpenCodeClick(
+export function handlePiClick(
   target: HTMLElement,
-  state: OpenCodeToolState,
-  deps: OpenCodeActionsDeps
+  state: PiToolState,
+  deps: PiActionsDeps
 ): boolean {
-  const actionEl = target.closest(`[${OPENCODE_DATA_ATTR.action}]`);
+  const actionEl = target.closest(`[${PI_DATA_ATTR.action}]`);
   if (actionEl) {
-    const actionValue = (actionEl as HTMLElement).getAttribute(OPENCODE_DATA_ATTR.action);
+    const actionValue = (actionEl as HTMLElement).getAttribute(PI_DATA_ATTR.action);
     if (actionValue === "dismiss-install") {
       state.installModalOpen = false;
       deps.renderAndBind();
@@ -40,9 +40,9 @@ export function handleOpenCodeClick(
       return true;
     }
     if (actionValue === "confirm-spawn") {
-      const labelEl = document.querySelector<HTMLInputElement>(`#${OPENCODE_UI_ID.spawnLabelInput}`);
-      const cwdEl = document.querySelector<HTMLInputElement>(`#${OPENCODE_UI_ID.spawnCwdInput}`);
-      const promptEl = document.querySelector<HTMLTextAreaElement>(`#${OPENCODE_UI_ID.spawnPromptInput}`);
+      const labelEl = document.querySelector<HTMLInputElement>(`#${PI_UI_ID.spawnLabelInput}`);
+      const cwdEl = document.querySelector<HTMLInputElement>(`#${PI_UI_ID.spawnCwdInput}`);
+      const promptEl = document.querySelector<HTMLTextAreaElement>(`#${PI_UI_ID.spawnPromptInput}`);
       const label = labelEl?.value ?? state.spawnLabelDraft;
       const cwd = cwdEl?.value ?? state.spawnCwdDraft;
       const prompt = promptEl?.value ?? state.spawnPromptDraft;
@@ -58,11 +58,11 @@ export function handleOpenCodeClick(
     }
   }
 
-  const agentEl = target.closest(`[${OPENCODE_DATA_ATTR.agentId}]`);
+  const agentEl = target.closest(`[${PI_DATA_ATTR.agentId}]`);
   if (agentEl) {
-    const closeEl = target.closest(`[${OPENCODE_DATA_ATTR.closeAgentId}]`);
+    const closeEl = target.closest(`[${PI_DATA_ATTR.closeAgentId}]`);
     if (closeEl) {
-      const agentId = (closeEl as HTMLElement).getAttribute(OPENCODE_DATA_ATTR.closeAgentId);
+      const agentId = (closeEl as HTMLElement).getAttribute(PI_DATA_ATTR.closeAgentId);
       if (agentId) {
         void import("./actions").then(({ closeAgent }) => {
           void closeAgent(state, deps, agentId);
@@ -71,7 +71,7 @@ export function handleOpenCodeClick(
       }
       return true;
     }
-    const agentId = (agentEl as HTMLElement).getAttribute(OPENCODE_DATA_ATTR.agentId);
+    const agentId = (agentEl as HTMLElement).getAttribute(PI_DATA_ATTR.agentId);
     if (agentId && agentId !== state.activeAgentId) {
       void import("./actions").then(({ switchAgent }) => {
         switchAgent(state, agentId);
@@ -84,14 +84,14 @@ export function handleOpenCodeClick(
   return false;
 }
 
-export function handleOpenCodeInput(
+export function handlePiInput(
   target: HTMLElement,
-  state: OpenCodeToolState
+  state: PiToolState
 ): { handled: boolean; rerender: boolean } {
-  const action = target.closest(`[${OPENCODE_DATA_ATTR.action}]`);
+  const action = target.closest(`[${PI_DATA_ATTR.action}]`);
   if (!action) return { handled: false, rerender: false };
 
-  const actionValue = (action as HTMLElement).getAttribute(OPENCODE_DATA_ATTR.action);
+  const actionValue = (action as HTMLElement).getAttribute(PI_DATA_ATTR.action);
   if (actionValue === "spawn-label") {
     const input = target as HTMLInputElement;
     state.spawnLabelDraft = input.value;

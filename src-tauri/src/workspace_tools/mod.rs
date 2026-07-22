@@ -93,8 +93,8 @@ const WORKSPACE_TOOL_MANIFESTS: &[WorkspaceToolManifest] = &[
         default_enabled: true,
     },
     WorkspaceToolManifest {
-        tool_id: "opencode",
-        title: "OpenCode",
+        tool_id: "pi",
+        title: "Pi",
         description: "AI-powered coding agent in your terminal",
         category: "workspace",
         core: false,
@@ -150,6 +150,22 @@ struct WorkspaceToolsState {
     plugin_capabilities: HashMap<String, HashSet<String>>,
 }
 
+fn canonical_tool_id(tool_id: &str) -> &str {
+    if tool_id == "opencode" {
+        "pi"
+    } else {
+        tool_id
+    }
+}
+
+fn snapshot_setting(settings: &HashMap<String, bool>, tool_id: &str) -> Option<bool> {
+    settings.get(tool_id).copied().or_else(|| {
+        (tool_id == "pi")
+            .then(|| settings.get("opencode").copied())
+            .flatten()
+    })
+}
+
 pub struct WorkspaceToolsService {
     state: RwLock<WorkspaceToolsState>,
     registry_path: PathBuf,
@@ -164,12 +180,9 @@ impl WorkspaceToolsService {
 
         let mut tools = HashMap::new();
         for manifest in WORKSPACE_TOOL_MANIFESTS {
-            let enabled = snapshot
-                .enabled
-                .get(manifest.tool_id)
-                .copied()
+            let enabled = snapshot_setting(&snapshot.enabled, manifest.tool_id)
                 .unwrap_or(manifest.default_enabled);
-            let icon = snapshot.icon.get(manifest.tool_id).copied().unwrap_or(true);
+            let icon = snapshot_setting(&snapshot.icon, manifest.tool_id).unwrap_or(true);
             tools.insert(
                 manifest.tool_id.to_string(),
                 WorkspaceToolRecord {
@@ -228,7 +241,8 @@ impl WorkspaceToolsService {
         let mut state = self.state.write().expect("workspace tools lock poisoned");
         let snapshot = read_registry_snapshot(&self.registry_path);
         apply_plugins(&mut state, &self.plugins_root, &snapshot);
-        let Some(tool) = state.tools.get_mut(tool_id) else {
+        let canonical_id = canonical_tool_id(tool_id);
+        let Some(tool) = state.tools.get_mut(canonical_id) else {
             return Err(format!("workspace tool not found: {tool_id}"));
         };
         tool.enabled = enabled;
@@ -241,7 +255,8 @@ impl WorkspaceToolsService {
         let mut state = self.state.write().expect("workspace tools lock poisoned");
         let snapshot = read_registry_snapshot(&self.registry_path);
         apply_plugins(&mut state, &self.plugins_root, &snapshot);
-        let Some(tool) = state.tools.get_mut(tool_id) else {
+        let canonical_id = canonical_tool_id(tool_id);
+        let Some(tool) = state.tools.get_mut(canonical_id) else {
             return Err(format!("workspace tool not found: {tool_id}"));
         };
         tool.icon = icon;
@@ -250,7 +265,7 @@ impl WorkspaceToolsService {
     }
 
     pub fn forget_tool(&self, tool_id: &str) -> Result<(), String> {
-        let normalized = tool_id.trim();
+        let normalized = canonical_tool_id(tool_id.trim());
         if normalized.is_empty() {
             return Err("tool id is required".to_string());
         }
@@ -421,10 +436,10 @@ impl WorkspaceToolsService {
             .map_err(|e| format!("invalid tool registry import payload: {e}"))?;
         let mut state = self.state.write().expect("workspace tools lock poisoned");
         for (tool_id, tool) in state.tools.iter_mut() {
-            let enabled = parsed.enabled.get(tool_id).copied().unwrap_or(tool.enabled);
+            let enabled = snapshot_setting(&parsed.enabled, tool_id).unwrap_or(tool.enabled);
             tool.enabled = enabled;
             tool.status = status_for_enabled(enabled).to_string();
-            tool.icon = parsed.icon.get(tool_id).copied().unwrap_or(tool.icon);
+            tool.icon = snapshot_setting(&parsed.icon, tool_id).unwrap_or(tool.icon);
         }
         self.persist_snapshot(&state.tools)?;
         let mut records: Vec<_> = state.tools.values().cloned().collect();

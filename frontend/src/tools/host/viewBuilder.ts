@@ -14,8 +14,8 @@ import type { TaskFolder, TaskSortDirection, TaskSortKey, TaskRecord, TaskRunRec
 import type { ProjectRecord } from "../../projectsStore";
 import { renderWebToolActions, renderWebToolBody } from "../webSearch";
 import type { WebSearchHistoryItem, WebTabState } from "../webSearch/state";
-import { renderOpenCodeToolActions, renderOpenCodeToolBody, renderOpenCodeInstallModal, renderOpenCodeSpawnModal } from "../opencode";
-import type { OpenCodeToolState } from "../opencode/state";
+import { renderPiToolActions, renderPiToolBody, renderPiInstallModal, renderPiSpawnModal } from "../pi";
+import type { PiToolState } from "../pi/state";
 import { renderLooperToolActions, renderLooperToolBody } from "../looper";
 import type { LooperToolState } from "../looper/state";
 import { renderNotepadToolActions, renderNotepadToolBody } from "../notepad";
@@ -139,7 +139,7 @@ export interface WorkspaceToolViewInput {
   flowModelUnavailableStatus: string;
   terminalSessions: Array<{ sessionId: string }>;
   filteredFlowEvents: unknown[];
-  opencodeState: OpenCodeToolState;
+  piState: PiToolState;
   looperState: LooperToolState;
   notepadOpenTabs: string[];
   notepadActiveTabId: string | null;
@@ -401,11 +401,11 @@ export function buildWorkspaceToolViews(input: WorkspaceToolViewInput, activeToo
         error: input.memoryError
       })
     } } : {}),
-    ...(shouldRender("opencode") ? { opencode: {
-      actionsHtml: renderOpenCodeToolActions(input.opencodeState),
-      bodyHtml: renderOpenCodeToolBody(input.opencodeState) +
-        renderOpenCodeInstallModal(input.opencodeState) +
-        renderOpenCodeSpawnModal(input.opencodeState)
+    ...(shouldRender("pi") ? { pi: {
+      actionsHtml: renderPiToolActions(input.piState),
+      bodyHtml: renderPiToolBody(input.piState) +
+        renderPiInstallModal(input.piState) +
+        renderPiSpawnModal(input.piState)
     } } : {}),
     ...(shouldRender("looper") ? { looper: {
       actionsHtml: renderLooperToolActions(input.looperState),

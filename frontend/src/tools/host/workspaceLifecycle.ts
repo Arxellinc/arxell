@@ -4,7 +4,7 @@ export interface WorkspaceToolLifecycleState {
   workspaceTab: WorkspaceTab;
   webSetupModalOpen: boolean;
   webSetupMessage: string | null;
-  opencodeNeedsInit: boolean;
+  piNeedsInit: boolean;
   looperNeedsInit: boolean;
   memoryLoading: boolean;
 }
@@ -19,7 +19,7 @@ export interface WorkspaceToolLifecycleDeps {
   ensureNotepadReady: () => Promise<void>;
   ensureSheetReady: () => Promise<void>;
   ensureMemoryLoaded: () => Promise<void>;
-  ensureOpenCodeInit: () => Promise<void>;
+  ensurePiInit: () => Promise<void>;
   ensureLooperInit: () => Promise<void>;
 }
 
@@ -66,10 +66,10 @@ export async function handleWorkspaceToolTabActivation(
     return true;
   }
 
-  if (workspaceTab === "opencode-tool") {
-    if (state.opencodeNeedsInit) {
-      state.opencodeNeedsInit = false;
-      await deps.ensureOpenCodeInit();
+  if (workspaceTab === "pi-tool") {
+    if (state.piNeedsInit) {
+      state.piNeedsInit = false;
+      await deps.ensurePiInit();
     }
     return true;
   }

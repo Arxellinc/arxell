@@ -485,7 +485,7 @@ export function loadPersistedWorkspaceTab(fallback: string): string {
   try {
     const raw = window.localStorage.getItem(WORKSPACE_TAB_STORAGE_KEY);
     if (raw && (raw === "events" || raw === "terminal" || raw === "manager-tool" || raw.endsWith("-tool"))) {
-      return raw;
+      return raw === "opencode-tool" ? "pi-tool" : raw;
     }
   } catch {}
   return fallback;
@@ -493,7 +493,7 @@ export function loadPersistedWorkspaceTab(fallback: string): string {
 
 export function persistWorkspaceTab(tab: string): void {
   try {
-    window.localStorage.setItem(WORKSPACE_TAB_STORAGE_KEY, tab);
+    window.localStorage.setItem(WORKSPACE_TAB_STORAGE_KEY, tab === "opencode-tool" ? "pi-tool" : tab);
   } catch {}
 }
 

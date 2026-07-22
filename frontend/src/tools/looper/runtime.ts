@@ -230,7 +230,7 @@ function markRunningSubsteps(state: LooperPhaseState, nextStatus: "complete" | "
 export function applyLooperEvent(state: LooperToolState, event: AppEvent): void {
   if (!event.action.startsWith("looper.")) return;
 
-  if (event.action === "looper.check-opencode.result") {
+  if (event.action === "looper.check-pi.result") {
     const payload = payloadAsRecord(event.payload);
     if (typeof payload?.installed === "boolean") {
       state.installed = payload.installed;

@@ -1699,13 +1699,14 @@ export interface LooperImportResponse {
   importedCount: number;
 }
 
-export interface LooperCheckOpenCodeRequest {
+export interface LooperCheckPiRequest {
   correlationId: string;
 }
 
-export interface LooperCheckOpenCodeResponse {
+export interface LooperCheckPiResponse {
   correlationId: string;
   installed: boolean;
+  version?: string | null;
 }
 
 export interface LooperQuestionAnswer {

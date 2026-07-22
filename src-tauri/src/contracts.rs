@@ -1983,15 +1983,16 @@ pub struct LooperCloseResponse {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct LooperCheckOpenCodeRequest {
+pub struct LooperCheckPiRequest {
     pub correlation_id: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct LooperCheckOpenCodeResponse {
+pub struct LooperCheckPiResponse {
     pub correlation_id: String,
     pub installed: bool,
+    pub version: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

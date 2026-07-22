@@ -12,7 +12,7 @@ There are three related tool paths in the app:
 
 1. Workspace tools
 - User-facing panels in the workspace, implemented in `frontend/src/tools`.
-- Examples: `files`, `webSearch`, `chart`, `flow`, `looper`, `tasks`, `memory`, `skills`, `notepad`, `opencode`, `terminal`, `manager`.
+- Examples: `files`, `webSearch`, `chart`, `flow`, `looper`, `tasks`, `memory`, `skills`, `notepad`, `pi`, `terminal`, `manager`.
 - Registered in the frontend by `frontend/src/tools/registry.ts`.
 - Registered in the backend workspace tool list by `src-tauri/src/workspace_tools/mod.rs`.
 
@@ -73,7 +73,7 @@ Not every tool needs every file. Static tools such as `memory` and `skills` may 
 | `skills` | `frontend/src/tools/skills/` | agent | Agent skill browsing |
 | `sheets` | `frontend/src/tools/sheets/` | data | Spreadsheet editing with backend workbook state, formulas, and agent access |
 | `notepad` | `frontend/src/tools/notepad/` | workspace | Note editor |
-| `opencode` | `frontend/src/tools/opencode/` | automation | OpenCode integration |
+| `pi` | `frontend/src/tools/pi/` | automation | Pi integration |
 | `terminal` | `frontend/src/tools/terminal/` | workspace | Integrated terminal emulator |
 | `webSearch` | `frontend/src/tools/webSearch/` | search | Web search |
 | `manager` | `frontend/src/tools/manager/` | workspace | Workspace tool manager (enable/disable/import/export) |

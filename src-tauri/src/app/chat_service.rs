@@ -4195,7 +4195,7 @@ fn build_plan_artifact(
             "Supporting notes, source list, and intermediate files as needed.".to_string(),
             "Completion summary with validation evidence.".to_string(),
         ],
-        allowed_tools: vec!["looper".to_string(), "opencode".to_string()],
+        allowed_tools: vec!["looper".to_string(), "pi".to_string()],
         data_policy:
             "External sources are allowed and expected unless the approved plan says otherwise."
                 .to_string(),

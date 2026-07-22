@@ -4,7 +4,7 @@
 
 Build a general-purpose `Clarify -> PRD -> Approve -> Delegate -> Validate` workflow for large or ambiguous user requests.
 
-The primary chat agent should remain lean and user-facing. It owns routing, discovery, planning, approval, and progress reporting. Looper/OpenCode should act as the delegated execution runtime after the user approves a constrained execution brief.
+The primary chat agent should remain lean and user-facing. It owns routing, discovery, planning, approval, and progress reporting. Looper/Pi should act as the delegated execution runtime after the user approves a constrained execution brief.
 
 ## Guiding Principles
 
@@ -110,7 +110,7 @@ Always force planning for:
 
 `delegated_execution`
 
-- Approved plan has been handed to Looper/OpenCode.
+- Approved plan has been handed to Looper/Pi.
 - Chat displays a delegated run status card.
 - User can continue chatting, but task-scoped changes should become plan deltas if they alter approved scope.
 

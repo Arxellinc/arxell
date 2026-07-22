@@ -110,18 +110,18 @@ export const FLOW_UI_ID = {
   projectDescriptionInput: "flowProjectDescriptionInput"
 } as const;
 
-export const OPENCODE_DATA_ATTR = {
-  action: "data-opencode-action",
-  agentId: "data-opencode-agent-id",
-  closeAgentId: "data-opencode-close-agent-id"
+export const PI_DATA_ATTR = {
+  action: "data-pi-action",
+  agentId: "data-pi-agent-id",
+  closeAgentId: "data-pi-close-agent-id"
 } as const;
 
-export const OPENCODE_UI_ID = {
-  terminalHost: "opencodeTerminalHost",
-  installModalOverlay: "opencodeInstallModalOverlay",
-  spawnLabelInput: "opencodeSpawnLabelInput",
-  spawnCwdInput: "opencodeSpawnCwdInput",
-  spawnPromptInput: "opencodeSpawnPromptInput"
+export const PI_UI_ID = {
+  terminalHost: "piTerminalHost",
+  installModalOverlay: "piInstallModalOverlay",
+  spawnLabelInput: "piSpawnLabelInput",
+  spawnCwdInput: "piSpawnCwdInput",
+  spawnPromptInput: "piSpawnPromptInput"
 } as const;
 
 export const LOOPER_DATA_ATTR = {

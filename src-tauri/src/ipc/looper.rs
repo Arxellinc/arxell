@@ -4,13 +4,13 @@
 //! Follows the same pattern as FlowCommandHandler.
 
 use crate::contracts::{
-    EventSeverity, EventStage, LooperAdvanceRequest, LooperAdvanceResponse,
-    LooperCheckOpenCodeRequest, LooperCheckOpenCodeResponse, LooperCloseAllRequest,
-    LooperCloseAllResponse, LooperCloseRequest, LooperCloseResponse, LooperImportRequest,
-    LooperImportResponse, LooperListRequest, LooperListResponse, LooperPauseRequest,
-    LooperPauseResponse, LooperPreviewRequest, LooperPreviewResponse, LooperStartRequest,
-    LooperStartResponse, LooperStatusRequest, LooperStatusResponse, LooperStopRequest,
-    LooperStopResponse, LooperSubmitQuestionsRequest, LooperSubmitQuestionsResponse, Subsystem,
+    EventSeverity, EventStage, LooperAdvanceRequest, LooperAdvanceResponse, LooperCheckPiRequest,
+    LooperCheckPiResponse, LooperCloseAllRequest, LooperCloseAllResponse, LooperCloseRequest,
+    LooperCloseResponse, LooperImportRequest, LooperImportResponse, LooperListRequest,
+    LooperListResponse, LooperPauseRequest, LooperPauseResponse, LooperPreviewRequest,
+    LooperPreviewResponse, LooperStartRequest, LooperStartResponse, LooperStatusRequest,
+    LooperStatusResponse, LooperStopRequest, LooperStopResponse, LooperSubmitQuestionsRequest,
+    LooperSubmitQuestionsResponse, Subsystem,
 };
 use crate::observability::EventHub;
 use crate::tools::looper_handler::LooperHandler;
@@ -354,33 +354,33 @@ impl LooperCommandHandler {
         result
     }
 
-    pub async fn check_opencode(
+    pub async fn check_pi(
         &self,
-        req: LooperCheckOpenCodeRequest,
-    ) -> Result<LooperCheckOpenCodeResponse, String> {
+        req: LooperCheckPiRequest,
+    ) -> Result<LooperCheckPiResponse, String> {
         self.hub.emit(self.hub.make_event(
             &req.correlation_id,
             Subsystem::Ipc,
-            "cmd.looper.check_opencode",
+            "cmd.looper.check_pi",
             EventStage::Start,
             EventSeverity::Info,
             json!({}),
         ));
 
-        let result = self.handler.check_opencode(req.clone()).await;
+        let result = self.handler.check_pi(req.clone()).await;
         match &result {
             Ok(response) => self.hub.emit(self.hub.make_event(
                 &response.correlation_id,
                 Subsystem::Ipc,
-                "cmd.looper.check_opencode",
+                "cmd.looper.check_pi",
                 EventStage::Complete,
                 EventSeverity::Info,
-                json!({ "installed": response.installed }),
+                json!({ "installed": response.installed, "version": response.version }),
             )),
             Err(error) => self.hub.emit(self.hub.make_event(
                 &req.correlation_id,
                 Subsystem::Ipc,
-                "cmd.looper.check_opencode",
+                "cmd.looper.check_pi",
                 EventStage::Error,
                 EventSeverity::Error,
                 json!({ "error": error }),
