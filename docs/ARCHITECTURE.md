@@ -48,6 +48,9 @@ Core chat orchestration: message handling, agent loop, tool binding, streaming. 
 ### Terminal Service (`src-tauri/src/app/terminal_service.rs`)
 PTY-based terminal sessions: open, input, resize, close. Emits `terminal.output` streaming events.
 
+### Pi RPC Service (`src-tauri/src/app/pi_rpc_service.rs`)
+Headless Pi process integration over strict JSONL stdin/stdout. It owns RPC command correlation, event streaming, settlement detection, bounded output, timeout/abort behavior, and fail-closed extension UI responses. Looper migration to this service is tracked separately from the interactive PTY-based Pi workspace tool.
+
 ### Looper Handler (`src-tauri/src/tools/looper_handler.rs`)
 PRD/build loop orchestration with multi-phase execution, interactive questions, and Pi integration. Routed through `cmd_tool_invoke`.
 
