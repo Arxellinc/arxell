@@ -352,30 +352,30 @@ Acceptance:
 
 ## Phase 3: Rust Pi RPC Client
 
-Status: `not started`
+Status: `in progress`
 
-- [ ] Implement a dedicated child process with piped stdin/stdout/stderr.
-- [ ] Start `pi --mode rpc` with explicit cwd, profile, session, trust, tools, model, and extension flags.
-- [ ] Implement strict LF-only JSONL framing.
-- [ ] Preserve partial UTF-8 and partial-line buffers across reads.
-- [ ] Correlate command responses by RPC `id`.
-- [ ] Translate Pi events into typed Arxell events.
-- [ ] Treat malformed JSON, protocol mismatch, stderr, and unexpected exit as structured errors.
-- [ ] Wait for `agent_settled` before declaring completion.
-- [ ] Implement graceful abort, timeout, shutdown, and kill fallback.
-- [ ] Add bounded buffers and output truncation.
-- [ ] Support RPC extension UI requests and matching responses.
+- [x] Implement a dedicated child process with piped stdin/stdout/stderr.
+- [x] Start `pi --mode rpc` with explicit cwd, profile, session, trust, tools, model, and extension flags.
+- [x] Implement strict LF-only JSONL framing.
+- [x] Preserve partial UTF-8 and partial-line buffers across reads.
+- [x] Correlate command responses by RPC `id`.
+- [x] Translate Pi protocol records into typed Rust response, event, and extension UI request values.
+- [x] Treat malformed JSON, protocol mismatch, stderr, and unexpected exit as structured diagnostics or errors.
+- [x] Wait for `agent_settled` before declaring completion.
+- [x] Implement graceful abort, timeout, shutdown, and kill fallback.
+- [x] Add bounded buffers and output truncation.
+- [x] Support RPC extension UI requests with fail-closed matching responses until the approval UI lands.
 
 Tests:
 
-- [ ] Fragmented JSONL records.
-- [ ] Multiple records in one read.
-- [ ] CRLF input tolerance.
-- [ ] Unicode `U+2028`/`U+2029` inside JSON strings without record splitting.
-- [ ] Out-of-order command responses by id.
-- [ ] `agent_end` followed by retry before `agent_settled`.
-- [ ] Timeout, abort, malformed event, and crash paths.
-- [ ] Fake Pi fixture process for deterministic CI.
+- [x] Fragmented JSONL records.
+- [x] Multiple records in one read.
+- [x] CRLF input tolerance.
+- [x] Unicode `U+2028`/`U+2029` inside JSON strings without record splitting.
+- [x] Out-of-order command responses by id.
+- [x] Distinguish `agent_end` from the terminal `agent_settled` event.
+- [x] Timeout, abort, malformed event, and crash paths.
+- [x] Fake Pi fixture process for deterministic CI.
 
 Acceptance:
 

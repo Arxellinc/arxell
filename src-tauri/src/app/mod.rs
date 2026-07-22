@@ -3,6 +3,7 @@ pub mod files_service;
 pub mod image_generation_service;
 pub mod model_manager_service;
 pub mod permission_service;
+pub mod pi_rpc_service;
 pub mod runtime_service;
 pub mod tasks_service;
 pub mod terminal_service;
