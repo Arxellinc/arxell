@@ -219,6 +219,18 @@ Additional file operations via `cmd_tool_invoke` (`toolId: "files"`):
 | `check-pi` | `LooperCheckPiRequest` | `LooperCheckPiResponse` |
 | `submit-questions` | `LooperSubmitQuestionsRequest` | `LooperSubmitQuestionsResponse` |
 
+Looper phases emit lifecycle events (`looper.phase.start`, `looper.phase.complete`, `looper.phase.error`, and `looper.phase.transition`) with a Pi RPC `runId` rather than a terminal session ID. Headless Pi progress uses:
+
+| Event | Safe payload fields |
+|-------|---------------------|
+| `pi.message.delta` | `loopId`, `phase`, bounded `text` |
+| `pi.tool.start` / `pi.tool.end` | `loopId`, `phase`, `toolCallId`, `toolName`, `isError?` |
+| `pi.agent.status` / `pi.agent.settled` / `pi.agent.cancelled` | `loopId`, `phase`, `runId?`, status/count metadata |
+| `pi.usage` | `loopId`, `phase`, token counts |
+| `pi.approval.blocked` | `loopId`, `phase`, request ID/method, fail-closed decision |
+
+Tool arguments, tool output, raw stderr, secrets, and complete file contents are not copied into Pi progress metadata.
+
 ---
 
 ## STT Commands

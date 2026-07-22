@@ -352,7 +352,7 @@ Acceptance:
 
 ## Phase 3: Rust Pi RPC Client
 
-Status: `in progress`
+Status: `completed`
 
 - [x] Implement a dedicated child process with piped stdin/stdout/stderr.
 - [x] Start `pi --mode rpc` with explicit cwd, profile, session, trust, tools, model, and extension flags.
@@ -379,7 +379,7 @@ Tests:
 
 Acceptance:
 
-- [ ] The Rust client can start Pi, prompt it, stream events, detect settlement, retrieve final output, and stop it without a PTY.
+- [x] The Rust client can start Pi, prompt it, stream events, detect settlement, retrieve final output, and stop it without a PTY.
 
 ## Phase 4: Arxell Pi Policy Extension
 
@@ -407,25 +407,25 @@ Status: `in progress`
 
 Backend tasks:
 
-- [ ] Replace `check_opencode` with `check_pi`.
-- [ ] Replace each phase PTY with a Pi RPC session.
-- [ ] Send phase prompts using the RPC `prompt` command.
-- [ ] Select provider/model through Pi's provider/model contract.
-- [ ] Use `agent_settled` as the phase completion trigger.
+- [x] Replace `check_opencode` with `check_pi`.
+- [x] Replace each phase PTY with a Pi RPC session.
+- [x] Send phase prompts using the RPC `prompt` command.
+- [x] Select the configured model through Pi's model contract; custom provider mapping remains in Phase 7.
+- [x] Use `agent_settled` as the phase completion trigger.
 - [ ] Obtain final assistant text and session stats for bounded phase summaries.
 - [ ] Preserve existing file artifacts such as `implementation_plan.md`, `work_summary.txt`, `validation_report.txt`, `review_result.txt`, and `review_feedback.txt`.
-- [ ] Preserve Planner review/questions behavior.
-- [ ] Abort the active Pi RPC run on pause/stop; kill only as fallback.
+- [x] Preserve Planner review/questions behavior.
+- [x] Abort the active Pi RPC run on pause/stop; kill only as fallback.
 - [ ] Persist Pi session identifiers/paths needed for diagnostics and recovery.
 - [ ] Keep iteration and critic `SHIP`/`REVISE` semantics unchanged.
 
 Frontend tasks:
 
-- [ ] Replace OpenCode wording and setup UI.
-- [ ] Render structured phase logs from `pi.message.delta` and `pi.tool.*` events.
-- [ ] Stop depending on terminal session IDs for headless phases.
-- [ ] Show provider/model, token usage, phase state, and recoverable setup errors.
-- [ ] Keep logs bounded and expandable.
+- [x] Replace OpenCode wording and setup UI.
+- [x] Render structured phase logs from `pi.message.delta` and `pi.tool.*` events.
+- [x] Stop depending on terminal session IDs for headless phases.
+- [x] Show model, token usage, phase state, and recoverable runtime errors; provider mapping remains in Phase 7.
+- [x] Keep logs bounded and preserve prompt expansion/editing.
 
 Migration strategy:
 

@@ -7,7 +7,7 @@ use std::time::Duration;
 use thiserror::Error;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::process::{Child, ChildStdin, ChildStdout, Command};
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, watch};
 use tokio::time::{sleep, timeout, Instant};
 
 const DEFAULT_MAX_RECORD_BYTES: usize = 4 * 1024 * 1024;
@@ -106,6 +106,8 @@ pub enum PiRpcError {
     Agent(String),
     #[error("Pi RPC timed out after {0:?}")]
     Timeout(Duration),
+    #[error("Pi RPC run was cancelled")]
+    Cancelled,
     #[error("Pi RPC exited unexpectedly ({status}): {stderr}")]
     UnexpectedExit { status: String, stderr: String },
     #[error("Pi RPC record exceeded the {limit}-byte limit")]
@@ -120,18 +122,38 @@ impl PiRpcService {
         prompt: String,
         events: Option<mpsc::UnboundedSender<PiRpcRecord>>,
     ) -> Result<PiRpcRunResult, PiRpcError> {
+        Self::run_prompt_with_cancel(config, prompt, events, None).await
+    }
+
+    pub async fn run_prompt_with_cancel(
+        config: PiRpcConfig,
+        prompt: String,
+        events: Option<mpsc::UnboundedSender<PiRpcRecord>>,
+        mut cancellation: Option<watch::Receiver<bool>>,
+    ) -> Result<PiRpcRunResult, PiRpcError> {
         let run_timeout = config.timeout;
         let mut session = PiRpcSession::spawn(config, events).await?;
-        let result = timeout(run_timeout, session.run_prompt(&prompt)).await;
+        let outcome = {
+            let run = timeout(run_timeout, session.run_prompt(&prompt));
+            tokio::pin!(run);
+            tokio::select! {
+                result = &mut run => Some(result),
+                _ = wait_for_cancellation(&mut cancellation) => None,
+            }
+        };
 
-        match result {
-            Ok(run_result) => {
+        match outcome {
+            Some(Ok(run_result)) => {
                 let shutdown_result = session.shutdown().await;
                 run_result.and(shutdown_result.map(|_| session.result()))
             }
-            Err(_) => {
+            Some(Err(_)) => {
                 session.abort_and_stop().await;
                 Err(PiRpcError::Timeout(run_timeout))
+            }
+            None => {
+                session.abort_and_stop().await;
+                Err(PiRpcError::Cancelled)
             }
         }
     }
@@ -669,6 +691,21 @@ fn pi_command(executable: &PathBuf, args: &[String]) -> Command {
     command
 }
 
+async fn wait_for_cancellation(cancellation: &mut Option<watch::Receiver<bool>>) {
+    let Some(receiver) = cancellation.as_mut() else {
+        std::future::pending::<()>().await;
+        return;
+    };
+    if *receiver.borrow() {
+        return;
+    }
+    while receiver.changed().await.is_ok() {
+        if *receiver.borrow() {
+            return;
+        }
+    }
+}
+
 fn append_bounded(target: &mut Vec<u8>, bytes: &[u8], limit: usize) {
     if bytes.len() >= limit {
         target.clear();
@@ -890,6 +927,27 @@ mod tests {
         cleanup_wrapper(wrapper);
 
         assert!(matches!(result, Err(PiRpcError::Timeout(_))));
+    }
+
+    #[tokio::test]
+    async fn fake_pi_cancellation_aborts_and_stops_the_child() {
+        let Some((config, wrapper)) = fake_config("cancel", Duration::from_secs(5)) else {
+            return;
+        };
+        let (cancel, receiver) = watch::channel(false);
+        let task = tokio::spawn(PiRpcService::run_prompt_with_cancel(
+            config,
+            "timeout".to_string(),
+            None,
+            Some(receiver),
+        ));
+        sleep(Duration::from_millis(50)).await;
+        cancel.send(true).unwrap();
+
+        let result = task.await.unwrap();
+        cleanup_wrapper(wrapper);
+
+        assert!(matches!(result, Err(PiRpcError::Cancelled)));
     }
 
     #[tokio::test]

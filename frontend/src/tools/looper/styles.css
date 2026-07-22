@@ -555,19 +555,25 @@
   background: var(--surface-hover);
 }
 
-.looper-terminal-host {
+.looper-phase-runtime {
+  color: var(--muted);
+  font-size: var(--text-2xs);
+  font-weight: 400;
+}
+
+.looper-phase-output {
   flex: 1;
   min-height: 0;
-  overflow: hidden;
-}
-
-.looper-terminal-host .xterm {
-  height: 100%;
-  padding: 0.15rem;
-}
-
-.looper-terminal-host .xterm-screen canvas {
-  position: relative;
+  margin: 0;
+  padding: 6px;
+  overflow: auto;
+  background: var(--surface-strong);
+  color: var(--ink);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: var(--text-xs);
+  line-height: 1.45;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .looper-prompt-editor {

@@ -15,7 +15,7 @@ export function applyLooperRuntimeEvent(
   scheduleRefresh: () => void,
   registerSession?: (loopId: string, phase: string, sessionId: string) => void
 ): void {
-  if (!event.action.startsWith("looper.")) return;
+  if (!event.action.startsWith("looper.") && !event.action.startsWith("pi.")) return;
 
   const payload = event.payload;
   if (registerSession && payload && typeof payload === "object" && !Array.isArray(payload)) {
@@ -31,7 +31,6 @@ export function applyLooperRuntimeEvent(
 
   applyLooperEvent(state, event);
 
-  // Always schedule a refresh when a looper event arrives
-  // since terminal output may need to be written to the UI
+  // Always schedule a refresh for Looper lifecycle and Pi RPC progress events.
   scheduleRefresh();
 }

@@ -54,7 +54,11 @@ function normalizePhaseRecord(phase: LooperPhase, record?: LooperPhaseRecord): L
     substeps: normalizeSubsteps(record?.substeps ?? []),
     prompt: record?.prompt ?? "",
     promptDraft: record?.prompt ?? "",
-    promptEditing: false
+    promptEditing: false,
+    output: "",
+    model: null,
+    inputTokens: 0,
+    outputTokens: 0
   };
 }
 
@@ -128,7 +132,11 @@ function createEventPlaceholderLoop(loopId: string, iteration: number, timestamp
     substeps: [],
     prompt: "",
     promptDraft: "",
-    promptEditing: false
+    promptEditing: false,
+    output: "",
+    model: null,
+    inputTokens: 0,
+    outputTokens: 0
   });
 
   return {
@@ -227,7 +235,46 @@ function markRunningSubsteps(state: LooperPhaseState, nextStatus: "complete" | "
   }
 }
 
+function appendPhaseOutput(state: LooperPhaseState, text: string): void {
+  const maxLength = 100_000;
+  state.output = `${state.output}${text}`;
+  if (state.output.length > maxLength) {
+    state.output = `[Earlier output truncated]\n${state.output.slice(-maxLength)}`;
+  }
+}
+
+function applyPiEvent(state: LooperToolState, event: AppEvent): boolean {
+  if (!event.action.startsWith("pi.")) return false;
+  const payload = payloadAsRecord(event.payload);
+  if (!payload || typeof payload.loopId !== "string" || typeof payload.phase !== "string") {
+    return true;
+  }
+  if (!LOOPER_PHASES.includes(payload.phase as LooperPhase)) return true;
+  const loop = ensureLoop(state, payload.loopId, 0, event.timestampMs);
+  const phase = loop.phases[payload.phase as LooperPhase];
+
+  if (event.action === "pi.message.delta" && typeof payload.text === "string") {
+    appendPhaseOutput(phase, payload.text);
+  } else if (event.action === "pi.tool.start") {
+    const tool = typeof payload.toolName === "string" ? payload.toolName : "tool";
+    appendPhaseOutput(phase, `\n[Pi tool] ${tool} started\n`);
+  } else if (event.action === "pi.tool.end") {
+    const tool = typeof payload.toolName === "string" ? payload.toolName : "tool";
+    const status = payload.isError === true ? "failed" : "completed";
+    appendPhaseOutput(phase, `\n[Pi tool] ${tool} ${status}\n`);
+  } else if (event.action === "pi.agent.status" && typeof payload.status === "string") {
+    appendPhaseOutput(phase, `\n[Pi] ${payload.status.replaceAll("_", " ")}\n`);
+  } else if (event.action === "pi.approval.blocked") {
+    appendPhaseOutput(phase, "\n[Pi] An interactive approval request was blocked.\n");
+  } else if (event.action === "pi.usage") {
+    phase.inputTokens = typeof payload.inputTokens === "number" ? payload.inputTokens : phase.inputTokens;
+    phase.outputTokens = typeof payload.outputTokens === "number" ? payload.outputTokens : phase.outputTokens;
+  }
+  return true;
+}
+
 export function applyLooperEvent(state: LooperToolState, event: AppEvent): void {
+  if (applyPiEvent(state, event)) return;
   if (!event.action.startsWith("looper.")) return;
 
   if (event.action === "looper.check-pi.result") {
@@ -290,8 +337,13 @@ export function applyLooperEvent(state: LooperToolState, event: AppEvent): void 
   const phaseState = loop.phases[phasePayload.phase];
 
   if (event.action === "looper.phase.start") {
+    const payload = payloadAsRecord(event.payload);
     loop.activePhase = phasePayload.phase;
     phaseState.status = "running";
+    phaseState.output = "";
+    phaseState.model = typeof payload?.model === "string" ? payload.model : null;
+    phaseState.inputTokens = 0;
+    phaseState.outputTokens = 0;
     if (phasePayload.sessionId) {
       phaseState.sessionId = phasePayload.sessionId;
     }

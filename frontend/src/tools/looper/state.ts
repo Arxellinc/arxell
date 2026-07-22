@@ -15,6 +15,10 @@ export interface LooperPhaseState {
   prompt: string;
   promptDraft: string;
   promptEditing: boolean;
+  output: string;
+  model: string | null;
+  inputTokens: number;
+  outputTokens: number;
 }
 
 export interface LooperLoopRun {
@@ -172,7 +176,11 @@ function createPhaseState(phase: LooperPhase, projectContext?: string): LooperPh
     substeps: DEFAULT_SUBSTEPS[phase].map((s) => ({ ...s, status: "pending" as const })),
     prompt,
     promptDraft: prompt,
-    promptEditing: false
+    promptEditing: false,
+    output: "",
+    model: null,
+    inputTokens: 0,
+    outputTokens: 0
   };
 }
 
