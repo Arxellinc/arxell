@@ -49,7 +49,7 @@ Core chat orchestration: message handling, agent loop, tool binding, streaming. 
 PTY-based terminal sessions: open, input, resize, close. Emits `terminal.output` streaming events.
 
 ### Pi RPC Service (`src-tauri/src/app/pi_rpc_service.rs`)
-Headless Pi process integration over strict JSONL stdin/stdout. It owns RPC command correlation, event streaming, settlement detection, bounded output, timeout/abort behavior, and fail-closed extension UI responses. Looper migration to this service is tracked separately from the interactive PTY-based Pi workspace tool.
+Headless Pi process integration over strict JSONL stdin/stdout. It owns RPC command correlation, event streaming, settlement detection, bounded output, timeout/abort behavior, and fail-closed extension UI responses. Automated runs explicitly load the bundled `src-tauri/resources/pi/arxell-policy.ts` extension, which validates standard file-tool paths against the canonical project root, protects sensitive paths, and gates destructive shell patterns. This policy is defense in depth rather than an OS sandbox.
 
 ### Looper Handler (`src-tauri/src/tools/looper_handler.rs`)
 PRD/build loop orchestration with multi-phase execution, interactive questions, and headless Pi RPC integration. Each phase runs without a PTY, streams bounded message/tool metadata, and advances only after `agent_settled`. Routed through `cmd_tool_invoke`.
