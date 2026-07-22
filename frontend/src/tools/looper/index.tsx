@@ -369,19 +369,22 @@ function renderTerminalGrid(loop: LooperLoopRun, state: LooperToolState): string
       isActive ? "is-active" : "is-inactive"
     ].join(" ");
 
-    const hostId = `${LOOPER_UI_ID.terminalHostPrefix}${loop.id}-${phase}`;
+    const stats = ps.model
+      ? `${esc(ps.model)}${ps.inputTokens || ps.outputTokens ? ` · ${ps.inputTokens} in / ${ps.outputTokens} out` : ""}`
+      : "Pi RPC";
 
-    return `<div class="${cls}" data-looper-phase-terminal="${phase}" data-looper-session-id="${ps.sessionId ?? ""}">
+    return `<div class="${cls}" data-looper-phase-terminal="${phase}">
       <div class="looper-terminal-panel-header">
         <span class="looper-terminal-panel-title">
           ${iconHtml(LOOPER_PHASE_ICONS[phase] as IconName, { size: 16 })}
           ${LOOPER_PHASE_LABELS[phase]}
+          <span class="looper-phase-runtime">${stats}</span>
         </span>
         <button type="button" class="looper-terminal-panel-expand" ${LOOPER_DATA_ATTR.action}="toggle-prompt" ${LOOPER_DATA_ATTR.phase}="${phase}" title="Edit prompt">
           ${iconHtml("edit", { size: 16, tone: "dark" })}
         </button>
       </div>
-      <div class="looper-terminal-host" id="${hostId}"></div>
+      <pre class="looper-phase-output">${esc(ps.output || (ps.status === "running" ? "Waiting for Pi…" : "No output yet."))}</pre>
       ${ps.promptEditing ? renderPromptEditor(loop.id, phase, ps) : ""}
     </div>`;
   }).join("");

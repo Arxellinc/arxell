@@ -73,6 +73,55 @@ test("applyLooperEvent starts loops and phases from supported looper events", ()
   assert.equal(loop.phases.planner.substeps[0]?.status, "running");
 });
 
+test("applyLooperEvent renders bounded Pi RPC phase output and usage without a terminal", () => {
+  const state = getInitialLooperState();
+  const loop = createLoopRun(1, "/tmp");
+  state.loops.push(loop);
+
+  applyLooperEvent(
+    state,
+    makeEvent("looper.phase.start", {
+      loopId: loop.id,
+      phase: "planner",
+      runId: "pi-run-1",
+      runtime: "pi-rpc",
+      model: "openai/gpt-5"
+    })
+  );
+  applyLooperEvent(
+    state,
+    makeEvent("pi.message.delta", {
+      loopId: loop.id,
+      phase: "planner",
+      text: "Planning"
+    })
+  );
+  applyLooperEvent(
+    state,
+    makeEvent("pi.tool.start", {
+      loopId: loop.id,
+      phase: "planner",
+      toolName: "read"
+    })
+  );
+  applyLooperEvent(
+    state,
+    makeEvent("pi.usage", {
+      loopId: loop.id,
+      phase: "planner",
+      inputTokens: 12,
+      outputTokens: 4
+    })
+  );
+
+  assert.equal(loop.phases.planner.sessionId, null);
+  assert.equal(loop.phases.planner.model, "openai/gpt-5");
+  assert.match(loop.phases.planner.output, /Planning/);
+  assert.match(loop.phases.planner.output, /read started/);
+  assert.equal(loop.phases.planner.inputTokens, 12);
+  assert.equal(loop.phases.planner.outputTokens, 4);
+});
+
 test("applyLooperEvent accepts backend transition payloads that send toPhase", () => {
   const state = getInitialLooperState();
   const loop = createLoopRun(1, "/tmp");

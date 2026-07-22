@@ -6,7 +6,7 @@
 //! ## Architecture
 //!
 //! The backend owns:
-//!   - Terminal session management (creates one session per phase)
+//!   - Headless Pi RPC runs for each phase
 //!   - Phase state machine transitions
 //!   - Loop iteration control
 //!   - Pi CLI availability checking
@@ -17,16 +17,17 @@
 //!   - `looper.loop.failed` — iteration failed
 //!   - `looper.phase.start` — phase begins
 //!   - `looper.phase.progress` — phase emits output
-//!   - `looper.phase.complete` — phase ends (terminal exits)
+//!   - `looper.phase.complete` — phase reaches Pi's `agent_settled` event
 //!   - `looper.phase.error` — phase encountered an error
 //!
 //! ## Phase Flow
 //!
-//! Each phase runs in its own terminal session. When a phase's terminal exits,
-//! the handler automatically advances to the next phase. The critic phase produces
-//! a `SHIP` or `REVISE` decision which controls iteration looping.
+//! Each phase runs in a dedicated headless Pi RPC process. When Pi emits
+//! `agent_settled`, the handler advances to the next phase. The critic phase
+//! produces a `SHIP` or `REVISE` decision which controls iteration looping.
 
 use crate::api_registry::ApiRegistryService;
+use crate::app::pi_rpc_service::{PiRpcConfig, PiRpcError, PiRpcEvent, PiRpcRecord, PiRpcService};
 use crate::app::terminal_service::TerminalService;
 use crate::app::web_search_service::{
     WebSearchRequest as ServiceWebSearchRequest, WebSearchResult, WebSearchService,
@@ -47,10 +48,13 @@ use crate::workspace_tools::WorkspaceToolsService;
 use serde_json::json;
 use std::collections::HashMap;
 use std::fs;
+use std::future::Future;
 use std::path::{Path, PathBuf};
+use std::pin::Pin;
 use std::process::Command;
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, Mutex, RwLock};
 use std::time::{SystemTime, UNIX_EPOCH};
+use tokio::sync::{mpsc, watch};
 
 pub fn get_substeps(phase: &str, loop_type: &LooperLoopType) -> Vec<SubStepState> {
     match (phase, loop_type) {
@@ -382,14 +386,23 @@ If specs are complete, consistent, and ready:
     ),
 ];
 
+#[derive(Clone)]
 pub struct LooperHandler {
     hub: EventHub,
     terminal: Arc<TerminalService>,
     workspace_tools: Arc<WorkspaceToolsService>,
     web_search: Arc<WebSearchService>,
     api_registry: Arc<ApiRegistryService>,
-    loops: RwLock<HashMap<String, LooperLoop>>,
-    data_path: RwLock<Option<PathBuf>>,
+    loops: Arc<RwLock<HashMap<String, LooperLoop>>>,
+    data_path: Arc<RwLock<Option<PathBuf>>>,
+    active_runs: Arc<Mutex<HashMap<String, ActivePiRun>>>,
+    pi_executable_override: Arc<RwLock<Option<PathBuf>>>,
+}
+
+struct ActivePiRun {
+    id: String,
+    phase: String,
+    cancel: watch::Sender<bool>,
 }
 
 struct LooperLoop {
@@ -463,8 +476,10 @@ impl LooperHandler {
             workspace_tools,
             web_search,
             api_registry,
-            loops: RwLock::new(HashMap::new()),
-            data_path: RwLock::new(None),
+            loops: Arc::new(RwLock::new(HashMap::new())),
+            data_path: Arc::new(RwLock::new(None)),
+            active_runs: Arc::new(Mutex::new(HashMap::new())),
+            pi_executable_override: Arc::new(RwLock::new(None)),
         }
     }
 
@@ -550,8 +565,7 @@ impl LooperHandler {
 
     /// Starts a new loop iteration.
     ///
-    /// Creates terminal sessions for all 4 phases and begins execution
-    /// with the Planner phase.
+    /// Starts the loop and launches the Planner through headless Pi RPC.
     pub async fn start(&self, req: LooperStartRequest) -> Result<LooperStartResponse, String> {
         let loop_id = req.loop_id.clone();
         let now_ms = now_ms();
@@ -679,13 +693,6 @@ impl LooperHandler {
             loops.insert(loop_id.clone(), loopy);
         }
 
-        // Create terminal sessions for all phases after the loop exists in state.
-        if let Err(error) = self.create_phase_sessions(&loop_id).await {
-            let mut loops = self.loops.write().map_err(|e| e.to_string())?;
-            loops.remove(&loop_id);
-            return Err(error);
-        }
-
         // Emit loop.start event
         self.emit_event(
             &req.correlation_id,
@@ -713,7 +720,7 @@ impl LooperHandler {
         })
     }
 
-    /// Stops a running loop and closes all its terminal sessions.
+    /// Stops a running loop, aborts its active Pi run, and closes legacy sessions.
     pub async fn stop(&self, req: LooperStopRequest) -> Result<LooperStopResponse, String> {
         // Extract session IDs and iteration before releasing the lock
         let session_ids: Vec<Option<String>>;
@@ -737,7 +744,9 @@ impl LooperHandler {
             active_phase = loopy.active_phase.clone();
         }
 
-        // Close all phase sessions
+        self.cancel_active_run(&req.loop_id);
+
+        // Close any legacy phase sessions restored from an older record.
         self.close_phase_sessions(&session_ids).await;
 
         // Emit loop.failed event
@@ -803,6 +812,10 @@ impl LooperHandler {
             }
         };
 
+        if paused {
+            self.cancel_active_run(&req.loop_id);
+        }
+
         if let Some(session_id) = session_to_close {
             let req = TerminalCloseSessionRequest {
                 session_id: session_id.clone(),
@@ -818,7 +831,6 @@ impl LooperHandler {
                     req.loop_id
                 ));
             };
-            self.create_phase_session(&req.loop_id, phase_name).await?;
             self.start_phase(&req.loop_id, phase_name, &req.correlation_id)
                 .await?;
             let mut loops = self.loops.write().map_err(|e| e.to_string())?;
@@ -1050,8 +1062,8 @@ impl LooperHandler {
     }
 
     /// Manually advances a loop to the next phase.
-    /// This is typically called automatically when a phase's terminal exits,
-    /// but can be triggered manually for testing or recovery.
+    /// Normal Pi RPC runs advance on `agent_settled`; this can be triggered
+    /// manually for testing or recovery.
     pub async fn advance(
         &self,
         req: LooperAdvanceRequest,
@@ -1114,7 +1126,7 @@ impl LooperHandler {
             loops.remove(&req.loop_id);
         }
 
-        // Close all phase sessions
+        self.cancel_active_run(&req.loop_id);
         self.close_phase_sessions(&session_ids).await;
 
         self.save_to_disk();
@@ -1147,6 +1159,7 @@ impl LooperHandler {
             loops.clear();
         }
 
+        self.cancel_all_active_runs();
         for session_ids in &all_session_ids {
             self.close_phase_sessions(session_ids).await;
         }
@@ -1205,17 +1218,6 @@ impl LooperHandler {
     // Internal helpers
     // -------------------------------------------------------------------------
 
-    /// Creates terminal sessions for all phases of a loop.
-    async fn create_phase_sessions(&self, loop_id: &str) -> Result<(), String> {
-        let phases = ["planner", "executor", "validator", "critic"];
-
-        for phase in phases {
-            self.create_phase_session(loop_id, phase).await?;
-        }
-
-        Ok(())
-    }
-
     fn resolve_model_name(&self, raw_model_id: &str) -> Option<String> {
         let id = raw_model_id.trim();
         if id.is_empty() || id == "auto" {
@@ -1249,43 +1251,7 @@ impl LooperHandler {
         Some(id.to_string())
     }
 
-    async fn create_phase_session(&self, loop_id: &str, phase: &str) -> Result<String, String> {
-        let cwd_raw = {
-            let loops = self.loops.read().map_err(|e| e.to_string())?;
-            let loopy = loops
-                .get(loop_id)
-                .ok_or_else(|| format!("loop not found: {}", loop_id))?;
-            loopy.cwd.clone()
-        };
-
-        let cwd = if cwd_raw.is_empty() || cwd_raw == "." {
-            None
-        } else {
-            Some(cwd_raw)
-        };
-
-        let open_req = TerminalOpenSessionRequest {
-            correlation_id: format!("looper-{}-{}", loop_id, phase),
-            cols: Some(120),
-            rows: Some(24),
-            shell: Some(pi_shell()),
-            cwd,
-            model: None,
-        };
-
-        let response = self.terminal.open_session(open_req)?;
-        let session_id = response.session_id;
-        let mut loops = self.loops.write().map_err(|e| e.to_string())?;
-        if let Some(l) = loops.get_mut(loop_id) {
-            if let Some(phase_state) = l.phases.get_mut(phase) {
-                phase_state.session_id = Some(session_id.clone());
-            }
-        }
-        Ok(session_id)
-    }
-
-    /// Closes all terminal sessions for a loop's phases.
-    /// Takes session_ids directly to avoid needing to clone the whole loop struct.
+    /// Closes phase sessions retained by legacy persisted loop records.
     async fn close_phase_sessions(&self, session_ids: &[Option<String>]) {
         for session_id in session_ids {
             if let Some(ref sid) = session_id {
@@ -1300,139 +1266,401 @@ impl LooperHandler {
         }
     }
 
-    /// Starts a specific phase by sending pi + prompt to its terminal.
-    async fn start_phase(
+    /// Starts a phase in a dedicated headless Pi RPC process.
+    fn start_phase<'a>(
+        &'a self,
+        loop_id: &'a str,
+        phase: &'a str,
+        correlation_id: &'a str,
+    ) -> Pin<Box<dyn Future<Output = Result<(), String>> + Send + 'a>> {
+        Box::pin(async move {
+            let (
+                prompt,
+                raw_model,
+                loop_type,
+                cwd,
+                project_name,
+                project_type,
+                project_description,
+            ) = {
+                let loops = self.loops.read().map_err(|e| e.to_string())?;
+                let loopy = loops
+                    .get(loop_id)
+                    .ok_or_else(|| format!("loop not found: {}", loop_id))?;
+                let phase_state = loopy
+                    .phases
+                    .get(phase)
+                    .ok_or_else(|| format!("phase not found: {}", phase))?;
+                (
+                    phase_state.prompt.clone(),
+                    loopy.phase_models.get(phase).cloned(),
+                    loopy.loop_type.clone(),
+                    loopy.cwd.clone(),
+                    loopy.project_name.clone(),
+                    loopy.project_type.clone(),
+                    loopy.project_description.clone(),
+                )
+            };
+
+            let project_root = fs::canonicalize(if cwd.trim().is_empty() { "." } else { &cwd })
+                .map_err(|error| format!("invalid Looper project directory: {error}"))?;
+            if !project_root.is_dir() {
+                return Err(format!(
+                    "Looper project directory is not a folder: {}",
+                    project_root.display()
+                ));
+            }
+
+            let resolved_model = raw_model
+                .as_deref()
+                .and_then(|model| self.resolve_model_name(model));
+
+            let mut prompt = prompt;
+            if phase == "planner" {
+                if let Some(research_hint) = self
+                    .prepare_planner_web_research(
+                        correlation_id,
+                        loop_id,
+                        &loop_type,
+                        &cwd,
+                        &project_name,
+                        &project_type,
+                        &project_description,
+                    )
+                    .await
+                {
+                    prompt = format!("{}\n\n{}", prompt, research_hint);
+                }
+            }
+
+            let run_id = format!("pi-{}-{}-{}", loop_id, phase, now_ms());
+            {
+                let mut loops = self.loops.write().map_err(|e| e.to_string())?;
+                let loopy = loops
+                    .get_mut(loop_id)
+                    .ok_or_else(|| format!("loop not found: {}", loop_id))?;
+                let phase_state = loopy
+                    .phases
+                    .get_mut(phase)
+                    .ok_or_else(|| format!("phase not found: {}", phase))?;
+                phase_state.status = LooperPhaseStatus::Running;
+                phase_state.session_id = None;
+                if let Some(first) = phase_state.substeps.first_mut() {
+                    first.status = "running".to_string();
+                }
+                loopy.active_phase = Some(phase.to_string());
+            }
+
+            self.cancel_active_run(loop_id);
+            let (cancel, cancellation) = watch::channel(false);
+            self.active_runs
+                .lock()
+                .map_err(|error| error.to_string())?
+                .insert(
+                    loop_id.to_string(),
+                    ActivePiRun {
+                        id: run_id.clone(),
+                        phase: phase.to_string(),
+                        cancel,
+                    },
+                );
+
+            self.emit_event(
+                correlation_id,
+                "looper.phase.start",
+                EventStage::Complete,
+                EventSeverity::Info,
+                json!({
+                    "loopId": loop_id,
+                    "phase": phase,
+                    "runId": run_id,
+                    "model": resolved_model,
+                    "runtime": "pi-rpc",
+                }),
+            );
+
+            let mut config = PiRpcConfig::ephemeral(project_root);
+            config.model = resolved_model;
+            if let Ok(executable) = self.pi_executable_override.read() {
+                if let Some(executable) = executable.as_ref() {
+                    config.executable = executable.clone();
+                }
+            }
+
+            let handler = self.clone();
+            let loop_id = loop_id.to_string();
+            let phase = phase.to_string();
+            let correlation_id = correlation_id.to_string();
+            tokio::spawn(async move {
+                let (event_sender, mut event_receiver) = mpsc::unbounded_channel();
+                let event_handler = handler.clone();
+                let event_loop_id = loop_id.clone();
+                let event_phase = phase.clone();
+                let event_correlation_id = correlation_id.clone();
+                tokio::spawn(async move {
+                    while let Some(record) = event_receiver.recv().await {
+                        event_handler.handle_pi_record(
+                            &event_loop_id,
+                            &event_phase,
+                            &event_correlation_id,
+                            record,
+                        );
+                    }
+                });
+
+                let result = PiRpcService::run_prompt_with_cancel(
+                    config,
+                    prompt,
+                    Some(event_sender),
+                    Some(cancellation),
+                )
+                .await;
+
+                if !handler.finish_active_run(&loop_id, &run_id) {
+                    return;
+                }
+
+                match result {
+                    Ok(result) => {
+                        handler.emit_event(
+                            &correlation_id,
+                            "pi.agent.settled",
+                            EventStage::Complete,
+                            EventSeverity::Info,
+                            json!({
+                                "loopId": loop_id,
+                                "phase": phase,
+                                "runId": run_id,
+                                "eventCount": result.event_count,
+                                "finalTextBytes": result.final_text.len(),
+                            }),
+                        );
+                        handler.complete_phase_flow(&loop_id, &phase, &run_id).await;
+                    }
+                    Err(PiRpcError::Cancelled) => {}
+                    Err(error) => {
+                        handler.fail_rpc_phase(
+                            &loop_id,
+                            &phase,
+                            &run_id,
+                            &correlation_id,
+                            &safe_pi_error(&error),
+                        );
+                    }
+                }
+            });
+
+            Ok(())
+        })
+    }
+
+    fn handle_pi_record(
         &self,
         loop_id: &str,
         phase: &str,
         correlation_id: &str,
-    ) -> Result<(), String> {
-        let maybe_session_id = {
-            let loops = self.loops.read().map_err(|e| e.to_string())?;
-            let loopy = loops
-                .get(loop_id)
-                .ok_or_else(|| format!("loop not found: {}", loop_id))?;
-            loopy
-                .phases
-                .get(phase)
-                .ok_or_else(|| format!("phase not found: {}", phase))?
-                .session_id
-                .clone()
-        };
-
-        if maybe_session_id.is_none() {
-            self.create_phase_session(loop_id, phase).await?;
+        record: PiRpcRecord,
+    ) {
+        match record {
+            PiRpcRecord::Event(event) => self.emit_pi_event(loop_id, phase, correlation_id, event),
+            PiRpcRecord::ExtensionUiRequest(request) => self.emit_event(
+                correlation_id,
+                "pi.approval.blocked",
+                EventStage::Complete,
+                EventSeverity::Warn,
+                json!({
+                    "loopId": loop_id,
+                    "phase": phase,
+                    "requestId": request.id,
+                    "method": request.method,
+                    "decision": "cancelled",
+                }),
+            ),
+            PiRpcRecord::Stderr(_) | PiRpcRecord::Response(_) => {}
         }
+    }
 
-        let (
-            session_id,
-            prompt,
-            raw_model,
-            loop_type,
-            cwd,
-            project_name,
-            project_type,
-            project_description,
-        ) = {
-            let loops = self.loops.read().map_err(|e| e.to_string())?;
-            let loopy = loops
-                .get(loop_id)
-                .ok_or_else(|| format!("loop not found: {}", loop_id))?;
-            let phase_state = loopy
-                .phases
-                .get(phase)
-                .ok_or_else(|| format!("phase not found: {}", phase))?;
-            let session_id = phase_state
-                .session_id
-                .clone()
-                .ok_or_else(|| format!("session not created for phase: {}", phase))?;
-            let model = loopy.phase_models.get(phase).cloned();
-            (
-                session_id,
-                phase_state.prompt.clone(),
-                model,
-                loopy.loop_type.clone(),
-                loopy.cwd.clone(),
-                loopy.project_name.clone(),
-                loopy.project_type.clone(),
-                loopy.project_description.clone(),
-            )
-        };
-
-        let resolved_model = raw_model
-            .as_deref()
-            .and_then(|m| self.resolve_model_name(m));
-
-        let mut prompt = prompt;
-        if phase == "planner" {
-            if let Some(research_hint) = self
-                .prepare_planner_web_research(
-                    correlation_id,
-                    loop_id,
-                    &loop_type,
-                    &cwd,
-                    &project_name,
-                    &project_type,
-                    &project_description,
-                )
-                .await
-            {
-                prompt = format!("{}\n\n{}", prompt, research_hint);
-            }
-        }
-
-        // Update phase status to running
-        {
-            let mut loops = self.loops.write().map_err(|e| e.to_string())?;
-            if let Some(l) = loops.get_mut(loop_id) {
-                if let Some(p) = l.phases.get_mut(phase) {
-                    p.status = LooperPhaseStatus::Running;
-                    // Mark first substep as running
-                    if !p.substeps.is_empty() {
-                        p.substeps[0].status = "running".to_string();
+    fn emit_pi_event(&self, loop_id: &str, phase: &str, correlation_id: &str, event: PiRpcEvent) {
+        match event.event_type.as_str() {
+            "message_update" => {
+                let update = &event.payload["assistantMessageEvent"];
+                if update["type"].as_str() == Some("text_delta") {
+                    if let Some(delta) = update["delta"].as_str() {
+                        self.emit_event(
+                            correlation_id,
+                            "pi.message.delta",
+                            EventStage::Progress,
+                            EventSeverity::Info,
+                            json!({
+                                "loopId": loop_id,
+                                "phase": phase,
+                                "text": truncate_utf8(delta, 8 * 1024),
+                            }),
+                        );
                     }
                 }
-                l.active_phase = Some(phase.to_string());
+            }
+            "tool_execution_start" => self.emit_event(
+                correlation_id,
+                "pi.tool.start",
+                EventStage::Start,
+                EventSeverity::Info,
+                json!({
+                    "loopId": loop_id,
+                    "phase": phase,
+                    "toolCallId": event.payload["toolCallId"],
+                    "toolName": event.payload["toolName"],
+                }),
+            ),
+            "tool_execution_end" => self.emit_event(
+                correlation_id,
+                "pi.tool.end",
+                EventStage::Complete,
+                if event.payload["isError"].as_bool() == Some(true) {
+                    EventSeverity::Warn
+                } else {
+                    EventSeverity::Info
+                },
+                json!({
+                    "loopId": loop_id,
+                    "phase": phase,
+                    "toolCallId": event.payload["toolCallId"],
+                    "toolName": event.payload["toolName"],
+                    "isError": event.payload["isError"],
+                }),
+            ),
+            "message_end" => {
+                let usage = &event.payload["message"]["usage"];
+                if usage.is_object() {
+                    self.emit_event(
+                        correlation_id,
+                        "pi.usage",
+                        EventStage::Complete,
+                        EventSeverity::Info,
+                        json!({
+                            "loopId": loop_id,
+                            "phase": phase,
+                            "inputTokens": usage["input"],
+                            "outputTokens": usage["output"],
+                            "cacheReadTokens": usage["cacheRead"],
+                            "cacheWriteTokens": usage["cacheWrite"],
+                        }),
+                    );
+                }
+            }
+            "auto_retry_start" | "auto_retry_end" | "compaction_start" | "compaction_end" => {
+                self.emit_event(
+                    correlation_id,
+                    "pi.agent.status",
+                    EventStage::Progress,
+                    EventSeverity::Info,
+                    json!({
+                        "loopId": loop_id,
+                        "phase": phase,
+                        "status": event.event_type,
+                    }),
+                );
+            }
+            _ => {}
+        }
+    }
+
+    fn finish_active_run(&self, loop_id: &str, run_id: &str) -> bool {
+        let Ok(mut runs) = self.active_runs.lock() else {
+            return false;
+        };
+        if runs.get(loop_id).map(|run| run.id.as_str()) != Some(run_id) {
+            return false;
+        }
+        runs.remove(loop_id);
+        true
+    }
+
+    fn cancel_active_run(&self, loop_id: &str) {
+        let run = self
+            .active_runs
+            .lock()
+            .ok()
+            .and_then(|mut runs| runs.remove(loop_id));
+        if let Some(run) = run {
+            let _ = run.cancel.send(true);
+            self.emit_event(
+                &format!("looper-cancel-{}", loop_id),
+                "pi.agent.cancelled",
+                EventStage::Complete,
+                EventSeverity::Info,
+                json!({
+                    "loopId": loop_id,
+                    "phase": run.phase,
+                    "runId": run.id,
+                }),
+            );
+        }
+    }
+
+    fn cancel_all_active_runs(&self) {
+        let runs = self
+            .active_runs
+            .lock()
+            .map(|mut runs| runs.drain().map(|(_, run)| run).collect::<Vec<_>>())
+            .unwrap_or_default();
+        for run in runs {
+            let _ = run.cancel.send(true);
+        }
+    }
+
+    fn fail_rpc_phase(
+        &self,
+        loop_id: &str,
+        phase: &str,
+        run_id: &str,
+        correlation_id: &str,
+        error: &str,
+    ) {
+        {
+            let Ok(mut loops) = self.loops.write() else {
+                return;
+            };
+            let Some(loopy) = loops.get_mut(loop_id) else {
+                return;
+            };
+            loopy.status = LooperLoopStatus::Failed;
+            loopy.completed_at_ms = Some(now_ms());
+            if let Some(phase_state) = loopy.phases.get_mut(phase) {
+                phase_state.status = LooperPhaseStatus::Error;
+                for substep in &mut phase_state.substeps {
+                    if substep.status == "running" {
+                        substep.status = "error".to_string();
+                    }
+                }
             }
         }
-
-        // Emit phase.start event
         self.emit_event(
             correlation_id,
-            "looper.phase.start",
-            EventStage::Complete,
-            EventSeverity::Info,
+            "looper.phase.error",
+            EventStage::Error,
+            EventSeverity::Error,
             json!({
                 "loopId": loop_id,
                 "phase": phase,
-                "sessionId": session_id,
+                "runId": run_id,
+                "error": error,
+                "runtime": "pi-rpc",
             }),
         );
-
-        // Pi print mode is used as the transition runner until the dedicated
-        // RPC process service lands. It exits only after the agent settles,
-        // preserving Looper's phase-transition behavior without an interactive TUI.
-        let mut command = format!(
-            "PI_TELEMETRY=0 PI_SKIP_VERSION_CHECK=1 {} -p --no-session --no-approve",
-            shell_quote(&pi_executable())
+        self.emit_event(
+            correlation_id,
+            "looper.loop.failed",
+            EventStage::Error,
+            EventSeverity::Error,
+            json!({
+                "loopId": loop_id,
+                "phase": phase,
+                "reason": "pi_rpc_failed",
+                "error": error,
+            }),
         );
-        if let Some(model_name) = resolved_model.as_ref().filter(|v| !v.trim().is_empty()) {
-            command.push_str(" --model ");
-            command.push_str(&shell_quote(model_name));
-        }
-        if !prompt.trim().is_empty() {
-            command.push(' ');
-            command.push_str(&shell_quote(&prompt));
-        }
-        command.push('\n');
-        let input_req = TerminalInputRequest {
-            session_id: session_id.clone(),
-            input: command,
-            correlation_id: correlation_id.to_string(),
-        };
-        self.terminal.send_input(input_req)?;
-
-        Ok(())
+        self.save_to_disk();
     }
 
     /// Advances from the current phase to the next one.
@@ -1540,9 +1768,29 @@ impl LooperHandler {
             correlation_id: format!("looper-exit-{}", session_id),
         });
 
+        self.complete_phase_flow(&loop_id, &phase, session_id).await;
+    }
+
+    async fn complete_phase_flow(&self, loop_id: &str, phase: &str, run_id: &str) {
         let iteration = {
-            let loops = self.loops.read().expect("loops lock poisoned");
-            loops.get(&loop_id).map(|l| l.iteration).unwrap_or(0)
+            let mut loops = self.loops.write().expect("loops lock poisoned");
+            let Some(loopy) = loops.get_mut(loop_id) else {
+                return;
+            };
+            if loopy.status != LooperLoopStatus::Running
+                || loopy.active_phase.as_deref() != Some(phase)
+            {
+                return;
+            }
+            if let Some(phase_state) = loopy.phases.get_mut(phase) {
+                phase_state.status = LooperPhaseStatus::Complete;
+                for substep in &mut phase_state.substeps {
+                    if substep.status == "running" {
+                        substep.status = "complete".to_string();
+                    }
+                }
+            }
+            loopy.iteration
         };
 
         self.emit_event(
@@ -1554,7 +1802,7 @@ impl LooperHandler {
                 "loopId": loop_id,
                 "iteration": iteration,
                 "phase": phase,
-                "sessionId": session_id,
+                "runId": run_id,
             }),
         );
 
@@ -1562,7 +1810,7 @@ impl LooperHandler {
             let (cwd, review_before_execute) = {
                 let loops = self.loops.read().expect("loops lock poisoned");
                 loops
-                    .get(&loop_id)
+                    .get(loop_id)
                     .map(|l| (l.cwd.clone(), l.review_before_execute))
                     .unwrap_or_else(|| (String::new(), true))
             };
@@ -1572,7 +1820,7 @@ impl LooperHandler {
                 let (planner_plan, pending_questions) = read_planner_review_files(&cwd);
                 {
                     let mut loops = self.loops.write().expect("loops lock poisoned");
-                    if let Some(loopy) = loops.get_mut(&loop_id) {
+                    if let Some(loopy) = loops.get_mut(loop_id) {
                         loopy.status = LooperLoopStatus::Blocked;
                         loopy.active_phase = Some("planner".to_string());
                         loopy.planner_plan = planner_plan.clone();
@@ -1602,7 +1850,7 @@ impl LooperHandler {
         }
 
         // Determine the next phase
-        let next_phase = match phase.as_str() {
+        let next_phase = match phase {
             "planner" => Some("executor"),
             "executor" => Some("validator"),
             "validator" => Some("critic"),
@@ -2326,9 +2574,29 @@ pub fn now_ms() -> i64 {
         .unwrap_or(0)
 }
 
-fn shell_quote(value: &str) -> String {
-    let escaped = value.replace("'", "'\"'\"'");
-    format!("'{}'", escaped)
+fn truncate_utf8(value: &str, max_bytes: usize) -> &str {
+    if value.len() <= max_bytes {
+        return value;
+    }
+    let mut end = max_bytes;
+    while end > 0 && !value.is_char_boundary(end) {
+        end -= 1;
+    }
+    &value[..end]
+}
+
+fn safe_pi_error(error: &PiRpcError) -> String {
+    let message = match error {
+        PiRpcError::UnexpectedExit { status, .. } => {
+            format!("Pi RPC exited unexpectedly ({status})")
+        }
+        PiRpcError::RecordTooLarge { limit } => {
+            format!("Pi RPC output exceeded the {limit}-byte record limit")
+        }
+        PiRpcError::Cancelled => "Pi RPC run was cancelled".to_string(),
+        _ => error.to_string(),
+    };
+    truncate_utf8(&message, 500).to_string()
 }
 
 fn pi_executable() -> String {
@@ -2365,32 +2633,6 @@ fn probe_pi_version() -> Option<String> {
     }
     let version = String::from_utf8_lossy(&output.stdout).trim().to_string();
     (!version.is_empty()).then_some(version)
-}
-
-fn pi_shell() -> String {
-    if let Ok(shell) = std::env::var("ARXELL_PI_SHELL") {
-        if !shell.trim().is_empty() {
-            return shell;
-        }
-    }
-
-    #[cfg(target_os = "windows")]
-    {
-        let program_files =
-            std::env::var("ProgramFiles").unwrap_or_else(|_| "C:\\Program Files".to_string());
-        let git_bash = PathBuf::from(program_files)
-            .join("Git")
-            .join("bin")
-            .join("bash.exe");
-        if git_bash.is_file() {
-            return git_bash.to_string_lossy().into_owned();
-        }
-        "bash.exe".to_string()
-    }
-    #[cfg(not(target_os = "windows"))]
-    {
-        "/bin/sh".to_string()
-    }
 }
 
 #[cfg(feature = "tauri-runtime")]
@@ -2608,6 +2850,110 @@ mod tests {
             assert_eq!(phase.session_id, None);
             assert!(phase.substeps.iter().all(|step| step.status == "pending"));
         }
+    }
+
+    #[tokio::test]
+    async fn pi_rpc_settlement_advances_all_looper_phases_without_terminals() {
+        if Command::new("node")
+            .arg("--version")
+            .output()
+            .ok()
+            .filter(|output| output.status.success())
+            .is_none()
+        {
+            return;
+        }
+
+        let root = std::env::temp_dir().join(format!("arxell-looper-rpc-{}", now_ms()));
+        fs::create_dir_all(&root).unwrap();
+        let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests")
+            .join("fixtures")
+            .join("fake_pi_rpc.js");
+        let wrapper = root.join(if cfg!(target_os = "windows") {
+            "fake-pi.cmd"
+        } else {
+            "fake-pi.sh"
+        });
+        let script = if cfg!(target_os = "windows") {
+            format!("@node \"{}\" %*\r\n", fixture.display())
+        } else {
+            format!("#!/bin/sh\nexec node \"{}\" \"$@\"\n", fixture.display())
+        };
+        fs::write(&wrapper, script).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut permissions = fs::metadata(&wrapper).unwrap().permissions();
+            permissions.set_mode(0o700);
+            fs::set_permissions(&wrapper, permissions).unwrap();
+        }
+
+        let handler = sample_handler();
+        *handler.pi_executable_override.write().unwrap() = Some(wrapper);
+        let mut events = handler.hub.subscribe();
+        handler
+            .start(LooperStartRequest {
+                correlation_id: "rpc-loop-correlation".to_string(),
+                loop_id: "rpc-loop".to_string(),
+                iteration: 1,
+                loop_type: LooperLoopType::Build,
+                cwd: root.to_string_lossy().into_owned(),
+                task_path: "task.md".to_string(),
+                specs_glob: "specs/*.md".to_string(),
+                max_iterations: 1,
+                phase_models: None,
+                phase_prompts: None,
+                project_name: "RPC Test".to_string(),
+                project_type: "standalone-app".to_string(),
+                project_icon: String::new(),
+                project_description: "exercise headless phase transitions".to_string(),
+                review_before_execute: false,
+            })
+            .await
+            .unwrap();
+
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(10);
+        loop {
+            let failed = handler
+                .loops
+                .read()
+                .unwrap()
+                .get("rpc-loop")
+                .map(|loopy| loopy.status == LooperLoopStatus::Failed)
+                .unwrap_or(false);
+            if failed {
+                break;
+            }
+            assert!(
+                tokio::time::Instant::now() < deadline,
+                "Looper RPC run timed out"
+            );
+            tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+        }
+
+        let loops = handler.loops.read().unwrap();
+        let loopy = loops.get("rpc-loop").unwrap();
+        assert_eq!(loopy.active_phase.as_deref(), Some("critic"));
+        assert!(loopy
+            .phases
+            .values()
+            .all(|phase| phase.session_id.is_none()));
+        assert!(loopy
+            .phases
+            .values()
+            .all(|phase| phase.status == LooperPhaseStatus::Complete));
+        drop(loops);
+
+        let mut settled = 0;
+        let mut completed = 0;
+        while let Ok(event) = events.try_recv() {
+            settled += usize::from(event.action == "pi.agent.settled");
+            completed += usize::from(event.action == "looper.phase.complete");
+        }
+        assert_eq!(settled, 4);
+        assert_eq!(completed, 4);
+        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
