@@ -3,11 +3,13 @@
 use crate::app::tasks_service::{
     DurableNotificationRecord, DurableTaskRecord, DurableTaskRunRecord,
 };
+use crate::contracts::{LooperLoopType, LooperStartRequest};
 use crate::ipc::tauri_bridge::TauriBridgeState;
 use crate::tools::invoke::build_registry;
 use crate::tools::invoke::registry::{InvokeRegistry, ToolInvokeFuture};
 use serde::Deserialize;
 use serde_json::{json, Value};
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -262,7 +264,8 @@ fn emit_task_run_notification(
 ) -> Result<(), String> {
     let (title, tone) = match status {
         "succeeded" => (format!("Task complete: {}", task.name), "success"),
-        "blocked" => (format!("Task blocked: {}", task.name), "warning"),
+        "running" => (format!("Task started: {}", task.name), "info"),
+        "blocked" => (format!("Task blocked: {}", task.name), "warn"),
         _ => (format!("Task failed: {}", task.name), "error"),
     };
     let mut description = format!("{} run for task {}.", trigger_reason, task.id);
@@ -322,13 +325,7 @@ async fn execute_task_payload(
         );
     }
     match task.payload_kind.as_str() {
-        "agent_prompt" => (
-            "succeeded".to_string(),
-            "allow".to_string(),
-            "agent_prompt_placeholder".to_string(),
-            json!({ "note": "Agent prompt run recorded." }),
-            String::new(),
-        ),
+        "agent_prompt" => run_agent_prompt_payload(state, task, canonical_root).await,
         "tool_invoke" => run_tool_invoke_payload(state, task, canonical_root).await,
         "looper_run" => run_looper_payload(state, task, canonical_root).await,
         _ => (
@@ -338,6 +335,100 @@ async fn execute_task_payload(
             json!({}),
             format!("unsupported payload kind: {}", task.payload_kind),
         ),
+    }
+}
+
+async fn run_agent_prompt_payload(
+    state: &TauriBridgeState,
+    task: &DurableTaskRecord,
+    canonical_root: &Path,
+) -> (String, String, String, Value, String) {
+    let prompt = task
+        .payload_json
+        .get("prompt")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or(task.description.as_str());
+    if prompt.trim().is_empty() {
+        return (
+            "failed".to_string(),
+            "deny".to_string(),
+            "empty_agent_prompt".to_string(),
+            json!({}),
+            "agent prompt is empty".to_string(),
+        );
+    }
+
+    let request = build_agent_looper_request(task, canonical_root, prompt, now_ms());
+    let loop_id = request.loop_id.clone();
+    let correlation_id = request.correlation_id.clone();
+
+    match state.looper_handler.start(request).await {
+        Ok(response) => (
+            "running".to_string(),
+            "allow".to_string(),
+            "pi_looper_delegation".to_string(),
+            json!({
+                "loopId": response.loop_id,
+                "correlationId": response.correlation_id,
+                "status": response.status
+            }),
+            String::new(),
+        ),
+        Err(err) => (
+            "failed".to_string(),
+            "allow".to_string(),
+            "pi_looper_delegation".to_string(),
+            json!({ "loopId": loop_id, "correlationId": correlation_id }),
+            err,
+        ),
+    }
+}
+
+fn build_agent_looper_request(
+    task: &DurableTaskRecord,
+    canonical_root: &Path,
+    prompt: &str,
+    run_id: i64,
+) -> LooperStartRequest {
+    let mut phase_prompts = HashMap::new();
+    phase_prompts.insert(
+        "planner".to_string(),
+        format!(
+            "You are the Planner agent for an approved Arxell task. Work only within the approved project directory. Analyze the task below, inspect the project, and write a concrete implementation_plan.md. Do not write production code in this phase.\n\nTask type: {}\nTask name: {}\nTask request:\n{}",
+            task.task_type, task.name, prompt
+        ),
+    );
+    let phase_models = if task.agent_owner.trim().is_empty()
+        || task.agent_owner == "agent"
+        || task.agent_owner == "auto"
+    {
+        None
+    } else {
+        Some(
+            ["planner", "executor", "validator", "critic"]
+                .into_iter()
+                .map(|phase| (phase.to_string(), task.agent_owner.clone()))
+                .collect(),
+        )
+    };
+    LooperStartRequest {
+        correlation_id: format!("task-run-{}-{run_id}", task.id),
+        loop_id: format!("task-{}-{run_id}", task.id),
+        iteration: 1,
+        loop_type: LooperLoopType::Build,
+        cwd: canonical_root.to_string_lossy().to_string(),
+        task_path: "task.md".to_string(),
+        specs_glob: "specs/*.md".to_string(),
+        max_iterations: 3,
+        phase_models,
+        phase_prompts: Some(phase_prompts),
+        project_name: task.name.clone(),
+        project_type: "code".to_string(),
+        project_icon: "square-check-big".to_string(),
+        project_description: prompt.to_string(),
+        review_before_execute: false,
     }
 }
 
@@ -536,7 +627,9 @@ fn resolve_project_root(raw: &str) -> Result<PathBuf, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{now_ms, resolve_candidate_path, validate_files_payload_in_scope};
+    use super::{
+        build_agent_looper_request, now_ms, resolve_candidate_path, validate_files_payload_in_scope,
+    };
     use crate::app::tasks_service::DurableTaskRecord;
     use crate::app::AppContext;
     use serde_json::json;
@@ -585,6 +678,55 @@ mod tests {
         assert!(resolved.is_ok());
     }
 
+    #[test]
+    fn agent_prompt_builds_a_real_pi_looper_request() {
+        let root = std::env::current_dir()
+            .expect("cwd")
+            .canonicalize()
+            .expect("canonical cwd");
+        let task = DurableTaskRecord {
+            id: "T-AGENT-1".to_string(),
+            project_id: root.to_string_lossy().to_string(),
+            name: "Implement task execution".to_string(),
+            description: "Replace the placeholder".to_string(),
+            task_type: "code".to_string(),
+            agent_owner: "provider:model".to_string(),
+            state: "approved".to_string(),
+            risk_level: "low".to_string(),
+            payload_kind: "agent_prompt".to_string(),
+            payload_json: json!({ "prompt": "Implement the requested change" }),
+            estimate_json: json!({}),
+            scheduled_at_ms: None,
+            repeat: "none".to_string(),
+            repeat_time_of_day_ms: None,
+            repeat_timezone: "UTC".to_string(),
+            is_schedule_enabled: true,
+            next_run_at_ms: None,
+            created_at_ms: 0,
+            updated_at_ms: 0,
+        };
+
+        let request =
+            build_agent_looper_request(&task, root.as_path(), "Implement the requested change", 42);
+
+        assert_eq!(request.loop_id, "task-T-AGENT-1-42");
+        assert_eq!(request.cwd, root.to_string_lossy());
+        assert!(!request.review_before_execute);
+        assert!(request
+            .phase_prompts
+            .as_ref()
+            .and_then(|prompts| prompts.get("planner"))
+            .is_some_and(|prompt| prompt.contains("Implement the requested change")));
+        assert_eq!(
+            request
+                .phase_models
+                .as_ref()
+                .and_then(|models| models.get("executor"))
+                .map(String::as_str),
+            Some("provider:model")
+        );
+    }
+
     #[tokio::test]
     async fn scheduled_due_run_creates_run_and_notification() {
         let tmp = std::env::temp_dir().join(format!(
@@ -614,7 +756,7 @@ mod tests {
             agent_owner: "agent".to_string(),
             state: "approved".to_string(),
             risk_level: "low".to_string(),
-            payload_kind: "agent_prompt".to_string(),
+            payload_kind: "unsupported-test-payload".to_string(),
             payload_json: json!({}),
             estimate_json: json!({}),
             scheduled_at_ms: Some(now - 10_000),
