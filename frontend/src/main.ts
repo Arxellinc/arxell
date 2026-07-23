@@ -3346,7 +3346,12 @@ async function syncNotificationsFromBackend(): Promise<void> {
       id: String(row.id || ""),
       title: String(row.title || ""),
       description: String(row.description || ""),
-      tone: row.tone === "success" || row.tone === "warn" || row.tone === "error" ? row.tone : "info",
+      tone:
+        row.tone === "warning"
+          ? "warn"
+          : row.tone === "success" || row.tone === "warn" || row.tone === "error"
+            ? row.tone
+            : "info",
       read: row.read === true,
       actions: Array.isArray(row.actionsJson)
         ? row.actionsJson.map((item: any) => ({
