@@ -5,6 +5,7 @@ import {
   applySelectedTaskJson,
   createTask,
   getTasksForFolder,
+  resolveFrontendProjectId,
   toggleTaskDone,
   updateSelectedTaskField
 } from "../src/tools/tasks/actions.js";
@@ -72,6 +73,16 @@ test("toggle done moves approved task to complete", () => {
 
   toggleTaskDone(slice, id);
   assert.equal(slice.tasksById[id]?.state, "approved");
+});
+
+test("backend project roots migrate back to stable frontend project ids", () => {
+  const projects = {
+    pABC123: { rootPath: "/work/project-a" },
+    pDEF456: { rootPath: "/work/project-b" }
+  };
+  assert.equal(resolveFrontendProjectId(projects, "pABC123", "/stale"), "pABC123");
+  assert.equal(resolveFrontendProjectId(projects, "/work/project-b", "/work/project-b"), "pDEF456");
+  assert.equal(resolveFrontendProjectId(projects, "/unknown", "/unknown"), "");
 });
 
 test("json apply keeps allowed state/risk and cost normalization", () => {

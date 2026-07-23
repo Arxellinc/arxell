@@ -46,7 +46,18 @@ export function loadPersistedTasksById(): Record<string, TaskRecord> {
         archived: row.archived === true || (row as any).state === "complete" || (row as any).state === "rejected",
         starred: row.starred === true,
         agentOwner: typeof row.agentOwner === "string" ? row.agentOwner : "agent",
-        source: row.source === "user" ? "user" : "agent"
+        source: row.source === "agent" ? "agent" : "user",
+        scheduledAtMs: Number.isFinite(row.scheduledAtMs) ? Number(row.scheduledAtMs) : null,
+        repeat: normalizeRepeat(row.repeat),
+        repeatTimeOfDayMs: Number.isFinite(row.repeatTimeOfDayMs)
+          ? Number(row.repeatTimeOfDayMs)
+          : null,
+        repeatTimezone:
+          typeof row.repeatTimezone === "string" && row.repeatTimezone.trim()
+            ? row.repeatTimezone
+            : Intl.DateTimeFormat().resolvedOptions().timeZone,
+        isScheduleEnabled: row.isScheduleEnabled !== false,
+        nextRunAtMs: Number.isFinite(row.nextRunAtMs) ? Number(row.nextRunAtMs) : null
       };
     }
     return result;
@@ -337,6 +348,20 @@ export function getTasksForFolder(
   const direction = slice.tasksSortDirection === "asc" ? 1 : -1;
   rows.sort((a, b) => compareTasks(a, b, slice.tasksSortKey) * direction);
   return rows;
+}
+
+export function resolveFrontendProjectId(
+  projectsById: Record<string, { rootPath?: string }> | undefined,
+  projectId: string,
+  projectRoot: string
+): string {
+  if (!projectsById) return projectId;
+  if (projectId && projectsById[projectId]) return projectId;
+  const normalizedRoot = projectRoot.trim();
+  if (!normalizedRoot) return "";
+  return (
+    Object.entries(projectsById).find(([, project]) => project.rootPath === normalizedRoot)?.[0] ?? ""
+  );
 }
 
 export function getSelectedTask(slice: TasksRuntimeSlice): TaskRecord | null {
