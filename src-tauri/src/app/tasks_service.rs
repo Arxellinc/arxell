@@ -1,5 +1,5 @@
 use crate::app_paths;
-use chrono::{Datelike, Duration, TimeZone, Timelike, Utc};
+use chrono::{Datelike, Duration, LocalResult, NaiveDate, NaiveDateTime, NaiveTime, TimeZone, Utc};
 use chrono_tz::Tz;
 use rusqlite::{params, Connection, TransactionBehavior};
 use serde::{Deserialize, Serialize};
@@ -274,7 +274,7 @@ impl TaskAutomationService {
             normalized.repeat_timezone.as_str(),
             normalized.is_schedule_enabled,
             now,
-        );
+        )?;
         conn.execute(
             "INSERT INTO durable_tasks (id, project_id, name, description, task_type, agent_owner, state, risk_level, payload_kind, payload_json, estimate_json, scheduled_at_ms, repeat, repeat_time_of_day_ms, repeat_timezone, is_schedule_enabled, next_run_at_ms, created_at_ms, updated_at_ms, project_root, starred, source)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22)
@@ -463,7 +463,7 @@ impl TaskAutomationService {
                 task.repeat_timezone.as_str(),
                 task.is_schedule_enabled,
                 now_ms,
-            )
+            )?
         };
         let _guard = self
             .write_lock
@@ -759,72 +759,126 @@ fn compute_next_run_at_ms(
     repeat_timezone: &str,
     is_schedule_enabled: bool,
     now_ms: i64,
-) -> Option<i64> {
+) -> Result<Option<i64>, String> {
     if !is_schedule_enabled {
-        return None;
+        return Ok(None);
     }
-    let tz: Tz = repeat_timezone.parse().ok().unwrap_or(chrono_tz::UTC);
-    let anchor =
-        scheduled_at_ms.or(repeat_time_of_day_ms.map(|tod| now_ms - (now_ms % 86_400_000) + tod));
-    let Some(mut next) = anchor else {
-        return None;
+    if !matches!(
+        repeat,
+        "none" | "hourly" | "daily" | "weekly" | "monthly" | "yearly"
+    ) {
+        return Err(format!("invalid task recurrence: {repeat}"));
+    }
+    let tz: Tz = repeat_timezone
+        .parse()
+        .map_err(|_| format!("invalid task timezone: {repeat_timezone}"))?;
+    let now_utc = Utc
+        .timestamp_millis_opt(now_ms)
+        .single()
+        .ok_or_else(|| "invalid current task scheduler timestamp".to_string())?;
+    let anchor_ms = if let Some(value) = scheduled_at_ms {
+        value
+    } else if let Some(time_of_day_ms) = repeat_time_of_day_ms {
+        if !(0..86_400_000).contains(&time_of_day_ms) {
+            return Err("repeat time must be within a local calendar day".to_string());
+        }
+        let local_now = now_utc.with_timezone(&tz);
+        let seconds = (time_of_day_ms / 1000) as u32;
+        let nanos = ((time_of_day_ms % 1000) * 1_000_000) as u32;
+        let time = NaiveTime::from_num_seconds_from_midnight_opt(seconds, nanos)
+            .ok_or_else(|| "invalid repeat time".to_string())?;
+        resolve_local_datetime(&tz, local_now.date_naive().and_time(time))?
+            .with_timezone(&Utc)
+            .timestamp_millis()
+    } else {
+        return Ok(None);
     };
+
     if repeat == "none" {
-        return Some(next);
+        return Ok(Some(anchor_ms));
     }
     if repeat == "hourly" {
-        while next <= now_ms {
-            next += 3_600_000;
+        if anchor_ms > now_ms {
+            return Ok(Some(anchor_ms));
         }
-        return Some(next);
+        let elapsed = now_ms.saturating_sub(anchor_ms);
+        let intervals = elapsed / 3_600_000 + 1;
+        return Ok(anchor_ms.checked_add(intervals.saturating_mul(3_600_000)));
     }
 
-    let anchor_dt_utc = Utc.timestamp_millis_opt(anchor?).single()?;
-    let anchor_local = anchor_dt_utc.with_timezone(&tz);
-    let mut probe = Utc
-        .timestamp_millis_opt(now_ms)
-        .single()?
-        .with_timezone(&tz);
-    if probe <= anchor_local {
-        return Some(anchor_local.with_timezone(&Utc).timestamp_millis());
+    let anchor_utc = Utc
+        .timestamp_millis_opt(anchor_ms)
+        .single()
+        .ok_or_else(|| "invalid task schedule timestamp".to_string())?;
+    let anchor_local = anchor_utc.with_timezone(&tz);
+    if anchor_ms > now_ms {
+        return Ok(Some(anchor_ms));
     }
-    let hh = anchor_local.hour();
-    let mm = anchor_local.minute();
-    let ss = anchor_local.second();
-    let ns = anchor_local.nanosecond();
 
-    loop {
-        probe = match repeat {
-            "daily" => probe + Duration::days(1),
-            "weekly" => probe + Duration::weeks(1),
-            "monthly" => {
-                let mut y = probe.year();
-                let mut m = probe.month() as i32 + 1;
-                if m > 12 {
-                    m = 1;
-                    y += 1;
-                }
-                let d = anchor_local.day().min(days_in_month(y, m as u32));
-                tz.with_ymd_and_hms(y, m as u32, d, hh, mm, ss)
-                    .single()?
-                    .with_nanosecond(ns)?
-            }
-            "yearly" => {
-                let y = probe.year() + 1;
-                let m = anchor_local.month();
-                let d = anchor_local.day().min(days_in_month(y, m));
-                tz.with_ymd_and_hms(y, m, d, hh, mm, ss)
-                    .single()?
-                    .with_nanosecond(ns)?
-            }
-            _ => break,
-        };
-        let utc_ms = probe.with_timezone(&Utc).timestamp_millis();
-        if utc_ms > now_ms {
-            return Some(utc_ms);
+    for occurrence in 1..=200_000_i64 {
+        let date = recurrence_date(anchor_local.date_naive(), repeat, occurrence)?;
+        let local = resolve_local_datetime(&tz, date.and_time(anchor_local.time()))?;
+        let candidate = local.with_timezone(&Utc).timestamp_millis();
+        if candidate > now_ms {
+            return Ok(Some(candidate));
         }
     }
-    Some(next)
+    Err("task recurrence exceeds supported search range".to_string())
+}
+
+fn recurrence_date(anchor: NaiveDate, repeat: &str, occurrence: i64) -> Result<NaiveDate, String> {
+    match repeat {
+        "daily" => anchor
+            .checked_add_signed(Duration::days(occurrence))
+            .ok_or_else(|| "daily task recurrence is out of range".to_string()),
+        "weekly" => anchor
+            .checked_add_signed(Duration::weeks(occurrence))
+            .ok_or_else(|| "weekly task recurrence is out of range".to_string()),
+        "monthly" => {
+            let month_index =
+                i64::from(anchor.year()) * 12 + i64::from(anchor.month0()) + occurrence;
+            let year = i32::try_from(month_index.div_euclid(12))
+                .map_err(|_| "monthly task recurrence year is out of range".to_string())?;
+            let month = u32::try_from(month_index.rem_euclid(12) + 1)
+                .map_err(|_| "monthly task recurrence month is out of range".to_string())?;
+            let day = anchor.day().min(days_in_month(year, month));
+            NaiveDate::from_ymd_opt(year, month, day)
+                .ok_or_else(|| "invalid monthly task recurrence date".to_string())
+        }
+        "yearly" => {
+            let year =
+                anchor
+                    .year()
+                    .checked_add(i32::try_from(occurrence).map_err(|_| {
+                        "yearly task recurrence interval is out of range".to_string()
+                    })?)
+                    .ok_or_else(|| "yearly task recurrence year is out of range".to_string())?;
+            let day = anchor.day().min(days_in_month(year, anchor.month()));
+            NaiveDate::from_ymd_opt(year, anchor.month(), day)
+                .ok_or_else(|| "invalid yearly task recurrence date".to_string())
+        }
+        _ => Err(format!("invalid calendar recurrence: {repeat}")),
+    }
+}
+
+fn resolve_local_datetime(tz: &Tz, naive: NaiveDateTime) -> Result<chrono::DateTime<Tz>, String> {
+    for minute_offset in 0..=180 {
+        let candidate = naive
+            .checked_add_signed(Duration::minutes(minute_offset))
+            .ok_or_else(|| "task local schedule is out of range".to_string())?;
+        match tz.from_local_datetime(&candidate) {
+            LocalResult::Single(value) => return Ok(value),
+            LocalResult::Ambiguous(first, second) => {
+                return Ok(if first.timestamp_millis() <= second.timestamp_millis() {
+                    first
+                } else {
+                    second
+                });
+            }
+            LocalResult::None => continue,
+        }
+    }
+    Err("task local schedule falls outside a resolvable timezone window".to_string())
 }
 
 fn days_in_month(year: i32, month: u32) -> u32 {
@@ -845,7 +899,8 @@ fn days_in_month(year: i32, month: u32) -> u32 {
 
 #[cfg(test)]
 mod tests {
-    use super::{DurableTaskRecord, TaskAutomationService};
+    use super::{compute_next_run_at_ms, DurableTaskRecord, TaskAutomationService};
+    use chrono::{TimeZone, Utc};
     use serde_json::json;
     use std::fs;
     use std::path::PathBuf;
@@ -887,6 +942,121 @@ mod tests {
             created_at_ms: 0,
             updated_at_ms: 0,
         }
+    }
+
+    #[test]
+    fn daily_and_weekly_recurrence_preserve_anchor_time() {
+        let anchor = Utc
+            .with_ymd_and_hms(2024, 1, 1, 9, 30, 0)
+            .single()
+            .expect("anchor")
+            .timestamp_millis();
+        let now = Utc
+            .with_ymd_and_hms(2024, 1, 2, 12, 0, 0)
+            .single()
+            .expect("now")
+            .timestamp_millis();
+
+        let daily = compute_next_run_at_ms(Some(anchor), "daily", None, "UTC", true, now)
+            .expect("daily")
+            .expect("next daily");
+        let weekly = compute_next_run_at_ms(Some(anchor), "weekly", None, "UTC", true, now)
+            .expect("weekly")
+            .expect("next weekly");
+
+        assert_eq!(
+            daily,
+            Utc.with_ymd_and_hms(2024, 1, 3, 9, 30, 0)
+                .single()
+                .expect("daily expected")
+                .timestamp_millis()
+        );
+        assert_eq!(
+            weekly,
+            Utc.with_ymd_and_hms(2024, 1, 8, 9, 30, 0)
+                .single()
+                .expect("weekly expected")
+                .timestamp_millis()
+        );
+    }
+
+    #[test]
+    fn monthly_and_yearly_recurrence_clamp_calendar_days() {
+        let monthly_anchor = Utc
+            .with_ymd_and_hms(2024, 1, 31, 9, 0, 0)
+            .single()
+            .expect("monthly anchor")
+            .timestamp_millis();
+        let monthly_now = Utc
+            .with_ymd_and_hms(2024, 2, 1, 0, 0, 0)
+            .single()
+            .expect("monthly now")
+            .timestamp_millis();
+        let monthly = compute_next_run_at_ms(
+            Some(monthly_anchor),
+            "monthly",
+            None,
+            "UTC",
+            true,
+            monthly_now,
+        )
+        .expect("monthly")
+        .expect("next monthly");
+        assert_eq!(
+            monthly,
+            Utc.with_ymd_and_hms(2024, 2, 29, 9, 0, 0)
+                .single()
+                .expect("monthly expected")
+                .timestamp_millis()
+        );
+
+        let yearly_now = Utc
+            .with_ymd_and_hms(2024, 3, 1, 0, 0, 0)
+            .single()
+            .expect("yearly now")
+            .timestamp_millis();
+        let yearly = compute_next_run_at_ms(Some(monthly), "yearly", None, "UTC", true, yearly_now)
+            .expect("yearly")
+            .expect("next yearly");
+        assert_eq!(
+            yearly,
+            Utc.with_ymd_and_hms(2025, 2, 28, 9, 0, 0)
+                .single()
+                .expect("yearly expected")
+                .timestamp_millis()
+        );
+    }
+
+    #[test]
+    fn time_of_day_recurrence_uses_the_selected_timezone() {
+        let now = Utc
+            .with_ymd_and_hms(2024, 1, 1, 15, 0, 0)
+            .single()
+            .expect("now")
+            .timestamp_millis();
+        let next = compute_next_run_at_ms(
+            None,
+            "daily",
+            Some(9 * 60 * 60 * 1000),
+            "America/New_York",
+            true,
+            now,
+        )
+        .expect("daily")
+        .expect("next");
+        assert_eq!(
+            next,
+            Utc.with_ymd_and_hms(2024, 1, 2, 14, 0, 0)
+                .single()
+                .expect("expected")
+                .timestamp_millis()
+        );
+    }
+
+    #[test]
+    fn invalid_scheduler_timezone_is_rejected() {
+        let result = compute_next_run_at_ms(None, "daily", Some(0), "Mars/Olympus", true, 0);
+        assert!(result.is_err());
     }
 
     #[test]
