@@ -177,6 +177,9 @@ async fn run_task_now(state: &TauriBridgeState, payload: Value) -> Result<Value,
     }
     let canonical_root = resolve_task_project_root(&task)?;
     let now = now_ms();
+    if !state.tasks.claim_task_for_run(req.task_id.as_str(), now)? {
+        return Err("task is already running".to_string());
+    }
     let (status, policy_decision, policy_reason, result_json, error) =
         execute_task_payload(state, &task, canonical_root.as_path()).await;
     let task_id = req.task_id.clone();
@@ -193,7 +196,13 @@ async fn run_task_now(state: &TauriBridgeState, payload: Value) -> Result<Value,
         started_at_ms: Some(now),
         completed_at_ms: Some(now),
     };
-    let appended = state.tasks.append_run(run)?;
+    let appended = match state.tasks.append_run(run) {
+        Ok(run) => run,
+        Err(err) => {
+            let _ = state.tasks.release_task_claim(req.task_id.as_str());
+            return Err(err);
+        }
+    };
     let _ = emit_task_run_notification(
         state,
         &task,
@@ -211,7 +220,7 @@ pub async fn run_due_scheduled_tasks(
     limit: usize,
 ) -> Result<usize, String> {
     let now = now_ms();
-    let due = state.tasks.list_due_scheduled_tasks(now, limit)?;
+    let due = state.tasks.claim_due_scheduled_tasks(now, limit)?;
     if due.is_empty() {
         return Ok(0);
     }

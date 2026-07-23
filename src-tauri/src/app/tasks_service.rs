@@ -1,7 +1,7 @@
 use crate::app_paths;
 use chrono::{Datelike, Duration, TimeZone, Timelike, Utc};
 use chrono_tz::Tz;
-use rusqlite::{params, Connection};
+use rusqlite::{params, Connection, TransactionBehavior};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::fs;
@@ -68,6 +68,8 @@ pub struct DurableNotificationRecord {
     pub updated_at_ms: i64,
 }
 
+const TASK_CLAIM_LEASE_MS: i64 = 30 * 60 * 1000;
+
 pub struct TaskAutomationService {
     path: PathBuf,
     write_lock: Mutex<()>,
@@ -104,6 +106,7 @@ impl TaskAutomationService {
                 repeat_timezone TEXT NOT NULL DEFAULT 'UTC',
                 is_schedule_enabled INTEGER NOT NULL DEFAULT 1,
                 next_run_at_ms INTEGER,
+                schedule_claimed_at_ms INTEGER,
                 created_at_ms INTEGER NOT NULL,
                 updated_at_ms INTEGER NOT NULL
             );
@@ -177,6 +180,7 @@ impl TaskAutomationService {
             "INTEGER NOT NULL DEFAULT 1",
         )?;
         ensure_column(&conn, "durable_tasks", "next_run_at_ms", "INTEGER")?;
+        ensure_column(&conn, "durable_tasks", "schedule_claimed_at_ms", "INTEGER")?;
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_durable_tasks_next_run ON durable_tasks(next_run_at_ms)",
             [],
@@ -340,19 +344,109 @@ impl TaskAutomationService {
                 "SELECT id, project_id, name, description, task_type, agent_owner, state, risk_level, payload_kind, payload_json, estimate_json, scheduled_at_ms, repeat, repeat_time_of_day_ms, repeat_timezone, is_schedule_enabled, next_run_at_ms, created_at_ms, updated_at_ms
 , project_root, starred, source
                  FROM durable_tasks
-                 WHERE state = 'approved' AND is_schedule_enabled = 1 AND next_run_at_ms IS NOT NULL AND next_run_at_ms <= ?1
+                 WHERE state = 'approved'
+                   AND is_schedule_enabled = 1
+                   AND next_run_at_ms IS NOT NULL
+                   AND next_run_at_ms <= ?1
+                   AND (schedule_claimed_at_ms IS NULL OR schedule_claimed_at_ms <= ?1 - ?3)
                  ORDER BY next_run_at_ms ASC
                  LIMIT ?2",
             )
             .map_err(|e| format!("failed preparing due tasks query: {e}"))?;
         let rows = stmt
-            .query_map(params![now_ms, limit as i64], row_to_task)
+            .query_map(
+                params![now_ms, limit as i64, TASK_CLAIM_LEASE_MS],
+                row_to_task,
+            )
             .map_err(|e| format!("failed querying due tasks: {e}"))?;
         let mut out = Vec::new();
         for row in rows {
             out.push(row.map_err(|e| format!("failed reading due task row: {e}"))?);
         }
         Ok(out)
+    }
+
+    pub fn claim_due_scheduled_tasks(
+        &self,
+        now_ms: i64,
+        limit: usize,
+    ) -> Result<Vec<DurableTaskRecord>, String> {
+        let _guard = self
+            .write_lock
+            .lock()
+            .map_err(|_| "tasks write lock poisoned".to_string())?;
+        let mut conn = self.open_connection()?;
+        let tx = conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(|e| format!("failed starting task claim transaction: {e}"))?;
+        let claimed = {
+            let mut stmt = tx
+                .prepare(
+                    "SELECT id, project_id, name, description, task_type, agent_owner, state, risk_level, payload_kind, payload_json, estimate_json, scheduled_at_ms, repeat, repeat_time_of_day_ms, repeat_timezone, is_schedule_enabled, next_run_at_ms, created_at_ms, updated_at_ms, project_root, starred, source
+                     FROM durable_tasks
+                     WHERE state = 'approved'
+                       AND is_schedule_enabled = 1
+                       AND next_run_at_ms IS NOT NULL
+                       AND next_run_at_ms <= ?1
+                       AND (schedule_claimed_at_ms IS NULL OR schedule_claimed_at_ms <= ?1 - ?3)
+                     ORDER BY next_run_at_ms ASC
+                     LIMIT ?2",
+                )
+                .map_err(|e| format!("failed preparing task claim query: {e}"))?;
+            let rows = stmt
+                .query_map(
+                    params![now_ms, limit as i64, TASK_CLAIM_LEASE_MS],
+                    row_to_task,
+                )
+                .map_err(|e| format!("failed querying claimable tasks: {e}"))?;
+            let mut tasks = Vec::new();
+            for row in rows {
+                tasks.push(row.map_err(|e| format!("failed reading claimable task: {e}"))?);
+            }
+            tasks
+        };
+        for task in &claimed {
+            tx.execute(
+                "UPDATE durable_tasks SET schedule_claimed_at_ms = ?2 WHERE id = ?1",
+                params![task.id, now_ms],
+            )
+            .map_err(|e| format!("failed claiming scheduled task: {e}"))?;
+        }
+        tx.commit()
+            .map_err(|e| format!("failed committing task claims: {e}"))?;
+        Ok(claimed)
+    }
+
+    pub fn claim_task_for_run(&self, task_id: &str, now_ms: i64) -> Result<bool, String> {
+        let _guard = self
+            .write_lock
+            .lock()
+            .map_err(|_| "tasks write lock poisoned".to_string())?;
+        let conn = self.open_connection()?;
+        let changed = conn
+            .execute(
+                "UPDATE durable_tasks
+                 SET schedule_claimed_at_ms = ?2
+                 WHERE id = ?1
+                   AND (schedule_claimed_at_ms IS NULL OR schedule_claimed_at_ms <= ?2 - ?3)",
+                params![task_id, now_ms, TASK_CLAIM_LEASE_MS],
+            )
+            .map_err(|e| format!("failed claiming task run: {e}"))?;
+        Ok(changed == 1)
+    }
+
+    pub fn release_task_claim(&self, task_id: &str) -> Result<(), String> {
+        let _guard = self
+            .write_lock
+            .lock()
+            .map_err(|_| "tasks write lock poisoned".to_string())?;
+        let conn = self.open_connection()?;
+        conn.execute(
+            "UPDATE durable_tasks SET schedule_claimed_at_ms = NULL WHERE id = ?1",
+            params![task_id],
+        )
+        .map_err(|e| format!("failed releasing task claim: {e}"))?;
+        Ok(())
     }
 
     pub fn advance_next_run_at(&self, task_id: &str, now_ms: i64) -> Result<(), String> {
@@ -377,7 +471,7 @@ impl TaskAutomationService {
             .map_err(|_| "tasks write lock poisoned".to_string())?;
         let conn = self.open_connection()?;
         conn.execute(
-            "UPDATE durable_tasks SET next_run_at_ms = ?2, updated_at_ms = ?3 WHERE id = ?1",
+            "UPDATE durable_tasks SET next_run_at_ms = ?2, schedule_claimed_at_ms = NULL, updated_at_ms = ?3 WHERE id = ?1",
             params![task_id, next, now_ms],
         )
         .map_err(|e| format!("failed updating next run: {e}"))?;
@@ -853,6 +947,35 @@ mod tests {
         let saved = service.upsert_task(task).expect("upsert");
         let due = service.list_due_scheduled_tasks(now, 10).expect("due");
         assert!(due.iter().any(|row| row.id == saved.id));
+        let _ = fs::remove_file(db);
+    }
+
+    #[test]
+    fn due_tasks_are_leased_to_only_one_scheduler() {
+        let db = temp_db_path();
+        let service = TaskAutomationService::new(db.clone()).expect("service");
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as i64)
+            .unwrap_or(0);
+        let mut task = base_task("approved", "low");
+        task.scheduled_at_ms = Some(now - 60_000);
+        let saved = service.upsert_task(task).expect("upsert");
+
+        let first = service
+            .claim_due_scheduled_tasks(now, 10)
+            .expect("first claim");
+        let second = service
+            .claim_due_scheduled_tasks(now, 10)
+            .expect("second claim");
+
+        assert_eq!(first.iter().filter(|row| row.id == saved.id).count(), 1);
+        assert!(second.iter().all(|row| row.id != saved.id));
+        service
+            .release_task_claim(saved.id.as_str())
+            .expect("release claim");
+        let reclaimed = service.claim_due_scheduled_tasks(now, 10).expect("reclaim");
+        assert!(reclaimed.iter().any(|row| row.id == saved.id));
         let _ = fs::remove_file(db);
     }
 
