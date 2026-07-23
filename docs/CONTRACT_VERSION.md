@@ -32,6 +32,7 @@ This version pins the shared contracts between the TypeScript frontend (`fronten
 - command: `cmd_tool_invoke` → `ToolInvokeRequest` / `ToolInvokeResponse`
 - command: `cmd_custom_tool_capability_invoke` → `CustomToolCapabilityInvokeRequest` / `CustomToolCapabilityInvokeResponse`
 - command: `cmd_plugin_capability_invoke` → `PluginCapabilityInvokeRequest` / `PluginCapabilityInvokeResponse`
+- Tasks `upsert` payloads keep stable `projectId` separate from canonical `projectRoot` and persist `starred` and `source`; these additive fields are backward-compatible within `foundation-v7`.
 
 ### API Connections
 - command: `cmd_api_connections_list` → `ApiConnectionsListRequest` / `ApiConnectionsListResponse`

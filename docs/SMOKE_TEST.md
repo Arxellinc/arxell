@@ -116,6 +116,20 @@ See `PI_CODING_HARNESS.md` for installation and supported versions.
 
 Automated fixtures cover RPC framing, settlement, malformed output, crashes, timeout/cancellation, policy denial, approvals, process cleanup, and the full four-phase loop. Credentialed model calls and interactive platform behavior remain release smoke tests.
 
+## Tasks And Scheduler
+
+1. Create a low-risk task and verify it remains in Drafts after Save as Draft and app restart.
+2. Select a project, star the task, restart, and confirm project identity and priority survive backend synchronization.
+3. Use Save & Run and verify a real Pi-backed Looper record is created; a missing/incompatible Pi runtime must produce a visible task error rather than a successful run.
+4. Schedule a one-time task in the near future, allow it to run, and verify it does not run again on later 15-second scheduler ticks.
+5. Start “Run due now” near a background scheduler tick and verify only one run record is created for the occurrence.
+6. Check daily/weekly local-time recurrence and a DST transition in the selected timezone.
+7. Enter an invalid timezone and confirm the save fails visibly.
+8. Open a task notification from the Notifications tab and verify the correct folder/task opens and the notification is marked read.
+9. Simulate a backend failure for save, run, delete, and run-history load; verify the UI does not claim success or discard the local task.
+
+See `Cron-Tasks.md` for lifecycle, execution, scheduling, overlap, and notification semantics.
+
 ## Model Manager
 
 1. List installed models (`cmd_model_manager_list_installed`).

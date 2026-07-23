@@ -1,238 +1,104 @@
-# Cron Tasks Implementation Summary
+# Tasks And Scheduler
 
-This document summarizes all work completed in this session related to notifications, task scheduling UI, and backend scheduled-task execution.
+## Overview
 
-## 1) Notifications (UI + Task Tool + Backend Durability)
+The Tasks workspace tool stores durable task definitions, run history, schedules, and notifications in SQLite. User-created tasks remain drafts until explicitly approved. Approved low-risk agent tasks delegate to the Pi-backed Looper instead of being recorded as successful no-ops.
 
-### In-app notification UI
-- Implemented compact stacked toast notifications on the right side of the app (bottom-right overlay).
-- Style implemented as requested:
-  - small cards
-  - gray background
-  - 3px colored left border
-  - close button in top-right
-- Added auto-timeout behavior for active toast visibility.
+Primary implementation:
 
-Files:
-- `frontend/src/styles.css`
-- `frontend/src/app/render.ts`
-- `frontend/src/main.ts`
+- Frontend: `frontend/src/tools/tasks/`
+- Durable service: `src-tauri/src/app/tasks_service.rs`
+- Tool-invoke and execution policy: `src-tauri/src/tools/invoke/tasks.rs`
+- Scheduler loop: `src-tauri/src/main.rs`
 
-### Notification history tab in Tasks tool
-- Added `Notifications` tab in Tasks tool toolbar.
-- Added notification list rendering sorted by most recent.
-- Added row rendering with title, description, timestamp, and optional short actions.
+## Task Lifecycle
 
-Files:
-- `frontend/src/tools/tasks/state.ts`
-- `frontend/src/tools/tasks/index.tsx`
-- `frontend/src/tools/tasks/styles.css`
-- `frontend/src/tools/host/viewBuilder.ts`
-- `frontend/src/app/state.ts`
-- `frontend/src/main.ts`
+Supported states:
 
-### Notification actions
-- Added support for short action buttons in toast cards.
-- Implemented `open-task:<taskId>` action to switch to Tasks tool and select the task.
+- `draft`: editable and not runnable.
+- `approved`: explicitly approved and eligible to run.
+- `complete`: completed/archived.
+- `rejected`: rejected/archived.
 
-Files:
-- `frontend/src/main.ts`
-- `frontend/src/tools/tasks/bindings.ts`
+`Save as Draft` always stores `draft`. `Save & Run` is the explicit approval path for a user task. Backend upserts preserve the requested state and never silently promote low-risk drafts.
 
-### System notification attempt + fallback
-- Added system Notification API attempt where available.
-- In-app toasts remain primary visible fallback.
+Stable project identity and execution scope are separate fields:
 
-File:
-- `frontend/src/main.ts`
+- `projectId`: frontend project identifier.
+- `projectRoot`: canonical execution root.
 
-### Chime sound support
-- Added notification chime playback.
-- Integrated Tauri-safe URL conversion path for local file playback (`convertFileSrc` when available).
-- Chime file used:
-  - `/home/user/Projects/arxell/src-tauri/resources/sounds/default-chime.wav`
+The backend also persists priority (`starred`), source (`user` or `agent`), schedule fields, and safe run metadata. Legacy records that stored a root in `projectId` are matched back to a frontend project by root during synchronization.
 
-File:
-- `frontend/src/main.ts`
+## Execution
 
-### Settings toggles for sounds
-- Added `Sounds` section in Settings panel with two default-on checkboxes:
-  - Enable Notification chime (functional)
-  - Enable Chat Question Chime (stored, reserved for future behavior)
-- Added localStorage persistence for both toggles.
+Tasks currently support these durable payload kinds:
 
-Files:
-- `frontend/src/panels/settingsPanel.ts`
-- `frontend/src/panels/index.ts`
-- `frontend/src/panels/types.ts`
-- `frontend/src/main.ts`
+- `agent_prompt`: delegates an approved task to a real Planner → Executor → Validator → Critic Looper run backed by Pi RPC. The selected task model is applied to all phases when present.
+- `tool_invoke`: invokes a registered tool action after task policy and project-scope checks.
+- `looper_run`: starts an explicitly supplied Looper request after validating its working directory.
 
-### Backend durable notification store + APIs
-- Added durable notifications table to SQLite tasks DB.
-- Added backend methods for notification CRUD-like operations:
-  - list
-  - upsert
-  - mark-read
-  - dismiss
-- Added invoke endpoints on `tasks` tool:
-  - `notifications-list`
-  - `notifications-upsert`
-  - `notifications-mark-read`
-  - `notifications-dismiss`
+Automated execution remains fail-closed for non-low-risk tasks. Agent prompts run with `reviewBeforeExecute: false` because scheduled execution cannot answer an interactive planning blocker.
 
-Files:
-- `src-tauri/src/app/tasks_service.rs`
-- `src-tauri/src/tools/invoke/tasks.rs`
+Run records distinguish running, succeeded, blocked, and failed outcomes. Frontend actions inspect `ToolInvokeResponse.ok`; failed saves, runs, deletes, scheduler calls, and run-history loads are surfaced instead of being reported as successful.
 
-### Frontend/backend notification sync
-- Added frontend syncing from backend notifications on bootstrap and Tasks tool activation.
-- Added backend upsert on new notifications.
-- Added backend mark-read and dismiss wiring from UI interactions.
-- Updated close button behavior from mark-read to hard dismiss.
+## Scheduling
 
-Files:
-- `frontend/src/main.ts`
+Schedule fields:
 
-### Shared notification helper
-- Added shared helper for canonical notification record creation to reduce duplicate shaping logic.
+- `scheduledAtMs`
+- `repeat`: `none`, `hourly`, `daily`, `weekly`, `monthly`, or `yearly`
+- `repeatTimeOfDayMs`
+- `repeatTimezone`
+- `isScheduleEnabled`
+- `nextRunAtMs`
 
-File:
-- `frontend/src/notifications.ts`
+The Tauri runtime checks for due work every 15 seconds. Due tasks must be approved, enabled, and at or before `nextRunAtMs`.
 
+### Correctness and overlap policy
 
-## 2) Minimal Scheduling UI in Tasks Tool
+- One-time schedules clear `nextRunAtMs` after their first execution.
+- Due tasks are claimed atomically in an immediate SQLite transaction.
+- Claims use an expiring lease so another scheduler cannot execute the same occurrence concurrently and crashed processes can recover.
+- Daily and weekly recurrences preserve the original local time and weekday.
+- Monthly and yearly recurrences clamp invalid calendar days, such as February after a day-31 anchor.
+- Time-of-day schedules are constructed in the selected IANA timezone, not from UTC midnight.
+- DST gaps advance to the first valid local minute; ambiguous times choose the earlier occurrence.
+- Invalid timezones, recurrence values, and time-of-day values are rejected.
 
-Implemented minimal schedule fields and controls aligned with MVP direction.
+The Notifications tab exposes scheduler status and a manual “Run due now” control. Both use the same atomic claim path.
 
-### Task model fields added (frontend)
-- `scheduledAtMs?: number | null`
-- `repeat?: "none" | "hourly" | "daily" | "weekly" | "monthly" | "yearly"`
-- `repeatTimeOfDayMs?: number | null`
-- `repeatTimezone?: string`
-- `isScheduleEnabled?: boolean`
-- `nextRunAtMs?: number | null`
+## Notifications
 
-File:
-- `frontend/src/tools/tasks/state.ts`
+Task run notifications are durable. The frontend:
 
-### Task details UI controls added
-- `Scheduled` datetime-local input
-- `Repeat` dropdown
-- `Repeat Time` input
-- `Timezone` input
-- read-only `Next run` display
+- renders unread notifications as in-app toasts;
+- stores notification history in the Tasks tool;
+- supports URL actions and task-opening actions;
+- marks task-opening actions read in the backend;
+- normalizes legacy `warning` tones to `warn`;
+- optionally plays the configured notification chime.
 
-File:
-- `frontend/src/tools/tasks/index.tsx`
+Notification actions that open a task select the correct Tasks folder (`Drafts`, `Tasks List`, or `Archive`) for the task state.
 
-### Frontend field handling + normalization
-- Added schedule-related update handling in task actions/bindings.
-- Added parsing/normalization for:
-  - datetime-local -> `scheduledAtMs`
-  - `HH:mm` -> `repeatTimeOfDayMs`
-  - repeat enum
-  - timezone text
+## Verification
 
-Files:
-- `frontend/src/tools/tasks/actions.ts`
-- `frontend/src/tools/tasks/bindings.ts`
+Relevant automated coverage includes:
 
+- explicit draft preservation;
+- project identity, root, priority, and source round trips;
+- one-time schedule completion;
+- atomic scheduler leases;
+- daily, weekly, monthly, yearly, timezone, and invalid-timezone recurrence;
+- project-boundary validation;
+- real Pi/Looper request construction for agent prompts;
+- scheduled run and durable notification creation;
+- frontend folder/state normalization and failed-response handling.
 
-## 3) Backend Scheduling Persistence + Execution
+Run:
 
-### Durable task schema extended (SQLite)
-Added task scheduling columns:
-- `scheduled_at_ms`
-- `repeat`
-- `repeat_time_of_day_ms`
-- `repeat_timezone`
-- `is_schedule_enabled`
-- `next_run_at_ms`
-
-Added index:
-- `idx_durable_tasks_next_run` on `next_run_at_ms`
-
-File:
-- `src-tauri/src/app/tasks_service.rs`
-
-### Backend list/upsert/get mapping updated
-- SQL and row mapping updated so schedule fields persist and round-trip.
-
-File:
-- `src-tauri/src/app/tasks_service.rs`
-
-### Next-run computation
-- Added backend computation for `next_run_at_ms` during upsert and advancement.
-- Added timezone-aware recurrence implementation using:
-  - `chrono`
-  - `chrono-tz`
-- Recurrence computed with local calendar semantics from anchor for:
-  - daily
-  - weekly
-  - monthly
-  - yearly
-
-Files:
-- `src-tauri/Cargo.toml`
-- `src-tauri/src/app/tasks_service.rs`
-
-### Due scheduled task query helper
-- Added indexed due-task query helper:
-  - approved tasks
-  - schedule enabled
-  - `next_run_at_ms <= now`
-  - ordered by `next_run_at_ms`
-
-File:
-- `src-tauri/src/app/tasks_service.rs`
-
-### Scheduled execution path
-- Added scheduled execution helper in tasks invoke module:
-  - fetch due tasks
-  - execute through existing task payload execution path
-  - append run record (`trigger_reason = "scheduled"`)
-  - advance `next_run_at_ms`
-
-File:
-- `src-tauri/src/tools/invoke/tasks.rs`
-
-### Scheduler tick loop (runtime)
-- Added 15-second background scheduler loop during Tauri setup.
-- Each tick runs scheduled due-task execution helper.
-
-Files:
-- `src-tauri/src/main.rs`
-- `src-tauri/src/ipc/tauri_bridge.rs` (derive `Clone` for state capture)
-
-### Manual run integration
-- Manual `run-now` path now also advances `next_run_at_ms` after run append.
-
-File:
-- `src-tauri/src/tools/invoke/tasks.rs`
-
-
-## 4) Build/Validation Performed
-
-- Frontend build repeatedly validated with:
-  - `cd frontend && npm run build`
-- Rust backend validated with:
-  - `cd src-tauri && cargo check --features tauri-runtime`
-
-All checks passed at end of session (warnings present, no blocking errors).
-
-
-## 5) Current MVP Status
-
-Implemented:
-- Notification UX + history + backend durability + actions
-- Chime and settings toggles
-- Minimal task scheduling UI
-- Backend schedule persistence
-- Timezone-aware recurrence compute
-- Due task querying and active scheduler loop execution
-
-Potential follow-ups (not required for this summary):
-- Add scheduler diagnostics endpoint/status panel
-- Add explicit overlap policy field/UI (currently behavior is effectively skip)
-- Add richer schedule validation and edge-case tests
-- Add recurring calendar test suite around DST boundaries
+```bash
+cd frontend && npm run lint && npm test && npm run build
+cd ../src-tauri && cargo check && cargo check --features tauri-runtime
+cargo test --lib
+cargo test --lib --features tauri-runtime tasks
+```

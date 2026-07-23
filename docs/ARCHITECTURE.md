@@ -63,6 +63,9 @@ Local model lifecycle: list installed GGUF models, search HuggingFace, download,
 ### LLaMA Runtime Service (`src-tauri/src/app/runtime_service.rs`)
 Local inference runtime management: engine discovery, installation, start/stop with configurable parameters (context size, GPU layers, sampling).
 
+### Tasks Service (`src-tauri/src/app/tasks_service.rs`)
+Durable SQLite task, run-history, schedule, scheduler-lease, and notification storage. The service preserves explicit draft/approval state, separates stable project identity from canonical execution roots, computes timezone-aware calendar recurrence, clears one-time schedules after execution, and atomically leases due occurrences to prevent duplicate scheduler execution. `src-tauri/src/tools/invoke/tasks.rs` owns execution policy and delegates approved low-risk agent prompts to Pi-backed Looper runs.
+
 ### API Registry Service (`src-tauri/src/api_registry.rs`)
 API connection CRUD: create, probe, verify, update, delete, import/export. Stores connection metadata in app data and stores raw API keys through the secret storage abstraction. Portable exports omit credentials; imported connections without credentials require key re-entry and verification.
 
