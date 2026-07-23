@@ -30,7 +30,7 @@ export function renderTasksToolActions(view: TasksToolViewState): string {
       {
         id: "inbox",
         label: "Tasks List",
-        active: !inArchive && !inDrafts,
+        active: !inArchive && !inDrafts && !inNotifications,
         buttonAttrs: {
           [TASKS_DATA_ATTR.action]: "set-folder",
           [TASKS_DATA_ATTR.folder]: "inbox"
@@ -201,7 +201,11 @@ export function renderTasksToolBody(view: TasksToolViewState): string {
 
 function renderNotificationRow(row: TaskNotificationRecord): string {
   const actions = row.actions
-    .map((action) => action.href ? `<a class="tasks-notification-link" href="${escapeAttr(action.href)}" target="_blank" rel="noopener noreferrer">${escapeHtml(action.label)}</a>` : `<span class="tasks-notification-link">${escapeHtml(action.label)}</span>`)
+    .map((action) =>
+      action.href
+        ? `<a class="tasks-notification-link" href="${escapeAttr(action.href)}" target="_blank" rel="noopener noreferrer">${escapeHtml(action.label)}</a>`
+        : `<button type="button" class="tasks-notification-link tasks-notification-action" ${TASKS_DATA_ATTR.action}="run-notification-action" ${TASKS_DATA_ATTR.value}="${escapeAttr(action.id)}" data-notification-id="${escapeAttr(row.id)}">${escapeHtml(action.label)}</button>`
+    )
     .join("");
   return `<div class="tasks-notification-row ${row.read ? "" : "is-unread"}">
     <div class="tasks-notification-time tasks-mono">${escapeHtml(formatDate(row.createdAtMs))}</div>

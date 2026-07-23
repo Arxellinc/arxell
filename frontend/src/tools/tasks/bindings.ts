@@ -74,6 +74,33 @@ async function handleTasksClickInner(
   if (!action) return false;
   const taskId = actionTarget?.getAttribute(TASKS_DATA_ATTR.taskId);
 
+  if (action === "run-notification-action") {
+    const notificationAction = actionTarget?.getAttribute(TASKS_DATA_ATTR.value) || "";
+    const notificationId = actionTarget?.getAttribute("data-notification-id") || "";
+    if (notificationAction.startsWith("open-task:")) {
+      const targetTaskId = notificationAction.slice("open-task:".length);
+      const task = slice.tasksById[targetTaskId];
+      if (task) {
+        selectTask(slice, targetTaskId);
+        slice.tasksFolder =
+          task.state === "draft"
+            ? "drafts"
+            : task.state === "complete" || task.state === "rejected"
+              ? "archive"
+              : "inbox";
+        await loadTaskRuns(slice, deps, targetTaskId);
+        syncJsonDraftFromSelected(slice);
+      }
+    }
+    if (notificationId) {
+      slice.taskNotifications = slice.taskNotifications.map((row) =>
+        row.id === notificationId ? { ...row, read: true } : row
+      );
+      await markNotificationRead(deps, notificationId);
+    }
+    slice.tasksError = null;
+    return true;
+  }
   if (action === "new-task") {
     const id = createTask(slice);
     await syncTaskToBackend(slice, deps, id);
@@ -548,6 +575,22 @@ async function syncTaskToBackend(slice: TasksSlice, deps: TasksDeps | undefined,
       : task.updatedAtMs;
     persistTasksById(slice);
   }
+}
+
+async function markNotificationRead(
+  deps: TasksDeps | undefined,
+  notificationId: string
+): Promise<void> {
+  if (!deps?.client) return;
+  const correlationId = deps.nextCorrelationId();
+  const response = await deps.client.toolInvoke({
+    correlationId,
+    toolId: "tasks",
+    action: "notifications-mark-read",
+    mode: "sandbox",
+    payload: { correlationId, id: notificationId, read: true }
+  });
+  requireTaskInvokeData(response, "Failed to update notification.");
 }
 
 async function deleteTaskFromBackend(deps: TasksDeps, taskId: string): Promise<void> {
