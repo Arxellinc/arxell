@@ -5,6 +5,7 @@ import {
   deleteSelectedTask,
   saveSelectedTask,
   selectTask,
+  resolveFrontendProjectId,
   setSelectedTaskStarred,
   setTaskFolder,
   setTaskSort,
@@ -358,10 +359,20 @@ export async function syncAllTasksFromBackend(slice: TasksSlice, deps?: TasksDep
     const next: Record<string, any> = {};
     for (const row of rows) {
       if (!row || typeof row !== "object" || typeof row.id !== "string") continue;
+      const backendProjectId = typeof row.projectId === "string" ? row.projectId : "";
+      const backendProjectRoot =
+        typeof row.projectRoot === "string" && row.projectRoot.trim()
+          ? row.projectRoot
+          : backendProjectId;
+      const projectId = resolveFrontendProjectId(
+        (slice as any).projectsById,
+        backendProjectId,
+        backendProjectRoot
+      );
       next[row.id] = {
         id: row.id,
         type: typeof row.taskType === "string" ? row.taskType : "code",
-        projectId: typeof row.projectId === "string" ? row.projectId : "",
+        projectId,
         name: typeof row.name === "string" ? row.name : "Untitled task",
         description: typeof row.description === "string" ? row.description : "",
         state: row.state === "approved" || row.state === "complete" || row.state === "rejected" ? row.state : "draft",
@@ -375,9 +386,9 @@ export async function syncAllTasksFromBackend(slice: TasksSlice, deps?: TasksDep
         createdAtMs: Number.isFinite(row.createdAtMs) ? row.createdAtMs : Date.now(),
         updatedAtMs: Number.isFinite(row.updatedAtMs) ? row.updatedAtMs : Date.now(),
         archived: row.state === "complete" || row.state === "rejected",
-        starred: false,
+        starred: row.starred === true,
         agentOwner: typeof row.agentOwner === "string" ? row.agentOwner : "agent",
-        source: row.source === "user" ? "user" : "agent",
+        source: row.source === "agent" ? "agent" : "user",
         scheduledAtMs: Number.isFinite(row.scheduledAtMs) ? Number(row.scheduledAtMs) : null,
         repeat:
           row.repeat === "hourly" || row.repeat === "daily" || row.repeat === "weekly" || row.repeat === "monthly" || row.repeat === "yearly"
@@ -461,7 +472,8 @@ async function syncTaskToBackend(slice: TasksSlice, deps: TasksDeps | undefined,
       correlationId,
       task: {
         id: task.id,
-        projectId: projectRootPath || task.projectId,
+        projectId: task.projectId,
+        projectRoot: projectRootPath,
         name: task.name,
         description: task.description,
         taskType: task.type,
@@ -472,6 +484,8 @@ async function syncTaskToBackend(slice: TasksSlice, deps: TasksDeps | undefined,
         payloadJson: { prompt: task.description || task.name },
         estimateJson: { estimatedCostUsd: task.estimatedCostUsd },
         estimatedCostUsd: task.estimatedCostUsd,
+        starred: task.starred,
+        source: task.source,
         scheduledAtMs: task.scheduledAtMs ?? null,
         repeat: task.repeat || "none",
         repeatTimeOfDayMs: task.repeatTimeOfDayMs ?? null,

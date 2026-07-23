@@ -175,7 +175,7 @@ async fn run_task_now(state: &TauriBridgeState, payload: Value) -> Result<Value,
     if task.state != "approved" {
         return Err("task must be approved before run".to_string());
     }
-    let canonical_root = resolve_project_root(task.project_id.as_str())?;
+    let canonical_root = resolve_task_project_root(&task)?;
     let now = now_ms();
     let (status, policy_decision, policy_reason, result_json, error) =
         execute_task_payload(state, &task, canonical_root.as_path()).await;
@@ -217,7 +217,7 @@ pub async fn run_due_scheduled_tasks(
     }
     let mut executed = 0usize;
     for task in due {
-        let canonical_root = match resolve_project_root(task.project_id.as_str()) {
+        let canonical_root = match resolve_task_project_root(&task) {
             Ok(root) => root,
             Err(_) => {
                 let _ = state.tasks.advance_next_run_at(task.id.as_str(), now);
@@ -613,6 +613,15 @@ fn resolve_candidate_path(raw: &str) -> Result<PathBuf, String> {
     Ok(canonical_parent.join(name))
 }
 
+fn resolve_task_project_root(task: &DurableTaskRecord) -> Result<PathBuf, String> {
+    let raw = if task.project_root.trim().is_empty() {
+        task.project_id.as_str()
+    } else {
+        task.project_root.as_str()
+    };
+    resolve_project_root(raw)
+}
+
 fn resolve_project_root(raw: &str) -> Result<PathBuf, String> {
     let root = PathBuf::from(raw);
     if !root.is_absolute() {
@@ -686,7 +695,8 @@ mod tests {
             .expect("canonical cwd");
         let task = DurableTaskRecord {
             id: "T-AGENT-1".to_string(),
-            project_id: root.to_string_lossy().to_string(),
+            project_id: "p123456".to_string(),
+            project_root: root.to_string_lossy().to_string(),
             name: "Implement task execution".to_string(),
             description: "Replace the placeholder".to_string(),
             task_type: "code".to_string(),
@@ -696,6 +706,8 @@ mod tests {
             payload_kind: "agent_prompt".to_string(),
             payload_json: json!({ "prompt": "Implement the requested change" }),
             estimate_json: json!({}),
+            starred: false,
+            source: "user".to_string(),
             scheduled_at_ms: None,
             repeat: "none".to_string(),
             repeat_time_of_day_ms: None,
@@ -744,7 +756,8 @@ mod tests {
         let now = now_ms();
         let task = DurableTaskRecord {
             id: "T-SCHED-INT-1".to_string(),
-            project_id: std::env::current_dir()
+            project_id: "p123456".to_string(),
+            project_root: std::env::current_dir()
                 .expect("cwd")
                 .canonicalize()
                 .expect("canonical cwd")
@@ -759,6 +772,8 @@ mod tests {
             payload_kind: "unsupported-test-payload".to_string(),
             payload_json: json!({}),
             estimate_json: json!({}),
+            starred: false,
+            source: "user".to_string(),
             scheduled_at_ms: Some(now - 10_000),
             repeat: "none".to_string(),
             repeat_time_of_day_ms: None,

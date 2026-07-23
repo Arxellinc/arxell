@@ -14,6 +14,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 pub struct DurableTaskRecord {
     pub id: String,
     pub project_id: String,
+    #[serde(default)]
+    pub project_root: String,
     pub name: String,
     pub description: String,
     pub task_type: String,
@@ -23,6 +25,10 @@ pub struct DurableTaskRecord {
     pub payload_kind: String,
     pub payload_json: Value,
     pub estimate_json: Value,
+    #[serde(default)]
+    pub starred: bool,
+    #[serde(default = "default_task_source")]
+    pub source: String,
     pub scheduled_at_ms: Option<i64>,
     pub repeat: String,
     pub repeat_time_of_day_ms: Option<i64>,
@@ -80,6 +86,7 @@ impl TaskAutomationService {
             CREATE TABLE IF NOT EXISTS durable_tasks (
                 id TEXT PRIMARY KEY,
                 project_id TEXT NOT NULL,
+                project_root TEXT NOT NULL DEFAULT '',
                 name TEXT NOT NULL,
                 description TEXT NOT NULL,
                 task_type TEXT NOT NULL,
@@ -89,6 +96,8 @@ impl TaskAutomationService {
                 payload_kind TEXT NOT NULL,
                 payload_json TEXT NOT NULL,
                 estimate_json TEXT NOT NULL,
+                starred INTEGER NOT NULL DEFAULT 0,
+                source TEXT NOT NULL DEFAULT 'user',
                 scheduled_at_ms INTEGER,
                 repeat TEXT NOT NULL DEFAULT 'none',
                 repeat_time_of_day_ms INTEGER,
@@ -130,6 +139,24 @@ impl TaskAutomationService {
             "#,
         )
         .map_err(|e| format!("failed initializing tasks schema: {e}"))?;
+        ensure_column(
+            &conn,
+            "durable_tasks",
+            "project_root",
+            "TEXT NOT NULL DEFAULT ''",
+        )?;
+        ensure_column(
+            &conn,
+            "durable_tasks",
+            "starred",
+            "INTEGER NOT NULL DEFAULT 0",
+        )?;
+        ensure_column(
+            &conn,
+            "durable_tasks",
+            "source",
+            "TEXT NOT NULL DEFAULT 'user'",
+        )?;
         ensure_column(
             &conn,
             "durable_tasks",
@@ -178,7 +205,7 @@ impl TaskAutomationService {
         if let Some(project) = project_id {
             let mut stmt = conn
                 .prepare(
-                    "SELECT id, project_id, name, description, task_type, agent_owner, state, risk_level, payload_kind, payload_json, estimate_json, scheduled_at_ms, repeat, repeat_time_of_day_ms, repeat_timezone, is_schedule_enabled, next_run_at_ms, created_at_ms, updated_at_ms FROM durable_tasks WHERE project_id = ?1 ORDER BY updated_at_ms DESC",
+                    "SELECT id, project_id, name, description, task_type, agent_owner, state, risk_level, payload_kind, payload_json, estimate_json, scheduled_at_ms, repeat, repeat_time_of_day_ms, repeat_timezone, is_schedule_enabled, next_run_at_ms, created_at_ms, updated_at_ms, project_root, starred, source FROM durable_tasks WHERE project_id = ?1 ORDER BY updated_at_ms DESC",
                 )
                 .map_err(|e| format!("failed preparing list_tasks query: {e}"))?;
             let rows = stmt
@@ -191,7 +218,7 @@ impl TaskAutomationService {
         }
         let mut stmt = conn
             .prepare(
-                "SELECT id, project_id, name, description, task_type, agent_owner, state, risk_level, payload_kind, payload_json, estimate_json, scheduled_at_ms, repeat, repeat_time_of_day_ms, repeat_timezone, is_schedule_enabled, next_run_at_ms, created_at_ms, updated_at_ms FROM durable_tasks ORDER BY updated_at_ms DESC",
+                "SELECT id, project_id, name, description, task_type, agent_owner, state, risk_level, payload_kind, payload_json, estimate_json, scheduled_at_ms, repeat, repeat_time_of_day_ms, repeat_timezone, is_schedule_enabled, next_run_at_ms, created_at_ms, updated_at_ms, project_root, starred, source FROM durable_tasks ORDER BY updated_at_ms DESC",
             )
             .map_err(|e| format!("failed preparing list_tasks query: {e}"))?;
         let rows = stmt
@@ -233,6 +260,9 @@ impl TaskAutomationService {
         if normalized.repeat.trim().is_empty() {
             normalized.repeat = "none".to_string();
         }
+        if normalized.source != "agent" {
+            normalized.source = "user".to_string();
+        }
         normalized.next_run_at_ms = compute_next_run_at_ms(
             normalized.scheduled_at_ms,
             normalized.repeat.as_str(),
@@ -242,8 +272,8 @@ impl TaskAutomationService {
             now,
         );
         conn.execute(
-            "INSERT INTO durable_tasks (id, project_id, name, description, task_type, agent_owner, state, risk_level, payload_kind, payload_json, estimate_json, scheduled_at_ms, repeat, repeat_time_of_day_ms, repeat_timezone, is_schedule_enabled, next_run_at_ms, created_at_ms, updated_at_ms)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)
+            "INSERT INTO durable_tasks (id, project_id, name, description, task_type, agent_owner, state, risk_level, payload_kind, payload_json, estimate_json, scheduled_at_ms, repeat, repeat_time_of_day_ms, repeat_timezone, is_schedule_enabled, next_run_at_ms, created_at_ms, updated_at_ms, project_root, starred, source)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22)
              ON CONFLICT(id) DO UPDATE SET
                project_id = excluded.project_id,
                name = excluded.name,
@@ -261,7 +291,10 @@ impl TaskAutomationService {
                 repeat_timezone = excluded.repeat_timezone,
                 is_schedule_enabled = excluded.is_schedule_enabled,
                 next_run_at_ms = excluded.next_run_at_ms,
-                updated_at_ms = excluded.updated_at_ms",
+                updated_at_ms = excluded.updated_at_ms,
+                project_root = excluded.project_root,
+                starred = excluded.starred,
+                source = excluded.source",
             params![
                 normalized.id,
                 normalized.project_id,
@@ -282,6 +315,9 @@ impl TaskAutomationService {
                 normalized.next_run_at_ms,
                 created,
                 updated,
+                normalized.project_root,
+                if normalized.starred { 1 } else { 0 },
+                normalized.source,
             ],
         )
         .map_err(|e| format!("failed upserting task: {e}"))?;
@@ -302,6 +338,7 @@ impl TaskAutomationService {
         let mut stmt = conn
             .prepare(
                 "SELECT id, project_id, name, description, task_type, agent_owner, state, risk_level, payload_kind, payload_json, estimate_json, scheduled_at_ms, repeat, repeat_time_of_day_ms, repeat_timezone, is_schedule_enabled, next_run_at_ms, created_at_ms, updated_at_ms
+, project_root, starred, source
                  FROM durable_tasks
                  WHERE state = 'approved' AND is_schedule_enabled = 1 AND next_run_at_ms IS NOT NULL AND next_run_at_ms <= ?1
                  ORDER BY next_run_at_ms ASC
@@ -351,7 +388,7 @@ impl TaskAutomationService {
         let conn = self.open_connection()?;
         let mut stmt = conn
             .prepare(
-                "SELECT id, project_id, name, description, task_type, agent_owner, state, risk_level, payload_kind, payload_json, estimate_json, scheduled_at_ms, repeat, repeat_time_of_day_ms, repeat_timezone, is_schedule_enabled, next_run_at_ms, created_at_ms, updated_at_ms FROM durable_tasks WHERE id = ?1 LIMIT 1",
+                "SELECT id, project_id, name, description, task_type, agent_owner, state, risk_level, payload_kind, payload_json, estimate_json, scheduled_at_ms, repeat, repeat_time_of_day_ms, repeat_timezone, is_schedule_enabled, next_run_at_ms, created_at_ms, updated_at_ms, project_root, starred, source FROM durable_tasks WHERE id = ?1 LIMIT 1",
             )
             .map_err(|e| format!("failed preparing get_task query: {e}"))?;
         let mut rows = stmt
@@ -587,6 +624,7 @@ fn row_to_task(row: &rusqlite::Row<'_>) -> Result<DurableTaskRecord, rusqlite::E
     Ok(DurableTaskRecord {
         id: row.get(0)?,
         project_id: row.get(1)?,
+        project_root: row.get(19)?,
         name: row.get(2)?,
         description: row.get(3)?,
         task_type: row.get(4)?,
@@ -596,6 +634,8 @@ fn row_to_task(row: &rusqlite::Row<'_>) -> Result<DurableTaskRecord, rusqlite::E
         payload_kind: row.get(8)?,
         payload_json,
         estimate_json,
+        starred: row.get::<_, i64>(20)? != 0,
+        source: row.get(21)?,
         scheduled_at_ms: row.get(11)?,
         repeat: row.get(12)?,
         repeat_time_of_day_ms: row.get(13)?,
@@ -605,6 +645,10 @@ fn row_to_task(row: &rusqlite::Row<'_>) -> Result<DurableTaskRecord, rusqlite::E
         created_at_ms: row.get(17)?,
         updated_at_ms: row.get(18)?,
     })
+}
+
+fn default_task_source() -> String {
+    "user".to_string()
 }
 
 fn now_ms() -> i64 {
@@ -727,7 +771,8 @@ mod tests {
     fn base_task(state: &str, risk_level: &str) -> DurableTaskRecord {
         DurableTaskRecord {
             id: "T000001".to_string(),
-            project_id: "/tmp/project".to_string(),
+            project_id: "p123456".to_string(),
+            project_root: "/tmp/project".to_string(),
             name: "Task".to_string(),
             description: "Desc".to_string(),
             task_type: "code".to_string(),
@@ -737,6 +782,8 @@ mod tests {
             payload_kind: "agent_prompt".to_string(),
             payload_json: json!({}),
             estimate_json: json!({}),
+            starred: false,
+            source: "user".to_string(),
             scheduled_at_ms: None,
             repeat: "none".to_string(),
             repeat_time_of_day_ms: None,
@@ -755,6 +802,29 @@ mod tests {
         let task = base_task("draft", "low");
         let saved = service.upsert_task(task).expect("upsert");
         assert_eq!(saved.state, "approved");
+        let _ = fs::remove_file(db);
+    }
+
+    #[test]
+    fn persists_project_identity_and_frontend_metadata() {
+        let db = temp_db_path();
+        let service = TaskAutomationService::new(db.clone()).expect("service");
+        let mut task = base_task("approved", "low");
+        task.project_id = "pABC123".to_string();
+        task.project_root = "/tmp/project-a".to_string();
+        task.starred = true;
+        task.source = "agent".to_string();
+
+        let saved = service.upsert_task(task).expect("upsert");
+        let loaded = service
+            .get_task(saved.id.as_str())
+            .expect("get task")
+            .expect("saved task");
+
+        assert_eq!(loaded.project_id, "pABC123");
+        assert_eq!(loaded.project_root, "/tmp/project-a");
+        assert!(loaded.starred);
+        assert_eq!(loaded.source, "agent");
         let _ = fs::remove_file(db);
     }
 
