@@ -4,6 +4,7 @@ import {
   createTask,
   deleteSelectedTask,
   saveSelectedTask,
+  saveSelectedTaskAsDraft,
   selectTask,
   resolveFrontendProjectId,
   setSelectedTaskStarred,
@@ -130,7 +131,7 @@ export async function handleTasksClick(target: HTMLElement, slice: TasksSlice, d
     return true;
   }
   if (action === "save-selected") {
-    if (saveSelectedTask(slice)) {
+    if (saveSelectedTaskAsDraft(slice)) {
       if (slice.tasksSelectedId) await syncTaskToBackend(slice, deps, slice.tasksSelectedId);
       syncJsonDraftFromSelected(slice);
       slice.tasksError = null;

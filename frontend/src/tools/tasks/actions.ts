@@ -224,6 +224,14 @@ export function updateSelectedTaskField(
   persistTasksById(slice);
 }
 
+export function saveSelectedTaskAsDraft(slice: TasksRuntimeSlice): boolean {
+  const selected = getSelectedTask(slice);
+  if (!selected) return false;
+  selected.state = "draft";
+  selected.archived = false;
+  return saveSelectedTask(slice);
+}
+
 export function saveSelectedTask(slice: TasksRuntimeSlice): boolean {
   const selected = getSelectedTask(slice);
   if (!selected) return false;
