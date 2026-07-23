@@ -37,6 +37,14 @@
 - Destructive-action approval must preserve correlation and fail closed on denial, mismatch, missing UI, or timeout.
 - The policy extension does not replace OS-level sandboxing.
 
+## Tasks Guardrails
+- Persist draft and approved states exactly; never infer approval from a low risk level.
+- Scheduled execution must atomically claim an occurrence before side effects.
+- One-time schedules must clear after execution, and recurring schedules must preserve local calendar intent.
+- Stable project IDs and canonical execution roots are distinct values; execution uses the validated root.
+- Agent task runs must invoke Pi-backed Looper or return an explicit failure—never record placeholder work as success.
+- Frontend task actions must inspect typed invoke success and surface backend failures.
+
 ## Voice Guardrails
 - Voice session state transitions must follow the documented state machine (`idle` → `starting` → `running` → `stopping` → `idle`).
 - VAD handoff must never leave both methods active without a clear primary/shadow distinction.

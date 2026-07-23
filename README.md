@@ -79,7 +79,7 @@ Arxell ships with 11 built-in workspace tools — each one a full-featured panel
 | <img src="docs/icons/ico-sheets.svg" width="20"> | **Sheets** | An AI-powered spreadsheet editor. Open CSV, JSONL, and XLSX workbooks, use common formulas and functions, and save structured data. |
 | <img src="docs/icons/ico-search.svg" width="20"> | **WebSearch** | Use Serper to Search the web and pull live context into your workspace. Route queries through your configured search API. |
 | <img src="docs/icons/ico-chart.svg" width="20"> | **Chart** | Render Mermaid flowcharts, sequence diagrams, and more — visualised directly in the workspace pane. |
-| <img src="docs/icons/ico-tasks.svg" width="20"> | **Tasks** | Plan, track, and status-check work items. Works standalone or as an agent-accessible task board. |
+| <img src="docs/icons/ico-tasks.svg" width="20"> | **Tasks** | Draft, approve, schedule, and track durable work. Approved low-risk agent tasks delegate to Pi-backed Looper runs with history and notifications. |
 | <img src="docs/icons/ico-memory.svg" width="20"> | **Memory** | Persistent context references the agent can read and write across sessions. Long-term memory, local-first. |
 | <img src="docs/icons/ico-docs.svg" width="20"> | **Docs** | Browse and read documentation files without leaving the workspace. |
 

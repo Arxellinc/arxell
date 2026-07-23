@@ -68,7 +68,7 @@ Not every tool needs every file. Static tools such as `memory` and `skills` may 
 | `chart` | `frontend/src/tools/chart/` | data | Chart visualization |
 | `files` | `frontend/src/tools/files/` | workspace | File browser and editor |
 | `looper` | `frontend/src/tools/looper/` | automation | Planner/Executor/Validator/Critic orchestration over headless Pi RPC, with structured progress and approvals |
-| `tasks` | `frontend/src/tools/tasks/` | workspace | Task tracking |
+| `tasks` | `frontend/src/tools/tasks/` | workspace | Durable drafts, approval, Pi-backed execution, scheduling, run history, and notifications |
 | `memory` | `frontend/src/tools/memory/` | workspace | Memory/context display |
 | `skills` | `frontend/src/tools/skills/` | agent | Agent skill browsing |
 | `sheets` | `frontend/src/tools/sheets/` | data | Spreadsheet editing with backend workbook state, formulas, and agent access |
