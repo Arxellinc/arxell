@@ -1,5 +1,8 @@
 # Agent Instructions
-- Architecture and App information documents are available in the /docs folder
+
+- Architecture and application documentation is in `/docs`.
+- Read the relevant architecture, contract, privacy, and tool documents before changing a subsystem.
+- Keep documentation synchronized with behavior and contract changes.
 
 ## Git Workflow
 
@@ -31,7 +34,34 @@
 ## Build & Dev Commands
 - `cd frontend && npm run dev` — start dev server
 - `cd frontend && npm run build` — production build
-- `cd frontend && npm run lint` — run linter
+- `cd frontend && npm run lint` — run TypeScript checks
+- `cd frontend && npm test` — run frontend unit tests
+- `cd src-tauri && cargo check` — check the Rust library
+- `cd src-tauri && cargo check --features tauri-runtime` — check the desktop runtime
+- `cd src-tauri && cargo test --lib` — run Rust unit/integration-style library tests
+
+For Rust or cross-layer changes, run both frontend verification and Rust checks. For release/runtime/resource changes, also run `cd src-tauri && cargo tauri build --no-bundle` when the host supports it.
+
+## Pi Coding Harness
+
+- Current user and operator guidance: `docs/PI_CODING_HARNESS.md`.
+- Historical migration record and acceptance matrix: `docs/PI_AGENT_MIGRATION_PLAN.md`.
+- Interactive workspace sessions use Pi's TUI through the existing PTY/terminal infrastructure.
+- Automated Looper and approved chat-delegation runs use the Rust-owned `pi --mode rpc` integration in `src-tauri/src/app/pi_rpc_service.rs`.
+- Treat `agent_settled` as successful RPC completion; neither `agent_end` nor process exit is sufficient.
+- Runtime discovery and supported-version checks belong in `src-tauri/src/app/pi_runtime_service.rs`. The supported range is `>=0.81.0,<0.82.0`; update code, installation docs, tests, and notices together when changing it.
+- Automated runs must disable unrelated extension discovery and explicitly load `src-tauri/resources/pi/arxell-policy.ts`.
+- The Pi policy extension is defense in depth, not an OS sandbox. Preserve canonical project-boundary checks and fail-closed destructive-action approval.
+- Resolve provider credentials in Rust from secret storage and pass them only through child-process environment variables. Never put secrets in CLI arguments, generated model metadata, events, logs, or portable exports.
+- Pi progress and policy events must remain bounded and must not expose raw commands, arguments, file contents, stderr, tool output, or secrets.
+- Do not restore OpenCode aliases, identifiers, executable paths, or compatibility behavior. OpenCode appears only in historical migration documentation.
+
+## Documentation Rules
+
+- Update `docs/CONTRACT_VERSION.md` and the frontend/Rust contract constants together for contract changes.
+- Update `docs/IPC_EVENTS.md` for event or payload changes.
+- Update `docs/ARCHITECTURE.md` and subsystem documentation when ownership or dependency direction changes.
+- Update `README.md` when prerequisites, supported platforms, bundled capabilities, or user setup changes.
 
 ## CSS Conventions
 
