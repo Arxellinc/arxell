@@ -67,13 +67,13 @@ Not every tool needs every file. Static tools such as `memory` and `skills` may 
 |---------|-----------|----------|-------------|
 | `chart` | `frontend/src/tools/chart/` | data | Chart visualization |
 | `files` | `frontend/src/tools/files/` | workspace | File browser and editor |
-| `looper` | `frontend/src/tools/looper/` | automation | PRD/build loop orchestration with interactive questions |
+| `looper` | `frontend/src/tools/looper/` | automation | Planner/Executor/Validator/Critic orchestration over headless Pi RPC, with structured progress and approvals |
 | `tasks` | `frontend/src/tools/tasks/` | workspace | Task tracking |
 | `memory` | `frontend/src/tools/memory/` | workspace | Memory/context display |
 | `skills` | `frontend/src/tools/skills/` | agent | Agent skill browsing |
 | `sheets` | `frontend/src/tools/sheets/` | data | Spreadsheet editing with backend workbook state, formulas, and agent access |
 | `notepad` | `frontend/src/tools/notepad/` | workspace | Note editor |
-| `pi` | `frontend/src/tools/pi/` | automation | Pi integration |
+| `pi` | `frontend/src/tools/pi/` | automation | Interactive Pi coding-harness TUI sessions over independent PTYs |
 | `terminal` | `frontend/src/tools/terminal/` | workspace | Integrated terminal emulator |
 | `webSearch` | `frontend/src/tools/webSearch/` | search | Web search |
 | `manager` | `frontend/src/tools/manager/` | workspace | Workspace tool manager (enable/disable/import/export) |

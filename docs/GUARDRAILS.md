@@ -24,8 +24,18 @@
 - Tool policy checks happen before tool execution.
 
 ## Platform Guardrails
-- Platform branches are allowed only in tool modules.
-- Service and contracts remain platform-agnostic.
+- Platform branches are allowed only in tool/runtime modules.
+- Service interfaces and contracts remain platform-agnostic.
+- External-process shutdown must terminate the child process tree on Linux, macOS, and Windows.
+
+## Pi Guardrails
+- Interactive Pi uses PTY sessions; unattended Looper and approved chat execution use Rust-owned Pi RPC.
+- RPC completion requires `agent_settled`; process exit and `agent_end` are not success signals.
+- Automated runs use ephemeral profiles, disable unrelated extension discovery, and explicitly load the Arxell policy extension.
+- Resolve provider secrets in Rust and pass them only through child environment variables.
+- Pi events must not contain raw commands, arguments, file contents, stderr, tool output, or secrets.
+- Destructive-action approval must preserve correlation and fail closed on denial, mismatch, missing UI, or timeout.
+- The policy extension does not replace OS-level sandboxing.
 
 ## Voice Guardrails
 - Voice session state transitions must follow the documented state machine (`idle` → `starting` → `running` → `stopping` → `idle`).

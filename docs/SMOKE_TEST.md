@@ -72,8 +72,8 @@ Checks performed:
 3. List connections (`cmd_api_connections_list`), verify the new connection appears.
 4. Probe an endpoint (`cmd_api_connection_probe`), verify response includes detected type.
 5. Delete the connection (`cmd_api_connection_delete`), verify `deleted: true`.
-6. Export connections (`cmd_api_connections_export`), verify JSON payload.
-7. Import connections (`cmd_api_connections_import`), verify imported list.
+6. Export connections (`cmd_api_connections_export`), verify the JSON contains metadata but no API keys or credentials.
+7. Import connections (`cmd_api_connections_import`), verify imported credentialless records require key re-entry and verification.
 
 ## Workspace Tool Management
 
@@ -84,6 +84,37 @@ Checks performed:
 5. Re-enable it.
 6. Export tools config (`cmd_workspace_tools_export`).
 7. Import tools config (`cmd_workspace_tools_import`).
+
+## Pi Coding Harness
+
+See `PI_CODING_HARNESS.md` for installation and supported versions.
+
+### Runtime readiness
+
+1. Run `pi --version` and confirm it is in the supported `>=0.81.0,<0.82.0` range.
+2. Open the Pi tool and verify the setup state reports the selected executable and version.
+3. On a machine without Pi, or with an incompatible fixture executable, verify the UI shows a typed recovery message rather than reporting ready.
+4. On Windows, verify missing Git Bash is diagnosed and `PI_SHELL_PATH` works for a nonstandard Bash installation.
+
+### Interactive workspace
+
+1. Launch two Pi sessions with different labels and working directories.
+2. Supply an initial prompt to one session and verify it arrives after the TUI is ready.
+3. Switch between tabs and confirm each PTY remains independent.
+4. Close both sessions and verify the New Session action remains available.
+5. Close the app with an active session and confirm no Pi child remains.
+
+### Looper and delegated automation
+
+1. Select a verified cloud connection or a running local model, then complete a Planner → Executor → Validator → Critic cycle.
+2. Confirm phase progress shows bounded assistant text, tool names/state, selected model, and aggregate token usage—not commands, arguments, raw tool output, stderr, file contents, or secrets.
+3. Trigger a planner blocker and verify the question/response flow resumes the same loop.
+4. Trigger a recognizable destructive command and verify the approval modal preserves correlation, approval continues, denial blocks, and timeout fails closed.
+5. Attempt an out-of-project write and protected-path access; verify both are denied.
+6. Pause, resume, and stop runs; confirm the active RPC process tree terminates.
+7. Approve a chat plan and verify chat delegates through Looper to Pi and receives the completion summary.
+
+Automated fixtures cover RPC framing, settlement, malformed output, crashes, timeout/cancellation, policy denial, approvals, process cleanup, and the full four-phase loop. Credentialed model calls and interactive platform behavior remain release smoke tests.
 
 ## Model Manager
 

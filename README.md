@@ -11,7 +11,7 @@
 
 <p align="center">
   <img src="https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-6e7681?style=flat-square" alt="Platform">
-  <img src="https://img.shields.io/badge/version-0.2.10-blue?style=flat-square" alt="Version">
+  <img src="https://img.shields.io/badge/version-0.2.11-blue?style=flat-square" alt="Version">
   <img src="https://img.shields.io/badge/rust-2021-orange?style=flat-square" alt="Rust Edition">
   <img src="https://img.shields.io/badge/license-Proprietary-red?style=flat-square" alt="License">
   <img src="https://img.shields.io/badge/telemetry-none-brightgreen?style=flat-square" alt="No Telemetry">
@@ -27,7 +27,7 @@
 
 ## Why Arxell?
 
-Arxell brings frontier AI performance into secure local infrastructure, letting teams run language, image, voice, and document intelligence on-prem or offline without sending sensitive data to third-party clouds. With Arxell everything stays on your hardware. Your API keys live in your OS keychain. Your conversations stay on your disk. Even your voice never leaves the app. Arxell is fully functional even when 100% offline.
+Arxell brings AI workflows into secure local infrastructure, letting teams run language, voice, and document intelligence on-prem or offline. Local workflows stay on your hardware. If you explicitly configure a cloud provider, only the requests you initiate are sent to that provider. API keys use your OS keychain by default, conversations are stored locally, and the voice stack can run without a cloud service.
 
 <table>
   <tr>
@@ -72,11 +72,11 @@ Arxell ships with 11 built-in workspace tools — each one a full-featured panel
 | | Tool | Description |
 |---|------|-------------|
 | <img src="docs/icons/ico-terminal.svg" width="20"> | **Terminal** | Full PTY shell sessions — bash, zsh, PowerShell. Run anything you'd run in a terminal, right inside the workspace. |
-| <img src="docs/icons/ico-pi.svg" width="20"> | **Pi** | An AI-powered coding agent embedded in your terminal. Ask it to write, refactor, debug, or explain code. |
-| <img src="docs/icons/ico-looper.svg" width="20"> | **Looper** | Multi-agent loop orchestration with Planner, Executor, Validator, and Critic phases. Run iterative build cycles with interactive checkpoints. |
+| <img src="docs/icons/ico-pi.svg" width="20"> | **Pi** | Interactive [Pi coding harness](https://pi.dev/) sessions embedded in terminal tabs, with independent working directories and optional initial prompts. |
+| <img src="docs/icons/ico-looper.svg" width="20"> | **Looper** | Planner → Executor → Validator → Critic automation powered by isolated Pi RPC processes, structured progress, policy checks, and interactive approvals. |
 | <img src="docs/icons/ico-files.svg" width="20"> | **Files** | Browse directories, read and edit files, create folders — all through a permission-checked filesystem interface. |
 | <img src="docs/icons/ico-notepad.svg" width="20"> | **Notepad** | A tabbed text editor for workspace files and scratch buffers with syntax highlighting. |
-| <img src="docs/icons/ico-sheets.svg" width="20"> | **Sheets** | A AI-powered spreadsheet editor. Open CSV, Json/L, and XLSX workbooks, leverage over 20 common formulars/functions, and save structured data. |
+| <img src="docs/icons/ico-sheets.svg" width="20"> | **Sheets** | An AI-powered spreadsheet editor. Open CSV, JSONL, and XLSX workbooks, use common formulas and functions, and save structured data. |
 | <img src="docs/icons/ico-search.svg" width="20"> | **WebSearch** | Use Serper to Search the web and pull live context into your workspace. Route queries through your configured search API. |
 | <img src="docs/icons/ico-chart.svg" width="20"> | **Chart** | Render Mermaid flowcharts, sequence diagrams, and more — visualised directly in the workspace pane. |
 | <img src="docs/icons/ico-tasks.svg" width="20"> | **Tasks** | Plan, track, and status-check work items. Works standalone or as an agent-accessible task board. |
@@ -170,7 +170,8 @@ Every layer communicates through typed contracts with correlation IDs, structure
 | STT | **Whisper** (streaming) |
 | TTS | **sherpa-onnx** (Kokoro · Piper · Matcha · Kitten) |
 | Local inference | **llama.cpp** runtime (bundled) |
-| Secret storage | **OS keychain** via `keyring` crate |
+| Coding harness | **Pi 0.81.x** — interactive TUI and headless JSONL RPC |
+| Secret storage | **OS keychain** via `keyring`; explicitly acknowledged fallback when unavailable |
 | Database | **SQLite** via `rusqlite` |
 
 ---
@@ -181,10 +182,11 @@ Every layer communicates through typed contracts with correlation IDs, structure
 
 - No analytics, telemetry, or crash reporting
 - No accounts, sign-ups, or cloud sync
-- API keys stored exclusively in your OS credential manager
-- All conversations, files, and voice data remain on your local disk
-- The only network traffic is LLM API calls **you** initiate
-- Plugin tools run in sandboxed iframes with capability gating
+- API keys stored in your OS credential manager by default; plaintext fallback requires explicit acknowledgment
+- Conversations, files, and voice data remain local unless you explicitly send context to a configured cloud provider
+- The only provider traffic is generated by chat or agent runs **you** initiate
+- Automated Pi runs use an explicit project-boundary policy, protected-path checks, and fail-closed destructive-action approval
+- The Pi policy is defense in depth; Pi runs with Arxell's OS permissions and is not an operating-system sandbox
 
 ---
 
@@ -193,8 +195,18 @@ Every layer communicates through typed contracts with correlation IDs, structure
 ### Prerequisites
 
 - [Rust](https://rustup.rs/) (latest stable)
-- [Node.js](https://nodejs.org/) >= 18
+- [Node.js](https://nodejs.org/) >= 20.19 for frontend tooling
 - Platform-specific WebView2 (Windows) / WebKit (macOS &mdash; built-in) / webkit2gtk (Linux)
+- For the **Pi** workspace tool, **Looper**, and approved chat execution: Pi `>=0.81.0,<0.82.0` and Node.js >= 22.19
+- On Windows, Pi also requires Git for Windows/Bash
+
+Install the supported Pi release with lifecycle scripts disabled:
+
+```bash
+npm install -g --ignore-scripts @earendil-works/pi-coding-agent@0.81.1
+```
+
+Pi is an external system dependency in this release. Arxell discovers explicit, managed, PATH, npm, pnpm, Yarn, and Bun installations and reports actionable setup diagnostics. See [Pi Coding Harness](docs/PI_CODING_HARNESS.md).
 
 ### Build from Source
 
@@ -217,8 +229,10 @@ cd src-tauri && cargo tauri build
 
 1. Open **Settings &rarr; API Connections**
 2. Add a provider (OpenAI, Anthropic, local server, etc.)
-3. Your API key is stored in your OS keychain automatically
-4. Start chatting
+3. Your API key is stored through Arxell's secret-storage layer (the OS keychain by default)
+4. Start chatting or select the connection for a Pi-backed Looper run
+
+Portable connection exports contain metadata only; credentials must be re-entered after import.
 
 ### Run a Local Model
 
@@ -242,7 +256,7 @@ arxell/
 │   ├── src/skills/      # Agent skill playbooks
 │   ├── src/stt/         # Speech-to-text subsystem
 │   ├── src/tts/         # Text-to-speech subsystem
-│   └── resources/       # Bundled runtimes (llama.cpp, Kokoro, Whisper)
+│   └── resources/       # Bundled runtimes, Pi policy extension, and notices
 ├── agent/               # arx-rs agent library
 ├── docs/                # Architecture & design documents
 ├── model-lists/         # Bundled model catalog CSVs
