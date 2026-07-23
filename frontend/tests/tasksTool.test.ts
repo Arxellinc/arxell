@@ -6,6 +6,7 @@ import {
   createTask,
   getTasksForFolder,
   resolveFrontendProjectId,
+  saveSelectedTaskAsDraft,
   toggleTaskDone,
   updateSelectedTaskField
 } from "../src/tools/tasks/actions.js";
@@ -59,6 +60,17 @@ test("folder mapping uses simplified task states", () => {
   assert.ok(inbox.includes(a));
   assert.ok(archive.includes(c));
   assert.ok(archive.includes(r));
+});
+
+test("save as draft explicitly returns an approved task to draft", () => {
+  const slice = createSlice();
+  const id = createTask(slice);
+  slice.tasksSelectedId = id;
+  updateSelectedTaskField(slice, "state", "approved");
+
+  assert.equal(saveSelectedTaskAsDraft(slice), true);
+  assert.equal(slice.tasksById[id]?.state, "draft");
+  assert.equal(slice.tasksById[id]?.archived, false);
 });
 
 test("toggle done moves approved task to complete", () => {

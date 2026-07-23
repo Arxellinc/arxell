@@ -251,11 +251,7 @@ impl TaskAutomationService {
         } else {
             now
         };
-        let normalized_state = if task.state == "draft" && task.risk_level == "low" {
-            "approved".to_string()
-        } else {
-            task.state.clone()
-        };
+        let normalized_state = task.state.clone();
         let payload_json = serde_json::to_string(&task.payload_json)
             .map_err(|e| format!("failed serializing task payload: {e}"))?;
         let estimate_json = serde_json::to_string(&task.estimate_json)
@@ -1060,12 +1056,12 @@ mod tests {
     }
 
     #[test]
-    fn auto_approves_low_risk_draft_on_upsert() {
+    fn preserves_low_risk_draft_on_upsert() {
         let db = temp_db_path();
         let service = TaskAutomationService::new(db.clone()).expect("service");
         let task = base_task("draft", "low");
         let saved = service.upsert_task(task).expect("upsert");
-        assert_eq!(saved.state, "approved");
+        assert_eq!(saved.state, "draft");
         let _ = fs::remove_file(db);
     }
 
