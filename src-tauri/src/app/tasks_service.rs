@@ -322,14 +322,18 @@ impl TaskAutomationService {
         let Some(task) = self.get_task(task_id)? else {
             return Ok(());
         };
-        let next = compute_next_run_at_ms(
-            task.scheduled_at_ms,
-            task.repeat.as_str(),
-            task.repeat_time_of_day_ms,
-            task.repeat_timezone.as_str(),
-            task.is_schedule_enabled,
-            now_ms,
-        );
+        let next = if task.repeat == "none" {
+            None
+        } else {
+            compute_next_run_at_ms(
+                task.scheduled_at_ms,
+                task.repeat.as_str(),
+                task.repeat_time_of_day_ms,
+                task.repeat_timezone.as_str(),
+                task.is_schedule_enabled,
+                now_ms,
+            )
+        };
         let _guard = self
             .write_lock
             .lock()
@@ -779,6 +783,33 @@ mod tests {
         let saved = service.upsert_task(task).expect("upsert");
         let due = service.list_due_scheduled_tasks(now, 10).expect("due");
         assert!(due.iter().any(|row| row.id == saved.id));
+        let _ = fs::remove_file(db);
+    }
+
+    #[test]
+    fn advancing_one_time_schedule_clears_it_after_execution() {
+        let db = temp_db_path();
+        let service = TaskAutomationService::new(db.clone()).expect("service");
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as i64)
+            .unwrap_or(0);
+        let mut task = base_task("approved", "low");
+        task.scheduled_at_ms = Some(now - 60_000);
+        task.repeat = "none".to_string();
+        let saved = service.upsert_task(task).expect("upsert");
+
+        service
+            .advance_next_run_at(saved.id.as_str(), now)
+            .expect("advance schedule");
+
+        let advanced = service
+            .get_task(saved.id.as_str())
+            .expect("get task")
+            .expect("saved task");
+        assert_eq!(advanced.next_run_at_ms, None);
+        let due = service.list_due_scheduled_tasks(now, 10).expect("due");
+        assert!(due.iter().all(|row| row.id != saved.id));
         let _ = fs::remove_file(db);
     }
 
