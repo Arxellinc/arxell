@@ -3,9 +3,11 @@ import {
   archiveSelectedTask,
   createTask,
   deleteSelectedTask,
+  persistTasksById,
   saveSelectedTask,
   saveSelectedTaskAsDraft,
   selectTask,
+  requireTaskInvokeData,
   resolveFrontendProjectId,
   setSelectedTaskStarred,
   setTaskFolder,
@@ -48,7 +50,25 @@ function asFolder(value: string | null): TaskFolder | null {
   return null;
 }
 
-export async function handleTasksClick(target: HTMLElement, slice: TasksSlice, deps?: TasksDeps): Promise<boolean> {
+export async function handleTasksClick(
+  target: HTMLElement,
+  slice: TasksSlice,
+  deps?: TasksDeps
+): Promise<boolean> {
+  try {
+    return await handleTasksClickInner(target, slice, deps);
+  } catch (error) {
+    slice.tasksError = error instanceof Error ? error.message : "Task operation failed.";
+    persistToastMessage(slice.tasksError);
+    return true;
+  }
+}
+
+async function handleTasksClickInner(
+  target: HTMLElement,
+  slice: TasksSlice,
+  deps?: TasksDeps
+): Promise<boolean> {
   const actionTarget = target.closest<HTMLElement>(`[${TASKS_DATA_ATTR.action}]`);
   const action = actionTarget?.getAttribute(TASKS_DATA_ATTR.action);
   if (!action) return false;
@@ -82,10 +102,10 @@ export async function handleTasksClick(target: HTMLElement, slice: TasksSlice, d
     if (!selected) return true;
     const confirmed = window.confirm("Delete selected task?");
     if (!confirmed) return true;
-    deleteSelectedTask(slice);
     if (deps?.client) {
       await deleteTaskFromBackend(deps, selected);
     }
+    deleteSelectedTask(slice);
     syncJsonDraftFromSelected(slice);
     slice.tasksError = null;
     return true;
@@ -272,11 +292,15 @@ async function refreshSchedulerStatus(slice: TasksSlice, deps?: TasksDeps): Prom
       mode: "sandbox",
       payload: { correlationId }
     });
-    if (!resp.ok) return;
-    const dueCount = Number((resp.data as any)?.dueCount ?? 0);
+    const data = requireTaskInvokeData<Record<string, unknown>>(
+      resp,
+      "Failed to read scheduler status."
+    );
+    const dueCount = Number(data?.dueCount ?? 0);
     (slice as any).tasksSchedulerStatus = `Scheduler: due ${dueCount}`;
-  } catch {
-    (slice as any).tasksSchedulerStatus = "Scheduler: unavailable";
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Scheduler unavailable.";
+    (slice as any).tasksSchedulerStatus = `Scheduler: ${message}`;
   }
 }
 
@@ -291,8 +315,11 @@ async function runDueNow(slice: TasksSlice, deps?: TasksDeps): Promise<void> {
       mode: "sandbox",
       payload: { correlationId, limit: 16 }
     });
-    if (!resp.ok) return;
-    const executed = Number((resp.data as any)?.executed ?? 0);
+    const data = requireTaskInvokeData<Record<string, unknown>>(
+      resp,
+      "Failed to run due scheduler tasks."
+    );
+    const executed = Number(data?.executed ?? 0);
     (slice as any).tasksError = `Ran due scheduler tasks: ${executed}`;
     const notifications = (slice as any).taskNotifications;
     if (Array.isArray(notifications)) {
@@ -302,8 +329,9 @@ async function runDueNow(slice: TasksSlice, deps?: TasksDeps): Promise<void> {
       }));
       if (notifications.length > 100) notifications.length = 100;
     }
-  } catch {
-    (slice as any).tasksError = "Failed to run due scheduler tasks.";
+  } catch (error) {
+    (slice as any).tasksError =
+      error instanceof Error ? error.message : "Failed to run due scheduler tasks.";
   }
 }
 
@@ -354,8 +382,11 @@ export async function syncAllTasksFromBackend(slice: TasksSlice, deps?: TasksDep
       mode: "sandbox",
       payload: { correlationId }
     });
-    if (!invokeResponse.ok) return;
-    const rows = (invokeResponse.data as any)?.tasks;
+    const data = requireTaskInvokeData<{ tasks?: unknown }>(
+      invokeResponse,
+      "Failed to load tasks."
+    );
+    const rows = data?.tasks;
     if (!Array.isArray(rows)) return;
     const next: Record<string, any> = {};
     for (const row of rows) {
@@ -409,8 +440,8 @@ export async function syncAllTasksFromBackend(slice: TasksSlice, deps?: TasksDep
     if (selected) {
       await loadTaskRuns(slice, deps, selected);
     }
-  } catch {
-    // no-op fallback to local state
+  } catch (error) {
+    slice.tasksError = error instanceof Error ? error.message : "Failed to load tasks.";
   }
 }
 
@@ -464,7 +495,7 @@ async function syncTaskToBackend(slice: TasksSlice, deps: TasksDeps | undefined,
     task.projectId && (slice as any).projectsById?.[task.projectId]?.rootPath
       ? String((slice as any).projectsById[task.projectId].rootPath)
       : "";
-  await deps.client.toolInvoke({
+  const response = await deps.client.toolInvoke({
     correlationId,
     toolId: "tasks",
     action: "upsert",
@@ -498,30 +529,51 @@ async function syncTaskToBackend(slice: TasksSlice, deps: TasksDeps | undefined,
       }
     }
   });
+  const data = requireTaskInvokeData<{ task?: Record<string, unknown> }>(
+    response,
+    "Failed to save task."
+  );
+  const saved = data?.task;
+  if (saved) {
+    task.state =
+      saved.state === "approved" || saved.state === "complete" || saved.state === "rejected"
+        ? saved.state
+        : "draft";
+    task.archived = task.state === "complete" || task.state === "rejected";
+    task.nextRunAtMs = Number.isFinite(saved.nextRunAtMs)
+      ? Number(saved.nextRunAtMs)
+      : null;
+    task.updatedAtMs = Number.isFinite(saved.updatedAtMs)
+      ? Number(saved.updatedAtMs)
+      : task.updatedAtMs;
+    persistTasksById(slice);
+  }
 }
 
 async function deleteTaskFromBackend(deps: TasksDeps, taskId: string): Promise<void> {
   if (!deps.client) return;
   const correlationId = deps.nextCorrelationId();
-  await deps.client.toolInvoke({
+  const response = await deps.client.toolInvoke({
     correlationId,
     toolId: "tasks",
     action: "delete",
     mode: "sandbox",
     payload: { correlationId, taskId }
   });
+  requireTaskInvokeData(response, "Failed to delete task.");
 }
 
 async function runTaskNow(deps: TasksDeps | undefined, taskId: string): Promise<void> {
-  if (!deps?.client) return;
+  if (!deps?.client) throw new Error("Task runtime is unavailable.");
   const correlationId = deps.nextCorrelationId();
-  await deps.client.toolInvoke({
+  const response = await deps.client.toolInvoke({
     correlationId,
     toolId: "tasks",
     action: "run-now",
     mode: "sandbox",
     payload: { correlationId, taskId }
   });
+  requireTaskInvokeData(response, "Failed to run task.");
 }
 
 async function loadTaskRuns(slice: TasksSlice, deps: TasksDeps | undefined, taskId: string): Promise<void> {
@@ -534,8 +586,8 @@ async function loadTaskRuns(slice: TasksSlice, deps: TasksDeps | undefined, task
     mode: "sandbox",
     payload: { correlationId, taskId }
   });
-  if (!resp.ok) return;
-  const runs = Array.isArray((resp.data as any)?.runs) ? (resp.data as any).runs : [];
+  const data = requireTaskInvokeData<{ runs?: unknown }>(resp, "Failed to load task runs.");
+  const runs = Array.isArray(data?.runs) ? data.runs : [];
   const prevTopRunId = ((slice as any).tasksRunsByTaskId?.[taskId] || [])[0]?.id || "";
   const nextMapped = runs.map((run: any) => ({
     id: String(run.id || ""),

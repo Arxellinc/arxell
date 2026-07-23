@@ -13,6 +13,16 @@ interface PersistedTasksPayload {
   tasksById: Record<string, TaskRecord>;
 }
 
+export function requireTaskInvokeData<T>(
+  response: { ok: boolean; data?: unknown; error?: string },
+  fallbackMessage: string
+): T {
+  if (!response.ok) {
+    throw new Error(response.error || fallbackMessage);
+  }
+  return response.data as T;
+}
+
 export function loadPersistedTasksById(): Record<string, TaskRecord> {
   try {
     const raw = window.localStorage.getItem(TASKS_STORAGE_KEY);

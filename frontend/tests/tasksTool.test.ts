@@ -5,6 +5,7 @@ import {
   applySelectedTaskJson,
   createTask,
   getTasksForFolder,
+  requireTaskInvokeData,
   resolveFrontendProjectId,
   saveSelectedTaskAsDraft,
   toggleTaskDone,
@@ -85,6 +86,17 @@ test("toggle done moves approved task to complete", () => {
 
   toggleTaskDone(slice, id);
   assert.equal(slice.tasksById[id]?.state, "approved");
+});
+
+test("task invoke failures are not treated as successful operations", () => {
+  assert.throws(
+    () => requireTaskInvokeData({ ok: false, error: "task must be approved" }, "fallback"),
+    /task must be approved/
+  );
+  assert.deepEqual(
+    requireTaskInvokeData<{ value: number }>({ ok: true, data: { value: 3 } }, "fallback"),
+    { value: 3 }
+  );
 });
 
 test("backend project roots migrate back to stable frontend project ids", () => {
