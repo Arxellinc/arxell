@@ -26,6 +26,7 @@ const FLOW_PHASE_SESSION_MAP_STORAGE_KEY = "arxell.flow.phaseSessions";
 const FLOW_AUTO_FOLLOW_STORAGE_KEY = "arxell.flow.autoFollow";
 const WORKSPACE_TAB_STORAGE_KEY = "arxell.workspaceTab";
 const MODEL_MANAGER_DISABLED_MODEL_IDS_KEY = "arxell.modelManager.disabledModelIds";
+const LLAMA_RUNTIME_UPDATE_NOTIFIED_VERSION_KEY = "arxell.llamaRuntime.updateNotifiedVersion";
 
 export const BOTTOM_BAR_PREF_KEYS = {
   showBottomEngine: SHOW_BOTTOM_ENGINE_STORAGE_KEY,
@@ -521,5 +522,24 @@ export function loadPersistedModelManagerDisabledModelIds(): string[] {
 export function persistModelManagerDisabledModelIds(modelIds: string[]): void {
   try {
     window.localStorage.setItem(MODEL_MANAGER_DISABLED_MODEL_IDS_KEY, JSON.stringify(modelIds));
+  } catch {}
+}
+
+export function loadPersistedLlamaRuntimeUpdateNotifiedVersion(): string {
+  try {
+    return (window.localStorage.getItem(LLAMA_RUNTIME_UPDATE_NOTIFIED_VERSION_KEY) || "").trim();
+  } catch {
+    return "";
+  }
+}
+
+export function persistLlamaRuntimeUpdateNotifiedVersion(version: string): void {
+  try {
+    const normalized = version.trim();
+    if (!normalized) {
+      window.localStorage.removeItem(LLAMA_RUNTIME_UPDATE_NOTIFIED_VERSION_KEY);
+      return;
+    }
+    window.localStorage.setItem(LLAMA_RUNTIME_UPDATE_NOTIFIED_VERSION_KEY, normalized);
   } catch {}
 }

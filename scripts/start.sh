@@ -5,12 +5,14 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 FRONTEND_DIR="$ROOT_DIR/frontend"
 TAURI_DIR="$ROOT_DIR/src-tauri"
 
+"$ROOT_DIR/scripts/check-linux-deps.sh"
+
 kill_stale_instances() {
   local patterns=(
     "target/debug/arxell-lite"
     "cargo run --features tauri-runtime"
-    "$HOME/.local/share/com.arxell.lite/llama-runtime/.*/llama-server"
-    "$HOME/.local/share/com.arxell.lite/llama-runtime/.*/llama-server.exe"
+    "$HOME/.arxell/llama-runtime/.*/llama-server"
+    "$HOME/.arxell/llama-runtime/.*/llama-server.exe"
     "$ROOT_DIR/.*/vite"
     "$ROOT_DIR/frontend.*vite"
     "$ROOT_DIR/frontend.*npm run dev"

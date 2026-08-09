@@ -21,15 +21,15 @@ const DEFAULT_N_GPU_LAYERS: i32 = 999;
 const HEALTH_TIMEOUT_SECS: u64 = 90;
 
 #[derive(Debug, Deserialize)]
-struct GithubRelease {
-    tag_name: String,
-    assets: Vec<GithubAsset>,
+pub struct GithubRelease {
+    pub tag_name: String,
+    pub assets: Vec<GithubAsset>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
-struct GithubAsset {
-    name: String,
-    browser_download_url: String,
+pub struct GithubAsset {
+    pub name: String,
+    pub browser_download_url: String,
 }
 
 #[derive(Debug)]
@@ -74,6 +74,7 @@ impl LlamaRuntimeService {
                     return LlamaRuntimeStatusResponse {
                         correlation_id: correlation_id.to_string(),
                         state: "idle".to_string(),
+                        current_version: String::new(),
                         active_engine_id: None,
                         active_model_path: None,
                         endpoint: None,
@@ -104,6 +105,7 @@ impl LlamaRuntimeService {
         LlamaRuntimeStatusResponse {
             correlation_id: correlation_id.to_string(),
             state,
+            current_version: String::new(),
             active_engine_id,
             active_model_path,
             endpoint,
@@ -118,6 +120,7 @@ impl LlamaRuntimeService {
         engine_id: &str,
         app_data_dir: &Path,
         bundled_binary: Option<PathBuf>,
+        force_refresh: bool,
     ) -> Result<LlamaRuntimeInstallResponse, String> {
         self.emit(
             correlation_id,
@@ -131,7 +134,7 @@ impl LlamaRuntimeService {
         let requires_support_files = engine_id != "llama.cpp-cpu";
         let should_repair_support =
             target.exists() && requires_support_files && target_support_count == 0;
-        if target.exists() && !should_repair_support {
+        if target.exists() && !should_repair_support && !force_refresh {
             self.emit(
                 correlation_id,
                 "llama.runtime.install",
@@ -157,10 +160,7 @@ impl LlamaRuntimeService {
                 }),
             );
         }
-
-        let source = if let Some(path) = bundled_binary {
-            path
-        } else if let Some(path) = resolve_system_llama_server() {
+        if force_refresh {
             self.emit(
                 correlation_id,
                 "llama.runtime.install",
@@ -168,11 +168,61 @@ impl LlamaRuntimeService {
                 EventSeverity::Info,
                 json!({
                     "engineId": engine_id,
-                    "message": "Using system llama-server binary from PATH",
-                    "sourcePath": path.to_string_lossy()
+                    "message": "Refreshing runtime from latest llama.cpp release"
                 }),
             );
-            path
+        }
+
+        let source = if !force_refresh {
+            if let Some(path) = bundled_binary {
+                path
+            } else if let Some(path) = resolve_system_llama_server() {
+                self.emit(
+                    correlation_id,
+                    "llama.runtime.install",
+                    EventStage::Progress,
+                    EventSeverity::Info,
+                    json!({
+                        "engineId": engine_id,
+                        "message": "Using system llama-server binary from PATH",
+                        "sourcePath": path.to_string_lossy()
+                    }),
+                );
+                path
+            } else {
+                self.emit(
+                    correlation_id,
+                    "llama.runtime.install",
+                    EventStage::Progress,
+                    EventSeverity::Info,
+                    json!({
+                        "engineId": engine_id,
+                        "message": "No bundled/system binary found; fetching latest llama.cpp release metadata"
+                    }),
+                );
+                let downloaded = download_engine_binary(engine_id).map_err(|message| {
+                    self.emit(
+                        correlation_id,
+                        "llama.runtime.install",
+                        EventStage::Error,
+                        EventSeverity::Error,
+                        json!({ "engineId": engine_id, "message": message }),
+                    );
+                    message
+                })?;
+                self.emit(
+                    correlation_id,
+                    "llama.runtime.install",
+                    EventStage::Progress,
+                    EventSeverity::Info,
+                    json!({
+                        "engineId": engine_id,
+                        "message": "Downloaded runtime asset; installing binary",
+                        "sourcePath": downloaded.to_string_lossy()
+                    }),
+                );
+                downloaded
+            }
         } else {
             self.emit(
                 correlation_id,
@@ -181,7 +231,7 @@ impl LlamaRuntimeService {
                 EventSeverity::Info,
                 json!({
                     "engineId": engine_id,
-                    "message": "No bundled/system binary found; fetching latest llama.cpp release metadata"
+                    "message": "Fetching latest llama.cpp release metadata"
                 }),
             );
             let downloaded = download_engine_binary(engine_id).map_err(|message| {
@@ -201,7 +251,7 @@ impl LlamaRuntimeService {
                 EventSeverity::Info,
                 json!({
                     "engineId": engine_id,
-                    "message": "Downloaded runtime asset; installing binary",
+                    "message": "Downloaded latest runtime asset; installing binary",
                     "sourcePath": downloaded.to_string_lossy()
                 }),
             );
@@ -1157,19 +1207,7 @@ fn is_runtime_support_file(name: &str) -> bool {
 }
 
 fn download_engine_binary(engine_id: &str) -> Result<PathBuf, String> {
-    let release: GithubRelease = http_client(10)?
-        .get("https://api.github.com/repos/ggml-org/llama.cpp/releases/latest")
-        .header("User-Agent", app_paths::APP_USER_AGENT)
-        .send()
-        .map_err(|e| {
-            format!(
-                "failed requesting llama.cpp releases (network/proxy/firewall issue likely): {e}"
-            )
-        })?
-        .error_for_status()
-        .map_err(|e| format!("failed fetching llama.cpp release metadata: {e}"))?
-        .json()
-        .map_err(|e| format!("failed parsing llama.cpp release metadata: {e}"))?;
+    let release = fetch_latest_release_metadata()?;
 
     let asset = select_release_asset(
         engine_id,
@@ -1223,6 +1261,166 @@ fn download_engine_binary(engine_id: &str) -> Result<PathBuf, String> {
             asset.name, binary_name
         )
     })
+}
+
+pub fn fetch_latest_release_metadata() -> Result<GithubRelease, String> {
+    http_client(10)?
+        .get("https://api.github.com/repos/ggml-org/llama.cpp/releases/latest")
+        .header("User-Agent", app_paths::APP_USER_AGENT)
+        .send()
+        .map_err(|e| {
+            format!(
+                "failed requesting llama.cpp releases (network/proxy/firewall issue likely): {e}"
+            )
+        })?
+        .error_for_status()
+        .map_err(|e| format!("failed fetching llama.cpp release metadata: {e}"))?
+        .json()
+        .map_err(|e| format!("failed parsing llama.cpp release metadata: {e}"))
+}
+
+pub fn detect_installed_runtime_version(app_data_dir: &Path) -> Option<String> {
+    let _ = migrate_legacy_runtime_layout(app_data_dir);
+    let runtime_roots = candidate_runtime_roots(app_data_dir);
+    for root in runtime_roots {
+        let engines = detect_engines(root.as_path());
+        for installed in engines.into_iter().filter(|engine| engine.is_installed) {
+            let binary = engine_binary_path(root.as_path(), installed.engine_id.as_str());
+            if let Some(version) = detect_binary_version(binary.as_path()) {
+                return Some(version);
+            }
+        }
+    }
+    None
+}
+
+pub fn detect_engine_runtime_version(app_data_dir: &Path, engine_id: &str) -> Option<String> {
+    let _ = migrate_legacy_runtime_layout(app_data_dir);
+    let requested = engine_id.trim();
+    if requested.is_empty() {
+        return None;
+    }
+    let runtime_roots = candidate_runtime_roots(app_data_dir);
+    for root in runtime_roots {
+        let binary = engine_binary_path(root.as_path(), requested);
+        if let Some(version) = detect_binary_version(binary.as_path()) {
+            return Some(version);
+        }
+    }
+    None
+}
+
+fn candidate_runtime_roots(app_data_dir: &Path) -> Vec<PathBuf> {
+    vec![app_data_dir.to_path_buf()]
+}
+
+pub fn migrate_legacy_runtime_layout(app_data_dir: &Path) -> Result<(), String> {
+    let Some(home) = dirs::home_dir() else {
+        return Ok(());
+    };
+    let legacy_runtime_dir = home.join(".local/share/com.arxell.lite/llama-runtime");
+    if !legacy_runtime_dir.exists() {
+        return Ok(());
+    }
+
+    let target_runtime_dir = app_data_dir.join("llama-runtime");
+    if target_runtime_dir.exists() {
+        return Ok(());
+    }
+
+    copy_dir_recursive(&legacy_runtime_dir, &target_runtime_dir)
+}
+
+fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<(), String> {
+    std::fs::create_dir_all(dst)
+        .map_err(|e| format!("failed creating runtime migration target dir: {e}"))?;
+    let entries = std::fs::read_dir(src)
+        .map_err(|e| format!("failed reading runtime migration source dir: {e}"))?;
+    for entry in entries {
+        let entry = entry.map_err(|e| format!("failed reading runtime migration entry: {e}"))?;
+        let src_path = entry.path();
+        let dst_path = dst.join(entry.file_name());
+        if src_path.is_dir() {
+            copy_dir_recursive(src_path.as_path(), dst_path.as_path())?;
+        } else if src_path.is_file() {
+            std::fs::copy(&src_path, &dst_path).map_err(|e| {
+                format!(
+                    "failed copying runtime migration file {} -> {}: {e}",
+                    src_path.to_string_lossy(),
+                    dst_path.to_string_lossy()
+                )
+            })?;
+        }
+    }
+    Ok(())
+}
+
+fn detect_binary_version(binary: &Path) -> Option<String> {
+    let mut cmd = Command::new(binary);
+    cmd.arg("--version");
+    if let Some(engine_dir) = binary.parent() {
+        #[cfg(target_os = "linux")]
+        {
+            cmd.env(
+                "LD_LIBRARY_PATH",
+                prepend_env_path("LD_LIBRARY_PATH", engine_dir),
+            );
+        }
+        #[cfg(target_os = "macos")]
+        {
+            cmd.env(
+                "DYLD_LIBRARY_PATH",
+                prepend_env_path("DYLD_LIBRARY_PATH", engine_dir),
+            );
+        }
+        #[cfg(target_os = "windows")]
+        {
+            cmd.env("PATH", prepend_env_path("PATH", engine_dir));
+        }
+    }
+    let output = cmd.output().ok()?;
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let text = format!("{}\n{}", stdout, stderr);
+    parse_version_token(text.as_str())
+}
+
+fn parse_version_token(text: &str) -> Option<String> {
+    for line in text.lines() {
+        let lower = line.to_ascii_lowercase();
+        if let Some(idx) = lower.find("version:") {
+            let tail = &line[idx + "version:".len()..];
+            let token = tail
+                .split_whitespace()
+                .next()
+                .unwrap_or("")
+                .trim_matches(|c: char| !c.is_ascii_alphanumeric() && c != '.' && c != '-' && c != '_');
+            if !token.is_empty() {
+                if token.chars().all(|c| c.is_ascii_digit()) {
+                    return Some(format!("b{}", token));
+                }
+                return Some(token.to_string());
+            }
+        }
+    }
+    for token in text.split_whitespace() {
+        let trimmed = token.trim_matches(|c: char| !c.is_ascii_alphanumeric() && c != '.' && c != '-' && c != '_');
+        if trimmed.is_empty() {
+            continue;
+        }
+        if trimmed.starts_with('b') && trimmed[1..].chars().all(|c| c.is_ascii_digit()) {
+            return Some(trimmed.to_string());
+        }
+        if trimmed
+            .chars()
+            .next()
+            .is_some_and(|c| c.is_ascii_digit())
+            && trimmed.chars().any(|c| c == '.')
+        {
+            return Some(trimmed.to_string());
+        }
+    }
+    None
 }
 
 fn http_client(timeout_secs: u64) -> Result<reqwest::blocking::Client, String> {

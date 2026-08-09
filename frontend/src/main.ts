@@ -15,6 +15,7 @@ import type {
   MediaAssetRecord,
   LlamaRuntimeEngine,
   LlamaRuntimeStatusResponse,
+  LlamaRuntimeUpdateCheckResponse,
   ModelManagerHfCandidate,
   ModelManagerInstalledModel,
   PersistedVoiceSettings,
@@ -195,7 +196,9 @@ import {
   loadPersistedWorkspaceTab,
   persistWorkspaceTab,
   loadPersistedModelManagerDisabledModelIds,
+  loadPersistedLlamaRuntimeUpdateNotifiedVersion,
   persistModelManagerDisabledModelIds,
+  persistLlamaRuntimeUpdateNotifiedVersion,
   type ChatRoutePreference,
   type SttBackend
 } from "./app/persistence";
@@ -857,6 +860,7 @@ const state: {
   autoSafeEnabled: boolean;
   appVersion: string;
   updateCheckDismissedVersion: string | null;
+  llamaRuntimeUpdateNotifiedVersion: string;
   chatThinkingEnabled: boolean;
   chatRoutePreference: ChatRoutePreference;
   showAppResourceCpu: boolean;
@@ -897,6 +901,10 @@ const state: {
   llamaRuntimeContextTokens: number | null;
   llamaRuntimeContextCapacity: number | null;
   llamaRuntimeTokensPerSecond: number | null;
+  llamaRuntimeUpdateBusy: boolean;
+  llamaRuntimeCurrentVersion: string;
+  llamaRuntimeLatestVersion: string;
+  llamaRuntimeHasUpdate: boolean;
   firstRunOnboardingOpen: boolean;
   firstRunOnboardingStep: FirstRunOnboardingStep;
   firstRunSelectedModelId: string;
@@ -1154,6 +1162,7 @@ const state: {
   autoSafeEnabled: loadPersistedAutoSafeEnabled(),
   appVersion: FALLBACK_APP_VERSION,
   updateCheckDismissedVersion: null as string | null,
+  llamaRuntimeUpdateNotifiedVersion: loadPersistedLlamaRuntimeUpdateNotifiedVersion(),
   chatThinkingEnabled: false,
   chatRoutePreference: loadPersistedChatRoutePreference(),
   showAppResourceCpu: loadPersistedShowAppResourcesCpu(),
@@ -1194,6 +1203,10 @@ const state: {
   llamaRuntimeContextTokens: null,
   llamaRuntimeContextCapacity: null,
   llamaRuntimeTokensPerSecond: null,
+  llamaRuntimeUpdateBusy: false,
+  llamaRuntimeCurrentVersion: "",
+  llamaRuntimeLatestVersion: "",
+  llamaRuntimeHasUpdate: false,
   firstRunOnboardingOpen: !loadFirstRunOnboardingDismissed(),
   firstRunOnboardingStep: "welcome",
   firstRunSelectedModelId: FIRST_RUN_MODEL_OPTIONS[0]?.id ?? "",
@@ -3034,6 +3047,7 @@ function render(): void {
             apiDetectedModels: state.apiDetectedModels,
             conversations: state.conversations,
             llamaRuntime: state.llamaRuntime,
+            llamaRuntimeCurrentVersion: state.llamaRuntimeCurrentVersion,
             llamaRuntimeSelectedEngineId: state.llamaRuntimeSelectedEngineId,
             llamaRuntimeModelPath: state.llamaRuntimeModelPath,
             llamaRuntimeActiveModelPath: state.llamaRuntimeActiveModelPath,
@@ -3118,6 +3132,7 @@ function render(): void {
               icon: splitPanelDef.icon,
               title: splitPanelDef.title,
               sidebarTab: "chat",
+              llamaRuntimeVersion: state.llamaRuntimeCurrentVersion,
               chatModelOptions: state.chatModelOptions,
               chatActiveModelId: cp.chatActiveModelId,
               chatPaneId: cp.panelId,
@@ -3139,6 +3154,7 @@ function render(): void {
       icon: panel.icon,
       title: panel.title,
       sidebarTab: state.sidebarTab,
+      llamaRuntimeVersion: state.llamaRuntimeCurrentVersion,
       chatModelOptions: state.chatModelOptions,
       chatActiveModelId: primaryChatPanel.chatActiveModelId,
       chatPaneId: primaryChatPanel.panelId,
@@ -3218,6 +3234,7 @@ function render(): void {
   const actionButtons = app.querySelectorAll<HTMLButtonElement>("button[data-notify-action][data-notify-id]");
   actionButtons.forEach((button) => {
     button.onclick = () => {
+      void (async () => {
       const actionId = button.getAttribute("data-notify-action") || "";
       const notifyId = button.getAttribute("data-notify-id") || "";
       if (actionId.startsWith("open-task:")) {
@@ -3228,11 +3245,15 @@ function render(): void {
           state.tasksSelectedId = taskId;
         }
       }
+      if (actionId === "install-llama-runtime-update") {
+        await installLlamaRuntimeUpdateFromNotification();
+      }
       if (notifyId) {
         state.taskNotifications = state.taskNotifications.map((row) => row.id === notifyId ? { ...row, read: true } : row);
         void markNotificationReadInBackend(notifyId, true);
       }
       renderAndBind(appResourceRenderSendMessageRef ?? (async () => {}));
+      })();
     };
   });
   const notifyLinks = app.querySelectorAll<HTMLAnchorElement>(".app-notify-link[href]");
@@ -4882,6 +4903,85 @@ async function autoStartLlamaRuntimeIfConfigured(): Promise<void> {
   }
 }
 
+async function installLlamaRuntimeUpdateFromNotification(): Promise<void> {
+  if (!clientRef || state.llamaRuntimeUpdateBusy) return;
+  state.llamaRuntimeUpdateBusy = true;
+  try {
+    const appDataBefore = state.llamaRuntime;
+    const activeEngineIdBefore = appDataBefore?.activeEngineId?.trim() ?? "";
+    const selectedEngineIdBefore = state.llamaRuntimeSelectedEngineId.trim();
+    pushAppNotification({
+      title: "Updating llama.cpp runtime",
+      description: "Download and install started in background.",
+      tone: "info"
+    });
+    await refreshLlamaRuntime();
+    const previousVersion = state.llamaRuntimeCurrentVersion;
+    const engines = state.llamaRuntime?.engines ?? [];
+    const selected = selectedEngineIdBefore;
+    const engine =
+      (activeEngineIdBefore
+        ? engines.find((item) => item.engineId === activeEngineIdBefore && item.isApplicable)
+        : undefined) ||
+      engines.find((item) => item.engineId === selected && item.isApplicable) ||
+      engines.find((item) => item.engineId === "llama.cpp-vulkan" && item.isApplicable) ||
+      engines.find((item) => item.backend === "cpu" && item.isApplicable) ||
+      engines.find((item) => item.isApplicable);
+    if (!engine) {
+      throw new Error("No compatible llama.cpp runtime engine available for this platform.");
+    }
+    await clientRef.installLlamaRuntimeEngine({
+      correlationId: nextCorrelationId(),
+      engineId: engine.engineId,
+      forceRefresh: true
+    });
+    await refreshLlamaRuntime();
+    const versionResp = await checkLlamaRuntimeUpdateForEngine(engine.engineId);
+    const currentVersionAfter = versionResp?.currentVersion || previousVersion;
+    if (currentVersionAfter && previousVersion && currentVersionAfter !== previousVersion) {
+      pushAppNotification({
+        title: "llama.cpp runtime updated",
+        description: `${engine.engineId}: ${previousVersion} -> ${currentVersionAfter}. Restart recommended.`,
+        tone: "success"
+      });
+    } else {
+      pushAppNotification({
+        title: "llama.cpp runtime refresh complete",
+        description: `No version change detected for ${engine.engineId}${currentVersionAfter ? ` (current: ${currentVersionAfter})` : ""}.`,
+        tone: "info"
+      });
+    }
+  } catch (error) {
+    pushAppNotification({
+      title: "llama.cpp update failed",
+      description: String(error),
+      tone: "warn"
+    });
+  } finally {
+    state.llamaRuntimeUpdateBusy = false;
+    renderAndBind(appResourceRenderSendMessageRef ?? (async () => {}));
+  }
+}
+
+async function checkLlamaRuntimeUpdateForEngine(
+  engineId?: string
+): Promise<LlamaRuntimeUpdateCheckResponse | null> {
+  if (!clientRef || state.runtimeMode !== "tauri") return null;
+  const id = engineId?.trim() ?? "";
+  try {
+    const resp = await clientRef.checkLlamaRuntimeUpdates(id ? { engineId: id } : undefined);
+    state.llamaRuntimeLatestVersion = resp.latestVersion || "";
+    state.llamaRuntimeHasUpdate = Boolean(resp.hasUpdate && resp.latestVersion);
+    if (resp.currentVersion) {
+      state.llamaRuntimeCurrentVersion = resp.currentVersion;
+    }
+    return resp;
+  } catch {
+    state.llamaRuntimeHasUpdate = false;
+    return null;
+  }
+}
+
 let waitForLocalModelReady: () => Promise<boolean> = async () => false;
 
 async function toggleAutoSafeMode(sendMessage: (text: string) => Promise<void>): Promise<void> {
@@ -5966,13 +6066,34 @@ syncOverlayScrollbars();
       state.llamaRuntimeBusy = true;
       try {
         await refreshLlamaRuntime();
+        const selectedEngineId = state.llamaRuntimeSelectedEngineId.trim();
+        if (selectedEngineId) {
+          await checkLlamaRuntimeUpdateForEngine(selectedEngineId);
+        }
       } finally {
         state.llamaRuntimeBusy = false;
       }
       renderAndBind(sendMessage);
     },
+    onLlamaRuntimeSelectEngine: async (engineId: string) => {
+      const next = engineId.trim();
+      if (!next) return;
+      state.llamaRuntimeSelectedEngineId = next;
+      persistLlamaEngineId(next);
+      await checkLlamaRuntimeUpdateForEngine(next);
+      renderAndBind(sendMessage);
+    },
     onLlamaRuntimeInstall: async (engineId: string) => {
       await installEngine(llamaState, clientRef, engineId, llamaControllerDeps);
+      await checkLlamaRuntimeUpdateForEngine(engineId);
+      renderAndBind(sendMessage);
+    },
+    onLlamaRuntimeUpgradeSelectedEngine: async () => {
+      await installLlamaRuntimeUpdateFromNotification();
+      const selectedEngineId = state.llamaRuntimeSelectedEngineId.trim();
+      if (selectedEngineId) {
+        await checkLlamaRuntimeUpdateForEngine(selectedEngineId);
+      }
       renderAndBind(sendMessage);
     },
     onLlamaRuntimeBrowseModelPath: async () => {
@@ -9296,6 +9417,31 @@ async function bootstrap(): Promise<void> {
       } catch {}
     })();
   }, 60_000);
+
+  window.setTimeout(() => {
+    void (async () => {
+      if (!clientRef || runtimeMode !== "tauri") return;
+      try {
+        const resp = await checkLlamaRuntimeUpdateForEngine();
+        if (!resp) return;
+        if (!resp.hasUpdate || !resp.latestVersion) return;
+        const notifyKey = `${resp.engineId}:${resp.latestVersion}`;
+        if (state.llamaRuntimeUpdateNotifiedVersion === notifyKey) return;
+        pushAppNotification({
+          title: "llama.cpp update available",
+          description: `${resp.engineId || "llama.cpp"}: ${resp.latestVersion} is available${resp.currentVersion ? ` (installed: ${resp.currentVersion})` : ""}.`,
+          tone: "info",
+          actions: [
+            { id: "install-llama-runtime-update", label: "Install now" },
+            ...(resp.htmlUrl ? [{ id: "download-llama-update", label: "Download", href: resp.htmlUrl }] : [])
+          ]
+        });
+        state.llamaRuntimeUpdateNotifiedVersion = notifyKey;
+        persistLlamaRuntimeUpdateNotifiedVersion(notifyKey);
+        renderAndBind(sendMessage);
+      } catch {}
+    })();
+  }, 5_000);
 }
 
 function installConsoleCapture(): void {

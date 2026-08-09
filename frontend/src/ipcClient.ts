@@ -21,6 +21,8 @@ import type {
   AppEvent,
   AppVersionResponse,
   CheckForUpdatesResponse,
+  LlamaRuntimeUpdateCheckResponse,
+  LlamaRuntimeUpdateCheckRequest,
   ChatCancelRequest,
   ChatCancelResponse,
   ChatDeleteConversationRequest,
@@ -174,6 +176,7 @@ import { getAllToolManifests } from "./tools/registry";
 export interface ChatIpcClient {
   getAppVersion(): Promise<AppVersionResponse>;
   checkForUpdates(): Promise<CheckForUpdatesResponse>;
+  checkLlamaRuntimeUpdates(request?: LlamaRuntimeUpdateCheckRequest): Promise<LlamaRuntimeUpdateCheckResponse>;
   getAppResourceUsage(request: AppResourceUsageRequest): Promise<AppResourceUsageResponse>;
   sendMessage(request: ChatSendRequest): Promise<ChatSendResponse>;
   cancelMessage(request: ChatCancelRequest): Promise<ChatCancelResponse>;
@@ -375,6 +378,10 @@ class TauriChatIpcClient implements ChatIpcClient {
 
   checkForUpdates(): Promise<CheckForUpdatesResponse> {
     return this.invokeFn<CheckForUpdatesResponse>("cmd_check_for_updates");
+  }
+
+  checkLlamaRuntimeUpdates(request?: LlamaRuntimeUpdateCheckRequest): Promise<LlamaRuntimeUpdateCheckResponse> {
+    return this.invokeFn<LlamaRuntimeUpdateCheckResponse>("cmd_check_llama_runtime_updates", { request });
   }
 
   getAppResourceUsage(request: AppResourceUsageRequest): Promise<AppResourceUsageResponse> {
@@ -883,6 +890,16 @@ export class MockChatIpcClient implements ChatIpcClient {
 
   async checkForUpdates(): Promise<CheckForUpdatesResponse> {
     return { hasUpdate: false, currentVersion: APP_BUILD_VERSION, latestVersion: "", htmlUrl: "" };
+  }
+
+  async checkLlamaRuntimeUpdates(request?: LlamaRuntimeUpdateCheckRequest): Promise<LlamaRuntimeUpdateCheckResponse> {
+    return {
+      hasUpdate: false,
+      engineId: request?.engineId ?? "",
+      currentVersion: "",
+      latestVersion: "",
+      htmlUrl: ""
+    };
   }
 
   async getAppResourceUsage(request: AppResourceUsageRequest): Promise<AppResourceUsageResponse> {
@@ -1866,6 +1883,7 @@ export class MockChatIpcClient implements ChatIpcClient {
     return {
       correlationId: request.correlationId,
       state: "idle",
+      currentVersion: "",
       activeEngineId: null,
       activeModelPath: null,
       endpoint: null,

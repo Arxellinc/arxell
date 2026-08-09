@@ -700,6 +700,80 @@ jobs:
           SIZE=$(stat -c%s "$APPIMAGE")
           [ "$SIZE" -gt 10485760 ] || { echo "ERROR: AppImage is ${SIZE} bytes — likely a partial build"; exit 1; }
 
+      - name: Smoke test Linux .deb install and launch
+        if: matrix.platform.os == 'ubuntu-24.04'
+        shell: bash
+        run: |
+          set -euo pipefail
+          DEB_PATH="$(python3 - <<'PY'
+          import pathlib
+          items = sorted(pathlib.Path('src-tauri/target/release/bundle/deb').rglob('*.deb'))
+          if not items:
+            raise SystemExit('No .deb artifact found')
+          print(items[0])
+          PY
+          )"
+
+          PKG_NAME="$(dpkg-deb -f "$DEB_PATH" Package)"
+
+          sudo apt-get update
+          sudo apt-get install -y "$DEB_PATH" xvfb
+
+          BIN_PATH="$(dpkg -L "$PKG_NAME" | python3 - <<'PY'
+          import sys
+          bins = [line.strip() for line in sys.stdin if line.strip().startswith('/usr/bin/')]
+          if not bins:
+            raise SystemExit('No /usr/bin launcher found in installed package')
+          print(bins[0])
+          PY
+          )"
+
+          echo "Installed package: $PKG_NAME"
+          echo "Launcher path: $BIN_PATH"
+
+          set +e
+          xvfb-run -a timeout 20s "$BIN_PATH"
+          code=$?
+          set -e
+
+          if [[ "$code" -ne 0 && "$code" -ne 124 ]]; then
+            echo "Smoke launch failed with exit code: $code" >&2
+            exit "$code"
+          fi
+
+          echo "Smoke launch passed (exit code $code)"
+
+      - name: Smoke test Linux AppImage launch
+        if: matrix.platform.os == 'ubuntu-24.04'
+        shell: bash
+        env:
+          APPIMAGE_EXTRACT_AND_RUN: "1"
+        run: |
+          set -euo pipefail
+          APPIMAGE_PATH="$(python3 - <<'PY'
+          import pathlib
+          items = sorted(pathlib.Path('src-tauri/target/release/bundle/appimage').rglob('*.AppImage'))
+          if not items:
+            raise SystemExit('No AppImage artifact found')
+          print(items[0])
+          PY
+          )"
+
+          chmod +x "$APPIMAGE_PATH"
+          ./scripts/check-appimage-runtime.sh
+
+          set +e
+          xvfb-run -a timeout 20s "$APPIMAGE_PATH"
+          code=$?
+          set -e
+
+          if [[ "$code" -ne 0 && "$code" -ne 124 ]]; then
+            echo "AppImage smoke launch failed with exit code: $code" >&2
+            exit "$code"
+          fi
+
+          echo "AppImage smoke launch passed (exit code $code)"
+
       - name: Verify Tauri bundle output
         shell: bash
         env:
@@ -828,3 +902,63 @@ jobs:
             release-assets/**/*.msi
           fail_on_unmatched_files: true
           generate_release_notes: true
+
+  build-flatpak:
+    name: Build Flatpak (linux-x64)
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Read app version
+        id: app_version
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(python3 -c 'import pathlib,re,sys; text=pathlib.Path("src-tauri/Cargo.toml").read_text(encoding="utf-8"); section=re.search(r"(?ms)^\[package\]\s*(.*?)(?=^\[|\Z)", text); m=re.search(r"(?m)^\s*version\s*=\s*\"([^\"]+)\"\s*$", section.group(1) if section else ""); print(m.group(1) if m else (sys.stderr.write("Could not find [package].version in src-tauri/Cargo.toml\\n") or sys.exit(1)))')"
+          echo "version=${version}" >> "${GITHUB_OUTPUT}"
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Build frontend dist for Flatpak
+        run: |
+          set -euo pipefail
+          npm --prefix frontend ci
+          npm --prefix frontend run build
+
+      - name: Install Flatpak tooling
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y flatpak flatpak-builder
+
+      - name: Install Flatpak runtimes
+        run: |
+          set -euo pipefail
+          flatpak remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
+          flatpak install -y flathub \
+            org.gnome.Platform//47 \
+            org.gnome.Sdk//47 \
+            org.freedesktop.Sdk.Extension.rust-stable//24.08
+
+      - name: Build Flatpak
+        run: |
+          set -euo pipefail
+          flatpak-builder --force-clean --repo=flatpak-repo flatpak-build packaging/flatpak/com.arxell.desktop.yml
+
+      - name: Create Flatpak bundle
+        run: |
+          set -euo pipefail
+          flatpak build-bundle flatpak-repo "arxell-v${{ steps.app_version.outputs.version }}-linux-x64.flatpak" com.arxell.desktop
+
+      - name: Upload Flatpak artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-x64-v${{ steps.app_version.outputs.version }}-flatpak
+          path: arxell-v${{ steps.app_version.outputs.version }}-linux-x64.flatpak
+          if-no-files-found: error

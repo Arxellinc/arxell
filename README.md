@@ -208,6 +208,12 @@ npm install -g --ignore-scripts @earendil-works/pi-coding-agent@0.81.1
 
 Pi is an external system dependency in this release. Arxell discovers explicit, managed, PATH, npm, pnpm, Yarn, and Bun installations and reports actionable setup diagnostics. See [Pi Coding Harness](docs/PI_CODING_HARNESS.md).
 
+Linux package notes:
+- `.deb` packages declare required GTK/WebKit runtime dependencies so supported Debian/Ubuntu systems install them automatically.
+- `AppImage` still relies on host desktop runtime libraries (notably GTK/WebKit). Prefer `.deb` on Debian/Ubuntu for the most reliable out-of-box install.
+- `Flatpak` is the recommended cross-distro Linux install format for the most consistent runtime behavior.
+- If an AppImage opens to a blank window, run `./scripts/check-appimage-runtime.sh` to validate host runtime libraries.
+
 ### Build from Source
 
 ```bash

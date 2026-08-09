@@ -39,6 +39,14 @@ export function renderLlamaCppActions(state: PrimaryPanelRenderState): string {
   const startDisabledAttr = canStart ? "" : " disabled";
   const stopDisabledAttr = canStop ? "" : " disabled";
   const engineSelectDisabledAttr = isBusy ? " disabled" : "";
+  const canUpgrade =
+    !isBusy &&
+    Boolean(selected?.isApplicable) &&
+    state.llamaRuntimeHasUpdate &&
+    Boolean(state.llamaRuntimeLatestVersion.trim());
+  const upgradeBtnHtml = canUpgrade
+    ? `<button type="button" class="tool-action-btn is-primary" id="llamaUpgradeBtn" title="Upgrade selected runtime engine">Upgrade to v.${escapeHtml(state.llamaRuntimeLatestVersion.trim())}</button>`
+    : "";
   return `
     <div class="llama-actions">
       <div class="llama-actions-engine">
@@ -47,6 +55,7 @@ export function renderLlamaCppActions(state: PrimaryPanelRenderState): string {
         </select>
         <span class="llama-engine-status${engineStatusClass}" title="${escapeHtml(engineStatusLabel)}" aria-label="${escapeHtml(engineStatusLabel)}">${selected?.isReady ? "✓" : "•"}</span>
       </div>
+      ${upgradeBtnHtml}
       <button type="button" class="topbar-icon-btn" id="llamaRefreshBtn" aria-label="Refresh llama runtime" data-title="Refresh Runtime" title="Refresh Runtime"${refreshDisabledAttr}>↻</button>
       <button type="button" class="topbar-icon-btn" id="llamaInstallBtn" aria-label="Install selected engine" data-title="Install Engine" title="Install Engine"${installDisabledAttr}>⇣</button>
       <button type="button" class="topbar-icon-btn" id="llamaStartBtn" aria-label="Start runtime" data-title="Start Server" title="Start Server"${startDisabledAttr}>▶</button>
@@ -191,6 +200,11 @@ export function renderLlamaCppBody(state: PrimaryPanelRenderState): string {
           <span class="config-key">GPU Acceleration</span>
           <span class="config-value">${escapeHtml(detectedGpu.label)}</span>
           <span class="config-meta">${escapeHtml(detectedGpu.meta)}</span>
+        </div>
+        <div class="config-row">
+          <span class="config-key">Runtime Version (debug)</span>
+          <span class="config-value">${escapeHtml((state.llamaRuntimeCurrentVersion || "").trim() || "v.unknown")}</span>
+          <span class="config-meta">from runtime status</span>
         </div>
         <label class="config-row">
           <span class="config-key">Port</span>
@@ -360,6 +374,13 @@ export function renderLlamaCppBody(state: PrimaryPanelRenderState): string {
 }
 
 export function bindLlamaCppPanel(bindings: PrimaryPanelBindings): void {
+  const engineSelect = document.querySelector<HTMLSelectElement>("#llamaEngineSelect");
+  if (engineSelect) {
+    engineSelect.onchange = async () => {
+      await bindings.onLlamaRuntimeSelectEngine(engineSelect.value);
+    };
+  }
+
   const readRuntimeStartInput = () => {
     const engineId =
       document.querySelector<HTMLSelectElement>("#llamaEngineSelect")?.value || "llama.cpp-cpu";
@@ -439,6 +460,13 @@ export function bindLlamaCppPanel(bindings: PrimaryPanelBindings): void {
       const engineId =
         document.querySelector<HTMLSelectElement>("#llamaEngineSelect")?.value || "llama.cpp-cpu";
       await bindings.onLlamaRuntimeInstall(engineId);
+    };
+  }
+
+  const upgradeBtn = document.querySelector<HTMLButtonElement>("#llamaUpgradeBtn");
+  if (upgradeBtn) {
+    upgradeBtn.onclick = async () => {
+      await bindings.onLlamaRuntimeUpgradeSelectedEngine();
     };
   }
 

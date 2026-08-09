@@ -36,6 +36,7 @@ export interface LlamaStateSlice {
   llamaRuntimeMlock: boolean;
   llamaRuntimeSeed: number | null;
   llamaRuntime: LlamaRuntimeStatusResponse | null;
+  llamaRuntimeCurrentVersion: string;
   sidebarTab: string;
   modelManagerBusy: boolean;
   modelManagerMessage: string | null;

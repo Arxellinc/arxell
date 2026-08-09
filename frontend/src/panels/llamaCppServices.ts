@@ -17,6 +17,7 @@ export async function refreshLlamaRuntimeState(
   if (!clientRef) return warnedMissingBundleEngineId;
   const response = await clientRef.getLlamaRuntimeStatus({ correlationId: nextCorrelationId() });
   state.llamaRuntime = response;
+  state.llamaRuntimeCurrentVersion = (response.currentVersion || "").trim();
   const previousSelectedEngineId = state.llamaRuntimeSelectedEngineId;
   if (shouldClearActiveModelPath(response)) {
     state.llamaRuntimeActiveModelPath = state.llamaRuntimeModelPath?.trim() || "";

@@ -1136,6 +1136,7 @@ pub struct LlamaRuntimeEngine {
 pub struct LlamaRuntimeStatusResponse {
     pub correlation_id: String,
     pub state: String,
+    pub current_version: String,
     pub active_engine_id: Option<String>,
     pub active_model_path: Option<String>,
     pub endpoint: Option<String>,
@@ -1148,6 +1149,7 @@ pub struct LlamaRuntimeStatusResponse {
 pub struct LlamaRuntimeInstallRequest {
     pub correlation_id: String,
     pub engine_id: String,
+    pub force_refresh: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1524,6 +1526,22 @@ pub struct CheckForUpdatesResponse {
     pub current_version: String,
     pub latest_version: String,
     pub html_url: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LlamaRuntimeUpdateCheckResponse {
+    pub has_update: bool,
+    pub engine_id: String,
+    pub current_version: String,
+    pub latest_version: String,
+    pub html_url: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LlamaRuntimeUpdateCheckRequest {
+    pub engine_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
