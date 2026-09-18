@@ -905,6 +905,7 @@ const state: {
   firstRunBusy: boolean;
   firstRunMessage: string | null;
   modelManagerInstalled: ModelManagerInstalledModel[];
+  modelManagerDirectory: string;
   modelManagerActiveTab: "all_models" | "download";
   modelManagerDisabledModelIds: string[];
   modelManagerInfoModalModelId: string | null;
@@ -1202,6 +1203,7 @@ const state: {
   firstRunBusy: false,
   firstRunMessage: null,
   modelManagerInstalled: [],
+  modelManagerDirectory: "",
   modelManagerActiveTab: "all_models",
   modelManagerDisabledModelIds: loadPersistedModelManagerDisabledModelIds(),
   modelManagerInfoModalModelId: null,
@@ -3055,6 +3057,7 @@ function render(): void {
             llamaRuntimeBusy: state.llamaRuntimeBusy,
             llamaRuntimeLogs: state.llamaRuntimeLogs,
             modelManagerInstalled: state.modelManagerInstalled,
+            modelManagerDirectory: state.modelManagerDirectory,
             modelManagerActiveTab: state.modelManagerActiveTab,
             modelManagerDisabledModelIds: state.modelManagerDisabledModelIds,
             modelManagerInfoModalModelId: state.modelManagerInfoModalModelId,
@@ -4603,6 +4606,7 @@ async function refreshModelManagerInstalled(): Promise<void> {
   const response = await clientRef.modelManagerListInstalled({
     correlationId: nextCorrelationId()
   });
+  state.modelManagerDirectory = response.modelDirectory;
   state.modelManagerInstalled = response.models;
 }
 
@@ -4706,6 +4710,28 @@ async function refreshLlamaRuntime(): Promise<void> {
 async function browseModelPath(): Promise<string | null> {
   const runtimeMode = state.runtimeMode === "tauri" ? "tauri" : "web";
   return browseLlamaModelPath(runtimeMode, state.llamaRuntimeModelPath.trim(), pushConsoleEntry);
+}
+
+async function browseModelDirectory(): Promise<string | null> {
+  if (state.runtimeMode !== "tauri") {
+    state.modelManagerMessage = "Choosing a model directory is available in the desktop app.";
+    return null;
+  }
+  try {
+    const { invoke } = await import("@tauri-apps/api/core");
+    const selected = await invoke<string | string[] | null>("plugin:dialog|open", {
+      options: {
+        title: "Select Model Directory",
+        directory: true,
+        multiple: false,
+        defaultPath: state.modelManagerDirectory || undefined
+      }
+    });
+    return Array.isArray(selected) ? selected[0] ?? null : selected;
+  } catch (error) {
+    state.modelManagerMessage = `Model directory picker unavailable: ${String(error)}`;
+    return null;
+  }
 }
 
 async function browseTtsModelPath(currentValue: string): Promise<string | null> {
@@ -6055,6 +6081,49 @@ syncOverlayScrollbars();
       } finally {
         state.modelManagerBusy = false;
       }
+      renderAndBind(sendMessage);
+    },
+    onModelManagerChooseDirectory: async () => {
+      if (!clientRef || state.modelManagerBusy) return;
+      const selected = await browseModelDirectory();
+      if (!selected) {
+        renderAndBind(sendMessage);
+        return;
+      }
+      state.modelManagerBusy = true;
+      try {
+        const response = await clientRef.modelManagerSetDirectory({
+          correlationId: nextCorrelationId(),
+          modelDirectory: selected
+        });
+        state.modelManagerDirectory = response.modelDirectory;
+        await refreshModelManagerInstalled();
+        state.modelManagerMessage = `Using ${response.modelDirectory}. Found ${state.modelManagerInstalled.length} model(s).`;
+      } catch (error) {
+        state.modelManagerMessage = `Could not set model directory: ${String(error)}`;
+      } finally {
+        state.modelManagerBusy = false;
+      }
+      renderAndBind(sendMessage);
+    },
+    onModelManagerResetDirectory: async () => {
+      if (!clientRef || state.modelManagerBusy) return;
+      state.modelManagerBusy = true;
+      try {
+        const response = await clientRef.modelManagerSetDirectory({ correlationId: nextCorrelationId() });
+        state.modelManagerDirectory = response.modelDirectory;
+        await refreshModelManagerInstalled();
+        state.modelManagerMessage = `Restored the default model directory: ${response.modelDirectory}.`;
+      } catch (error) {
+        state.modelManagerMessage = `Could not reset model directory: ${String(error)}`;
+      } finally {
+        state.modelManagerBusy = false;
+      }
+      renderAndBind(sendMessage);
+    },
+    onModelManagerOpenDirectoryManager: async () => {
+      state.sidebarTab = "model_manager";
+      await refreshModelManagerInstalled();
       renderAndBind(sendMessage);
     },
     onModelManagerSetActiveTab: async (tab: "all_models" | "download") => {

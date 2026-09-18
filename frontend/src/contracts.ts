@@ -887,7 +887,19 @@ export interface ModelManagerInstalledModel {
 
 export interface ModelManagerListInstalledResponse {
   correlationId: string;
+  modelDirectory: string;
   models: ModelManagerInstalledModel[];
+}
+
+export interface ModelManagerSetDirectoryRequest {
+  correlationId: string;
+  /** Omit to restore the default app-owned models directory. */
+  modelDirectory?: string;
+}
+
+export interface ModelManagerSetDirectoryResponse {
+  correlationId: string;
+  modelDirectory: string;
 }
 
 export interface ModelManagerSearchHfRequest {

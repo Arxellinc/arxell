@@ -32,6 +32,24 @@ function formatModelSize(sizeMb: number): string {
   return `${sizeMb} MB`;
 }
 
+function renderModelDirectory(state: PrimaryPanelRenderState): string {
+  const directory = state.modelManagerDirectory || "Loading model directory...";
+  const disabled = state.modelManagerBusy ? " disabled" : "";
+  return `
+    <div class="llama-form">
+      <h3 class="model-manager-title">Model Directory</h3>
+      <div class="config-row">
+        <span class="config-key">Directory</span>
+        <input class="llama-input" value="${escapeHtml(directory)}" readonly aria-label="Model Directory" title="${escapeHtml(directory)}" />
+        <span class="config-meta">
+          <button type="button" class="tool-action-btn" id="modelManagerChooseDirectoryBtn"${disabled}>Choose…</button>
+          <button type="button" class="tool-action-btn" id="modelManagerResetDirectoryBtn"${disabled}>Reset</button>
+        </span>
+      </div>
+    </div>
+  `;
+}
+
 function capabilityIconsForModel(modelName: string): string {
   const lowered = modelName.toLowerCase();
   const caps: Array<{ icon: string; label: string }> = [{ icon: "✍", label: "Text Gen" }];
@@ -306,6 +324,7 @@ export function renderModelManagerBody(state: PrimaryPanelRenderState): string {
   return `
     <div class="primary-pane-body">
       <div class="mm-tab-content">
+        ${renderModelDirectory(state)}
         ${allModelsContent}
         ${downloadContent}
       </div>
@@ -487,6 +506,20 @@ export function bindModelManagerPanel(bindings: PrimaryPanelBindings): void {
   if (refreshBtn) {
     refreshBtn.onclick = async () => {
       await bindings.onModelManagerRefreshInstalled();
+    };
+  }
+
+  const chooseDirectoryBtn = document.querySelector<HTMLButtonElement>("#modelManagerChooseDirectoryBtn");
+  if (chooseDirectoryBtn) {
+    chooseDirectoryBtn.onclick = async () => {
+      await bindings.onModelManagerChooseDirectory();
+    };
+  }
+
+  const resetDirectoryBtn = document.querySelector<HTMLButtonElement>("#modelManagerResetDirectoryBtn");
+  if (resetDirectoryBtn) {
+    resetDirectoryBtn.onclick = async () => {
+      await bindings.onModelManagerResetDirectory();
     };
   }
 

@@ -111,6 +111,8 @@ import type {
   ModelManagerListInstalledRequest,
   ModelManagerListInstalledResponse,
   ModelManagerRefreshUnslothCatalogRequest,
+  ModelManagerSetDirectoryRequest,
+  ModelManagerSetDirectoryResponse,
   ModelManagerRefreshUnslothCatalogResponse,
   ModelManagerSearchHfRequest,
   ModelManagerSearchHfResponse,
@@ -242,6 +244,9 @@ export interface ChatIpcClient {
   modelManagerListInstalled(
     request: ModelManagerListInstalledRequest
   ): Promise<ModelManagerListInstalledResponse>;
+  modelManagerSetDirectory(
+    request: ModelManagerSetDirectoryRequest
+  ): Promise<ModelManagerSetDirectoryResponse>;
   modelManagerSearchHf(request: ModelManagerSearchHfRequest): Promise<ModelManagerSearchHfResponse>;
   modelManagerDownloadHf(
     request: ModelManagerDownloadHfRequest
@@ -613,6 +618,14 @@ class TauriChatIpcClient implements ChatIpcClient {
     request: ModelManagerListInstalledRequest
   ): Promise<ModelManagerListInstalledResponse> {
     return this.invokeFn<ModelManagerListInstalledResponse>("cmd_model_manager_list_installed", {
+      request
+    });
+  }
+
+  modelManagerSetDirectory(
+    request: ModelManagerSetDirectoryRequest
+  ): Promise<ModelManagerSetDirectoryResponse> {
+    return this.invokeFn<ModelManagerSetDirectoryResponse>("cmd_model_manager_set_directory", {
       request
     });
   }
@@ -1964,7 +1977,17 @@ export class MockChatIpcClient implements ChatIpcClient {
   ): Promise<ModelManagerListInstalledResponse> {
     return {
       correlationId: request.correlationId,
+      modelDirectory: "/tmp/models",
       models: []
+    };
+  }
+
+  async modelManagerSetDirectory(
+    request: ModelManagerSetDirectoryRequest
+  ): Promise<ModelManagerSetDirectoryResponse> {
+    return {
+      correlationId: request.correlationId,
+      modelDirectory: request.modelDirectory || "/tmp/models"
     };
   }
 
