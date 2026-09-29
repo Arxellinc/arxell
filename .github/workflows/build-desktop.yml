@@ -263,11 +263,14 @@ jobs:
             local binary_name="llama-server"
             if [[ "$RUNNER_OS" == "Windows" ]]; then binary_name="llama-server.exe"; fi
             echo "[llama-runtime] configuring ${engine_id}"
-            local dependency_args=()
             if [[ "$RUNNER_OS" == "Windows" ]]; then
-              dependency_args+=("-DCMAKE_PREFIX_PATH=$RUNNER_TEMP/spirv-headers-install")
+              cmake -S "$source_dir" -B "$build_dir" \
+                -DCMAKE_BUILD_TYPE=Release -DLLAMA_BUILD_SERVER=ON \
+                "-DCMAKE_PREFIX_PATH=$RUNNER_TEMP/spirv-headers-install" "$@"
+            else
+              cmake -S "$source_dir" -B "$build_dir" \
+                -DCMAKE_BUILD_TYPE=Release -DLLAMA_BUILD_SERVER=ON "$@"
             fi
-            cmake -S "$source_dir" -B "$build_dir" -DCMAKE_BUILD_TYPE=Release -DLLAMA_BUILD_SERVER=ON "${dependency_args[@]}" "$@"
             echo "[llama-runtime] building ${engine_id}"
             cmake --build "$build_dir" --config Release --parallel
             local server
