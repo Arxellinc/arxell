@@ -1133,9 +1133,30 @@ fn is_runtime_support_file(name: &str) -> bool {
     false
 }
 
+/// llama.cpp release used for in-app engine downloads. Defaults to the tag
+/// whose engines Arxell bundles and tests with; override with
+/// `ARXELL_LLAMA_RUNTIME_RELEASE` (a tag like `v0.5.0`, or `latest`).
+const LLAMA_RUNTIME_RELEASE_TAG: &str = "v0.4.1";
+
+fn llama_runtime_release_url_from(configured: Option<&str>) -> String {
+    let configured = configured
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or(LLAMA_RUNTIME_RELEASE_TAG);
+    if configured.eq_ignore_ascii_case("latest") {
+        "https://api.github.com/repos/ggml-org/llama.cpp/releases/latest".to_string()
+    } else {
+        format!("https://api.github.com/repos/ggml-org/llama.cpp/releases/tags/{configured}")
+    }
+}
+
+fn llama_runtime_release_url() -> String {
+    llama_runtime_release_url_from(std::env::var("ARXELL_LLAMA_RUNTIME_RELEASE").ok().as_deref())
+}
+
 fn download_engine_binary(engine_id: &str) -> Result<PathBuf, String> {
     let release: GithubRelease = http_client(10)?
-        .get("https://api.github.com/repos/ggml-org/llama.cpp/releases/latest")
+        .get(llama_runtime_release_url())
         .header("User-Agent", app_paths::APP_USER_AGENT)
         .send()
         .map_err(|e| {
@@ -1156,7 +1177,9 @@ fn download_engine_binary(engine_id: &str) -> Result<PathBuf, String> {
     )
     .ok_or_else(|| {
         format!(
-            "No compatible llama.cpp release asset found for engine {} on {}-{} (release {}).",
+            "No compatible llama.cpp release asset found for engine {} on {}-{} (release {}). \
+             Arxell bundles tested engines with the app: reinstall Arxell to restore them, \
+             or set ARXELL_LLAMA_RUNTIME_RELEASE to a release that ships prebuilt binaries.",
             engine_id,
             std::env::consts::OS,
             std::env::consts::ARCH,
@@ -1200,6 +1223,69 @@ fn download_engine_binary(engine_id: &str) -> Result<PathBuf, String> {
             asset.name, binary_name
         )
     })
+}
+
+#[cfg(test)]
+mod engine_download_tests {
+    use super::*;
+
+    fn asset(name: &str) -> GithubAsset {
+        GithubAsset {
+            name: name.to_string(),
+            browser_download_url: String::new(),
+        }
+    }
+
+    #[test]
+    fn release_url_defaults_to_the_tested_pin_and_honors_override() {
+        assert_eq!(
+            llama_runtime_release_url_from(None),
+            "https://api.github.com/repos/ggml-org/llama.cpp/releases/tags/v0.4.1"
+        );
+        assert_eq!(
+            llama_runtime_release_url_from(Some("v0.5.0")),
+            "https://api.github.com/repos/ggml-org/llama.cpp/releases/tags/v0.5.0"
+        );
+        assert_eq!(
+            llama_runtime_release_url_from(Some("latest")),
+            "https://api.github.com/repos/ggml-org/llama.cpp/releases/latest"
+        );
+    }
+
+    #[test]
+    fn release_asset_selection_is_platform_and_backend_specific() {
+        let assets = vec![
+            asset("llama-b1-bin-ubuntu-vulkan-x64.tar.gz"),
+            asset("llama-b1-bin-ubuntu-x64.tar.gz"),
+            asset("llama-b1-bin-win-cpu-x64.zip"),
+        ];
+
+        let cpu =
+            select_release_asset("llama.cpp-cpu", "linux", "x86_64", &assets).unwrap();
+        assert_eq!(cpu.name, "llama-b1-bin-ubuntu-x64.tar.gz");
+
+        let vulkan =
+            select_release_asset("llama.cpp-vulkan", "linux", "x86_64", &assets).unwrap();
+        assert_eq!(vulkan.name, "llama-b1-bin-ubuntu-vulkan-x64.tar.gz");
+
+        let windows =
+            select_release_asset("llama.cpp-cpu", "windows", "x86_64", &assets).unwrap();
+        assert_eq!(windows.name, "llama-b1-bin-win-cpu-x64.zip");
+    }
+
+    #[test]
+    fn release_asset_selection_never_falls_back_across_platforms() {
+        let linux_only = vec![
+            asset("llama-b1-bin-ubuntu-vulkan-x64.tar.gz"),
+            asset("llama-b1-bin-ubuntu-x64.tar.gz"),
+        ];
+
+        assert!(select_release_asset("llama.cpp-cpu", "windows", "x86_64", &linux_only).is_none());
+        assert!(select_release_asset("llama.cpp-metal", "macos", "aarch64", &linux_only).is_none());
+        // Upstream's current stable ships no engine assets at all; the
+        // downloader must report that instead of picking a wrong binary.
+        assert!(select_release_asset("llama.cpp-cpu", "linux", "x86_64", &[]).is_none());
+    }
 }
 
 fn http_client(timeout_secs: u64) -> Result<reqwest::blocking::Client, String> {
