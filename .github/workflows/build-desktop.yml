@@ -288,6 +288,13 @@ jobs:
               -o -name '*.metallib' -o -name '*.metal' \
             \) -exec cp {} "$engine_dir"/ \;
             if [[ "$RUNNER_OS" != "Windows" ]]; then chmod +x "$engine_dir/$binary_name"; fi
+            # Match runtime_service.rs: copied shared libraries live beside
+            # the executable and must be discoverable after cache restore.
+            if [[ "$RUNNER_OS" == "Linux" ]]; then
+              export LD_LIBRARY_PATH="$engine_dir${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+            elif [[ "$RUNNER_OS" == "macOS" ]]; then
+              export DYLD_LIBRARY_PATH="$engine_dir${DYLD_LIBRARY_PATH:+:$DYLD_LIBRARY_PATH}"
+            fi
             echo "[llama-runtime] smoke test ${engine_id}"
             if ! "$engine_dir/$binary_name" --version; then
               echo "[llama-runtime] ERROR: ${engine_id} failed the --version smoke test" >&2
@@ -390,7 +397,25 @@ jobs:
               binary = root / engine_id / binary_name
               if not binary.is_file():
                   raise SystemExit(f"Missing bundled runtime: {binary}")
-              subprocess.run([str(binary), "--version"], check=True, capture_output=True)
+              # Test the relocated runtime closure, not the runner's CMake
+              # build-tree RPATH. This is the loader path the app configures
+              # when it starts a bundled engine.
+              env = os.environ.copy()
+              loader_var = {
+                  "Linux": "LD_LIBRARY_PATH",
+                  "macOS": "DYLD_LIBRARY_PATH",
+                  "Windows": "PATH",
+              }[os.environ["RUNNER_OS"]]
+              prior = env.get(loader_var, "")
+              env[loader_var] = str(binary.parent) + (os.pathsep + prior if prior else "")
+              result = subprocess.run(
+                  [str(binary), "--version"], capture_output=True, text=True, env=env
+              )
+              if result.returncode != 0:
+                  raise SystemExit(
+                      f"{binary} --version failed ({result.returncode})\n"
+                      f"stdout: {result.stdout[-4000:]}\nstderr: {result.stderr[-4000:]}"
+                  )
           print(f"Verified llama.cpp {expected_tag} runtime bundle: {expected}")
           PY
 
