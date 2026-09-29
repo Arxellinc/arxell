@@ -459,6 +459,9 @@ impl PiRpcSession {
                     .wait()
                     .await
                     .map_err(|error| PiRpcError::Io(error.to_string()))?;
+                // Give the stderr pump a moment to drain the child's final
+                // output so UnexpectedExit diagnostics are not truncated.
+                sleep(Duration::from_millis(150)).await;
                 return Err(PiRpcError::UnexpectedExit {
                     status: status.to_string(),
                     stderr: self.stderr_text(),
@@ -1175,7 +1178,12 @@ mod tests {
         } else {
             format!("#!/bin/sh\nexec node \"{}\" \"$@\"\n", fixture.display())
         };
-        std::fs::write(&wrapper, script).ok()?;
+        // Write-then-rename so the wrapper is never exec'd mid-write
+        // (executing a file that is open for writing fails with ETXTBSY
+        // under load).
+        let staging = wrapper.with_extension("tmp");
+        std::fs::write(&staging, script).ok()?;
+        std::fs::rename(&staging, &wrapper).ok()?;
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;

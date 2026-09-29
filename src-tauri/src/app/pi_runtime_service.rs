@@ -590,7 +590,14 @@ mod tests {
         } else {
             "#!/bin/sh\nexec node -e \"setTimeout(()=>{},30000)\"\n".to_string()
         };
-        if std::fs::write(&path, script).is_err() {
+        // Write-then-rename so the fixture is never exec'd mid-write
+        // (executing a file that is open for writing fails with ETXTBSY
+        // under load).
+        let staging = path.with_extension("tmp");
+        if std::fs::write(&staging, script).is_err() {
+            return;
+        }
+        if std::fs::rename(&staging, &path).is_err() {
             return;
         }
         #[cfg(unix)]
@@ -637,7 +644,12 @@ mod tests {
         } else {
             format!("#!/bin/sh\nexec node -e \"console.log('{}')\"\n", version)
         };
-        std::fs::write(&path, script).ok()?;
+        // Write-then-rename so the wrapper is never exec'd mid-write
+        // (executing a file that is open for writing fails with ETXTBSY
+        // under load).
+        let staging = path.with_extension("tmp");
+        std::fs::write(&staging, script).ok()?;
+        std::fs::rename(&staging, &path).ok()?;
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
