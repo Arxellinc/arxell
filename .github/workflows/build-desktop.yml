@@ -628,7 +628,7 @@ jobs:
           case "${{ matrix.platform.os }}" in
             ubuntu-24.04)
               cargo tauri build --bundles deb -- --features tauri-runtime 2>&1
-              LD_LIBRARY_PATH="" cargo tauri build --bundles appimage -- --features tauri-runtime 2>&1
+              DEBUG=1 LD_LIBRARY_PATH="" cargo tauri build --verbose --bundles appimage -- --features tauri-runtime 2>&1
               ;;
             windows-latest)
               cargo tauri build --bundles msi -- --features tauri-runtime
