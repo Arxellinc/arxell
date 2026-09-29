@@ -19,6 +19,7 @@ const DEFAULT_PORT: u16 = 1420;
 const DEFAULT_CTX: u32 = 8192;
 const DEFAULT_N_GPU_LAYERS: i32 = 999;
 const HEALTH_TIMEOUT_SECS: u64 = 90;
+const MODEL_READY_TIMEOUT_SECS: u64 = 300;
 
 #[derive(Debug, Deserialize)]
 struct GithubRelease {
@@ -463,9 +464,23 @@ impl LlamaRuntimeService {
             command.creation_flags(CREATE_NO_WINDOW);
         }
 
-        let mut child = command
-            .spawn()
-            .map_err(|e| format!("failed to start llama-server: {e}"))?;
+        let mut child = match command.spawn() {
+            Ok(child) => child,
+            Err(e) => {
+                let message = format!("failed to start llama-server: {e}");
+                self.emit(
+                    request.correlation_id.as_str(),
+                    "llama.runtime.start",
+                    EventStage::Error,
+                    EventSeverity::Error,
+                    json!({ "engineId": request.engine_id, "message": message }),
+                );
+                if let Ok(mut state) = self.state.try_lock() {
+                    state.status = "failed".to_string();
+                }
+                return Err(message);
+            }
+        };
         let pid = child.id();
 
         if let Some(stdout) = child.stdout.take() {
@@ -492,15 +507,59 @@ impl LlamaRuntimeService {
             "llama.runtime.health",
             EventStage::Progress,
             EventSeverity::Info,
-            json!({ "port": port, "timeoutSec": HEALTH_TIMEOUT_SECS }),
+            json!({
+                "port": port,
+                "portTimeoutSec": HEALTH_TIMEOUT_SECS,
+                "modelReadyTimeoutSec": MODEL_READY_TIMEOUT_SECS
+            }),
         );
 
-        if !wait_for_port(port, HEALTH_TIMEOUT_SECS) {
+        // A listening socket only proves the process booted; the model may
+        // still be loading. Wait for llama-server's /health to report ready
+        // and fail fast if the child exits while we are waiting.
+        let started_at = std::time::Instant::now();
+        let port_deadline = started_at + Duration::from_secs(HEALTH_TIMEOUT_SECS);
+        let ready_deadline = started_at + Duration::from_secs(MODEL_READY_TIMEOUT_SECS);
+        let mut last_emitted_progress: Option<f64> = None;
+        let readiness_error: Option<String> = loop {
+            if let Some(status) = child.try_wait().ok().flatten() {
+                break Some(format!("llama-server exited during startup ({status})"));
+            }
+            let addr = std::net::SocketAddr::from(([127, 0, 0, 1], port));
+            let port_open =
+                std::net::TcpStream::connect_timeout(&addr, Duration::from_millis(600)).is_ok();
+            if port_open {
+                match query_health_progress(port) {
+                    Some(progress) if progress >= 1.0 => break None,
+                    Some(progress) => {
+                        if last_emitted_progress != Some(progress) {
+                            last_emitted_progress = Some(progress);
+                            self.emit(
+                                request.correlation_id.as_str(),
+                                "llama.runtime.loading",
+                                EventStage::Progress,
+                                EventSeverity::Info,
+                                json!({ "progress": progress }),
+                            );
+                        }
+                    }
+                    None => {}
+                }
+            } else if std::time::Instant::now() > port_deadline {
+                break Some(format!(
+                    "llama-server did not listen on port {port} within {HEALTH_TIMEOUT_SECS}s"
+                ));
+            }
+            if std::time::Instant::now() > ready_deadline {
+                break Some(format!(
+                    "llama-server did not finish loading the model within {MODEL_READY_TIMEOUT_SECS}s"
+                ));
+            }
+            std::thread::sleep(Duration::from_millis(500));
+        };
+
+        if let Some(message) = readiness_error {
             let _ = terminate_process(child);
-            let message = format!(
-                "llama-server failed health check on port {} within {}s",
-                port, HEALTH_TIMEOUT_SECS
-            );
             self.emit(
                 request.correlation_id.as_str(),
                 "llama.runtime.start",
@@ -514,6 +573,14 @@ impl LlamaRuntimeService {
             return Err(message);
         }
 
+        self.emit(
+            request.correlation_id.as_str(),
+            "llama.runtime.loading",
+            EventStage::Complete,
+            EventSeverity::Info,
+            json!({ "progress": 1.0 }),
+        );
+
         {
             if let Ok(mut state) = self.state.try_lock() {
                 state.status = "healthy".to_string();
@@ -525,39 +592,6 @@ impl LlamaRuntimeService {
                 });
             }
         }
-
-        let loading_correlation_id = request.correlation_id.clone();
-        let loading_hub = self.hub.clone();
-        std::thread::spawn(move || {
-            let deadline = std::time::Instant::now() + Duration::from_secs(300);
-            while std::time::Instant::now() < deadline {
-                match query_health_progress(port) {
-                    Some(progress) if progress >= 1.0 => {
-                        loading_hub.emit(loading_hub.make_event(
-                            loading_correlation_id.as_str(),
-                            Subsystem::Runtime,
-                            "llama.runtime.loading",
-                            EventStage::Complete,
-                            EventSeverity::Info,
-                            json!({ "progress": 1.0 }),
-                        ));
-                        return;
-                    }
-                    Some(progress) => {
-                        loading_hub.emit(loading_hub.make_event(
-                            loading_correlation_id.as_str(),
-                            Subsystem::Runtime,
-                            "llama.runtime.loading",
-                            EventStage::Progress,
-                            EventSeverity::Info,
-                            json!({ "progress": progress }),
-                        ));
-                    }
-                    None => {}
-                }
-                std::thread::sleep(Duration::from_millis(800));
-            }
-        });
 
         let endpoint = format!("http://127.0.0.1:{}/v1", port);
         self.emit(
@@ -737,18 +771,6 @@ fn set_executable_if_needed(_path: &Path) -> Result<(), String> {
             .map_err(|e| format!("failed setting runtime binary executable bit: {e}"))?;
     }
     Ok(())
-}
-
-fn wait_for_port(port: u16, timeout_secs: u64) -> bool {
-    let deadline = std::time::Instant::now() + Duration::from_secs(timeout_secs);
-    while std::time::Instant::now() < deadline {
-        let addr = std::net::SocketAddr::from(([127, 0, 0, 1], port));
-        if std::net::TcpStream::connect_timeout(&addr, Duration::from_millis(600)).is_ok() {
-            return true;
-        }
-        std::thread::sleep(Duration::from_millis(450));
-    }
-    false
 }
 
 fn query_health_progress(port: u16) -> Option<f64> {
@@ -1379,6 +1401,40 @@ mod port_tests {
         }
         assert!(!is_runtime_support_file("readme.txt"));
         assert!(!is_runtime_support_file("llama-server"));
+    }
+
+    #[test]
+    fn health_progress_parses_loading_and_ready_states() {
+        fn spawn_health_responder(
+            body: &'static str,
+        ) -> std::net::SocketAddr {
+            use std::io::{Read, Write};
+            let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
+            let addr = listener.local_addr().unwrap();
+            std::thread::spawn(move || {
+                for stream in listener.incoming().take(4) {
+                    let Ok(mut stream) = stream else { break };
+                    let mut buf = [0_u8; 1024];
+                    let _ = stream.read(&mut buf);
+                    let response = format!(
+                        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                        body.len(),
+                        body
+                    );
+                    let _ = stream.write_all(response.as_bytes());
+                }
+            });
+            addr
+        }
+
+        let addr = spawn_health_responder("{\"status\":\"ok\"}");
+        assert_eq!(query_health_progress(addr.port()), Some(1.0));
+
+        let addr = spawn_health_responder("{\"status\":\"loading\",\"progress\":0.42}");
+        assert_eq!(query_health_progress(addr.port()), Some(0.42));
+
+        let addr = spawn_health_responder("busy");
+        assert_eq!(query_health_progress(addr.port()), None);
     }
 }
 
