@@ -1096,7 +1096,9 @@ fn is_runtime_support_file(name: &str) -> bool {
     }
     #[cfg(target_os = "macos")]
     {
-        return lower.ends_with(".dylib");
+        return lower.ends_with(".dylib")
+            || lower.ends_with(".metallib")
+            || lower.ends_with(".metal");
     }
     #[cfg(target_os = "linux")]
     {
@@ -1356,6 +1358,27 @@ mod port_tests {
     #[test]
     fn dynamic_port_is_rejected_because_endpoint_requires_a_known_port() {
         assert!(ensure_port_available(0).is_err());
+    }
+
+    #[test]
+    fn runtime_support_files_cover_engine_dependency_closures() {
+        if cfg!(target_os = "windows") {
+            assert!(is_runtime_support_file("ggml.dll"));
+        }
+        if cfg!(target_os = "linux") {
+            assert!(is_runtime_support_file("libggml.so"));
+            assert!(is_runtime_support_file("libggml.so.1"));
+        }
+        if cfg!(target_os = "macos") {
+            assert!(is_runtime_support_file("libggml.dylib"));
+            // Metal kernels ship beside the binary when the build does not
+            // embed them; GGML_METAL_EMBED_LIBRARY defaults to ON at v0.4.1,
+            // so these remain defensive.
+            assert!(is_runtime_support_file("default.metallib"));
+            assert!(is_runtime_support_file("ggml-metal.metal"));
+        }
+        assert!(!is_runtime_support_file("readme.txt"));
+        assert!(!is_runtime_support_file("llama-server"));
     }
 }
 

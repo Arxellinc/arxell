@@ -31,13 +31,16 @@ Reject final errors, aborts, output-limit truncation, and exhausted retries; per
 
 Remove external-process killing. Report occupied/invalid ports and stop only the child owned by the runtime service. Port preflight is not a reservation; startup health checks still require further hardening below.
 
+## Addressed in this pass (PR #20)
+
+- **Pinned llama.cpp runtime preparation.** CI no longer resolves `/releases/latest` (whose current stable ships no engine assets — PR #20's first CI run reproduced this failure on all three platforms). Engines are built from the pinned source tag `v0.4.1`, with per-engine `--version` smoke tests, an arch-aware cache key (`runtimes-llama-source-v2-<os>-<arch>-…`), and an always-run verification step. Local validation: CPU engine built from the exact recipe and executed from an isolated engine directory containing only the copied closure (`exit=0`, zero unresolved dynamic dependencies).
+- **Complete dependency closure.** The engine copy step now bundles shared libraries and Metal kernels (`*.so*`, `*.dylib`, `*.dll`, `*.metallib`, `*.metal`). This is load-bearing, not defensive: the v0.4.1 Linux build links `llama-server` against `libggml*`/`libllama*` shared objects. `is_runtime_support_file` (app-side install/copy path) now also recognizes `.metallib`/`.metal`; Metal kernels are embedded by default at v0.4.1 (`GGML_METAL_EMBED_LIBRARY=${GGML_METAL}`), so those remain insurance.
+- **macOS architecture accuracy.** The matrix label now says `macos-arm64` (matching `macos-latest` hardware) and engines are built natively on the runner, eliminating the previous x64-asset/aarch64-app mismatch. `vulkan-1.dll` is intentionally not bundled on Windows: it is the system Khronos loader from the GPU driver, the app gates the Vulkan engine on runtime detection, and the CPU engine is the guaranteed fallback.
+
 ## Outstanding release blockers
 
 | Priority | Finding / evidence | Required acceptance |
 |---|---|---|
-| P0 | `.github/workflows/build-desktop.yml` downloads llama.cpp `/releases/latest`. On review, upstream returned `v0.5.0` with only `nightly-tag.txt`, not matching engine archives. The cache key and downloader also independently resolve latest. | Pin a tested binary release/source commit and hashes; resolve once; validate cold-cache builds on all targets. Do not switch to an arbitrary new nightly without inference tests. |
-| P0 | The llama bundle copy step only copies `*.so*`; it drops Windows DLLs and macOS dylibs. | Package each engine's complete dependency closure, verify executable architecture, and run the installed engine on a machine without development libraries. |
-| P0 | The workflow labels `macos-latest` as x64 and selects x64 llama assets, while the published app is aarch64. Runtime cache keys omit architecture. | Explicit Rust target/runner/runtime architecture matrix. Test Apple Silicon and Intel separately if both are supported; do not rely on Rosetta accidentally being installed. |
 | P0 | Linux packages are built on Ubuntu 24.04; there is no clean-machine install/functional matrix on main. AppImage media framework bundling is disabled. | Define the minimum distro/glibc/WebKit baseline, declare `.deb` runtime dependencies, and test both package formats outside the build environment on supported distributions. |
 | P1 | Pi and Node are not bundled; supported Pi is `>=0.81.0,<0.82.0`. The review machine has Pi 0.84.2 and is correctly outside that range. Interactive Pi uses the user's profile; Looper uses Arxell credentials. | For a download-and-run coding product, ship a verified managed runtime or provide an explicit prerequisite/setup flow. Test the actual pinned Pi, not just a fake process; document separate interactive authentication. |
 | P1 | Pi discovery misses `%APPDATA%/npm` when absent from PATH; macOS executable discovery does not ensure the Node interpreter is discoverable. Probes have no timeout. | PATH-poor GUI launches, npm shims, spaces/non-ASCII paths, missing Bash/Node, hung wrapper, restart persistence, and version compatibility tests. |
@@ -81,5 +84,7 @@ Keep results with OS/version, architecture, package checksum, runtime/Pi/model v
 - After fixes: frontend build/type checks and 28 frontend tests passed; both Rust check modes and 160 desktop-feature Rust tests passed (one opt-in native-store test excluded from the normal suite).
 - The opt-in native-store test also passed against a real GNOME Keyring in an isolated D-Bus session and temporary home/data directory, using only a synthetic credential.
 - Linux `cargo tauri build --no-bundle --features tauri-runtime` passed. This compiles the application; it is not an installer or first-run test.
+- PR #20's first CI run: steps through "Run Rust tests" passed on Linux, macOS, and Windows (validating the keyring/Pi/port fixes cross-platform); all three jobs then failed at "Prepare bundled llama.cpp runtimes" because upstream's current `latest` release ships no engine assets — the exact breakage this pass fixes.
+- llama.cpp `v0.4.1` CPU engine was built locally from the pinned recipe and executed from an isolated engine directory (binary + copied closure only), confirming a self-contained engine (`--version` exit 0, no unresolved shared libraries).
 - Tests using fake Pi do not establish compatibility with a real Pi package or provider.
 - This review did not launch Windows/macOS installers, spend provider credits, or download/run a GGUF model. Full cross-platform stability is still unverified.

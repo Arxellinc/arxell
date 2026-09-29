@@ -29,7 +29,7 @@ jobs:
         platform:
           - name: linux-x64
             os: ubuntu-24.04
-          - name: macos-x64
+          - name: macos-arm64
             os: macos-latest
           - name: windows-x64
             os: windows-latest
@@ -123,7 +123,11 @@ jobs:
             gtk+3.0 \
             libgtk-3-dev \
             librsvg2-common \
-            shared-mime-info
+            shared-mime-info \
+            cmake \
+            ninja-build \
+            libvulkan-dev \
+            glslc
           sudo /usr/lib/x86_64-linux-gnu/gdk-pixbuf-2.0/gdk-pixbuf-query-loaders --update-cache
           sudo /usr/lib/x86_64-linux-gnu/libgtk3-nocsd.so.0 || true
           sudo gtk-query-immodules-3.0 --update-cache 2>/dev/null || true
@@ -156,6 +160,12 @@ jobs:
           pkg-config --modversion librsvg-2.0
           PKG_CONFIG_PATH="${overlay_dir}${PKG_CONFIG_PATH:+:${PKG_CONFIG_PATH}}" pkg-config --variable=libdir librsvg-2.0
 
+      - name: Setup Vulkan SDK for Windows llama.cpp build
+        if: matrix.platform.os == 'windows-latest'
+        uses: Khrushkin/action-setup-vulkan@v1
+        with:
+          version: 1.3.275.0
+
       - name: Install frontend dependencies
         working-directory: frontend
         run: npm ci
@@ -182,7 +192,10 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          llama_tag="$(curl -fsSL -H "Authorization: Bearer ${GITHUB_TOKEN}" https://api.github.com/repos/ggml-org/llama.cpp/releases/latest | python3 -c 'import json,sys; print(json.load(sys.stdin)["tag_name"])')"
+          # v0.4.1 is the latest stable llama.cpp release and ships no upstream
+          # binary assets, so engines are built from this pinned source tag
+          # below. Bump deliberately and re-validate inference before changing.
+          llama_tag="v0.4.1"
           whisper_tag="$(curl -fsSL -H "Authorization: Bearer ${GITHUB_TOKEN}" https://api.github.com/repos/ggerganov/whisper.cpp/releases/latest | python3 -c 'import json,sys; print(json.load(sys.stdin)["tag_name"])')"
           kokoro_hash="$(md5sum scripts/prepare_kokoro_runtime.py scripts/verify_kokoro_runtime_archive.py | md5sum | cut -d' ' -f1)"
           echo "llama_tag=${llama_tag}" >> "${GITHUB_OUTPUT}"
@@ -199,185 +212,154 @@ jobs:
             src-tauri/resources/whisper-server
             src-tauri/resources/whisper
             src-tauri/resources/kokoro-runtime
-          key: runtimes-${{ runner.os }}-${{ steps.runtime_versions.outputs.llama_tag }}-${{ steps.runtime_versions.outputs.whisper_tag }}-${{ steps.runtime_versions.outputs.kokoro_hash }}
+          key: runtimes-llama-source-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.runtime_versions.outputs.llama_tag }}-${{ steps.runtime_versions.outputs.whisper_tag }}-${{ steps.runtime_versions.outputs.kokoro_hash }}
 
-      - name: Prepare bundled llama.cpp runtimes
+      - name: Build bundled llama.cpp runtimes from pinned source
         if: steps.cache_runtimes.outputs.cache-hit != 'true'
         shell: bash
         env:
-          GITHUB_TOKEN: ${{ github.token }}
+          LLAMA_TAG: ${{ steps.runtime_versions.outputs.llama_tag }}
+        run: |
+          set -euo pipefail
+          source_dir="$RUNNER_TEMP/llama.cpp"
+          resources_dir="$GITHUB_WORKSPACE/src-tauri/resources/llama-runtime"
+          rm -rf "$source_dir" "$resources_dir"
+          echo "[llama-runtime] cloning ${LLAMA_TAG}"
+          git clone --depth 1 --branch "$LLAMA_TAG" https://github.com/ggml-org/llama.cpp.git "$source_dir"
+          mkdir -p "$resources_dir"
+
+          build_engine() {
+            local engine_id="$1"
+            shift
+            local build_dir="$RUNNER_TEMP/llama-build-${engine_id}"
+            local binary_name="llama-server"
+            if [[ "$RUNNER_OS" == "Windows" ]]; then binary_name="llama-server.exe"; fi
+            echo "[llama-runtime] configuring ${engine_id}"
+            cmake -S "$source_dir" -B "$build_dir" -DCMAKE_BUILD_TYPE=Release -DLLAMA_BUILD_SERVER=ON "$@"
+            echo "[llama-runtime] building ${engine_id}"
+            cmake --build "$build_dir" --config Release --parallel
+            local server
+            server="$(find "$build_dir" -type f -name "$binary_name" | head -1)"
+            if [[ -z "$server" ]]; then
+              echo "[llama-runtime] ERROR: ${binary_name} not found under ${build_dir}" >&2
+              find "$build_dir" -maxdepth 4 -type f | head -40 >&2
+              return 1
+            fi
+            local engine_dir="$resources_dir/$engine_id"
+            mkdir -p "$engine_dir"
+            cp "$server" "$engine_dir/$binary_name"
+            # Complete runtime dependency closure: shared libraries and Metal
+            # kernels when the build does not embed them. GGML_METAL_EMBED_LIBRARY
+            # defaults to ON at v0.4.1, so macOS usually has no extra files.
+            find "$build_dir" -type f \( \
+              -name '*.so' -o -name '*.so.*' -o -name '*.dylib' -o -name '*.dll' \
+              -o -name '*.metallib' -o -name '*.metal' \
+            \) -exec cp {} "$engine_dir"/ \;
+            if [[ "$RUNNER_OS" != "Windows" ]]; then chmod +x "$engine_dir/$binary_name"; fi
+            echo "[llama-runtime] smoke test ${engine_id}"
+            if ! "$engine_dir/$binary_name" --version; then
+              echo "[llama-runtime] ERROR: ${engine_id} failed the --version smoke test" >&2
+              return 1
+            fi
+            echo "[llama-runtime] prepared ${engine_id}:"
+            ls -la "$engine_dir"
+          }
+
+          case "$RUNNER_OS" in
+            Linux)
+              build_engine llama.cpp-cpu -DGGML_VULKAN=OFF
+              build_engine llama.cpp-vulkan -DGGML_VULKAN=ON
+              required_engines='["llama.cpp-cpu", "llama.cpp-vulkan"]'
+              ;;
+            Windows)
+              build_engine llama.cpp-cpu -DGGML_VULKAN=OFF
+              build_engine llama.cpp-vulkan -DGGML_VULKAN=ON
+              required_engines='["llama.cpp-cpu", "llama.cpp-vulkan"]'
+              ;;
+            macOS)
+              build_engine llama.cpp-cpu -DGGML_METAL=OFF
+              build_engine llama.cpp-metal -DGGML_METAL=ON
+              required_engines='["llama.cpp-cpu", "llama.cpp-metal"]'
+              ;;
+            *)
+              echo "Unsupported runner: $RUNNER_OS" >&2
+              exit 1
+              ;;
+          esac
+
+          LLAMA_TAG="$LLAMA_TAG" RUNNER_OS="$RUNNER_OS" RUNNER_ARCH="$RUNNER_ARCH" REQUIRED_ENGINES="$required_engines" python - <<'PY_MANIFEST'
+          import json
+          import os
+          import pathlib
+
+          root = pathlib.Path("src-tauri/resources/llama-runtime")
+          binary_name = "llama-server.exe" if os.environ["RUNNER_OS"] == "Windows" else "llama-server"
+          engines = {}
+          for engine_id in json.loads(os.environ["REQUIRED_ENGINES"]):
+              engine_dir = root / engine_id
+              binary = engine_dir / binary_name
+              if not binary.is_file():
+                  raise SystemExit(f"Missing bundled runtime: {binary}")
+              support_files = sorted(
+                  entry.name
+                  for entry in engine_dir.iterdir()
+                  if entry.is_file() and entry.name != binary_name
+              )
+              engines[engine_id] = {
+                  "binaryPath": str(binary),
+                  "source": "built-from-source",
+                  "supportFiles": support_files,
+              }
+          (root / "manifest.json").write_text(
+              json.dumps(
+                  {
+                      "releaseTag": os.environ["LLAMA_TAG"],
+                      "runnerOs": os.environ["RUNNER_OS"],
+                      "runnerArch": os.environ["RUNNER_ARCH"],
+                      "source": "https://github.com/ggml-org/llama.cpp",
+                      "engines": engines,
+                  },
+                  indent=2,
+              ),
+              encoding="utf-8",
+          )
+          print("[llama-runtime] manifest written")
+          PY_MANIFEST
+
+      - name: Verify bundled llama.cpp runtimes
+        shell: bash
+        env:
+          LLAMA_TAG: ${{ steps.runtime_versions.outputs.llama_tag }}
+          RUNNER_OS: ${{ runner.os }}
         run: |
           set -euo pipefail
           python - <<'PY'
           import json
           import os
           import pathlib
-          import shutil
-          import stat
-          import tarfile
-          import urllib.request
-          import zipfile
+          import subprocess
 
-          def request_json(url: str) -> dict:
-            req = urllib.request.Request(url)
-            req.add_header("Accept", "application/vnd.github+json")
-            req.add_header("User-Agent", "arxell-ci")
-            token = os.environ.get("GITHUB_TOKEN", "").strip()
-            if token:
-              req.add_header("Authorization", f"Bearer {token}")
-            with urllib.request.urlopen(req, timeout=60) as resp:
-              return json.loads(resp.read().decode("utf-8"))
-
-          def safe_extract_tar(archive_path: pathlib.Path, dest: pathlib.Path) -> None:
-            with tarfile.open(archive_path, "r:*") as tf:
-              for member in tf.getmembers():
-                target = (dest / member.name).resolve()
-                if not str(target).startswith(str(dest.resolve())):
-                  raise RuntimeError(f"unsafe tar member path: {member.name}")
-              tf.extractall(dest)
-
-          def safe_extract_zip(archive_path: pathlib.Path, dest: pathlib.Path) -> None:
-            with zipfile.ZipFile(archive_path) as zf:
-              for member in zf.infolist():
-                target = (dest / member.filename).resolve()
-                if not str(target).startswith(str(dest.resolve())):
-                  raise RuntimeError(f"unsafe zip member path: {member.filename}")
-              zf.extractall(dest)
-
-          def find_binary(dest: pathlib.Path, binary_name: str) -> pathlib.Path | None:
-            for path in dest.rglob(binary_name):
-              if path.is_file():
-                return path
-            return None
-
-          def select_asset(assets: list[dict], required: list[str], forbidden: list[str]) -> dict | None:
-            candidates = []
-            for asset in assets:
-              name = str(asset.get("name", "")).lower()
-              if not name.startswith("llama-"):
-                continue
-              if not (name.endswith(".tar.gz") or name.endswith(".zip")):
-                continue
-              if asset.get("size", 0) <= 0:
-                continue
-              if any(word in name for word in forbidden):
-                continue
-              if not all(word in name for word in required):
-                continue
-              candidates.append(asset)
-            if not candidates:
-              return None
-            candidates.sort(key=lambda item: len(item["name"]), reverse=True)
-            return candidates[0]
-
-          runner_os = os.environ.get("RUNNER_OS", "")
-          os_key = {
-            "Linux": "linux",
-            "Windows": "windows",
-            "macOS": "macos",
-          }.get(runner_os, "")
-          if not os_key:
-            raise RuntimeError(f"unsupported RUNNER_OS={runner_os}")
-
-          release = request_json("https://api.github.com/repos/ggml-org/llama.cpp/releases/latest")
-          assets = release.get("assets", [])
-          tag = release.get("tag_name", "unknown")
-
-          if os_key == "linux":
-            targets = [
-              ("llama.cpp-cpu", ["ubuntu", "x64"], ["vulkan", "cuda", "rocm", "hip", "openvino", "sycl", "aclgraph", "s390x", "cudart"]),
-              ("llama.cpp-vulkan", ["ubuntu", "vulkan", "x64"], ["cuda", "rocm", "hip", "aclgraph", "s390x", "cudart"]),
-            ]
-            required_engines = ["llama.cpp-cpu", "llama.cpp-vulkan"]
-          elif os_key == "windows":
-            targets = [
-              ("llama.cpp-cpu", ["win", "cpu", "x64"], ["vulkan", "cuda", "hip", "cudart"]),
-              ("llama.cpp-vulkan", ["win", "vulkan", "x64"], ["cuda", "hip", "cudart"]),
-              ("llama.cpp-cuda", ["win", "cuda", "x64"], ["vulkan", "hip", "cudart"]),
-              ("llama.cpp-rocm", ["win", "hip", "radeon", "x64"], ["vulkan", "cuda", "cudart"]),
-            ]
-            required_engines = ["llama.cpp-cpu", "llama.cpp-vulkan"]
-          else:
-            targets = [
-              ("llama.cpp-metal", ["macos", "x64"], ["xcframework"]),
-              ("llama.cpp-cpu", ["macos", "x64"], ["xcframework"]),
-            ]
-            required_engines = ["llama.cpp-cpu", "llama.cpp-metal"]
-
-          repo_root = pathlib.Path(".").resolve()
-          resources_root = repo_root / "src-tauri" / "resources" / "llama-runtime"
-          temp_root = repo_root / ".tmp-llama-runtime"
-          shutil.rmtree(temp_root, ignore_errors=True)
-          temp_root.mkdir(parents=True, exist_ok=True)
-          resources_root.mkdir(parents=True, exist_ok=True)
-
-          selected = {}
-          prepared = {}
-          downloaded = {}
-          binary_name = "llama-server.exe" if os_key == "windows" else "llama-server"
-
-          for engine_id, required, forbidden in targets:
-            asset = select_asset(assets, required, forbidden)
-            if not asset:
-              print(f"[llama-runtime] skip {engine_id}: no compatible release asset")
-              continue
-            name = asset["name"]
-            url = asset["browser_download_url"]
-            selected[engine_id] = {"name": name, "url": url}
-            archive_path = downloaded.get(url)
-            if not archive_path:
-              archive_path = temp_root / name
-              print(f"[llama-runtime] download {engine_id}: {name}")
-              req = urllib.request.Request(url, headers={"User-Agent": "arxell-ci"})
-              with urllib.request.urlopen(req, timeout=120) as resp, open(archive_path, "wb") as out:
-                shutil.copyfileobj(resp, out)
-              downloaded[url] = archive_path
-
-            extract_dir = temp_root / f"extract-{engine_id}"
-            shutil.rmtree(extract_dir, ignore_errors=True)
-            extract_dir.mkdir(parents=True, exist_ok=True)
-            if str(archive_path).lower().endswith(".zip"):
-              safe_extract_zip(archive_path, extract_dir)
-            else:
-              safe_extract_tar(archive_path, extract_dir)
-
-            binary_src = find_binary(extract_dir, binary_name)
-            if not binary_src:
-              print(f"[llama-runtime] skip {engine_id}: {binary_name} not found after extraction")
-              continue
-
-            engine_dir = resources_root / engine_id
-            shutil.rmtree(engine_dir, ignore_errors=True)
-            engine_dir.mkdir(parents=True, exist_ok=True)
-            binary_dest = engine_dir / binary_name
-            shutil.copy2(binary_src, binary_dest)
-            if os_key != "windows":
-              binary_dest.chmod(binary_dest.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
-            for so_file in extract_dir.rglob("*.so*"):
-              if so_file.is_file():
-                so_dest = engine_dir / so_file.name
-                shutil.copy2(so_file, so_dest)
-                if os_key != "windows":
-                  so_dest.chmod(so_dest.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
-                print(f"[llama-runtime] bundled shared library: {so_file.name}")
-            print(f"[llama-runtime] prepared {engine_id}: {binary_dest}")
-            prepared[engine_id] = {
-              "name": name,
-              "url": url,
-              "binaryPath": str(binary_dest.relative_to(repo_root)),
-            }
-
-          missing_required = [engine_id for engine_id in required_engines if engine_id not in prepared]
-          if missing_required:
-            raise RuntimeError(f"Missing required bundled llama runtime engines for {runner_os}: {missing_required}")
-
-          manifest = {
-            "releaseTag": tag,
-            "runnerOs": runner_os,
-            "engines": prepared,
-          }
-          (resources_root / "manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
-          print("[llama-runtime] manifest written")
+          root = pathlib.Path("src-tauri/resources/llama-runtime")
+          manifest = json.loads((root / "manifest.json").read_text(encoding="utf-8"))
+          expected_tag = os.environ["LLAMA_TAG"]
+          if manifest.get("releaseTag") != expected_tag:
+              raise SystemExit(
+                  f"Expected llama.cpp {expected_tag}, got {manifest.get('releaseTag')!r}"
+              )
+          expected = {
+              "Linux": ["llama.cpp-cpu", "llama.cpp-vulkan"],
+              "Windows": ["llama.cpp-cpu", "llama.cpp-vulkan"],
+              "macOS": ["llama.cpp-cpu", "llama.cpp-metal"],
+          }[os.environ["RUNNER_OS"]]
+          binary_name = (
+              "llama-server.exe" if os.environ["RUNNER_OS"] == "Windows" else "llama-server"
+          )
+          for engine_id in expected:
+              binary = root / engine_id / binary_name
+              if not binary.is_file():
+                  raise SystemExit(f"Missing bundled runtime: {binary}")
+              subprocess.run([str(binary), "--version"], check=True, capture_output=True)
+          print(f"Verified llama.cpp {expected_tag} runtime bundle: {expected}")
           PY
 
       - name: Prepare bundled whisper runtimes
