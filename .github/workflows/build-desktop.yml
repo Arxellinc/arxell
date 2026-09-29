@@ -217,7 +217,7 @@ jobs:
             src-tauri/resources/whisper-server
             src-tauri/resources/whisper
             src-tauri/resources/kokoro-runtime
-          key: runtimes-llama-source-v3-${{ runner.os }}-${{ runner.arch }}-${{ steps.runtime_versions.outputs.llama_tag }}-${{ steps.runtime_versions.outputs.whisper_tag }}-${{ steps.runtime_versions.outputs.kokoro_hash }}
+          key: runtimes-llama-source-v4-${{ runner.os }}-${{ runner.arch }}-${{ steps.runtime_versions.outputs.llama_tag }}-${{ steps.runtime_versions.outputs.whisper_tag }}-${{ steps.runtime_versions.outputs.kokoro_hash }}
 
       - name: Build and install pinned SPIRV-Headers for Windows
         if: matrix.platform.os == 'windows-latest' && steps.cache_runtimes.outputs.cache-hit != 'true'
@@ -283,10 +283,13 @@ jobs:
             # Complete runtime dependency closure: shared libraries and Metal
             # kernels when the build does not embed them. GGML_METAL_EMBED_LIBRARY
             # defaults to ON at v0.4.1, so macOS usually has no extra files.
-            find "$build_dir" -type f \( \
+            # Preserve the loader-visible sonames as regular files in the
+            # portable bundle: Linux/macOS builds commonly expose them as
+            # symlinks to versioned library files, and `-type f` misses those.
+            find "$build_dir" \( -type f -o -type l \) \( \
               -name '*.so' -o -name '*.so.*' -o -name '*.dylib' -o -name '*.dll' \
               -o -name '*.metallib' -o -name '*.metal' \
-            \) -exec cp {} "$engine_dir"/ \;
+            \) -exec cp -L {} "$engine_dir"/ \;
             if [[ "$RUNNER_OS" != "Windows" ]]; then chmod +x "$engine_dir/$binary_name"; fi
             # Match runtime_service.rs: copied shared libraries live beside
             # the executable and must be discoverable after cache restore.
@@ -464,9 +467,9 @@ jobs:
           # Complete runtime dependency closure, matching the app's expected
           # per-platform binary name (see src-tauri/src/stt/supervisor.rs).
           cp "$server" "$whisper_server_dir/$target_name"
-          find "$build_dir" -type f \( \
+          find "$build_dir" \( -type f -o -type l \) \( \
             -name '*.so' -o -name '*.so.*' -o -name '*.dylib' -o -name '*.dll' \
-          \) -exec cp {} "$whisper_server_dir"/ \;
+          \) -exec cp -L {} "$whisper_server_dir"/ \;
           if [[ "$RUNNER_OS" != "Windows" ]]; then chmod +x "$whisper_server_dir/$target_name"; fi
 
           echo "[whisper-runtime] smoke test ${target_name}"
