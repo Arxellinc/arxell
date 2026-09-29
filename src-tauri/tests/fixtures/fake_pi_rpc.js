@@ -39,6 +39,27 @@ input.on("line", (line) => {
   }
 
   send({ type: "agent_start" });
+  if (["error", "aborted", "length", "retry-success", "extension-error", "retry-exhausted"].includes(command.message)) {
+    const stopReason = ["aborted", "length"].includes(command.message) ? command.message : "error";
+    if (command.message === "extension-error") {
+      send({ type: "extension_error", error: "fixture policy failure" });
+    }
+    if (command.message !== "retry-exhausted") {
+      send({
+        type: "message_end",
+        message: { role: "assistant", content: [], stopReason, errorMessage: "sensitive provider diagnostic" }
+      });
+    }
+    if (command.message === "retry-success" || command.message === "extension-error") {
+      send({ type: "auto_retry_start", attempt: 1 });
+      send({ type: "message_end", message: { role: "assistant", content: [{ type: "text", text: "recovered" }], stopReason: "stop" } });
+      send({ type: "auto_retry_end", success: true });
+    } else if (command.message === "retry-exhausted") {
+      send({ type: "auto_retry_end", success: false, finalError: "sensitive provider diagnostic" });
+    }
+    send({ type: "agent_settled" });
+    return;
+  }
   send({
     type: "message_update",
     message: { role: "assistant", content: [{ type: "text", text: "hello" }] },

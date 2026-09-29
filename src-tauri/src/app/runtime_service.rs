@@ -331,7 +331,17 @@ impl LlamaRuntimeService {
                 let _ = terminate_process(active.child);
             }
             let port = request.port.unwrap_or(DEFAULT_PORT);
-            kill_orphaned_llama_server(port);
+            if let Err(message) = ensure_port_available(port) {
+                state.status = "failed".to_string();
+                self.emit(
+                    &request.correlation_id,
+                    "llama.runtime.start",
+                    EventStage::Error,
+                    EventSeverity::Error,
+                    json!({ "engineId": request.engine_id, "message": message }),
+                );
+                return Err(message);
+            }
         }
 
         let binary_path = engine_binary_path(app_data_dir, request.engine_id.as_str());
@@ -786,77 +796,20 @@ fn terminate_process(mut child: Child) -> Result<(), String> {
     Ok(())
 }
 
-#[cfg(unix)]
-fn kill_orphaned_llama_server(port: u16) {
-    let output = match Command::new("ss").args(["-tlnp"]).output() {
-        Ok(o) => o,
-        Err(_) => return,
-    };
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    for line in stdout.lines() {
-        if !line.contains(&format!(":{port}")) {
-            continue;
-        }
-        let pid = if let Some(start) = line.find("pid=") {
-            let rest = &line[start + 4..];
-            rest.chars()
-                .take_while(|c| c.is_ascii_digit())
-                .collect::<String>()
-                .parse::<u32>()
-                .ok()
-        } else {
-            None
-        };
-        if let Some(pid) = pid {
-            unsafe {
-                libc::kill(pid as i32, libc::SIGTERM);
-            }
-            std::thread::sleep(Duration::from_millis(100));
-            unsafe {
-                libc::kill(pid as i32, libc::SIGKILL);
-            }
-            std::thread::sleep(Duration::from_millis(150));
-        }
+fn ensure_port_available(port: u16) -> Result<(), String> {
+    if port == 0 {
+        return Err("Choose a llama-server port between 1 and 65535".to_string());
     }
-}
-
-#[cfg(not(unix))]
-fn kill_orphaned_llama_server(_port: u16) {
-    #[cfg(target_os = "windows")]
-    {
-        use std::os::windows::process::CommandExt;
-        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-        let output = match Command::new("netstat")
-            .args(["-ano", "-p", "TCP"])
-            .creation_flags(CREATE_NO_WINDOW)
-            .stdout(Stdio::piped())
-            .stderr(Stdio::null())
-            .output()
-        {
-            Ok(o) => o,
-            Err(_) => return,
-        };
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        let needle = format!(":{}", _port);
-        for line in stdout.lines() {
-            if !line.contains(&needle) {
-                continue;
-            }
-            let pid = line
-                .split_whitespace()
-                .last()
-                .and_then(|s| s.parse::<u32>().ok());
-            if let Some(pid) = pid {
-                let _ = Command::new("taskkill")
-                    .args(["/F", "/T", "/PID", &pid.to_string()])
-                    .creation_flags(CREATE_NO_WINDOW)
-                    .stdout(Stdio::null())
-                    .stderr(Stdio::null())
-                    .status();
-                std::thread::sleep(Duration::from_millis(200));
-            }
-        }
-    }
+    // A port number is not proof of process ownership. Never terminate an
+    // external listener; only children held in ActiveRuntime may be stopped.
+    // This is a preflight, not a reservation; startup still needs a health check.
+    std::net::TcpListener::bind(("127.0.0.1", port))
+        .map(|_| ())
+        .map_err(|error| {
+            format!(
+                "Cannot use llama-server port {port}: {error}. Choose another port or stop its owner manually."
+            )
+        })
 }
 
 fn spawn_output_forwarder<R>(
@@ -1382,6 +1335,28 @@ fn find_binary_recursive(root: &Path, binary_name: &str) -> Option<PathBuf> {
         }
     }
     None
+}
+
+#[cfg(test)]
+mod port_tests {
+    use super::*;
+
+    #[test]
+    fn occupied_port_is_rejected_without_disrupting_its_owner() {
+        let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        assert!(ensure_port_available(port)
+            .unwrap_err()
+            .contains("Choose another port"));
+        let client = std::net::TcpStream::connect(("127.0.0.1", port)).unwrap();
+        let (_server, _) = listener.accept().unwrap();
+        drop(client);
+    }
+
+    #[test]
+    fn dynamic_port_is_rejected_because_endpoint_requires_a_known_port() {
+        assert!(ensure_port_available(0).is_err());
+    }
 }
 
 pub fn engine_binary_filename() -> &'static str {

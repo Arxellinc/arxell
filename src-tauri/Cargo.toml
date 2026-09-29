@@ -37,7 +37,7 @@ arx_rs = { path = "../agent" }
 sysinfo = "0.37"
 git2 = { version = "0.20", features = ["vendored-libgit2"] }
 ironcalc = "0.7.1"
-keyring = "3"
+keyring = { version = "3", default-features = false }
 base64 = "0.22"
 ort-sys = { version = "=2.0.0-rc.8", default-features = false, features = ["load-dynamic"] }
 ndarray = "0.16"
@@ -48,5 +48,14 @@ chrono-tz = "0.10"
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
+# keyring 3 has no native backend enabled by default. Use persistent desktop
+# stores (not Linux's session-only keyutils backend or keyring's mock store).
 [target.'cfg(target_os = "linux")'.dependencies]
 webkit2gtk = "2.0"
+keyring = { version = "3", default-features = false, features = ["sync-secret-service", "crypto-rust", "vendored"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+keyring = { version = "3", default-features = false, features = ["apple-native"] }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+keyring = { version = "3", default-features = false, features = ["windows-native"] }

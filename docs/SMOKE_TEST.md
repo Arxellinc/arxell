@@ -75,6 +75,25 @@ Checks performed:
 6. Export connections (`cmd_api_connections_export`), verify the JSON contains metadata but no API keys or credentials.
 7. Import connections (`cmd_api_connections_import`), verify imported credentialless records require key re-entry and verification.
 
+## Credential Persistence (Release Gate)
+
+On Windows, macOS, and a Linux desktop with an unlocked Secret Service:
+
+1. Create a connection with a test provider key; do not enable plaintext fallback.
+2. Fully quit and restart Arxell; verify a request still authenticates.
+3. Update the key, restart again, and verify the new key is used.
+4. Delete the connection and confirm its native credential is removed.
+5. Repeat with a locked/unavailable keychain: saving must report a failure, not claim success or silently write plaintext.
+6. Confirm connection exports, logs, and Pi profile files do not contain the key.
+
+Optional native-store smoke test (writes and removes a uniquely named synthetic credential, never a real provider key):
+
+```sh
+cargo test --manifest-path src-tauri/Cargo.toml --lib native_keychain_round_trip -- --ignored
+```
+
+The regular `desktop_keyring_backend_persists_until_deleted` test checks native backend selection without requiring an OS keychain in CI. The optional test checks a real store; the application restart checks above are still required.
+
 ## Workspace Tool Management
 
 1. List workspace tools (`cmd_workspace_tools_list`).

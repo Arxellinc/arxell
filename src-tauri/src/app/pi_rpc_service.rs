@@ -193,6 +193,7 @@ struct PiRpcSession {
     event_count: usize,
     max_final_text_bytes: usize,
     agent_error: Option<String>,
+    assistant_error: Option<String>,
     ui_responses: Option<mpsc::UnboundedReceiver<PiRpcUiResponse>>,
     pending_ui_responses: HashMap<String, PiRpcUiResponse>,
 }
@@ -275,6 +276,7 @@ impl PiRpcSession {
             event_count: 0,
             max_final_text_bytes: config.max_final_text_bytes,
             agent_error: None,
+            assistant_error: None,
             ui_responses,
             pending_ui_responses: HashMap::new(),
         })
@@ -291,7 +293,11 @@ impl PiRpcSession {
             let event = self.next_event().await?;
             self.capture_event(&event);
             if event.event_type == "agent_settled" {
-                if let Some(error) = self.agent_error.take() {
+                if let Some(error) = self
+                    .agent_error
+                    .take()
+                    .or_else(|| self.assistant_error.take())
+                {
                     return Err(PiRpcError::Agent(error));
                 }
                 return Ok(());
@@ -478,22 +484,36 @@ impl PiRpcSession {
                         }
                     }
                     Some("error") => {
-                        self.agent_error = Some(
-                            update["error"]
-                                .as_str()
-                                .or_else(|| update["message"].as_str())
-                                .unwrap_or("Pi reported an assistant message error")
-                                .to_string(),
-                        );
+                        self.assistant_error =
+                            Some("Pi reported an assistant message error".to_string());
                     }
                     _ => {}
                 }
             }
             "message_end" => {
-                if let Some(text) = assistant_text(&event.payload["message"]) {
+                let message = &event.payload["message"];
+                if message["role"].as_str() == Some("assistant") {
+                    // Settlement means no more automatic work, not success. The final
+                    // assistant message is authoritative, including empty/error output.
                     self.final_text.clear();
-                    append_string_bounded(&mut self.final_text, &text, self.max_final_text_bytes);
+                    if let Some(text) = assistant_text(message) {
+                        append_string_bounded(&mut self.final_text, &text, self.max_final_text_bytes);
+                    }
+                    self.assistant_error = match message["stopReason"].as_str() {
+                        Some("error") => Some("Pi model request failed".to_string()),
+                        Some("aborted") => Some("Pi model request was aborted".to_string()),
+                        Some("length") => {
+                            Some("Pi model response exceeded its output limit".to_string())
+                        }
+                        // A successful retry can recover a provider failure, but must
+                        // never clear a policy/extension failure in agent_error.
+                        Some("stop" | "toolUse") => None,
+                        _ => self.assistant_error.take(),
+                    };
                 }
+            }
+            "auto_retry_end" if event.payload["success"].as_bool() == Some(false) => {
+                self.assistant_error = Some("Pi model request failed after retries".to_string());
             }
             "extension_error" => {
                 self.agent_error = Some(
@@ -975,6 +995,41 @@ mod tests {
         }
         assert!(saw_retrying_end);
         assert!(saw_settled);
+    }
+
+    #[tokio::test]
+    async fn settlement_does_not_hide_failed_or_incomplete_model_runs() {
+        for scenario in [
+            "error",
+            "aborted",
+            "length",
+            "retry-exhausted",
+            "extension-error",
+        ] {
+            let Some((config, wrapper)) = fake_config(scenario, Duration::from_secs(5)) else {
+                return;
+            };
+            let result = PiRpcService::run_prompt(config, scenario.to_string(), None).await;
+            cleanup_wrapper(wrapper);
+            assert!(
+                matches!(result, Err(PiRpcError::Agent(_))),
+                "{scenario}: {result:?}"
+            );
+            assert!(!result
+                .unwrap_err()
+                .to_string()
+                .contains("sensitive provider diagnostic"));
+        }
+    }
+
+    #[tokio::test]
+    async fn successful_retry_clears_the_previous_assistant_failure() {
+        let Some((config, wrapper)) = fake_config("retry-success", Duration::from_secs(5)) else {
+            return;
+        };
+        let result = PiRpcService::run_prompt(config, "retry-success".to_string(), None).await;
+        cleanup_wrapper(wrapper);
+        assert_eq!(result.unwrap().final_text, "recovered");
     }
 
     #[tokio::test]
