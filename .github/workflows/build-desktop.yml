@@ -127,7 +127,8 @@ jobs:
             cmake \
             ninja-build \
             libvulkan-dev \
-            glslc
+            glslc \
+            spirv-headers
           sudo /usr/lib/x86_64-linux-gnu/gdk-pixbuf-2.0/gdk-pixbuf-query-loaders --update-cache
           sudo /usr/lib/x86_64-linux-gnu/libgtk3-nocsd.so.0 || true
           sudo gtk-query-immodules-3.0 --update-cache 2>/dev/null || true
