@@ -628,7 +628,8 @@ jobs:
           case "${{ matrix.platform.os }}" in
             ubuntu-24.04)
               cargo tauri build --bundles deb -- --features tauri-runtime 2>&1
-              DEBUG=1 LD_LIBRARY_PATH="" cargo tauri build --verbose --bundles appimage -- --features tauri-runtime 2>&1
+              llama_runtime_libs="$GITHUB_WORKSPACE/src-tauri/resources/llama-runtime/llama.cpp-cpu:$GITHUB_WORKSPACE/src-tauri/resources/llama-runtime/llama.cpp-vulkan"
+              DEBUG=1 LD_LIBRARY_PATH="$llama_runtime_libs" cargo tauri build --verbose --bundles appimage -- --features tauri-runtime 2>&1
               ;;
             windows-latest)
               cargo tauri build --bundles msi -- --features tauri-runtime
