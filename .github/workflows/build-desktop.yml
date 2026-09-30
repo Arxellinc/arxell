@@ -742,6 +742,52 @@ jobs:
               )
           PY
 
+      - name: Install, launch, and uninstall Windows MSI
+        if: matrix.platform.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $msi = Get-ChildItem 'src-tauri/target/release/bundle' -Recurse -Filter '*.msi' | Select-Object -First 1
+          if (-not $msi) { throw 'MSI artifact was not produced' }
+          $install = Start-Process msiexec.exe -ArgumentList @('/i', $msi.FullName, '/qn', '/norestart') -Wait -PassThru
+          if ($install.ExitCode -notin @(0, 3010)) { throw "MSI install failed with exit code $($install.ExitCode)" }
+          $exeCandidates = @(
+            "$env:LOCALAPPDATA\Arxell\Arxell.exe",
+            "$env:LOCALAPPDATA\Programs\Arxell\Arxell.exe",
+            "$env:ProgramFiles\Arxell\Arxell.exe",
+            "${env:ProgramFiles(x86)}\Arxell\Arxell.exe"
+          )
+          $exePath = $exeCandidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+          if (-not $exePath) { throw 'Installed Arxell.exe was not found in the standard MSI install locations' }
+          $app = Start-Process -FilePath $exePath -PassThru
+          Start-Sleep -Seconds 10
+          $app.Refresh()
+          if ($app.HasExited) { throw "Installed app exited during startup (code $($app.ExitCode))" }
+          Stop-Process -Id $app.Id -Force
+          $uninstall = Start-Process msiexec.exe -ArgumentList @('/x', $msi.FullName, '/qn', '/norestart') -Wait -PassThru
+          if ($uninstall.ExitCode -notin @(0, 3010)) { throw "MSI uninstall failed with exit code $($uninstall.ExitCode)" }
+
+      - name: Mount and validate macOS DMG installation
+        if: matrix.platform.os == 'macos-latest'
+        shell: bash
+        run: |
+          set -euo pipefail
+          dmg=$(find src-tauri/target/release/bundle -name '*.dmg' | head -1)
+          mount_dir="$RUNNER_TEMP/arxell-dmg"
+          app_copy="$RUNNER_TEMP/Arxell.app"
+          mkdir -p "$mount_dir"
+          hdiutil attach -nobrowse -readonly -mountpoint "$mount_dir" "$dmg"
+          cleanup() { hdiutil detach "$mount_dir" -quiet || true; }
+          trap cleanup EXIT
+          app=$(find "$mount_dir" -maxdepth 2 -name 'Arxell.app' -print -quit)
+          test -n "$app"
+          ditto "$app" "$app_copy"
+          plutil -lint "$app_copy/Contents/Info.plist"
+          executable=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$app_copy/Contents/Info.plist")
+          test -x "$app_copy/Contents/MacOS/$executable"
+          file "$app_copy/Contents/MacOS/$executable" | grep -q 'arm64'
+          echo "Validated copied Apple Silicon app bundle: $app_copy"
+
       - name: Upload Tauri bundle artifact
         uses: actions/upload-artifact@v4
         with:
