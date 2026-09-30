@@ -220,7 +220,7 @@ jobs:
             src-tauri/resources/whisper-server
             src-tauri/resources/whisper
             src-tauri/resources/kokoro-runtime
-          key: runtimes-llama-source-v8-${{ runner.os }}-${{ runner.arch }}-${{ steps.runtime_versions.outputs.llama_tag }}-${{ steps.runtime_versions.outputs.whisper_tag }}-${{ steps.runtime_versions.outputs.shaderc_tag }}-${{ steps.runtime_versions.outputs.vulkan_headers_tag }}-${{ steps.runtime_versions.outputs.kokoro_hash }}
+          key: runtimes-llama-source-v9-${{ runner.os }}-${{ runner.arch }}-${{ steps.runtime_versions.outputs.llama_tag }}-${{ steps.runtime_versions.outputs.whisper_tag }}-${{ steps.runtime_versions.outputs.shaderc_tag }}-${{ steps.runtime_versions.outputs.vulkan_headers_tag }}-${{ steps.runtime_versions.outputs.kokoro_hash }}
 
       - name: Build and install pinned SPIRV-Headers for Windows
         if: matrix.platform.os == 'windows-latest' && steps.cache_runtimes.outputs.cache-hit != 'true'
@@ -348,6 +348,17 @@ jobs:
               -name '*.so' -o -name '*.so.*' -o -name '*.dylib' -o -name '*.dll' \
               -o -name '*.metallib' -o -name '*.metal' \
             \) -exec cp -L {} "$engine_dir"/ \;
+            if [[ "$RUNNER_OS" == "Linux" ]]; then
+              local libgomp
+              libgomp="$(LD_LIBRARY_PATH="$build_dir/bin${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" ldd "$server" \
+                | awk '$1 == "libgomp.so.1" && $2 == "=>" { print $3; exit }')"
+              if [[ -z "$libgomp" || ! -f "$libgomp" ]]; then
+                echo "[llama-runtime] ERROR: libgomp.so.1 dependency was not found for ${engine_id}" >&2
+                ldd "$server" >&2
+                return 1
+              fi
+              cp -L "$libgomp" "$engine_dir/libgomp.so.1"
+            fi
             if [[ "$RUNNER_OS" != "Windows" ]]; then chmod +x "$engine_dir/$binary_name"; fi
             # Match runtime_service.rs: copied shared libraries live beside
             # the executable and must be discoverable after cache restore.
