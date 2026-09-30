@@ -16,7 +16,7 @@ import platform
 # Configuration
 WHISPER_REPO = "ggerganov/whisper.cpp"
 MODEL_FILE = "ggml-base.en.bin"
-MODEL_URL = f"https://huggingface.co/datasets/ggerganov/whisper.cpp/resolve/main/ggml-base.en.bin"
+MODEL_URL = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en.bin"
 BINARIES = {
     "linux-x86_64": "whisper-server-linux-x86_64",
     "macos-aarch64": "whisper-server-macos-aarch64",
@@ -134,7 +134,7 @@ def download_model():
     
     # Try to download from HuggingFace (quantized version)
     # The q8_0 version is quantized to 8-bit
-    url = "https://huggingface.co/datasets/ggerganov/whisper.cpp/resolve/main/ggml-base.en-q8_0.bin"
+    url = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en-q8_0.bin"
     
     return download_file(url, model_path)
 
