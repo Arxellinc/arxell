@@ -28,7 +28,7 @@ jobs:
       matrix:
         platform:
           - name: linux-x64
-            os: ubuntu-24.04
+            os: ubuntu-22.04
           - name: macos-arm64
             os: macos-latest
           - name: windows-x64
@@ -100,9 +100,10 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: src-tauri -> target
+          shared-key: ${{ matrix.platform.os == 'ubuntu-22.04' && 'ubuntu-22.04-glibc-2.35' || matrix.platform.os }}
 
       - name: Install Linux system dependencies
-        if: matrix.platform.os == 'ubuntu-24.04'
+        if: matrix.platform.os == 'ubuntu-22.04'
         run: |
           sudo apt-get update
           sudo apt-get install -y \
@@ -112,7 +113,7 @@ jobs:
             libappindicator3-dev \
             librsvg2-dev \
             patchelf \
-            libfuse2t64 \
+            libfuse2 \
             libcairo2-dev \
             libgdk-pixbuf-2.0-dev \
             libgdk-pixbuf2.0-bin \
@@ -135,7 +136,7 @@ jobs:
           sudo update-mime-database /usr/share/mime 2>/dev/null || true
 
       - name: Normalize Linux pkg-config metadata
-        if: matrix.platform.os == 'ubuntu-24.04'
+        if: matrix.platform.os == 'ubuntu-22.04'
         shell: bash
         run: |
           set -euo pipefail
@@ -217,7 +218,7 @@ jobs:
             src-tauri/resources/whisper-server
             src-tauri/resources/whisper
             src-tauri/resources/kokoro-runtime
-          key: runtimes-llama-source-v4-${{ runner.os }}-${{ runner.arch }}-${{ steps.runtime_versions.outputs.llama_tag }}-${{ steps.runtime_versions.outputs.whisper_tag }}-${{ steps.runtime_versions.outputs.kokoro_hash }}
+          key: runtimes-llama-source-v5-${{ runner.os }}-${{ runner.arch }}-${{ steps.runtime_versions.outputs.llama_tag }}-${{ steps.runtime_versions.outputs.whisper_tag }}-${{ steps.runtime_versions.outputs.kokoro_hash }}
 
       - name: Build and install pinned SPIRV-Headers for Windows
         if: matrix.platform.os == 'windows-latest' && steps.cache_runtimes.outputs.cache-hit != 'true'
@@ -626,7 +627,7 @@ jobs:
           mkdir -p "${XDG_CACHE_HOME}"
           rm -rf target/release/bundle
           case "${{ matrix.platform.os }}" in
-            ubuntu-24.04)
+            ubuntu-22.04)
               cargo tauri build --bundles deb -- --features tauri-runtime 2>&1
               runtime_library_path="$GITHUB_WORKSPACE/src-tauri/resources/llama-runtime/llama.cpp-cpu:$GITHUB_WORKSPACE/src-tauri/resources/llama-runtime/llama.cpp-vulkan:$GITHUB_WORKSPACE/src-tauri/resources/whisper-server"
               DEBUG=1 LD_LIBRARY_PATH="$runtime_library_path" cargo tauri build --verbose --bundles appimage -- --features tauri-runtime 2>&1
@@ -644,7 +645,7 @@ jobs:
           esac
 
       - name: Verify Linux artifacts
-        if: matrix.platform.os == 'ubuntu-24.04'
+        if: matrix.platform.os == 'ubuntu-22.04'
         run: |
           DEB=$(find src-tauri/target/release/bundle/deb -name "*.deb" | head -1)
           APPIMAGE=$(find src-tauri/target/release/bundle/appimage -name "*.AppImage" | head -1)
@@ -661,6 +662,50 @@ jobs:
           SIZE=$(stat -c%s "$APPIMAGE")
           [ "$SIZE" -gt 10485760 ] || { echo "ERROR: AppImage is ${SIZE} bytes — likely a partial build"; exit 1; }
 
+      - name: Install and launch Linux packages in clean Ubuntu 22.04
+        if: matrix.platform.os == 'ubuntu-22.04'
+        shell: bash
+        run: |
+          set -euo pipefail
+          DEB=$(find src-tauri/target/release/bundle/deb -name "*.deb" | head -1)
+          APPIMAGE=$(find src-tauri/target/release/bundle/appimage -name "*.AppImage" | head -1)
+          docker run --rm \
+            -v "$GITHUB_WORKSPACE/$DEB:/tmp/arxell.deb:ro" \
+            -v "$GITHUB_WORKSPACE/$APPIMAGE:/tmp/Arxell.AppImage:ro" \
+            ubuntu:22.04 bash -euc '
+              apt-get update -qq
+              DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
+                libfuse2 libasound2 libwebkit2gtk-4.1-0 libgtk-3-0 \
+                libayatana-appindicator3-1 librsvg2-2 xvfb xauth dbus-x11
+              dpkg -i /tmp/arxell.deb || apt-get install -f -y -qq
+              mkdir -p /tmp/appimage-extract
+              cd /tmp/appimage-extract
+              APPIMAGE_EXTRACT_AND_RUN=1 /tmp/Arxell.AppImage --appimage-extract >/dev/null
+              appdir=/tmp/appimage-extract/squashfs-root/usr/lib/Arxell/resources
+              llama_dir="$appdir/llama-runtime/llama.cpp-cpu"
+              whisper_dir="$appdir/whisper-server"
+              LD_LIBRARY_PATH="$llama_dir" "$llama_dir/llama-server" --version
+              LD_LIBRARY_PATH="$whisper_dir" "$whisper_dir/whisper-server-linux-x86_64" --help >/dev/null
+              cd /
+              smoke_launch() {
+                set +e
+                timeout --signal=TERM --kill-after=5s 25s xvfb-run -a "$@" >/tmp/arxell-launch.log 2>&1
+                result=$?
+                set -e
+                if [ "$result" -ne 124 ]; then
+                  cat /tmp/arxell-launch.log
+                  echo "Arxell exited before the clean-machine launch timeout (status $result)" >&2
+                  exit 1
+                fi
+                if grep -Eq "GLIBC_[0-9.]+.*not found|error while loading shared libraries" /tmp/arxell-launch.log; then
+                  cat /tmp/arxell-launch.log
+                  exit 1
+                fi
+              }
+              smoke_launch /usr/bin/arxell
+              smoke_launch env APPIMAGE_EXTRACT_AND_RUN=1 /tmp/Arxell.AppImage
+            '
+
       - name: Verify Tauri bundle output
         shell: bash
         env:
@@ -674,7 +719,7 @@ jobs:
 
           platform_os = os.environ["PLATFORM_OS"]
           expected_suffixes = {
-              "ubuntu-24.04": {".deb", ".appimage"},
+              "ubuntu-22.04": {".deb", ".appimage"},
               "windows-latest": {".msi"},
               "macos-latest": {".dmg"},
           }.get(platform_os)
@@ -778,14 +823,23 @@ jobs:
           merge-multiple: true
           path: release-assets
 
+      - name: Generate release checksums
+        shell: bash
+        run: |
+          set -euo pipefail
+          find release-assets -type f -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS.txt
+          test -s SHA256SUMS.txt
+
       - name: Publish GitHub Release assets
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ steps.app_version.outputs.version }}
+          body_path: docs/RELEASE_NOTES_v${{ steps.app_version.outputs.version }}.md
           files: |
             release-assets/**/*.deb
             release-assets/**/*.AppImage
             release-assets/**/*.dmg
             release-assets/**/*.msi
+            SHA256SUMS.txt
           fail_on_unmatched_files: true
-          generate_release_notes: true
+          generate_release_notes: false

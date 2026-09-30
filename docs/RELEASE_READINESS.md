@@ -1,6 +1,6 @@
 # Desktop release readiness
 
-Review baseline: `main` at `6e260f7` (Arxell 0.2.11), reviewed 2026-09-29.
+Review baseline: `main` at `8930472` (Arxell 0.2.12), reviewed 2026-09-30.
 
 **Status: not ready to label a new release fully stable.** Source tests pass on the review Linux host, but clean-machine installer, real model, and cross-platform acceptance remain required. No new release tag should be published merely because unit tests pass.
 
@@ -49,12 +49,12 @@ Remove external-process killing. Report occupied/invalid ports and stop only the
 
 | Priority | Finding / evidence | Required acceptance |
 |---|---|---|
-| P0 | Linux packages are built on Ubuntu 24.04; there is no clean-machine install/functional matrix on main. AppImage media framework bundling is disabled. | Define the minimum distro/glibc/WebKit baseline, declare `.deb` runtime dependencies, and test both package formats outside the build environment on supported distributions. |
-| P1 | Pi and Node are not bundled; supported Pi is `>=0.81.0,<0.82.0`. The review machine has Pi 0.84.2 and is correctly outside that range. Interactive Pi uses the user's profile; Looper uses Arxell credentials. | For a download-and-run coding product, ship a verified managed runtime or provide an explicit prerequisite/setup flow. Test the actual pinned Pi, not just a fake process; document separate interactive authentication. |
-| P1 | Pi executable discovery under PATH-poor GUI launches is now mitigated (npm/`%APPDATA%`, Homebrew, timeouts), but paths with spaces/non-ASCII characters, restart persistence of the selected executable, and npm-shim edge cases remain untested hands-on. | Exercise the setup dialog on clean Windows/macOS/Linux accounts with fresh npm/pnpm/Yarn/Bun installs, unusual HOME paths, and reboot persistence. |
+| P0 | Linux packaging was built on Ubuntu 24.04 and a clean Ubuntu 22.04 launch reproduced `GLIBC_2.38/2.39 not found` from bundled libraries. A follow-up now builds on Ubuntu 22.04 and adds clean-container `.deb`/AppImage launch smoke tests; its CI is pending. | Require those smoke tests to pass and publish Ubuntu 22.04/glibc 2.35 as the tested Linux baseline. AppImage optional media/audio remains unverified. |
+| P1 | Pi and Node are not bundled. Arxell accepts parseable Pi versions and installs the current Pi npm package privately when Node/npm (and Windows Git Bash) are available; Pi 0.84.2 and 0.99.1 passed only RPC startup, policy-extension load, and `get_state` smoke checks. Interactive Pi uses the user's profile; Looper uses Arxell credentials. | Test first-run install, interactive use, and complete Looper runs on clean Windows/macOS/Linux accounts; document the Node/npm/Git Bash prerequisites and separate interactive authentication. |
+| P1 | Pi executable discovery under PATH-poor GUI launches is mitigated (npm/`%APPDATA%`, Homebrew, timeouts), but unusual HOME paths, reboot persistence, and Windows npm-shim behavior remain untested hands-on. | Exercise setup on clean platform accounts, including spaces/non-ASCII paths and restart persistence. |
 | P1 | Chat's Rust provider and generated Looper model profiles use OpenAI-compatible Chat Completions. All profiles declare the same context/output limits. | Publish an explicit provider support matrix. Test OpenAI-compatible public APIs and local endpoints. Add native Anthropic/Gemini/Responses adapters if claiming those protocols; derive local context limits rather than advertising 131072 tokens for an 8192-token server. |
-| P1 | No installer-driven chat/Pi/keychain tests; unit fixtures do not authenticate to public APIs or exercise a GGUF runtime. | Execute the acceptance matrix below using built artifacts, not a developer checkout. |
-| P1 | No Windows signing or macOS signing/notarization configuration in the workflow. | Decide signing identities/credentials and verify Gatekeeper/SmartScreen installation behavior. Never claim unsigned downloads are warning-free. |
+| P1 | A real 4B GGUF CPU inference succeeded with the bundled llama.cpp from the Linux AppImage on this developer host. Clean-container package launch and Windows/macOS installer-driven chat/Pi/keychain behavior are not yet verified; public-provider authentication has not been tested. | Execute the remaining acceptance matrix below with built artifacts on clean platform accounts. |
+| P1 | Windows signing and macOS signing/notarization are not configured; the release pipeline will produce unsigned installers. | Disclose unsigned status and Gatekeeper/SmartScreen warnings in release notes unless signing identities and notarization credentials are provided and validated. |
 | P1 | Native TTS assets and executable discovery (espeak-ng, Kokoro, onnxruntime) are Linux-biased; per-target voice resource paths are not validated. | Either validate voice dependency/resource paths per target, or clearly mark voice unavailable when dependencies are absent. Missing optional voice must not prevent core chat/coding. |
 | P1 | Credential fallback read/modify/write and deletion paths need further review; native backend selection alone does not prove migration/deletion/locked-store behavior. | Restart/update/delete tests with both native and explicitly acknowledged fallback storage; no lost updates, stale keys, or permissive plaintext files. |
 
@@ -63,8 +63,8 @@ Remove external-process killing. Report occupied/invalid ports and stop only the
 1. Merge narrowly scoped credential, Pi error-state, and process-ownership fixes after cross-platform checks.
 2. Repair and pin runtime preparation. Port useful work from the preserved feature branch selectively. Verify package contents and architecture, add cold-cache builds and artifact smoke tests.
 3. Define provider support and deliver managed Pi/setup diagnostics. Add a mock HTTP provider suite for auth failures, streaming, disconnects, tool calls, retries, and cancellation, plus an actual pinned-Pi/local mock-provider integration test.
-4. Validate the release candidate on clean Windows, macOS, and Linux machines, including upgrades from the published 0.2.11 release.
-5. Bump/synchronize the version only for a verified candidate; publish immutable artifacts with checksums and release notes stating supported OS/architecture, prerequisites, and known limitations.
+4. Run Linux clean-container package smoke tests and obtain Windows/macOS clean-machine install/upgrade evidence; do not claim unsupported platforms or signing status.
+5. Publish only after checksums, release notes, platform prerequisites, and known limitations are explicit. Version 0.2.12 is already synchronized on main.
 
 ## Release acceptance matrix
 
@@ -94,4 +94,6 @@ Keep results with OS/version, architecture, package checksum, runtime/Pi/model v
 - PR #20's first CI run: steps through "Run Rust tests" passed on Linux, macOS, and Windows; all three jobs then failed because upstream's current `latest` llama.cpp release ships no engine assets. The latest cross-platform CI run (`281ac3d`) passes Linux `.deb`/AppImage, macOS Apple Silicon DMG, and Windows x64 MSI builds, including pinned runtime preparation, isolated runtime verification, and Linux AppImage dependency deployment. This is build evidence, not clean-machine functional acceptance.
 - llama.cpp `v0.4.1` CPU engine was built locally from the pinned recipe and executed from an isolated engine directory (binary + copied closure only), confirming a self-contained engine (`--version` exit 0, no unresolved shared libraries).
 - Tests using fake Pi do not establish compatibility with a real Pi package or provider.
-- This review did not launch Windows/macOS installers, spend provider credits, or download/run a GGUF model. Full cross-platform stability is still unverified.
+- On this Linux host, the v0.2.12 AppImage launched previously and its Whisper sidecar returned healthy. In this follow-up, the AppImage's bundled CPU llama-server loaded `/home/user/models/Qwen3.5-4B-Q4_0.gguf` and returned `ready` from a real completion request (7 tokens generated, 0.4 seconds). This does not validate installer-driven app-to-model integration.
+- A bare Ubuntu 22.04 container first failed to launch the Ubuntu 24.04-built AppImage because bundled libraries required GLIBC 2.38/2.39. That concrete compatibility failure motivated the Ubuntu 22.04 build baseline and clean-container tests; passing CI is still required.
+- Windows/macOS clean installs, provider credentials, signing, and full interactive Pi/Looper behavior remain unverified. Full cross-platform stability is still unverified.
