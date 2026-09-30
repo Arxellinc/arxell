@@ -2,10 +2,10 @@ import type { TerminalManager } from "../terminal/index";
 import type { ChatIpcClient } from "../../ipcClient";
 import type { PiAgent, PiToolState } from "./state";
 
-const INSTALL_COMMAND = "npm install -g --ignore-scripts @earendil-works/pi-coding-agent@0.81.1";
+const PI_PACKAGE = "@earendil-works/pi-coding-agent";
 
 function isWindows(): boolean {
-  return /Windows/i.test(navigator.userAgent);
+  return typeof navigator !== "undefined" && /Windows/i.test(navigator.userAgent);
 }
 
 function quoteExecutable(path: string): string {
@@ -22,8 +22,21 @@ function getLaunchCommand(executablePath: string | null): string {
     : `PI_TELEMETRY=0 PI_SKIP_VERSION_CHECK=1 ${executable}`;
 }
 
-export function getInstallCommand(): string {
-  return INSTALL_COMMAND;
+export function getInstallCommand(windows = isWindows()): string {
+  const prefix = windows ? '"%USERPROFILE%\\.arxell\\pi-runtime"' : '"$HOME/.arxell/pi-runtime"';
+  return `npm install --prefix ${prefix} --ignore-scripts --no-audit --no-fund ${PI_PACKAGE}`;
+}
+
+export function shouldAutoInstallPi(
+  state: Pick<PiToolState, "installed" | "runtimeStatus" | "nodeAvailable" | "npmAvailable" | "bashPath" | "executablePathDraft">,
+  isWindows: boolean
+): boolean {
+  return state.installed === false &&
+    state.runtimeStatus === "not_found" &&
+    state.nodeAvailable === true &&
+    state.npmAvailable === true &&
+    !state.executablePathDraft.trim() &&
+    (!isWindows || Boolean(state.bashPath));
 }
 
 export interface PiActionsDeps {
@@ -36,7 +49,8 @@ export interface PiActionsDeps {
 
 export async function checkPiInstalled(
   state: PiToolState,
-  deps: PiActionsDeps
+  deps: PiActionsDeps,
+  deferSetupModalForAutoInstall = false
 ): Promise<boolean> {
   state.installChecking = true;
   state.installed = null;
@@ -69,7 +83,7 @@ export async function checkPiInstalled(
       status?: string;
       errorMessage?: string | null;
     };
-    const ready = response.installed === true && response.compatible === true && response.status === "ready";
+    const ready = response.installed === true && response.status === "ready";
     state.installed = response.installed === true;
     state.version = typeof response.version === "string" ? response.version : null;
     state.executablePath = typeof response.executablePath === "string" ? response.executablePath : null;
@@ -79,13 +93,15 @@ export async function checkPiInstalled(
     state.npmAvailable = typeof response.npmAvailable === "boolean" ? response.npmAvailable : null;
     state.runtimeStatus = typeof response.status === "string" ? response.status : null;
     state.error = ready ? null : response.errorMessage || "Pi runtime is not ready.";
-    state.installModalOpen = !ready;
+    const autoInstallWillRun = deferSetupModalForAutoInstall && shouldAutoInstallPi(state, isWindows());
+    state.installModalOpen = !ready && !state.busy && !autoInstallWillRun;
     return ready;
   } catch (error) {
     state.installed = false;
     state.version = null;
+    state.runtimeStatus = "launch_failed";
     state.error = error instanceof Error ? error.message : "Pi runtime probe failed.";
-    state.installModalOpen = true;
+    state.installModalOpen = !state.busy;
     return false;
   } finally {
     state.installChecking = false;
@@ -238,10 +254,31 @@ export async function installNow(
     });
     agent.status = "running";
 
-    await sleep(10000);
-    const installed = await checkPiInstalled(state, deps);
+    const installDeadline = Date.now() + 120_000;
+    let installed = false;
+    while (Date.now() < installDeadline) {
+      await sleep(2500);
+      installed = await checkPiInstalled(state, deps);
+      if (installed) break;
+    }
+
     if (installed) {
+      await sleep(1000);
+      const installAgent = state.agents.find((agent) => agent.id === agentId);
+      if (installAgent) {
+        installAgent.label = "Agent 1";
+        installAgent.cwd = deps.defaultCwd || ".";
+        installAgent.status = "starting";
+        await deps.client.sendTerminalInput({
+          sessionId: installAgent.sessionId,
+          input: `${getLaunchCommand(state.executablePath)}\n`,
+          correlationId: deps.nextCorrelationId()
+        });
+        installAgent.status = "running";
+      }
       state.installModalOpen = false;
+    } else {
+      state.installModalOpen = true;
     }
   } catch (error) {
     state.error = error instanceof Error ? error.message : "Failed to install Pi.";

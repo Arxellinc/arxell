@@ -49,7 +49,7 @@ For Rust or cross-layer changes, run both frontend verification and Rust checks.
 - Interactive workspace sessions use Pi's TUI through the existing PTY/terminal infrastructure.
 - Automated Looper and approved chat-delegation runs use the Rust-owned `pi --mode rpc` integration in `src-tauri/src/app/pi_rpc_service.rs`.
 - Treat `agent_settled` as successful RPC completion; neither `agent_end` nor process exit is sufficient.
-- Runtime discovery and supported-version checks belong in `src-tauri/src/app/pi_runtime_service.rs`. The supported range is `>=0.81.0,<0.82.0`; update code, installation docs, tests, and notices together when changing it.
+- Pi runtime discovery belongs in `src-tauri/src/app/pi_runtime_service.rs`. Do not reject a detected Pi solely by semantic version; validate real launch/RPC behavior and keep the app-managed npm install in `~/.arxell/pi-runtime` isolated from a user's global installation. Update runtime docs, tests, and notices together when changing this policy.
 - Automated runs must disable unrelated extension discovery and explicitly load `src-tauri/resources/pi/arxell-policy.ts`.
 - The Pi policy extension is defense in depth, not an OS sandbox. Preserve canonical project-boundary checks and fail-closed destructive-action approval.
 - Resolve provider credentials in Rust from secret storage and pass them only through child-process environment variables. Never put secrets in CLI arguments, generated model metadata, events, logs, or portable exports.
