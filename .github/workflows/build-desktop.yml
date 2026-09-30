@@ -202,12 +202,14 @@ jobs:
           # and re-validate voice input before changing.
           whisper_tag="v1.9.4"
           shaderc_tag="v2023.8"
+          vulkan_headers_tag="vulkan-sdk-1.4.309.0"
           kokoro_hash="$(md5sum scripts/prepare_kokoro_runtime.py scripts/verify_kokoro_runtime_archive.py | md5sum | cut -d' ' -f1)"
           echo "llama_tag=${llama_tag}" >> "${GITHUB_OUTPUT}"
           echo "whisper_tag=${whisper_tag}" >> "${GITHUB_OUTPUT}"
           echo "shaderc_tag=${shaderc_tag}" >> "${GITHUB_OUTPUT}"
+          echo "vulkan_headers_tag=${vulkan_headers_tag}" >> "${GITHUB_OUTPUT}"
           echo "kokoro_hash=${kokoro_hash}" >> "${GITHUB_OUTPUT}"
-          echo "Cache key: llama=${llama_tag} whisper=${whisper_tag} shaderc=${shaderc_tag} kokoro=${kokoro_hash}"
+          echo "Cache key: llama=${llama_tag} whisper=${whisper_tag} shaderc=${shaderc_tag} vulkan_headers=${vulkan_headers_tag} kokoro=${kokoro_hash}"
 
       - name: Cache bundled runtimes
         id: cache_runtimes
@@ -218,7 +220,7 @@ jobs:
             src-tauri/resources/whisper-server
             src-tauri/resources/whisper
             src-tauri/resources/kokoro-runtime
-          key: runtimes-llama-source-v7-${{ runner.os }}-${{ runner.arch }}-${{ steps.runtime_versions.outputs.llama_tag }}-${{ steps.runtime_versions.outputs.whisper_tag }}-${{ steps.runtime_versions.outputs.shaderc_tag }}-${{ steps.runtime_versions.outputs.kokoro_hash }}
+          key: runtimes-llama-source-v8-${{ runner.os }}-${{ runner.arch }}-${{ steps.runtime_versions.outputs.llama_tag }}-${{ steps.runtime_versions.outputs.whisper_tag }}-${{ steps.runtime_versions.outputs.shaderc_tag }}-${{ steps.runtime_versions.outputs.vulkan_headers_tag }}-${{ steps.runtime_versions.outputs.kokoro_hash }}
 
       - name: Build and install pinned SPIRV-Headers for Windows
         if: matrix.platform.os == 'windows-latest' && steps.cache_runtimes.outputs.cache-hit != 'true'
@@ -238,6 +240,24 @@ jobs:
           cmake --build "$build_dir" --config Release --target install
           test -f "$install_dir/share/cmake/SPIRV-Headers/SPIRV-HeadersConfig.cmake"
           echo "Installed SPIRV-Headers package: $install_dir"
+
+      - name: Build and install pinned Vulkan headers for Linux
+        if: matrix.platform.os == 'ubuntu-22.04' && steps.cache_runtimes.outputs.cache-hit != 'true'
+        shell: bash
+        env:
+          VULKAN_HEADERS_TAG: ${{ steps.runtime_versions.outputs.vulkan_headers_tag }}
+        run: |
+          set -euo pipefail
+          source_dir="$RUNNER_TEMP/Vulkan-Headers"
+          build_dir="$RUNNER_TEMP/vulkan-headers-build"
+          install_dir="$RUNNER_TEMP/vulkan-headers-install"
+          git clone --depth 1 --branch "$VULKAN_HEADERS_TAG" \
+            https://github.com/KhronosGroup/Vulkan-Headers.git "$source_dir"
+          cmake -S "$source_dir" -B "$build_dir" \
+            -DCMAKE_INSTALL_PREFIX="$install_dir"
+          cmake --build "$build_dir" --target install --parallel "$(nproc)"
+          test -f "$install_dir/include/vulkan/vulkan.h"
+          echo "Installed Vulkan headers $VULKAN_HEADERS_TAG: $install_dir"
 
       - name: Build pinned glslc for Linux Vulkan runtime
         if: matrix.platform.os == 'ubuntu-22.04' && steps.cache_runtimes.outputs.cache-hit != 'true'
@@ -298,6 +318,10 @@ jobs:
               cmake -S "$source_dir" -B "$build_dir" \
                 -DCMAKE_BUILD_TYPE=Release -DLLAMA_BUILD_SERVER=ON -DGGML_NATIVE=OFF \
                 "-DCMAKE_PREFIX_PATH=$RUNNER_TEMP/spirv-headers-install" "$@"
+            elif [[ "$RUNNER_OS" == "Linux" ]]; then
+              cmake -S "$source_dir" -B "$build_dir" \
+                -DCMAKE_BUILD_TYPE=Release -DLLAMA_BUILD_SERVER=ON -DGGML_NATIVE=OFF \
+                "-DVulkan_INCLUDE_DIR=$RUNNER_TEMP/vulkan-headers-install/include" "$@"
             else
               cmake -S "$source_dir" -B "$build_dir" \
                 -DCMAKE_BUILD_TYPE=Release -DLLAMA_BUILD_SERVER=ON -DGGML_NATIVE=OFF "$@"
