@@ -2,7 +2,7 @@
 
 ## GNU OpenMP runtime (Linux)
 
-The bundled Linux llama.cpp engines include `libgomp.so.1` from Ubuntu 22.04's GCC 11 runtime package. The GCC runtime is copyright the Free Software Foundation and is distributed under GPL-3.0-or-later with the GCC Runtime Library Exception 3.1. The exception permits combining the runtime with the application; `libgomp` itself remains under its stated license.
+The bundled Linux llama.cpp and Whisper server runtimes include `libgomp.so.1` from Ubuntu 22.04's GCC 11 runtime package. The GCC runtime is copyright the Free Software Foundation and is distributed under GPL-3.0-or-later with the GCC Runtime Library Exception 3.1. The exception permits combining the runtime with the application; `libgomp` itself remains under its stated license.
 
 - GCC 11 Ubuntu source package: https://packages.ubuntu.com/jammy/amd64/gcc-11
 - GPL-3.0: https://www.gnu.org/licenses/gpl-3.0.html

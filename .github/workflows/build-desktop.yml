@@ -220,7 +220,7 @@ jobs:
             src-tauri/resources/whisper-server
             src-tauri/resources/whisper
             src-tauri/resources/kokoro-runtime
-          key: runtimes-llama-source-v9-${{ runner.os }}-${{ runner.arch }}-${{ steps.runtime_versions.outputs.llama_tag }}-${{ steps.runtime_versions.outputs.whisper_tag }}-${{ steps.runtime_versions.outputs.shaderc_tag }}-${{ steps.runtime_versions.outputs.vulkan_headers_tag }}-${{ steps.runtime_versions.outputs.kokoro_hash }}
+          key: runtimes-llama-source-v10-${{ runner.os }}-${{ runner.arch }}-${{ steps.runtime_versions.outputs.llama_tag }}-${{ steps.runtime_versions.outputs.whisper_tag }}-${{ steps.runtime_versions.outputs.shaderc_tag }}-${{ steps.runtime_versions.outputs.vulkan_headers_tag }}-${{ steps.runtime_versions.outputs.kokoro_hash }}
 
       - name: Build and install pinned SPIRV-Headers for Windows
         if: matrix.platform.os == 'windows-latest' && steps.cache_runtimes.outputs.cache-hit != 'true'
@@ -539,6 +539,16 @@ jobs:
           find "$build_dir" \( -type f -o -type l \) \( \
             -name '*.so' -o -name '*.so.*' -o -name '*.dylib' -o -name '*.dll' \
           \) -exec cp -L {} "$whisper_server_dir"/ \;
+          if [[ "$RUNNER_OS" == "Linux" ]]; then
+            libgomp="$(LD_LIBRARY_PATH="$build_dir/bin${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" ldd "$server" \
+              | awk '$1 == "libgomp.so.1" && $2 == "=>" { print $3; exit }')"
+            if [[ -z "$libgomp" || ! -f "$libgomp" ]]; then
+              echo "[whisper-runtime] ERROR: libgomp.so.1 dependency was not found" >&2
+              ldd "$server" >&2
+              exit 1
+            fi
+            cp -L "$libgomp" "$whisper_server_dir/libgomp.so.1"
+          fi
           if [[ "$RUNNER_OS" != "Windows" ]]; then chmod +x "$whisper_server_dir/$target_name"; fi
 
           echo "[whisper-runtime] smoke test ${target_name}"
