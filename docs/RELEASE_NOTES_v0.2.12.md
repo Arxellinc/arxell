@@ -22,7 +22,7 @@ Download `SHA256SUMS.txt` with the installers and verify the checksum before ins
 ## Important limitations
 
 - Installers are unsigned and macOS builds are not notarized. Windows SmartScreen and macOS Gatekeeper may show warnings; only install after verifying the checksum and source.
-- Linux AppImage/deb clean-container launch and CPU GGUF smoke tests are automated/reviewed on the available Linux host. Windows/macOS installers were built by CI, but were not manually installed on separate clean physical machines for this release.
+- Linux `.deb` and AppImage install/launch plus bundled llama.cpp and Whisper runtime smoke checks passed in a clean Ubuntu 22.04 CI container; real GGUF CPU inference was separately verified on the development host. Windows CI installed, launched, and uninstalled the MSI; macOS CI mounted and validated the DMG. These checks do not replace physical clean-machine acceptance or validate full model/chat/Pi workflows on Windows and macOS.
 - Live public-provider credentials and paid inference were not used for release testing. Verify your provider/model configuration before relying on the app.
 - Optional voice/audio behavior varies with system media dependencies and has not received the same cross-platform acceptance as core chat and local text inference.
 
