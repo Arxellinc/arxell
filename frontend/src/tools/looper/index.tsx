@@ -456,7 +456,7 @@ function renderInstallModal(state: LooperToolState): string {
   return `<div class="looper-modal-overlay" id="${LOOPER_UI_ID.installModalOverlay}">
     <div class="looper-modal">
       <h2>${iconHtml("refresh-cw", { size: 16, tone: "dark" })} Pi CLI Required</h2>
-      <p>Looper needs the Pi coding harness. Open the Pi workspace to install it automatically when Node.js/npm are available, or run this in a terminal:</p>
+      <p>Looper needs the Pi coding harness. Open the Pi workspace to install it automatically when Node.js 22.19 or newer and npm are available. Windows also requires Git Bash. You can alternatively install it manually:</p>
       <div class="looper-install-cmd">npm install -g --ignore-scripts @earendil-works/pi-coding-agent</div>
       ${state.statusMessage ? `<p class="looper-install-error">${esc(state.statusMessage)}</p>` : ""}
       <p>After installation, click <strong>I've Installed It</strong>.</p>

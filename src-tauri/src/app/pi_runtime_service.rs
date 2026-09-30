@@ -77,7 +77,7 @@ impl PiRuntimeService {
         };
 
         let found_candidate = candidates.iter().any(|candidate| candidate.is_file());
-        let node_available = command_succeeds("node", &["--version"]);
+        let node_available = node_version_supported();
         let npm_available = command_succeeds("npm", &["--version"]);
         let bash_path = discover_bash();
         let mut last_error = None;
@@ -149,7 +149,7 @@ impl PiRuntimeService {
             }),
             error_message: Some(last_error.unwrap_or_else(|| {
                 if !node_available {
-                    "Pi was not found and Node.js is unavailable. Install Node.js, then install Pi."
+                    "Automatic Pi installation requires Node.js 22.19.0 or newer and npm. Install or update Node.js, then retry."
                         .to_string()
                 } else {
                     "Pi was not found in managed, explicit, PATH, npm, pnpm, Yarn, or Bun locations."
@@ -351,6 +351,22 @@ fn probe_candidate(candidate: &Path) -> Result<String, String> {
     Ok(version)
 }
 
+fn node_version_supported() -> bool {
+    let mut command = Command::new("node");
+    command.arg("--version");
+    let Some(output) =
+        run_probe_with_timeout(&mut command, Duration::from_secs(PROBE_TIMEOUT_SECS))
+    else {
+        return false;
+    };
+    let version = String::from_utf8_lossy(&output.stdout);
+    output.status.success() && is_supported_pi_node_version(version.trim())
+}
+
+fn is_supported_pi_node_version(value: &str) -> bool {
+    parse_version(value).is_some_and(|version| version >= (22, 19, 0))
+}
+
 fn parse_version(value: &str) -> Option<(u64, u64, u64)> {
     let value = value.trim().trim_start_matches('v');
     let mut parts =
@@ -434,6 +450,15 @@ mod tests {
         assert!(parse_version("v0.84.2").is_some());
         assert!(parse_version("0.99.1").is_some());
         assert!(parse_version("invalid").is_none());
+    }
+
+    #[test]
+    fn automatic_pi_install_requires_node_22_19_or_newer() {
+        assert!(!is_supported_pi_node_version("v20.19.0"));
+        assert!(!is_supported_pi_node_version("v22.18.9"));
+        assert!(is_supported_pi_node_version("v22.19.0"));
+        assert!(is_supported_pi_node_version("v24.0.0"));
+        assert!(!is_supported_pi_node_version("not-node"));
     }
 
     #[test]
