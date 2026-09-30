@@ -108,6 +108,8 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y \
             pkg-config \
+            build-essential \
+            python3 \
             libasound2-dev \
             libwebkit2gtk-4.1-dev \
             libappindicator3-dev \
@@ -128,7 +130,6 @@ jobs:
             cmake \
             ninja-build \
             libvulkan-dev \
-            glslc \
             spirv-headers
           sudo /usr/lib/x86_64-linux-gnu/gdk-pixbuf-2.0/gdk-pixbuf-query-loaders --update-cache
           sudo /usr/lib/x86_64-linux-gnu/libgtk3-nocsd.so.0 || true
@@ -203,11 +204,13 @@ jobs:
           # built from this pinned source tag below. Bump deliberately
           # and re-validate voice input before changing.
           whisper_tag="v1.9.4"
+          shaderc_tag="v2023.8"
           kokoro_hash="$(md5sum scripts/prepare_kokoro_runtime.py scripts/verify_kokoro_runtime_archive.py | md5sum | cut -d' ' -f1)"
           echo "llama_tag=${llama_tag}" >> "${GITHUB_OUTPUT}"
           echo "whisper_tag=${whisper_tag}" >> "${GITHUB_OUTPUT}"
+          echo "shaderc_tag=${shaderc_tag}" >> "${GITHUB_OUTPUT}"
           echo "kokoro_hash=${kokoro_hash}" >> "${GITHUB_OUTPUT}"
-          echo "Cache key: llama=${llama_tag} whisper=${whisper_tag} kokoro=${kokoro_hash}"
+          echo "Cache key: llama=${llama_tag} whisper=${whisper_tag} shaderc=${shaderc_tag} kokoro=${kokoro_hash}"
 
       - name: Cache bundled runtimes
         id: cache_runtimes
@@ -218,7 +221,7 @@ jobs:
             src-tauri/resources/whisper-server
             src-tauri/resources/whisper
             src-tauri/resources/kokoro-runtime
-          key: runtimes-llama-source-v5-${{ runner.os }}-${{ runner.arch }}-${{ steps.runtime_versions.outputs.llama_tag }}-${{ steps.runtime_versions.outputs.whisper_tag }}-${{ steps.runtime_versions.outputs.kokoro_hash }}
+          key: runtimes-llama-source-v6-${{ runner.os }}-${{ runner.arch }}-${{ steps.runtime_versions.outputs.llama_tag }}-${{ steps.runtime_versions.outputs.whisper_tag }}-${{ steps.runtime_versions.outputs.shaderc_tag }}-${{ steps.runtime_versions.outputs.kokoro_hash }}
 
       - name: Build and install pinned SPIRV-Headers for Windows
         if: matrix.platform.os == 'windows-latest' && steps.cache_runtimes.outputs.cache-hit != 'true'
@@ -238,6 +241,35 @@ jobs:
           cmake --build "$build_dir" --config Release --target install
           test -f "$install_dir/share/cmake/SPIRV-Headers/SPIRV-HeadersConfig.cmake"
           echo "Installed SPIRV-Headers package: $install_dir"
+
+      - name: Build pinned glslc for Linux Vulkan runtime
+        if: matrix.platform.os == 'ubuntu-22.04' && steps.cache_runtimes.outputs.cache-hit != 'true'
+        shell: bash
+        env:
+          SHADERC_TAG: ${{ steps.runtime_versions.outputs.shaderc_tag }}
+        run: |
+          set -euo pipefail
+          source_dir="$RUNNER_TEMP/shaderc"
+          build_dir="$RUNNER_TEMP/shaderc-build"
+          bin_dir="$RUNNER_TEMP/shaderc-bin"
+          rm -rf "$source_dir" "$build_dir" "$bin_dir"
+          git clone --depth 1 --branch "$SHADERC_TAG" \
+            https://github.com/google/shaderc.git "$source_dir"
+          python3 "$source_dir/utils/git-sync-deps"
+          cmake -S "$source_dir" -B "$build_dir" -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release
+          cmake --build "$build_dir" --target glslc_exe --parallel "$(nproc)"
+          glslc_binary="$(find "$build_dir" -type f -name glslc -executable | head -1)"
+          test -n "$glslc_binary" && test -x "$glslc_binary"
+          mkdir -p "$bin_dir"
+          install -m 755 "$glslc_binary" "$bin_dir/glslc"
+          if ldd "$bin_dir/glslc" | grep -q 'not found'; then
+            ldd "$bin_dir/glslc" >&2
+            echo "Pinned glslc has unresolved runtime libraries" >&2
+            exit 1
+          fi
+          "$bin_dir/glslc" --version
+          echo "$bin_dir" >> "$GITHUB_PATH"
 
       - name: Build bundled llama.cpp runtimes from pinned source
         if: steps.cache_runtimes.outputs.cache-hit != 'true'
