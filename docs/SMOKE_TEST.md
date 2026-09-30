@@ -106,13 +106,13 @@ The regular `desktop_keyring_backend_persists_until_deleted` test checks native 
 
 ## Pi Coding Harness
 
-See `PI_CODING_HARNESS.md` for installation and supported versions.
+See `PI_CODING_HARNESS.md` for runtime discovery and setup.
 
 ### Runtime readiness
 
-1. Run `pi --version` and confirm it is in the supported `>=0.81.0,<0.82.0` range.
-2. Open the Pi tool and verify the setup state reports the selected executable and version.
-3. On a machine without Pi, or with an incompatible fixture executable, verify the UI shows a typed recovery message rather than reporting ready.
+1. Run `pi --version`; verify Arxell detects the selected executable/version without rejecting it solely by version number.
+2. Open the Pi tool and verify an installed Pi launches automatically.
+3. On a machine without Pi but with Node.js/npm, verify Arxell installs the current package and then launches Pi; when prerequisites are missing, verify the setup UI explains what is needed.
 4. On Windows, verify missing Git Bash is diagnosed and `PI_SHELL_PATH` works for a nonstandard Bash installation.
 
 ### Interactive workspace
@@ -139,7 +139,7 @@ Automated fixtures cover RPC framing, settlement, malformed output, crashes, tim
 
 1. Create a low-risk task and verify it remains in Drafts after Save as Draft and app restart.
 2. Select a project, star the task, restart, and confirm project identity and priority survive backend synchronization.
-3. Use Save & Run and verify a real Pi-backed Looper record is created; a missing/incompatible Pi runtime must produce a visible task error rather than a successful run.
+3. Use Save & Run and verify a real Pi-backed Looper record is created; a missing or unlaunchable Pi runtime must produce a visible task error rather than a successful run.
 4. Schedule a one-time task in the near future, allow it to run, and verify it does not run again on later 15-second scheduler ticks.
 5. Start “Run due now” near a background scheduler tick and verify only one run record is created for the occurrence.
 6. Check daily/weekly local-time recurrence and a DST transition in the selected timezone.

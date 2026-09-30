@@ -91,11 +91,16 @@ export function renderPiInstallModal(state: PiToolState): string {
   if (!state.installModalOpen) return "";
 
   const cmd = getInstallCommand();
+  const installDisabled = state.installChecking ||
+    state.nodeAvailable !== true ||
+    state.npmAvailable !== true ||
+    state.runtimeStatus === "missing_bash" ||
+    (/Windows/i.test(navigator.userAgent) && !state.bashPath);
 
   return `<div class="modal-backdrop-fixed" id="${PI_UI_ID.installModalOverlay}">
     <div class="modal-box-fixed">
-      <div class="modal-title">${iconHtml("bot-message-square", { size: 16, tone: "dark" })} Pi CLI Required</div>
-      <p>Install the supported Pi coding harness with npm, then recheck availability.</p>
+      <div class="modal-title">${iconHtml("bot-message-square", { size: 16, tone: "dark" })} Pi CLI Setup</div>
+      <p>Arxell does not reject detected Pi versions by version number. If Pi is missing, Arxell can install the current release with npm when Node.js and npm are available.</p>
       <div class="pi-install-cmd">${escapeHtml(cmd)}</div>
       <label class="field">Pi executable path (optional)
         <input class="field-input-soft" type="text" value="${escapeHtml(state.executablePathDraft)}" placeholder="Auto-detect from PATH, npm, pnpm, Yarn, or Bun" ${PI_DATA_ATTR.action}="pi-executable-path" />
@@ -110,7 +115,7 @@ export function renderPiInstallModal(state: PiToolState): string {
         <button type="button" class="modal-btn" ${PI_DATA_ATTR.action}="recheck-install" ${state.installChecking ? "disabled" : ""}>
           ${state.installChecking ? "Checking..." : "I've Installed It"}
         </button>
-        <button type="button" class="modal-btn" ${PI_DATA_ATTR.action}="install-now" ${state.installChecking ? "disabled" : ""}>
+        <button type="button" class="modal-btn" ${PI_DATA_ATTR.action}="install-now" ${installDisabled ? "disabled" : ""}>
           Install Now
         </button>
       </div>

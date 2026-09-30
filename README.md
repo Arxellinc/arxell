@@ -83,7 +83,7 @@ Arxell ships with 11 built-in workspace tools — each one a full-featured panel
 | <img src="docs/icons/ico-memory.svg" width="20"> | **Memory** | Persistent context references the agent can read and write across sessions. Long-term memory, local-first. |
 | <img src="docs/icons/ico-docs.svg" width="20"> | **Docs** | Browse and read documentation files without leaving the workspace. |
 
-See [Pi Coding Harness](docs/PI_CODING_HARNESS.md) for supported versions, installation, authentication, privacy, trust, and automation policy details.
+See [Pi Coding Harness](docs/PI_CODING_HARNESS.md) for runtime discovery, installation, authentication, privacy, trust, and automation policy details.
 
 ---
 
@@ -196,17 +196,17 @@ Every layer communicates through typed contracts with correlation IDs, structure
 
 - When building from source: [Rust](https://rustup.rs/) (latest stable), Tauri CLI 2, and [Node.js](https://nodejs.org/) >= 20.19 for frontend tooling
 - Platform-specific WebView2 (Windows) / WebKit (macOS &mdash; built-in) / webkit2gtk (Linux)
-- For the **Pi** workspace tool, **Looper**, and approved chat execution: Pi `>=0.81.0,<0.82.0` and Node.js >= 22.19
+- For automatic Pi setup when Pi is not already installed: Node.js (>= 22.19 for the current Pi package) and npm
 - On Windows, Pi also requires Git for Windows/Bash
 - On Linux, API-key storage requires an unlocked desktop Secret Service (for example GNOME Keyring or a compatible KWallet). If unavailable, saving credentials fails unless you explicitly enable plaintext fallback; Arxell does not silently downgrade storage.
 
-Install the supported Pi release with lifecycle scripts disabled:
+Arxell uses an already-detected Pi installation regardless of its version. If Pi is missing and Node.js/npm are available, opening the Pi workspace automatically installs the current package into Arxell's private `~/.arxell/pi-runtime` directory with lifecycle scripts disabled; it does not replace a global Pi installation. You can also install Pi manually:
 
 ```bash
-npm install -g --ignore-scripts @earendil-works/pi-coding-agent@0.81.1
+npm install -g --ignore-scripts @earendil-works/pi-coding-agent
 ```
 
-Pi is an external system dependency in this release. Arxell discovers explicit, managed, PATH, npm, pnpm, Yarn, and Bun installations and reports actionable setup diagnostics. See [Pi Coding Harness](docs/PI_CODING_HARNESS.md).
+Pi is an external system dependency. Arxell discovers explicit, PATH, npm, pnpm, Yarn, and Bun installations before falling back to its private managed copy, and reports actionable setup diagnostics. See [Pi Coding Harness](docs/PI_CODING_HARNESS.md).
 
 ### Build from Source
 
