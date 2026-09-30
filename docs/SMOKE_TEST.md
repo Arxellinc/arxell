@@ -164,6 +164,14 @@ See `Cron-Tasks.md` for lifecycle, execution, scheduling, overlap, and notificat
 4. Verify `endpoint` and `pid` are returned.
 5. Stop runtime (`cmd_llama_runtime_stop`), verify `stopped: true`.
 
+## Whisper relocation and lifecycle
+
+- Library tests cover private dependency staging, bundled English/Tiny model discovery, HTTP readiness, child exit, and cancellation/reaping during loading.
+- To test a real prepared/package binary through the same staging helper used by the app:
+  `ARXELL_TEST_WHISPER_BINARY=/absolute/path/to/whisper-server cargo test --manifest-path src-tauri/Cargo.toml --features tauri-runtime real_whisper_runs_from_staged_closure -- --ignored`
+- In the installed app, start voice with a bundled model, stop while loading, restart, then terminate only its owned Whisper child and confirm an error status and cleared endpoint. Stopping must not leave staged runtime directories or child processes.
+- Both bundled English quantized models are resolved under `whisper/` and `resources/whisper/`; the model download URL is the Hugging Face model repository, not its nonexistent datasets endpoint.
+
 ## TTS Engine Reset Behavior
 
 1. Open the `TTS` panel.

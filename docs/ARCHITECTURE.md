@@ -85,7 +85,7 @@ Permission enforcement for tool actions, file access, and runtime operations.
 Voice session management with VAD method selection, duplex modes, handoff between VAD methods, shadow evaluation, and speculation.
 
 ### STT Subsystem (`src-tauri/src/stt/`)
-Speech-to-text: backend selection, model management, streaming transcription via Whisper-compatible servers.
+Speech-to-text: backend selection, model management, streaming transcription via Whisper-compatible servers. Whisper lifecycle changes are serialized with startup cancellation; the supervisor stages a private executable/shared-library closure and sets the child loader path, checks HTTP `/health` plus child liveness, cleans up failed startup, and clears the endpoint/status on health failure. Model listing and startup share bundled/user model discovery.
 
 ### TTS Subsystem (`src-tauri/src/tts/`)
 Text-to-speech: multi-engine support (Kokoro, Piper, Matcha, Kitten), voice selection, settings management, self-test, model download.
