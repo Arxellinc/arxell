@@ -221,7 +221,7 @@ jobs:
             src-tauri/resources/whisper-server
             src-tauri/resources/whisper
             src-tauri/resources/kokoro-runtime
-          key: runtimes-llama-source-v6-${{ runner.os }}-${{ runner.arch }}-${{ steps.runtime_versions.outputs.llama_tag }}-${{ steps.runtime_versions.outputs.whisper_tag }}-${{ steps.runtime_versions.outputs.shaderc_tag }}-${{ steps.runtime_versions.outputs.kokoro_hash }}
+          key: runtimes-llama-source-v7-${{ runner.os }}-${{ runner.arch }}-${{ steps.runtime_versions.outputs.llama_tag }}-${{ steps.runtime_versions.outputs.whisper_tag }}-${{ steps.runtime_versions.outputs.shaderc_tag }}-${{ steps.runtime_versions.outputs.kokoro_hash }}
 
       - name: Build and install pinned SPIRV-Headers for Windows
         if: matrix.platform.os == 'windows-latest' && steps.cache_runtimes.outputs.cache-hit != 'true'
@@ -296,13 +296,14 @@ jobs:
             local binary_name="llama-server"
             if [[ "$RUNNER_OS" == "Windows" ]]; then binary_name="llama-server.exe"; fi
             echo "[llama-runtime] configuring ${engine_id}"
+            # Keep release binaries portable across CPUs; never use runner-native ISA tuning.
             if [[ "$RUNNER_OS" == "Windows" ]]; then
               cmake -S "$source_dir" -B "$build_dir" \
-                -DCMAKE_BUILD_TYPE=Release -DLLAMA_BUILD_SERVER=ON \
+                -DCMAKE_BUILD_TYPE=Release -DLLAMA_BUILD_SERVER=ON -DGGML_NATIVE=OFF \
                 "-DCMAKE_PREFIX_PATH=$RUNNER_TEMP/spirv-headers-install" "$@"
             else
               cmake -S "$source_dir" -B "$build_dir" \
-                -DCMAKE_BUILD_TYPE=Release -DLLAMA_BUILD_SERVER=ON "$@"
+                -DCMAKE_BUILD_TYPE=Release -DLLAMA_BUILD_SERVER=ON -DGGML_NATIVE=OFF "$@"
             fi
             echo "[llama-runtime] building ${engine_id}"
             cmake --build "$build_dir" --config Release --parallel
