@@ -11,7 +11,7 @@ Arxell uses the [Pi coding harness](https://pi.dev/) in two modes:
 
 Arxell uses an installed Pi runtime without a hard-coded semantic-version ceiling. A candidate must return a parseable version from `pi --version`; Arxell then launches it and reports actual launch/RPC failures rather than telling users to replace an otherwise detected version. This is intentionally version-agnostic, not a guarantee that every future Pi protocol change will work. Pi `0.84.2` and `0.99.1` were manually verified to start in RPC mode, load the bundled policy extension, and answer `get_state`; the `0.99.1` check used a disposable npm installation. This is a startup/protocol smoke test, not a credentialed inference test.
 
-Arxell checks an explicit path, `ARXELL_PI_EXECUTABLE`, `PATH`, standard npm/pnpm/Yarn/Bun locations, and finally its private managed-runtime location. If no Pi is found and Node.js/npm are available (and Bash is present on Windows), opening the Pi workspace automatically installs the current package into its private `~/.arxell/pi-runtime` directory without lifecycle scripts. This leaves a user's global Pi installation untouched. The equivalent manual commands are:
+Arxell checks an explicit path, `ARXELL_PI_EXECUTABLE`, `PATH`, standard npm/pnpm/Yarn/Bun locations, and finally its private managed-runtime location. If no Pi is found and Node.js `>=22.19.0`/npm are available (and Bash is present on Windows), opening the Pi workspace automatically installs the current package into its private `~/.arxell/pi-runtime` directory without lifecycle scripts. This leaves a user's global Pi installation untouched. The equivalent manual commands are:
 
 ```sh
 # macOS/Linux
