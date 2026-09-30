@@ -1,4 +1,6 @@
-# Arxell v0.2.12
+# Arxell v0.2.12 — Preview
+
+**Preview release:** this build is publicly available for evaluation, but it is not being labeled fully stable while clean-machine/provider acceptance and platform signing remain incomplete.
 
 Arxell v0.2.12 is a cross-platform desktop build with safer native credential storage, hardened Pi RPC failure handling, safer local-runtime process ownership, and updated llama.cpp/Whisper runtime packaging.
 
