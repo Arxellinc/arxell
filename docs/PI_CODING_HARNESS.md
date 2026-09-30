@@ -5,7 +5,7 @@ Implementation status: complete in Arxell `0.2.11`. Credentialed model runs and 
 Arxell uses the [Pi coding harness](https://pi.dev/) in two modes:
 
 - **Pi workspace tool:** interactive TUI sessions run in Arxell terminals and use the user's normal Pi profile.
-- **Looper and approved chat delegation:** isolated, ephemeral `pi --mode rpc` processes run from Rust and complete only after `agent_settled`.
+- **Looper and approved chat delegation:** isolated, ephemeral `pi --mode rpc` processes run from Rust and complete only after `agent_settled`, provided the final model response succeeded. Failed, aborted, truncated, or retry-exhausted responses fail the phase rather than advancing Looper. Successful automatic retries recover earlier model errors; policy/extension errors remain failures.
 
 ## Supported Runtime
 

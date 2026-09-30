@@ -29,7 +29,7 @@ jobs:
         platform:
           - name: linux-x64
             os: ubuntu-24.04
-          - name: macos-x64
+          - name: macos-arm64
             os: macos-latest
           - name: windows-x64
             os: windows-latest
@@ -123,7 +123,12 @@ jobs:
             gtk+3.0 \
             libgtk-3-dev \
             librsvg2-common \
-            shared-mime-info
+            shared-mime-info \
+            cmake \
+            ninja-build \
+            libvulkan-dev \
+            glslc \
+            spirv-headers
           sudo /usr/lib/x86_64-linux-gnu/gdk-pixbuf-2.0/gdk-pixbuf-query-loaders --update-cache
           sudo /usr/lib/x86_64-linux-gnu/libgtk3-nocsd.so.0 || true
           sudo gtk-query-immodules-3.0 --update-cache 2>/dev/null || true
@@ -156,6 +161,13 @@ jobs:
           pkg-config --modversion librsvg-2.0
           PKG_CONFIG_PATH="${overlay_dir}${PKG_CONFIG_PATH:+:${PKG_CONFIG_PATH}}" pkg-config --variable=libdir librsvg-2.0
 
+      - name: Install Vulkan SDK for Windows llama.cpp build
+        if: matrix.platform.os == 'windows-latest'
+        uses: humbletim/install-vulkan-sdk@v1.2
+        with:
+          version: 1.4.309.0
+          cache: true
+
       - name: Install frontend dependencies
         working-directory: frontend
         run: npm ci
@@ -182,8 +194,14 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          llama_tag="$(curl -fsSL -H "Authorization: Bearer ${GITHUB_TOKEN}" https://api.github.com/repos/ggml-org/llama.cpp/releases/latest | python3 -c 'import json,sys; print(json.load(sys.stdin)["tag_name"])')"
-          whisper_tag="$(curl -fsSL -H "Authorization: Bearer ${GITHUB_TOKEN}" https://api.github.com/repos/ggerganov/whisper.cpp/releases/latest | python3 -c 'import json,sys; print(json.load(sys.stdin)["tag_name"])')"
+          # v0.4.1 is the latest stable llama.cpp release and ships no upstream
+          # binary assets, so engines are built from this pinned source tag
+          # below. Bump deliberately and re-validate inference before changing.
+          llama_tag="v0.4.1"
+          # v1.9.4 ships no upstream binary assets, so the server is
+          # built from this pinned source tag below. Bump deliberately
+          # and re-validate voice input before changing.
+          whisper_tag="v1.9.4"
           kokoro_hash="$(md5sum scripts/prepare_kokoro_runtime.py scripts/verify_kokoro_runtime_archive.py | md5sum | cut -d' ' -f1)"
           echo "llama_tag=${llama_tag}" >> "${GITHUB_OUTPUT}"
           echo "whisper_tag=${whisper_tag}" >> "${GITHUB_OUTPUT}"
@@ -199,371 +217,313 @@ jobs:
             src-tauri/resources/whisper-server
             src-tauri/resources/whisper
             src-tauri/resources/kokoro-runtime
-          key: runtimes-${{ runner.os }}-${{ steps.runtime_versions.outputs.llama_tag }}-${{ steps.runtime_versions.outputs.whisper_tag }}-${{ steps.runtime_versions.outputs.kokoro_hash }}
+          key: runtimes-llama-source-v4-${{ runner.os }}-${{ runner.arch }}-${{ steps.runtime_versions.outputs.llama_tag }}-${{ steps.runtime_versions.outputs.whisper_tag }}-${{ steps.runtime_versions.outputs.kokoro_hash }}
 
-      - name: Prepare bundled llama.cpp runtimes
+      - name: Build and install pinned SPIRV-Headers for Windows
+        if: matrix.platform.os == 'windows-latest' && steps.cache_runtimes.outputs.cache-hit != 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          source_dir="$RUNNER_TEMP/SPIRV-Headers"
+          build_dir="$RUNNER_TEMP/spirv-headers-build"
+          install_dir="$RUNNER_TEMP/spirv-headers-install"
+          # Match the Vulkan SDK version above. The SDK action supplies Vulkan
+          # itself but not the SPIRV-Headers CMake package required by llama.cpp.
+          git clone --depth 1 --branch vulkan-sdk-1.4.309.0 \
+            https://github.com/KhronosGroup/SPIRV-Headers.git "$source_dir"
+          cmake -S "$source_dir" -B "$build_dir" \
+            -DSPIRV_HEADERS_ENABLE_TESTS=OFF \
+            -DCMAKE_INSTALL_PREFIX="$install_dir"
+          cmake --build "$build_dir" --config Release --target install
+          test -f "$install_dir/share/cmake/SPIRV-Headers/SPIRV-HeadersConfig.cmake"
+          echo "Installed SPIRV-Headers package: $install_dir"
+
+      - name: Build bundled llama.cpp runtimes from pinned source
         if: steps.cache_runtimes.outputs.cache-hit != 'true'
         shell: bash
         env:
-          GITHUB_TOKEN: ${{ github.token }}
+          LLAMA_TAG: ${{ steps.runtime_versions.outputs.llama_tag }}
         run: |
           set -euo pipefail
-          python - <<'PY'
+          # Make the SDK Vulkan loader visible to the engine smoke test.
+          if [[ -n "${VULKAN_SDK:-}" && -d "${VULKAN_SDK}" ]]; then
+            export PATH="$VULKAN_SDK/Bin:$VULKAN_SDK/RunTimes/x64:$VULKAN_SDK/Runtime/x64:$PATH"
+          fi
+          source_dir="$RUNNER_TEMP/llama.cpp"
+          resources_dir="$GITHUB_WORKSPACE/src-tauri/resources/llama-runtime"
+          rm -rf "$source_dir" "$resources_dir"
+          echo "[llama-runtime] cloning ${LLAMA_TAG}"
+          git clone --depth 1 --branch "$LLAMA_TAG" https://github.com/ggml-org/llama.cpp.git "$source_dir"
+          mkdir -p "$resources_dir"
+
+          build_engine() {
+            local engine_id="$1"
+            shift
+            local build_dir="$RUNNER_TEMP/llama-build-${engine_id}"
+            local binary_name="llama-server"
+            if [[ "$RUNNER_OS" == "Windows" ]]; then binary_name="llama-server.exe"; fi
+            echo "[llama-runtime] configuring ${engine_id}"
+            if [[ "$RUNNER_OS" == "Windows" ]]; then
+              cmake -S "$source_dir" -B "$build_dir" \
+                -DCMAKE_BUILD_TYPE=Release -DLLAMA_BUILD_SERVER=ON \
+                "-DCMAKE_PREFIX_PATH=$RUNNER_TEMP/spirv-headers-install" "$@"
+            else
+              cmake -S "$source_dir" -B "$build_dir" \
+                -DCMAKE_BUILD_TYPE=Release -DLLAMA_BUILD_SERVER=ON "$@"
+            fi
+            echo "[llama-runtime] building ${engine_id}"
+            cmake --build "$build_dir" --config Release --parallel
+            local server
+            server="$(find "$build_dir" -type f -name "$binary_name" | head -1)"
+            if [[ -z "$server" ]]; then
+              echo "[llama-runtime] ERROR: ${binary_name} not found under ${build_dir}" >&2
+              find "$build_dir" -maxdepth 4 -type f | head -40 >&2
+              return 1
+            fi
+            local engine_dir="$resources_dir/$engine_id"
+            mkdir -p "$engine_dir"
+            cp "$server" "$engine_dir/$binary_name"
+            # Complete runtime dependency closure: shared libraries and Metal
+            # kernels when the build does not embed them. GGML_METAL_EMBED_LIBRARY
+            # defaults to ON at v0.4.1, so macOS usually has no extra files.
+            # Preserve the loader-visible sonames as regular files in the
+            # portable bundle: Linux/macOS builds commonly expose them as
+            # symlinks to versioned library files, and `-type f` misses those.
+            find "$build_dir" \( -type f -o -type l \) \( \
+              -name '*.so' -o -name '*.so.*' -o -name '*.dylib' -o -name '*.dll' \
+              -o -name '*.metallib' -o -name '*.metal' \
+            \) -exec cp -L {} "$engine_dir"/ \;
+            if [[ "$RUNNER_OS" != "Windows" ]]; then chmod +x "$engine_dir/$binary_name"; fi
+            # Match runtime_service.rs: copied shared libraries live beside
+            # the executable and must be discoverable after cache restore.
+            if [[ "$RUNNER_OS" == "Linux" ]]; then
+              export LD_LIBRARY_PATH="$engine_dir${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+            elif [[ "$RUNNER_OS" == "macOS" ]]; then
+              export DYLD_LIBRARY_PATH="$engine_dir${DYLD_LIBRARY_PATH:+:$DYLD_LIBRARY_PATH}"
+            fi
+            echo "[llama-runtime] smoke test ${engine_id}"
+            if ! "$engine_dir/$binary_name" --version; then
+              echo "[llama-runtime] ERROR: ${engine_id} failed the --version smoke test" >&2
+              return 1
+            fi
+            echo "[llama-runtime] prepared ${engine_id}:"
+            ls -la "$engine_dir"
+          }
+
+          case "$RUNNER_OS" in
+            Linux)
+              build_engine llama.cpp-cpu -DGGML_VULKAN=OFF
+              build_engine llama.cpp-vulkan -DGGML_VULKAN=ON
+              required_engines='["llama.cpp-cpu", "llama.cpp-vulkan"]'
+              ;;
+            Windows)
+              build_engine llama.cpp-cpu -DGGML_VULKAN=OFF
+              build_engine llama.cpp-vulkan -DGGML_VULKAN=ON
+              required_engines='["llama.cpp-cpu", "llama.cpp-vulkan"]'
+              ;;
+            macOS)
+              build_engine llama.cpp-cpu -DGGML_METAL=OFF
+              build_engine llama.cpp-metal -DGGML_METAL=ON
+              required_engines='["llama.cpp-cpu", "llama.cpp-metal"]'
+              ;;
+            *)
+              echo "Unsupported runner: $RUNNER_OS" >&2
+              exit 1
+              ;;
+          esac
+
+          LLAMA_TAG="$LLAMA_TAG" RUNNER_OS="$RUNNER_OS" RUNNER_ARCH="$RUNNER_ARCH" REQUIRED_ENGINES="$required_engines" python - <<'PY_MANIFEST'
           import json
           import os
           import pathlib
-          import shutil
-          import stat
-          import tarfile
-          import urllib.request
-          import zipfile
 
-          def request_json(url: str) -> dict:
-            req = urllib.request.Request(url)
-            req.add_header("Accept", "application/vnd.github+json")
-            req.add_header("User-Agent", "arxell-ci")
-            token = os.environ.get("GITHUB_TOKEN", "").strip()
-            if token:
-              req.add_header("Authorization", f"Bearer {token}")
-            with urllib.request.urlopen(req, timeout=60) as resp:
-              return json.loads(resp.read().decode("utf-8"))
-
-          def safe_extract_tar(archive_path: pathlib.Path, dest: pathlib.Path) -> None:
-            with tarfile.open(archive_path, "r:*") as tf:
-              for member in tf.getmembers():
-                target = (dest / member.name).resolve()
-                if not str(target).startswith(str(dest.resolve())):
-                  raise RuntimeError(f"unsafe tar member path: {member.name}")
-              tf.extractall(dest)
-
-          def safe_extract_zip(archive_path: pathlib.Path, dest: pathlib.Path) -> None:
-            with zipfile.ZipFile(archive_path) as zf:
-              for member in zf.infolist():
-                target = (dest / member.filename).resolve()
-                if not str(target).startswith(str(dest.resolve())):
-                  raise RuntimeError(f"unsafe zip member path: {member.filename}")
-              zf.extractall(dest)
-
-          def find_binary(dest: pathlib.Path, binary_name: str) -> pathlib.Path | None:
-            for path in dest.rglob(binary_name):
-              if path.is_file():
-                return path
-            return None
-
-          def select_asset(assets: list[dict], required: list[str], forbidden: list[str]) -> dict | None:
-            candidates = []
-            for asset in assets:
-              name = str(asset.get("name", "")).lower()
-              if not name.startswith("llama-"):
-                continue
-              if not (name.endswith(".tar.gz") or name.endswith(".zip")):
-                continue
-              if asset.get("size", 0) <= 0:
-                continue
-              if any(word in name for word in forbidden):
-                continue
-              if not all(word in name for word in required):
-                continue
-              candidates.append(asset)
-            if not candidates:
-              return None
-            candidates.sort(key=lambda item: len(item["name"]), reverse=True)
-            return candidates[0]
-
-          runner_os = os.environ.get("RUNNER_OS", "")
-          os_key = {
-            "Linux": "linux",
-            "Windows": "windows",
-            "macOS": "macos",
-          }.get(runner_os, "")
-          if not os_key:
-            raise RuntimeError(f"unsupported RUNNER_OS={runner_os}")
-
-          release = request_json("https://api.github.com/repos/ggml-org/llama.cpp/releases/latest")
-          assets = release.get("assets", [])
-          tag = release.get("tag_name", "unknown")
-
-          if os_key == "linux":
-            targets = [
-              ("llama.cpp-cpu", ["ubuntu", "x64"], ["vulkan", "cuda", "rocm", "hip", "openvino", "sycl", "aclgraph", "s390x", "cudart"]),
-              ("llama.cpp-vulkan", ["ubuntu", "vulkan", "x64"], ["cuda", "rocm", "hip", "aclgraph", "s390x", "cudart"]),
-            ]
-            required_engines = ["llama.cpp-cpu", "llama.cpp-vulkan"]
-          elif os_key == "windows":
-            targets = [
-              ("llama.cpp-cpu", ["win", "cpu", "x64"], ["vulkan", "cuda", "hip", "cudart"]),
-              ("llama.cpp-vulkan", ["win", "vulkan", "x64"], ["cuda", "hip", "cudart"]),
-              ("llama.cpp-cuda", ["win", "cuda", "x64"], ["vulkan", "hip", "cudart"]),
-              ("llama.cpp-rocm", ["win", "hip", "radeon", "x64"], ["vulkan", "cuda", "cudart"]),
-            ]
-            required_engines = ["llama.cpp-cpu", "llama.cpp-vulkan"]
-          else:
-            targets = [
-              ("llama.cpp-metal", ["macos", "x64"], ["xcframework"]),
-              ("llama.cpp-cpu", ["macos", "x64"], ["xcframework"]),
-            ]
-            required_engines = ["llama.cpp-cpu", "llama.cpp-metal"]
-
-          repo_root = pathlib.Path(".").resolve()
-          resources_root = repo_root / "src-tauri" / "resources" / "llama-runtime"
-          temp_root = repo_root / ".tmp-llama-runtime"
-          shutil.rmtree(temp_root, ignore_errors=True)
-          temp_root.mkdir(parents=True, exist_ok=True)
-          resources_root.mkdir(parents=True, exist_ok=True)
-
-          selected = {}
-          prepared = {}
-          downloaded = {}
-          binary_name = "llama-server.exe" if os_key == "windows" else "llama-server"
-
-          for engine_id, required, forbidden in targets:
-            asset = select_asset(assets, required, forbidden)
-            if not asset:
-              print(f"[llama-runtime] skip {engine_id}: no compatible release asset")
-              continue
-            name = asset["name"]
-            url = asset["browser_download_url"]
-            selected[engine_id] = {"name": name, "url": url}
-            archive_path = downloaded.get(url)
-            if not archive_path:
-              archive_path = temp_root / name
-              print(f"[llama-runtime] download {engine_id}: {name}")
-              req = urllib.request.Request(url, headers={"User-Agent": "arxell-ci"})
-              with urllib.request.urlopen(req, timeout=120) as resp, open(archive_path, "wb") as out:
-                shutil.copyfileobj(resp, out)
-              downloaded[url] = archive_path
-
-            extract_dir = temp_root / f"extract-{engine_id}"
-            shutil.rmtree(extract_dir, ignore_errors=True)
-            extract_dir.mkdir(parents=True, exist_ok=True)
-            if str(archive_path).lower().endswith(".zip"):
-              safe_extract_zip(archive_path, extract_dir)
-            else:
-              safe_extract_tar(archive_path, extract_dir)
-
-            binary_src = find_binary(extract_dir, binary_name)
-            if not binary_src:
-              print(f"[llama-runtime] skip {engine_id}: {binary_name} not found after extraction")
-              continue
-
-            engine_dir = resources_root / engine_id
-            shutil.rmtree(engine_dir, ignore_errors=True)
-            engine_dir.mkdir(parents=True, exist_ok=True)
-            binary_dest = engine_dir / binary_name
-            shutil.copy2(binary_src, binary_dest)
-            if os_key != "windows":
-              binary_dest.chmod(binary_dest.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
-            for so_file in extract_dir.rglob("*.so*"):
-              if so_file.is_file():
-                so_dest = engine_dir / so_file.name
-                shutil.copy2(so_file, so_dest)
-                if os_key != "windows":
-                  so_dest.chmod(so_dest.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
-                print(f"[llama-runtime] bundled shared library: {so_file.name}")
-            print(f"[llama-runtime] prepared {engine_id}: {binary_dest}")
-            prepared[engine_id] = {
-              "name": name,
-              "url": url,
-              "binaryPath": str(binary_dest.relative_to(repo_root)),
-            }
-
-          missing_required = [engine_id for engine_id in required_engines if engine_id not in prepared]
-          if missing_required:
-            raise RuntimeError(f"Missing required bundled llama runtime engines for {runner_os}: {missing_required}")
-
-          manifest = {
-            "releaseTag": tag,
-            "runnerOs": runner_os,
-            "engines": prepared,
-          }
-          (resources_root / "manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+          root = pathlib.Path("src-tauri/resources/llama-runtime")
+          binary_name = "llama-server.exe" if os.environ["RUNNER_OS"] == "Windows" else "llama-server"
+          engines = {}
+          for engine_id in json.loads(os.environ["REQUIRED_ENGINES"]):
+              engine_dir = root / engine_id
+              binary = engine_dir / binary_name
+              if not binary.is_file():
+                  raise SystemExit(f"Missing bundled runtime: {binary}")
+              support_files = sorted(
+                  entry.name
+                  for entry in engine_dir.iterdir()
+                  if entry.is_file() and entry.name != binary_name
+              )
+              engines[engine_id] = {
+                  "binaryPath": str(binary),
+                  "source": "built-from-source",
+                  "supportFiles": support_files,
+              }
+          (root / "manifest.json").write_text(
+              json.dumps(
+                  {
+                      "releaseTag": os.environ["LLAMA_TAG"],
+                      "runnerOs": os.environ["RUNNER_OS"],
+                      "runnerArch": os.environ["RUNNER_ARCH"],
+                      "source": "https://github.com/ggml-org/llama.cpp",
+                      "engines": engines,
+                  },
+                  indent=2,
+              ),
+              encoding="utf-8",
+          )
           print("[llama-runtime] manifest written")
-          PY
+          PY_MANIFEST
 
-      - name: Prepare bundled whisper runtimes
-        if: steps.cache_runtimes.outputs.cache-hit != 'true'
+      - name: Verify bundled llama.cpp runtimes
         shell: bash
         env:
-          GITHUB_TOKEN: ${{ github.token }}
+          LLAMA_TAG: ${{ steps.runtime_versions.outputs.llama_tag }}
+          RUNNER_OS: ${{ runner.os }}
         run: |
           set -euo pipefail
           python - <<'PY'
           import json
           import os
           import pathlib
-          import shutil
-          import stat
-          import tarfile
-          import urllib.request
-          import zipfile
+          import subprocess
 
-          def request_json(url: str) -> dict:
-            req = urllib.request.Request(url)
-            req.add_header("Accept", "application/vnd.github+json")
-            req.add_header("User-Agent", "arxell-ci")
-            token = os.environ.get("GITHUB_TOKEN", "").strip()
-            if token:
-              req.add_header("Authorization", f"Bearer {token}")
-            with urllib.request.urlopen(req, timeout=60) as resp:
-              return json.loads(resp.read().decode("utf-8"))
-
-          def safe_extract_tar(archive_path: pathlib.Path, dest: pathlib.Path) -> None:
-            with tarfile.open(archive_path, "r:*") as tf:
-              for member in tf.getmembers():
-                target = (dest / member.name).resolve()
-                if not str(target).startswith(str(dest.resolve())):
-                  raise RuntimeError(f"unsafe tar member path: {member.name}")
-              tf.extractall(dest)
-
-          def download_file(url: str, dest: pathlib.Path) -> bool:
-            try:
-              req = urllib.request.Request(url, headers={"User-Agent": "arxell-ci"})
-              with urllib.request.urlopen(req, timeout=120) as resp, open(dest, "wb") as out:
-                shutil.copyfileobj(resp, out)
-              return True
-            except Exception as e:
-              print(f"Download failed: {e}")
-              return False
-
-          runner_os = os.environ.get("RUNNER_OS", "")
-          os_key = {
-            "Linux": "linux",
-            "Windows": "windows",
-            "macOS": "macos",
-          }.get(runner_os, "")
-          if not os_key:
-            raise RuntimeError(f"unsupported RUNNER_OS={runner_os}")
-
-          repo_root = pathlib.Path(".").resolve()
-          resources_root = repo_root / "src-tauri" / "resources"
-          whisper_server_dir = resources_root / "whisper-server"
-          whisper_models_dir = resources_root / "whisper"
-          temp_root = repo_root / ".tmp-whisper-runtime"
-          shutil.rmtree(temp_root, ignore_errors=True)
-          temp_root.mkdir(parents=True, exist_ok=True)
-          whisper_server_dir.mkdir(parents=True, exist_ok=True)
-          whisper_models_dir.mkdir(parents=True, exist_ok=True)
-
-          # === Download Whisper Model ===
-          # Download quantized model from HuggingFace
-          print("[whisper-runtime] Downloading model files...")
-          model_files = [
-            ("ggml-base.en-q8_0.bin", "https://huggingface.co/datasets/ggerganov/whisper.cpp/resolve/main/ggml-base.en-q8_0.bin"),
-            ("ggml-tiny.en-q8_0.bin", "https://huggingface.co/datasets/ggerganov/whisper.cpp/resolve/main/ggml-tiny.en-q8_0.bin"),
-          ]
-
-          for model_name, model_url in model_files:
-            model_path = whisper_models_dir / model_name
-            if model_path.exists():
-              print(f"[whisper-runtime] Model already exists: {model_name}")
-            else:
-              print(f"[whisper-runtime] Downloading {model_name}...")
-              if download_file(model_url, model_path):
-                print(f"[whisper-runtime] Downloaded: {model_name}")
-              else:
-                print(f"[whisper-runtime] Warning: Failed to download {model_name}")
-
-          # === Download Whisper Server Binary ===
-          # Fetch whisper.cpp releases
-          release = request_json("https://api.github.com/repos/ggerganov/whisper.cpp/releases/latest")
-          assets = release.get("assets", [])
-          tag = release.get("tag_name", "unknown")
-
-          print(f"[whisper-runtime] Fetched release {tag} with {len(assets)} assets")
-
-          # Map OS to binary patterns
-          binary_patterns = {
-            "linux": ["whisper-server-linux-x86_64"],
-            "windows": ["whisper-server-windows-x86_64.exe"],
-            "macos": ["whisper-server-macos-arm64", "whisper-server-macos-aarch64", "whisper-server-macos-x86_64"],
-          }
-
-          found_binary = None
-          for asset in assets:
-            name = asset.get("name", "").lower()
-            # Skip source code archives
-            if "source" in name:
-              continue
-            for pattern in binary_patterns.get(os_key, []):
-              # Look for server binary in archive name
-              if pattern in name and (name.endswith(".zip") or name.endswith(".tar.gz") or name.endswith(".tar.xz")):
-                found_binary = asset
-                break
-            if found_binary:
-                break
-
-          # Alternative: look for any server binary
-          if not found_binary:
-            for asset in assets:
-              name = asset.get("name", "").lower()
-              if "whisper-server" in name and not "source" in name and (name.endswith(".zip") or name.endswith(".tar.gz") or name.endswith(".tar.xz")):
-                found_binary = asset
-                break
-
-          if not found_binary:
-            print("[whisper-runtime] No pre-built server binary found in release")
-            print("[whisper-runtime] Note: whisper.cpp may require building from source")
-            # Create a manifest noting that binary wasn't found
-            manifest = {
-              "releaseTag": tag,
-              "runnerOs": runner_os,
-              "status": "binary_not_found",
-              "note": "Pre-built whisper-server binary not found. Build from source: git clone https://github.com/ggerganov/whisper.cpp && cd whisper.cpp && make server",
-            }
-            (whisper_server_dir / "manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
-            print("[whisper-runtime] manifest written (binary not found)")
-          else:
-            name = found_binary["name"]
-            url = found_binary["browser_download_url"]
-            print(f"[whisper-runtime] Downloading: {name}")
-
-            archive_path = temp_root / name
-            req = urllib.request.Request(url, headers={"User-Agent": "arxell-ci"})
-            with urllib.request.urlopen(req, timeout=120) as resp, open(archive_path, "wb") as out:
-              shutil.copyfileobj(resp, out)
-
-            extract_dir = temp_root / "extract"
-            extract_dir.mkdir(parents=True, exist_ok=True)
-
-            # Determine extension and extract
-            if name.endswith(".zip"):
-              with zipfile.ZipFile(archive_path) as zf:
-                zf.extractall(extract_dir)
-            else:
-              safe_extract_tar(archive_path, extract_dir)
-
-            # Find the binary
-            binary_map = {
-              "linux": "whisper-server-linux-x86_64",
-              "macos": "whisper-server-macos-aarch64",
-              "windows": "whisper-server-windows-x86_64.exe",
-            }
-            target_binary = binary_map.get(os_key, "whisper-server")
-
-            for path in extract_dir.rglob("whisper-server*"):
-              if path.is_file():
-                binary_dest = whisper_server_dir / target_binary
-                shutil.copy2(path, binary_dest)
-                if os_key != "windows":
-                  binary_dest.chmod(binary_dest.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
-                print(f"[whisper-runtime] Prepared: {binary_dest}")
-                manifest = {
-                  "releaseTag": tag,
-                  "runnerOs": runner_os,
-                  "status": "ready",
-                  "binaryPath": str(binary_dest.relative_to(repo_root)),
-                }
-                (whisper_server_dir / "manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
-                print("[whisper-runtime] manifest written")
-                break
-
-          # List final files
-          print("[whisper-runtime] Final resources:")
-          for p in whisper_server_dir.iterdir():
-            print(f"  {p.name}")
-          for p in whisper_models_dir.iterdir():
-            print(f"  {p.name}")
+          root = pathlib.Path("src-tauri/resources/llama-runtime")
+          manifest = json.loads((root / "manifest.json").read_text(encoding="utf-8"))
+          expected_tag = os.environ["LLAMA_TAG"]
+          if manifest.get("releaseTag") != expected_tag:
+              raise SystemExit(
+                  f"Expected llama.cpp {expected_tag}, got {manifest.get('releaseTag')!r}"
+              )
+          expected = {
+              "Linux": ["llama.cpp-cpu", "llama.cpp-vulkan"],
+              "Windows": ["llama.cpp-cpu", "llama.cpp-vulkan"],
+              "macOS": ["llama.cpp-cpu", "llama.cpp-metal"],
+          }[os.environ["RUNNER_OS"]]
+          binary_name = (
+              "llama-server.exe" if os.environ["RUNNER_OS"] == "Windows" else "llama-server"
+          )
+          for engine_id in expected:
+              binary = root / engine_id / binary_name
+              if not binary.is_file():
+                  raise SystemExit(f"Missing bundled runtime: {binary}")
+              # Test the relocated runtime closure, not the runner's CMake
+              # build-tree RPATH. This is the loader path the app configures
+              # when it starts a bundled engine.
+              env = os.environ.copy()
+              loader_var = {
+                  "Linux": "LD_LIBRARY_PATH",
+                  "macOS": "DYLD_LIBRARY_PATH",
+                  "Windows": "PATH",
+              }[os.environ["RUNNER_OS"]]
+              prior = env.get(loader_var, "")
+              env[loader_var] = str(binary.parent) + (os.pathsep + prior if prior else "")
+              result = subprocess.run(
+                  [str(binary), "--version"], capture_output=True, text=True, env=env
+              )
+              if result.returncode != 0:
+                  raise SystemExit(
+                      f"{binary} --version failed ({result.returncode})\n"
+                      f"stdout: {result.stdout[-4000:]}\nstderr: {result.stderr[-4000:]}"
+                  )
+          print(f"Verified llama.cpp {expected_tag} runtime bundle: {expected}")
           PY
+
+      - name: Build bundled whisper runtimes from pinned source
+        if: steps.cache_runtimes.outputs.cache-hit != 'true'
+        shell: bash
+        env:
+          WHISPER_TAG: ${{ steps.runtime_versions.outputs.whisper_tag }}
+        run: |
+          set -euo pipefail
+          source_dir="$RUNNER_TEMP/whisper.cpp"
+          build_dir="$RUNNER_TEMP/whisper-build"
+          resources_root="$GITHUB_WORKSPACE/src-tauri/resources"
+          whisper_server_dir="$resources_root/whisper-server"
+          whisper_models_dir="$resources_root/whisper"
+          rm -rf "$source_dir" "$build_dir" "$whisper_server_dir"
+          mkdir -p "$whisper_server_dir" "$whisper_models_dir"
+
+          case "$RUNNER_OS/$RUNNER_ARCH" in
+            "Linux/X64") target_name="whisper-server-linux-x86_64" ;;
+            "Windows/X64") target_name="whisper-server-windows-x86_64.exe" ;;
+            "macOS/ARM64") target_name="whisper-server-macos-aarch64" ;;
+            "macOS/X64") target_name="whisper-server-macos-x86_64" ;;
+            *)
+              echo "[whisper-runtime] Unsupported runner: $RUNNER_OS/$RUNNER_ARCH" >&2
+              exit 1
+              ;;
+          esac
+          binary_name="whisper-server"
+          if [[ "$RUNNER_OS" == "Windows" ]]; then binary_name="whisper-server.exe"; fi
+
+          echo "[whisper-runtime] cloning ${WHISPER_TAG}"
+          git clone --depth 1 --branch "$WHISPER_TAG" https://github.com/ggerganov/whisper.cpp.git "$source_dir"
+          echo "[whisper-runtime] configuring"
+          cmake -S "$source_dir" -B "$build_dir" -DCMAKE_BUILD_TYPE=Release
+          echo "[whisper-runtime] building whisper-server"
+          cmake --build "$build_dir" --config Release --target whisper-server --parallel
+
+          server="$(find "$build_dir" -type f -name "$binary_name" | head -1)"
+          if [[ -z "$server" ]]; then
+            echo "[whisper-runtime] ERROR: ${binary_name} not found under ${build_dir}" >&2
+            find "$build_dir" -maxdepth 4 -type f | head -40 >&2
+            exit 1
+          fi
+
+          # Complete runtime dependency closure, matching the app's expected
+          # per-platform binary name (see src-tauri/src/stt/supervisor.rs).
+          cp "$server" "$whisper_server_dir/$target_name"
+          find "$build_dir" \( -type f -o -type l \) \( \
+            -name '*.so' -o -name '*.so.*' -o -name '*.dylib' -o -name '*.dll' \
+          \) -exec cp -L {} "$whisper_server_dir"/ \;
+          if [[ "$RUNNER_OS" != "Windows" ]]; then chmod +x "$whisper_server_dir/$target_name"; fi
+
+          echo "[whisper-runtime] smoke test ${target_name}"
+          if ! "$whisper_server_dir/$target_name" --help > /dev/null 2>&1; then
+            echo "[whisper-runtime] ERROR: ${target_name} failed the --help smoke test" >&2
+            exit 1
+          fi
+
+          # STT models are optional inputs: a failed download degrades voice
+          # features but must not block the app bundle.
+          for model in ggml-base.en-q8_0.bin ggml-tiny.en-q8_0.bin; do
+            if [[ ! -f "$whisper_models_dir/$model" ]]; then
+              echo "[whisper-runtime] downloading model ${model}"
+              if ! curl -fL --retry 3 -o "$whisper_models_dir/$model" \
+                  "https://huggingface.co/datasets/ggerganov/whisper.cpp/resolve/main/${model}"; then
+                echo "[whisper-runtime] WARNING: failed to download ${model}; voice input is degraded"
+                rm -f "$whisper_models_dir/$model"
+              fi
+            fi
+          done
+
+          WHISPER_TAG="$WHISPER_TAG" RUNNER_OS="$RUNNER_OS" RUNNER_ARCH="$RUNNER_ARCH" \
+          TARGET_NAME="$target_name" python - <<'PY_MANIFEST'
+          import json
+          import os
+          import pathlib
+
+          server_dir = pathlib.Path("src-tauri/resources/whisper-server")
+          binary = server_dir / os.environ["TARGET_NAME"]
+          if not binary.is_file():
+              raise SystemExit(f"Missing bundled whisper server: {binary}")
+          support_files = sorted(
+              entry.name
+              for entry in server_dir.iterdir()
+              if entry.is_file() and entry.name != os.environ["TARGET_NAME"]
+          )
+          manifest = {
+              "releaseTag": os.environ["WHISPER_TAG"],
+              "runnerOs": os.environ["RUNNER_OS"],
+              "runnerArch": os.environ["RUNNER_ARCH"],
+              "status": "ready",
+              "binaryPath": str(binary),
+              "supportFiles": support_files,
+              "source": "https://github.com/ggerganov/whisper.cpp",
+          }
+          (server_dir / "manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+          print("[whisper-runtime] manifest written")
+          PY_MANIFEST
+
+          echo "[whisper-runtime] final resources:"
+          ls -la "$whisper_server_dir" "$whisper_models_dir"
 
       - name: Prepare bundled Kokoro runtime archive
         if: steps.cache_runtimes.outputs.cache-hit != 'true'
@@ -668,7 +628,8 @@ jobs:
           case "${{ matrix.platform.os }}" in
             ubuntu-24.04)
               cargo tauri build --bundles deb -- --features tauri-runtime 2>&1
-              LD_LIBRARY_PATH="" cargo tauri build --bundles appimage -- --features tauri-runtime 2>&1
+              runtime_library_path="$GITHUB_WORKSPACE/src-tauri/resources/llama-runtime/llama.cpp-cpu:$GITHUB_WORKSPACE/src-tauri/resources/llama-runtime/llama.cpp-vulkan:$GITHUB_WORKSPACE/src-tauri/resources/whisper-server"
+              DEBUG=1 LD_LIBRARY_PATH="$runtime_library_path" cargo tauri build --verbose --bundles appimage -- --features tauri-runtime 2>&1
               ;;
             windows-latest)
               cargo tauri build --bundles msi -- --features tauri-runtime

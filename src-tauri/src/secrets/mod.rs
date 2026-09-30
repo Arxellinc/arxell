@@ -251,6 +251,36 @@ mod tests {
     use super::*;
 
     #[test]
+    fn desktop_keyring_backend_persists_until_deleted() {
+        // Does not contact the OS store, so this also runs in headless CI.
+        // keyring 3 silently uses an entry-local mock without platform features.
+        assert!(matches!(
+            keyring::default::default_credential_builder().persistence(),
+            keyring::credential::CredentialPersistence::UntilDelete
+        ));
+    }
+
+    #[test]
+    #[ignore = "requires an unlocked native desktop credential store"]
+    fn native_keychain_round_trip() {
+        let root = std::env::temp_dir().join(format!("arxell-keychain-{}", uuid::Uuid::new_v4()));
+        let key = SecretKey::api_connection(&uuid::Uuid::new_v4().to_string());
+        let store = AppSecretStore {
+            plaintext_path: root.join("api-secrets.plaintext.json"),
+            plaintext_allowed: RwLock::new(false),
+        };
+        // A unique, synthetic credential only; never use a real provider key.
+        let secret = SecretValue::new("arxell-native-keychain-smoke-test".to_string());
+        store.set_secret(&key, &secret).expect("native write failed");
+        let read_result = store.get_secret(&key);
+        let delete_result = store.delete_os_secret(&key);
+        assert_eq!(read_result.unwrap(), Some(secret));
+        delete_result.expect("native delete failed");
+        assert_eq!(store.get_secret(&key).unwrap(), None);
+        assert!(!store.plaintext_path.exists());
+    }
+
+    #[test]
     fn secret_value_debug_is_redacted() {
         let value = SecretValue::new("sk-test-secret".to_string());
         assert_eq!(format!("{value:?}"), "SecretValue(<redacted>)");

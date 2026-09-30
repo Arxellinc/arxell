@@ -2,11 +2,14 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::env;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Output, Stdio};
 use std::sync::RwLock;
+use std::time::Duration;
 
 pub const PI_MIN_VERSION: (u64, u64, u64) = (0, 81, 0);
 pub const PI_MAX_EXCLUSIVE_VERSION: (u64, u64, u64) = (0, 82, 0);
+
+const PROBE_TIMEOUT_SECS: u64 = 10;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -219,6 +222,12 @@ fn discover_pi_candidates(state_root: &Path) -> Vec<PathBuf> {
         }
     }
 
+    for directory in supplemental_bin_directories() {
+        for name in executable_names {
+            candidates.push(directory.join(name));
+        }
+    }
+
     #[cfg(target_os = "windows")]
     {
         for variable in ["APPDATA", "LOCALAPPDATA", "ProgramFiles"] {
@@ -232,7 +241,6 @@ fn discover_pi_candidates(state_root: &Path) -> Vec<PathBuf> {
             }
         }
     }
-
     let mut seen = HashSet::new();
     candidates
         .into_iter()
@@ -241,28 +249,109 @@ fn discover_pi_candidates(state_root: &Path) -> Vec<PathBuf> {
         .collect()
 }
 
+/// Directories that GUI-launched apps commonly miss because their inherited
+/// PATH is minimal. Applied to candidate discovery, probe subprocesses, and
+/// Node/npm availability checks.
+fn supplemental_bin_directories() -> Vec<PathBuf> {
+    let mut directories = Vec::new();
+    #[cfg(target_os = "macos")]
+    {
+        directories.push(PathBuf::from("/opt/homebrew/bin"));
+        directories.push(PathBuf::from("/usr/local/bin"));
+    }
+    #[cfg(target_os = "windows")]
+    {
+        // npm's default global install root (%APPDATA%\npm) is not on PATH
+        // for GUI apps even though `npm install -g` puts pi.cmd there.
+        if let Some(root) = env::var_os("APPDATA") {
+            directories.push(PathBuf::from(root).join("npm"));
+        }
+    }
+    if let Some(home) = dirs::home_dir() {
+        directories.push(home.join(".local/bin"));
+    }
+    directories
+}
+
+fn augment_path_from(existing: Option<std::ffi::OsString>) -> std::ffi::OsString {
+    let mut entries = supplemental_bin_directories();
+    if let Some(path) = existing {
+        entries.extend(env::split_paths(&path));
+    }
+    let mut seen = HashSet::new();
+    let unique = entries
+        .into_iter()
+        .filter(|entry| seen.insert(entry.to_string_lossy().to_lowercase()))
+        .collect::<Vec<_>>();
+    env::join_paths(unique).unwrap_or_else(|_| env::var_os("PATH").unwrap_or_default())
+}
+
+fn augmented_path() -> std::ffi::OsString {
+    augment_path_from(env::var_os("PATH"))
+}
+
+/// Run a probe command with piped output and a hard deadline so a hung
+/// wrapper (waiting on stdin, network, or a broken shim) cannot freeze the
+/// readiness probe. Returns `None` on timeout.
+fn run_probe_with_timeout(command: &mut Command, timeout: Duration) -> Option<Output> {
+    command
+        .env("PATH", augmented_path())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .stdin(Stdio::null());
+    let mut child = command.spawn().ok()?;
+    let deadline = std::time::Instant::now() + timeout;
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => break,
+            Ok(None) => {
+                if std::time::Instant::now() >= deadline {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return None;
+                }
+                std::thread::sleep(Duration::from_millis(25));
+            }
+            Err(_) => return None,
+        }
+    }
+    child.wait_with_output().ok()
+}
+
 fn probe_candidate(candidate: &Path) -> Result<String, String> {
     #[cfg(target_os = "windows")]
-    let output = {
+    let mut command = {
         let extension = candidate
             .extension()
             .and_then(|value| value.to_str())
             .unwrap_or_default();
         if matches!(extension.to_ascii_lowercase().as_str(), "cmd" | "bat") {
-            Command::new("cmd")
+            let mut command = Command::new("cmd");
+            command
                 .args(["/D", "/S", "/C"])
                 .arg(candidate)
-                .arg("--version")
-                .output()
+                .arg("--version");
+            command
         } else {
-            Command::new(candidate).arg("--version").output()
+            let mut command = Command::new(candidate);
+            command.arg("--version");
+            command
         }
     };
     #[cfg(not(target_os = "windows"))]
-    let output = Command::new(candidate).arg("--version").output();
+    let mut command = {
+        let mut command = Command::new(candidate);
+        command.arg("--version");
+        command
+    };
 
-    let output =
-        output.map_err(|error| format!("Could not launch {}: {error}", candidate.display()))?;
+    let output = run_probe_with_timeout(&mut command, Duration::from_secs(PROBE_TIMEOUT_SECS))
+        .ok_or_else(|| {
+            format!(
+                "{} --version did not finish within {PROBE_TIMEOUT_SECS}s",
+                candidate.display()
+            )
+        })?;
     if !output.status.success() {
         let diagnostic = String::from_utf8_lossy(&output.stderr);
         return Err(format!(
@@ -307,13 +396,19 @@ fn canonical_display(path: &Path) -> String {
 
 fn command_succeeds(command: &str, args: &[&str]) -> bool {
     #[cfg(target_os = "windows")]
-    let output = Command::new("cmd")
-        .args(["/D", "/S", "/C", command])
-        .args(args)
-        .output();
+    let mut probe = {
+        let mut probe = Command::new("cmd");
+        probe.args(["/D", "/S", "/C", command]);
+        probe.args(args);
+        probe
+    };
     #[cfg(not(target_os = "windows"))]
-    let output = Command::new(command).args(args).output();
-    output
+    let mut probe = {
+        let mut probe = Command::new(command);
+        probe.args(args);
+        probe
+    };
+    run_probe_with_timeout(&mut probe, Duration::from_secs(PROBE_TIMEOUT_SECS))
         .map(|output| output.status.success())
         .unwrap_or(false)
 }
@@ -436,6 +531,99 @@ mod tests {
         assert_eq!(unique.len(), candidates.len());
     }
 
+    #[test]
+    fn augmented_path_prepends_supplemental_dirs_without_duplicates() {
+        let supplemental = supplemental_bin_directories();
+        assert!(!supplemental.is_empty());
+        #[cfg(target_os = "macos")]
+        assert!(supplemental.contains(&PathBuf::from("/opt/homebrew/bin")));
+        #[cfg(target_os = "windows")]
+        assert!(supplemental
+            .iter()
+            .any(|dir| dir.ends_with("npm")));
+
+        let base = if cfg!(target_os = "windows") {
+            env::join_paths([PathBuf::from("C:\\tools")]).unwrap()
+        } else {
+            env::join_paths([PathBuf::from("/custom/bin")]).unwrap()
+        };
+        let augmented = augment_path_from(Some(base));
+        let entries: Vec<PathBuf> = env::split_paths(&augmented).collect();
+        assert_eq!(entries.first(), supplemental.first());
+        assert!(entries.contains(&PathBuf::from(
+            if cfg!(target_os = "windows") {
+                "C:\\tools"
+            } else {
+                "/custom/bin"
+            }
+        )));
+        // A supplemental directory already present in PATH must not duplicate.
+        let with_dup = augment_path_from(Some(env::join_paths([supplemental[0].clone()]).unwrap()));
+        let dup_entries: Vec<PathBuf> = env::split_paths(&with_dup).collect();
+        assert_eq!(
+            dup_entries
+                .iter()
+                .filter(|entry| **entry == supplemental[0])
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    fn hung_executable_times_out_instead_of_blocking_the_probe() {
+        if !command_succeeds("node", &["--version"]) {
+            return;
+        }
+        let extension = if cfg!(target_os = "windows") {
+            "cmd"
+        } else {
+            "sh"
+        };
+        let path = std::env::temp_dir().join(format!(
+            "arxell-pi-hung-{}-{}.{}",
+            std::process::id(),
+            "probe",
+            extension
+        ));
+        let script = if cfg!(target_os = "windows") {
+            "@node -e \"setTimeout(()=>{},30000)\"\r\n".to_string()
+        } else {
+            "#!/bin/sh\nexec node -e \"setTimeout(()=>{},30000)\"\n".to_string()
+        };
+        // Write-then-rename so the fixture is never exec'd mid-write
+        // (executing a file that is open for writing fails with ETXTBSY
+        // under load).
+        let staging = path.with_extension("tmp");
+        if std::fs::write(&staging, script).is_err() {
+            return;
+        }
+        if std::fs::rename(&staging, &path).is_err() {
+            return;
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            if let Ok(mut permissions) = std::fs::metadata(&path).map(|m| m.permissions()) {
+                permissions.set_mode(0o700);
+                let _ = std::fs::set_permissions(&path, permissions);
+            }
+        }
+
+        let started = std::time::Instant::now();
+        let result = probe_candidate(&path);
+        let elapsed = started.elapsed();
+        let _ = std::fs::remove_file(&path);
+
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .contains("did not finish within"));
+        assert!(
+            elapsed < Duration::from_secs(PROBE_TIMEOUT_SECS + 10),
+            "probe took {elapsed:?}"
+        );
+    }
+
     fn fake_version_executable(version: &str, label: &str) -> Option<PathBuf> {
         if !command_succeeds("node", &["--version"]) {
             return None;
@@ -456,7 +644,12 @@ mod tests {
         } else {
             format!("#!/bin/sh\nexec node -e \"console.log('{}')\"\n", version)
         };
-        std::fs::write(&path, script).ok()?;
+        // Write-then-rename so the wrapper is never exec'd mid-write
+        // (executing a file that is open for writing fails with ETXTBSY
+        // under load).
+        let staging = path.with_extension("tmp");
+        std::fs::write(&staging, script).ok()?;
+        std::fs::rename(&staging, &path).ok()?;
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;

@@ -11,7 +11,7 @@
 
 <p align="center">
   <img src="https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-6e7681?style=flat-square" alt="Platform">
-  <img src="https://img.shields.io/badge/version-0.2.11-blue?style=flat-square" alt="Version">
+  <img src="https://img.shields.io/badge/version-0.2.12-blue?style=flat-square" alt="Version">
   <img src="https://img.shields.io/badge/rust-2021-orange?style=flat-square" alt="Rust Edition">
   <img src="https://img.shields.io/badge/license-Proprietary-red?style=flat-square" alt="License">
   <img src="https://img.shields.io/badge/telemetry-none-brightgreen?style=flat-square" alt="No Telemetry">
@@ -194,11 +194,11 @@ Every layer communicates through typed contracts with correlation IDs, structure
 
 ### Prerequisites
 
-- [Rust](https://rustup.rs/) (latest stable)
-- [Node.js](https://nodejs.org/) >= 20.19 for frontend tooling
+- When building from source: [Rust](https://rustup.rs/) (latest stable), Tauri CLI 2, and [Node.js](https://nodejs.org/) >= 20.19 for frontend tooling
 - Platform-specific WebView2 (Windows) / WebKit (macOS &mdash; built-in) / webkit2gtk (Linux)
 - For the **Pi** workspace tool, **Looper**, and approved chat execution: Pi `>=0.81.0,<0.82.0` and Node.js >= 22.19
 - On Windows, Pi also requires Git for Windows/Bash
+- On Linux, API-key storage requires an unlocked desktop Secret Service (for example GNOME Keyring or a compatible KWallet). If unavailable, saving credentials fails unless you explicitly enable plaintext fallback; Arxell does not silently downgrade storage.
 
 Install the supported Pi release with lifecycle scripts disabled:
 
@@ -219,20 +219,22 @@ cd arxell
 cd frontend && npm install && cd ..
 
 # Run in development mode
-cd src-tauri && cargo tauri dev
+cd src-tauri && cargo tauri dev --features tauri-runtime
 
 # Or build a production bundle
-cd src-tauri && cargo tauri build
+cd src-tauri && cargo tauri build --features tauri-runtime
 ```
 
 ### Connect an LLM
 
 1. Open **Settings &rarr; API Connections**
-2. Add a provider (OpenAI, Anthropic, local server, etc.)
+2. Add an OpenAI Chat Completions-compatible provider or local server. Native Anthropic/Gemini APIs are not interchangeable with this protocol; use a compatible gateway for those models.
 3. Your API key is stored through Arxell's secret-storage layer (the OS keychain by default)
 4. Start chatting or select the connection for a Pi-backed Looper run
 
 Portable connection exports contain metadata only; credentials must be re-entered after import.
+
+See [Release readiness](docs/RELEASE_READINESS.md) for outstanding packaging and clean-machine acceptance checks. A passing source build is not a guarantee that every released installer or provider has been validated.
 
 ### Run a Local Model
 

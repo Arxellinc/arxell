@@ -19,6 +19,7 @@ const DEFAULT_PORT: u16 = 1420;
 const DEFAULT_CTX: u32 = 8192;
 const DEFAULT_N_GPU_LAYERS: i32 = 999;
 const HEALTH_TIMEOUT_SECS: u64 = 90;
+const MODEL_READY_TIMEOUT_SECS: u64 = 300;
 
 #[derive(Debug, Deserialize)]
 struct GithubRelease {
@@ -331,7 +332,17 @@ impl LlamaRuntimeService {
                 let _ = terminate_process(active.child);
             }
             let port = request.port.unwrap_or(DEFAULT_PORT);
-            kill_orphaned_llama_server(port);
+            if let Err(message) = ensure_port_available(port) {
+                state.status = "failed".to_string();
+                self.emit(
+                    &request.correlation_id,
+                    "llama.runtime.start",
+                    EventStage::Error,
+                    EventSeverity::Error,
+                    json!({ "engineId": request.engine_id, "message": message }),
+                );
+                return Err(message);
+            }
         }
 
         let binary_path = engine_binary_path(app_data_dir, request.engine_id.as_str());
@@ -453,9 +464,23 @@ impl LlamaRuntimeService {
             command.creation_flags(CREATE_NO_WINDOW);
         }
 
-        let mut child = command
-            .spawn()
-            .map_err(|e| format!("failed to start llama-server: {e}"))?;
+        let mut child = match command.spawn() {
+            Ok(child) => child,
+            Err(e) => {
+                let message = format!("failed to start llama-server: {e}");
+                self.emit(
+                    request.correlation_id.as_str(),
+                    "llama.runtime.start",
+                    EventStage::Error,
+                    EventSeverity::Error,
+                    json!({ "engineId": request.engine_id, "message": message }),
+                );
+                if let Ok(mut state) = self.state.try_lock() {
+                    state.status = "failed".to_string();
+                }
+                return Err(message);
+            }
+        };
         let pid = child.id();
 
         if let Some(stdout) = child.stdout.take() {
@@ -482,15 +507,59 @@ impl LlamaRuntimeService {
             "llama.runtime.health",
             EventStage::Progress,
             EventSeverity::Info,
-            json!({ "port": port, "timeoutSec": HEALTH_TIMEOUT_SECS }),
+            json!({
+                "port": port,
+                "portTimeoutSec": HEALTH_TIMEOUT_SECS,
+                "modelReadyTimeoutSec": MODEL_READY_TIMEOUT_SECS
+            }),
         );
 
-        if !wait_for_port(port, HEALTH_TIMEOUT_SECS) {
+        // A listening socket only proves the process booted; the model may
+        // still be loading. Wait for llama-server's /health to report ready
+        // and fail fast if the child exits while we are waiting.
+        let started_at = std::time::Instant::now();
+        let port_deadline = started_at + Duration::from_secs(HEALTH_TIMEOUT_SECS);
+        let ready_deadline = started_at + Duration::from_secs(MODEL_READY_TIMEOUT_SECS);
+        let mut last_emitted_progress: Option<f64> = None;
+        let readiness_error: Option<String> = loop {
+            if let Some(status) = child.try_wait().ok().flatten() {
+                break Some(format!("llama-server exited during startup ({status})"));
+            }
+            let addr = std::net::SocketAddr::from(([127, 0, 0, 1], port));
+            let port_open =
+                std::net::TcpStream::connect_timeout(&addr, Duration::from_millis(600)).is_ok();
+            if port_open {
+                match query_health_progress(port) {
+                    Some(progress) if progress >= 1.0 => break None,
+                    Some(progress) => {
+                        if last_emitted_progress != Some(progress) {
+                            last_emitted_progress = Some(progress);
+                            self.emit(
+                                request.correlation_id.as_str(),
+                                "llama.runtime.loading",
+                                EventStage::Progress,
+                                EventSeverity::Info,
+                                json!({ "progress": progress }),
+                            );
+                        }
+                    }
+                    None => {}
+                }
+            } else if std::time::Instant::now() > port_deadline {
+                break Some(format!(
+                    "llama-server did not listen on port {port} within {HEALTH_TIMEOUT_SECS}s"
+                ));
+            }
+            if std::time::Instant::now() > ready_deadline {
+                break Some(format!(
+                    "llama-server did not finish loading the model within {MODEL_READY_TIMEOUT_SECS}s"
+                ));
+            }
+            std::thread::sleep(Duration::from_millis(500));
+        };
+
+        if let Some(message) = readiness_error {
             let _ = terminate_process(child);
-            let message = format!(
-                "llama-server failed health check on port {} within {}s",
-                port, HEALTH_TIMEOUT_SECS
-            );
             self.emit(
                 request.correlation_id.as_str(),
                 "llama.runtime.start",
@@ -504,6 +573,14 @@ impl LlamaRuntimeService {
             return Err(message);
         }
 
+        self.emit(
+            request.correlation_id.as_str(),
+            "llama.runtime.loading",
+            EventStage::Complete,
+            EventSeverity::Info,
+            json!({ "progress": 1.0 }),
+        );
+
         {
             if let Ok(mut state) = self.state.try_lock() {
                 state.status = "healthy".to_string();
@@ -515,39 +592,6 @@ impl LlamaRuntimeService {
                 });
             }
         }
-
-        let loading_correlation_id = request.correlation_id.clone();
-        let loading_hub = self.hub.clone();
-        std::thread::spawn(move || {
-            let deadline = std::time::Instant::now() + Duration::from_secs(300);
-            while std::time::Instant::now() < deadline {
-                match query_health_progress(port) {
-                    Some(progress) if progress >= 1.0 => {
-                        loading_hub.emit(loading_hub.make_event(
-                            loading_correlation_id.as_str(),
-                            Subsystem::Runtime,
-                            "llama.runtime.loading",
-                            EventStage::Complete,
-                            EventSeverity::Info,
-                            json!({ "progress": 1.0 }),
-                        ));
-                        return;
-                    }
-                    Some(progress) => {
-                        loading_hub.emit(loading_hub.make_event(
-                            loading_correlation_id.as_str(),
-                            Subsystem::Runtime,
-                            "llama.runtime.loading",
-                            EventStage::Progress,
-                            EventSeverity::Info,
-                            json!({ "progress": progress }),
-                        ));
-                    }
-                    None => {}
-                }
-                std::thread::sleep(Duration::from_millis(800));
-            }
-        });
 
         let endpoint = format!("http://127.0.0.1:{}/v1", port);
         self.emit(
@@ -729,18 +773,6 @@ fn set_executable_if_needed(_path: &Path) -> Result<(), String> {
     Ok(())
 }
 
-fn wait_for_port(port: u16, timeout_secs: u64) -> bool {
-    let deadline = std::time::Instant::now() + Duration::from_secs(timeout_secs);
-    while std::time::Instant::now() < deadline {
-        let addr = std::net::SocketAddr::from(([127, 0, 0, 1], port));
-        if std::net::TcpStream::connect_timeout(&addr, Duration::from_millis(600)).is_ok() {
-            return true;
-        }
-        std::thread::sleep(Duration::from_millis(450));
-    }
-    false
-}
-
 fn query_health_progress(port: u16) -> Option<f64> {
     let url = format!("http://127.0.0.1:{}/health", port);
     let client = reqwest::blocking::Client::builder()
@@ -786,77 +818,20 @@ fn terminate_process(mut child: Child) -> Result<(), String> {
     Ok(())
 }
 
-#[cfg(unix)]
-fn kill_orphaned_llama_server(port: u16) {
-    let output = match Command::new("ss").args(["-tlnp"]).output() {
-        Ok(o) => o,
-        Err(_) => return,
-    };
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    for line in stdout.lines() {
-        if !line.contains(&format!(":{port}")) {
-            continue;
-        }
-        let pid = if let Some(start) = line.find("pid=") {
-            let rest = &line[start + 4..];
-            rest.chars()
-                .take_while(|c| c.is_ascii_digit())
-                .collect::<String>()
-                .parse::<u32>()
-                .ok()
-        } else {
-            None
-        };
-        if let Some(pid) = pid {
-            unsafe {
-                libc::kill(pid as i32, libc::SIGTERM);
-            }
-            std::thread::sleep(Duration::from_millis(100));
-            unsafe {
-                libc::kill(pid as i32, libc::SIGKILL);
-            }
-            std::thread::sleep(Duration::from_millis(150));
-        }
+fn ensure_port_available(port: u16) -> Result<(), String> {
+    if port == 0 {
+        return Err("Choose a llama-server port between 1 and 65535".to_string());
     }
-}
-
-#[cfg(not(unix))]
-fn kill_orphaned_llama_server(_port: u16) {
-    #[cfg(target_os = "windows")]
-    {
-        use std::os::windows::process::CommandExt;
-        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-        let output = match Command::new("netstat")
-            .args(["-ano", "-p", "TCP"])
-            .creation_flags(CREATE_NO_WINDOW)
-            .stdout(Stdio::piped())
-            .stderr(Stdio::null())
-            .output()
-        {
-            Ok(o) => o,
-            Err(_) => return,
-        };
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        let needle = format!(":{}", _port);
-        for line in stdout.lines() {
-            if !line.contains(&needle) {
-                continue;
-            }
-            let pid = line
-                .split_whitespace()
-                .last()
-                .and_then(|s| s.parse::<u32>().ok());
-            if let Some(pid) = pid {
-                let _ = Command::new("taskkill")
-                    .args(["/F", "/T", "/PID", &pid.to_string()])
-                    .creation_flags(CREATE_NO_WINDOW)
-                    .stdout(Stdio::null())
-                    .stderr(Stdio::null())
-                    .status();
-                std::thread::sleep(Duration::from_millis(200));
-            }
-        }
-    }
+    // A port number is not proof of process ownership. Never terminate an
+    // external listener; only children held in ActiveRuntime may be stopped.
+    // This is a preflight, not a reservation; startup still needs a health check.
+    std::net::TcpListener::bind(("127.0.0.1", port))
+        .map(|_| ())
+        .map_err(|error| {
+            format!(
+                "Cannot use llama-server port {port}: {error}. Choose another port or stop its owner manually."
+            )
+        })
 }
 
 fn spawn_output_forwarder<R>(
@@ -1143,7 +1118,9 @@ fn is_runtime_support_file(name: &str) -> bool {
     }
     #[cfg(target_os = "macos")]
     {
-        return lower.ends_with(".dylib");
+        return lower.ends_with(".dylib")
+            || lower.ends_with(".metallib")
+            || lower.ends_with(".metal");
     }
     #[cfg(target_os = "linux")]
     {
@@ -1156,9 +1133,30 @@ fn is_runtime_support_file(name: &str) -> bool {
     false
 }
 
+/// llama.cpp release used for in-app engine downloads. Defaults to the tag
+/// whose engines Arxell bundles and tests with; override with
+/// `ARXELL_LLAMA_RUNTIME_RELEASE` (a tag like `v0.5.0`, or `latest`).
+const LLAMA_RUNTIME_RELEASE_TAG: &str = "v0.4.1";
+
+fn llama_runtime_release_url_from(configured: Option<&str>) -> String {
+    let configured = configured
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or(LLAMA_RUNTIME_RELEASE_TAG);
+    if configured.eq_ignore_ascii_case("latest") {
+        "https://api.github.com/repos/ggml-org/llama.cpp/releases/latest".to_string()
+    } else {
+        format!("https://api.github.com/repos/ggml-org/llama.cpp/releases/tags/{configured}")
+    }
+}
+
+fn llama_runtime_release_url() -> String {
+    llama_runtime_release_url_from(std::env::var("ARXELL_LLAMA_RUNTIME_RELEASE").ok().as_deref())
+}
+
 fn download_engine_binary(engine_id: &str) -> Result<PathBuf, String> {
     let release: GithubRelease = http_client(10)?
-        .get("https://api.github.com/repos/ggml-org/llama.cpp/releases/latest")
+        .get(llama_runtime_release_url())
         .header("User-Agent", app_paths::APP_USER_AGENT)
         .send()
         .map_err(|e| {
@@ -1179,7 +1177,9 @@ fn download_engine_binary(engine_id: &str) -> Result<PathBuf, String> {
     )
     .ok_or_else(|| {
         format!(
-            "No compatible llama.cpp release asset found for engine {} on {}-{} (release {}).",
+            "No compatible llama.cpp release asset found for engine {} on {}-{} (release {}). \
+             Arxell bundles tested engines with the app: reinstall Arxell to restore them, \
+             or set ARXELL_LLAMA_RUNTIME_RELEASE to a release that ships prebuilt binaries.",
             engine_id,
             std::env::consts::OS,
             std::env::consts::ARCH,
@@ -1223,6 +1223,69 @@ fn download_engine_binary(engine_id: &str) -> Result<PathBuf, String> {
             asset.name, binary_name
         )
     })
+}
+
+#[cfg(test)]
+mod engine_download_tests {
+    use super::*;
+
+    fn asset(name: &str) -> GithubAsset {
+        GithubAsset {
+            name: name.to_string(),
+            browser_download_url: String::new(),
+        }
+    }
+
+    #[test]
+    fn release_url_defaults_to_the_tested_pin_and_honors_override() {
+        assert_eq!(
+            llama_runtime_release_url_from(None),
+            "https://api.github.com/repos/ggml-org/llama.cpp/releases/tags/v0.4.1"
+        );
+        assert_eq!(
+            llama_runtime_release_url_from(Some("v0.5.0")),
+            "https://api.github.com/repos/ggml-org/llama.cpp/releases/tags/v0.5.0"
+        );
+        assert_eq!(
+            llama_runtime_release_url_from(Some("latest")),
+            "https://api.github.com/repos/ggml-org/llama.cpp/releases/latest"
+        );
+    }
+
+    #[test]
+    fn release_asset_selection_is_platform_and_backend_specific() {
+        let assets = vec![
+            asset("llama-b1-bin-ubuntu-vulkan-x64.tar.gz"),
+            asset("llama-b1-bin-ubuntu-x64.tar.gz"),
+            asset("llama-b1-bin-win-cpu-x64.zip"),
+        ];
+
+        let cpu =
+            select_release_asset("llama.cpp-cpu", "linux", "x86_64", &assets).unwrap();
+        assert_eq!(cpu.name, "llama-b1-bin-ubuntu-x64.tar.gz");
+
+        let vulkan =
+            select_release_asset("llama.cpp-vulkan", "linux", "x86_64", &assets).unwrap();
+        assert_eq!(vulkan.name, "llama-b1-bin-ubuntu-vulkan-x64.tar.gz");
+
+        let windows =
+            select_release_asset("llama.cpp-cpu", "windows", "x86_64", &assets).unwrap();
+        assert_eq!(windows.name, "llama-b1-bin-win-cpu-x64.zip");
+    }
+
+    #[test]
+    fn release_asset_selection_never_falls_back_across_platforms() {
+        let linux_only = vec![
+            asset("llama-b1-bin-ubuntu-vulkan-x64.tar.gz"),
+            asset("llama-b1-bin-ubuntu-x64.tar.gz"),
+        ];
+
+        assert!(select_release_asset("llama.cpp-cpu", "windows", "x86_64", &linux_only).is_none());
+        assert!(select_release_asset("llama.cpp-metal", "macos", "aarch64", &linux_only).is_none());
+        // Upstream's current stable ships no engine assets at all; the
+        // downloader must report that instead of picking a wrong binary.
+        assert!(select_release_asset("llama.cpp-cpu", "linux", "x86_64", &[]).is_none());
+    }
 }
 
 fn http_client(timeout_secs: u64) -> Result<reqwest::blocking::Client, String> {
@@ -1382,6 +1445,83 @@ fn find_binary_recursive(root: &Path, binary_name: &str) -> Option<PathBuf> {
         }
     }
     None
+}
+
+#[cfg(test)]
+mod port_tests {
+    use super::*;
+
+    #[test]
+    fn occupied_port_is_rejected_without_disrupting_its_owner() {
+        let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        assert!(ensure_port_available(port)
+            .unwrap_err()
+            .contains("Choose another port"));
+        let client = std::net::TcpStream::connect(("127.0.0.1", port)).unwrap();
+        let (_server, _) = listener.accept().unwrap();
+        drop(client);
+    }
+
+    #[test]
+    fn dynamic_port_is_rejected_because_endpoint_requires_a_known_port() {
+        assert!(ensure_port_available(0).is_err());
+    }
+
+    #[test]
+    fn runtime_support_files_cover_engine_dependency_closures() {
+        if cfg!(target_os = "windows") {
+            assert!(is_runtime_support_file("ggml.dll"));
+        }
+        if cfg!(target_os = "linux") {
+            assert!(is_runtime_support_file("libggml.so"));
+            assert!(is_runtime_support_file("libggml.so.1"));
+        }
+        if cfg!(target_os = "macos") {
+            assert!(is_runtime_support_file("libggml.dylib"));
+            // Metal kernels ship beside the binary when the build does not
+            // embed them; GGML_METAL_EMBED_LIBRARY defaults to ON at v0.4.1,
+            // so these remain defensive.
+            assert!(is_runtime_support_file("default.metallib"));
+            assert!(is_runtime_support_file("ggml-metal.metal"));
+        }
+        assert!(!is_runtime_support_file("readme.txt"));
+        assert!(!is_runtime_support_file("llama-server"));
+    }
+
+    #[test]
+    fn health_progress_parses_loading_and_ready_states() {
+        fn spawn_health_responder(
+            body: &'static str,
+        ) -> std::net::SocketAddr {
+            use std::io::{Read, Write};
+            let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
+            let addr = listener.local_addr().unwrap();
+            std::thread::spawn(move || {
+                for stream in listener.incoming().take(4) {
+                    let Ok(mut stream) = stream else { break };
+                    let mut buf = [0_u8; 1024];
+                    let _ = stream.read(&mut buf);
+                    let response = format!(
+                        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                        body.len(),
+                        body
+                    );
+                    let _ = stream.write_all(response.as_bytes());
+                }
+            });
+            addr
+        }
+
+        let addr = spawn_health_responder("{\"status\":\"ok\"}");
+        assert_eq!(query_health_progress(addr.port()), Some(1.0));
+
+        let addr = spawn_health_responder("{\"status\":\"loading\",\"progress\":0.42}");
+        assert_eq!(query_health_progress(addr.port()), Some(0.42));
+
+        let addr = spawn_health_responder("busy");
+        assert_eq!(query_health_progress(addr.port()), None);
+    }
 }
 
 pub fn engine_binary_filename() -> &'static str {
