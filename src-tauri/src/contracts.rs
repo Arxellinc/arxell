@@ -1222,7 +1222,23 @@ pub struct ModelManagerInstalledModel {
 #[serde(rename_all = "camelCase")]
 pub struct ModelManagerListInstalledResponse {
     pub correlation_id: String,
+    pub model_directory: String,
     pub models: Vec<ModelManagerInstalledModel>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ModelManagerSetDirectoryRequest {
+    pub correlation_id: String,
+    /// `None` restores the default app-owned models directory.
+    pub model_directory: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ModelManagerSetDirectoryResponse {
+    pub correlation_id: String,
+    pub model_directory: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

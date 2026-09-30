@@ -167,6 +167,11 @@ export function renderLlamaCppBody(state: PrimaryPanelRenderState): string {
           </button>
         </div>
         <div class="config-row">
+          <span class="config-key">Model Directory</span>
+          <span class="config-value" title="${escapeHtml(state.modelManagerDirectory)}">${escapeHtml(state.modelManagerDirectory || "Loading...")}</span>
+          <span class="config-meta"><button type="button" class="tool-action-btn" id="llamaManageModelDirectoryBtn">Manage</button></span>
+        </div>
+        <div class="config-row">
           <span class="config-key">Model Path</span>
           <select
             id="llamaModelPathSelect"
@@ -439,6 +444,13 @@ export function bindLlamaCppPanel(bindings: PrimaryPanelBindings): void {
       const engineId =
         document.querySelector<HTMLSelectElement>("#llamaEngineSelect")?.value || "llama.cpp-cpu";
       await bindings.onLlamaRuntimeInstall(engineId);
+    };
+  }
+
+  const manageDirectoryBtn = document.querySelector<HTMLButtonElement>("#llamaManageModelDirectoryBtn");
+  if (manageDirectoryBtn) {
+    manageDirectoryBtn.onclick = async () => {
+      await bindings.onModelManagerOpenDirectoryManager();
     };
   }
 

@@ -102,6 +102,7 @@ export function selectPrimaryPanelState(state: AnyState, chat: unknown): Record<
     llamaRuntimeBusy: state.llamaRuntimeBusy,
     llamaRuntimeLogs: state.llamaRuntimeLogs,
     modelManagerInstalled: state.modelManagerInstalled,
+    modelManagerDirectory: state.modelManagerDirectory,
     modelManagerActiveTab: state.modelManagerActiveTab,
     modelManagerDisabledModelIds: state.modelManagerDisabledModelIds,
     modelManagerInfoModalModelId: state.modelManagerInfoModalModelId,

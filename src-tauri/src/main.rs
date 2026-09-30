@@ -44,6 +44,7 @@ use arxell_lite::contracts::{
     ModelManagerListCatalogCsvRequest, ModelManagerListCatalogCsvResponse,
     ModelManagerListInstalledRequest, ModelManagerListInstalledResponse,
     ModelManagerRefreshUnslothCatalogRequest, ModelManagerRefreshUnslothCatalogResponse,
+    ModelManagerSetDirectoryRequest, ModelManagerSetDirectoryResponse,
     ModelManagerSearchHfRequest, ModelManagerSearchHfResponse, PluginCapabilityInvokeRequest,
     PluginCapabilityInvokeResponse, ReferenceFileSetRequest, ReferenceFileSetResponse,
     SkillCreateRequest, SkillCreateResponse, Subsystem, SystemPromptSetRequest,
@@ -302,6 +303,7 @@ fn main() {
             cmd_llama_runtime_start,
             cmd_llama_runtime_stop,
             cmd_model_manager_list_installed,
+            cmd_model_manager_set_directory,
             cmd_model_manager_search_hf,
             cmd_model_manager_download_hf,
             cmd_model_manager_cancel_download,
@@ -1396,14 +1398,43 @@ async fn cmd_model_manager_list_installed(
     let service = std::sync::Arc::clone(&state.model_manager);
     let correlation_id = request.correlation_id.clone();
     let app_data_owned = app_data.clone();
-    let models = tokio::task::spawn_blocking(move || {
-        service.list_installed(correlation_id.as_str(), app_data_owned.as_path())
+    let (models, model_directory) = tokio::task::spawn_blocking(move || {
+        let models = service.list_installed(correlation_id.as_str(), app_data_owned.as_path())?;
+        let model_directory = service.model_directory(app_data_owned.as_path())?;
+        Ok::<_, String>((models, model_directory))
     })
     .await
     .map_err(|e| format!("model manager list task failed: {e}"))??;
     Ok(ModelManagerListInstalledResponse {
         correlation_id: request.correlation_id,
+        model_directory: model_directory.to_string_lossy().to_string(),
         models,
+    })
+}
+
+#[cfg(feature = "tauri-runtime")]
+#[tauri::command]
+async fn cmd_model_manager_set_directory(
+    _app: tauri::AppHandle,
+    state: State<'_, TauriBridgeState>,
+    request: ModelManagerSetDirectoryRequest,
+) -> Result<ModelManagerSetDirectoryResponse, String> {
+    let app_data = app_paths::app_data_dir();
+    let service = std::sync::Arc::clone(&state.model_manager);
+    let correlation_id = request.correlation_id.clone();
+    let model_directory = request.model_directory.clone();
+    let selected = tokio::task::spawn_blocking(move || {
+        service.set_model_directory(
+            correlation_id.as_str(),
+            app_data.as_path(),
+            model_directory.as_deref(),
+        )
+    })
+    .await
+    .map_err(|e| format!("model manager set directory task failed: {e}"))??;
+    Ok(ModelManagerSetDirectoryResponse {
+        correlation_id: request.correlation_id,
+        model_directory: selected.to_string_lossy().to_string(),
     })
 }
 

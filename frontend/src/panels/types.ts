@@ -321,6 +321,7 @@ export interface PrimaryPanelRenderState {
   llamaRuntimeBusy: boolean;
   llamaRuntimeLogs: string[];
   modelManagerInstalled: ModelManagerInstalledModel[];
+  modelManagerDirectory: string;
   modelManagerActiveTab: "all_models" | "download";
   modelManagerDisabledModelIds: string[];
   modelManagerInfoModalModelId: string | null;
@@ -472,6 +473,9 @@ export interface PrimaryPanelBindings {
   }) => Promise<void>;
   onLlamaRuntimeStop: () => Promise<void>;
   onModelManagerRefreshInstalled: () => Promise<void>;
+  onModelManagerChooseDirectory: () => Promise<void>;
+  onModelManagerResetDirectory: () => Promise<void>;
+  onModelManagerOpenDirectoryManager: () => Promise<void>;
   onModelManagerSetActiveTab: (tab: "all_models" | "download") => Promise<void>;
   onModelManagerToggleModelAvailability: (modelId: string) => Promise<void>;
   onModelManagerSetInfoModalModelId: (modelId: string | null) => Promise<void>;

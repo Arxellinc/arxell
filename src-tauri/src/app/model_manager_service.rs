@@ -3,9 +3,9 @@ use crate::contracts::{
     ModelManagerInstalledModel, Subsystem,
 };
 use crate::observability::EventHub;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::json;
-use std::collections::HashSet;
+use std::collections::{HashSet, VecDeque};
 use std::fs::File;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
@@ -53,6 +53,13 @@ pub struct ModelManagerService {
 }
 
 const DOWNLOAD_PROGRESS_INTERVAL_BYTES: u64 = 512 * 1024;
+const SETTINGS_FILE_NAME: &str = "model-manager.json";
+
+#[derive(Debug, Default, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ModelManagerSettings {
+    model_directory: Option<String>,
+}
 
 impl ModelManagerService {
     pub fn new(hub: EventHub) -> Self {
@@ -100,37 +107,15 @@ impl ModelManagerService {
             json!({}),
         );
 
-        let models_dir = ensure_models_dir(app_data_dir)?;
+        let models_dir = resolve_models_dir(app_data_dir)?;
         let mut out = Vec::new();
-        let read_dir = std::fs::read_dir(&models_dir)
-            .map_err(|e| format!("failed to read models directory: {e}"))?;
-
-        for entry in read_dir.flatten() {
-            let path = entry.path();
-            if !is_gguf(&path) {
-                continue;
-            }
-            let Ok(metadata) = entry.metadata() else {
+        for path in find_gguf_files(&models_dir)? {
+            let Ok(model_id) = relative_model_id(&models_dir, &path) else {
                 continue;
             };
-            let name = path
-                .file_name()
-                .and_then(|s| s.to_str())
-                .unwrap_or("unknown.gguf")
-                .to_string();
-            let modified_ms = metadata
-                .modified()
-                .ok()
-                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-                .map(|d| d.as_millis() as i64)
-                .unwrap_or(0);
-            out.push(ModelManagerInstalledModel {
-                id: name.clone(),
-                name,
-                path: path.to_string_lossy().to_string(),
-                size_mb: metadata.len() / (1024 * 1024),
-                modified_ms,
-            });
+            if let Ok(model) = to_installed_model(&path, model_id) {
+                out.push(model);
+            }
         }
 
         out.sort_by(|a, b| {
@@ -147,6 +132,47 @@ impl ModelManagerService {
             json!({ "count": out.len() }),
         );
         Ok(out)
+    }
+
+    pub fn model_directory(&self, app_data_dir: &Path) -> Result<PathBuf, String> {
+        resolve_models_dir(app_data_dir)
+    }
+
+    pub fn set_model_directory(
+        &self,
+        correlation_id: &str,
+        app_data_dir: &Path,
+        model_directory: Option<&str>,
+    ) -> Result<PathBuf, String> {
+        self.emit(
+            correlation_id,
+            "model.manager.set_directory",
+            EventStage::Start,
+            EventSeverity::Info,
+            json!({ "reset": model_directory.is_none() }),
+        );
+        let resolved = match model_directory
+            .map(str::trim)
+            .filter(|path| !path.is_empty())
+        {
+            Some(path) => ensure_directory(Path::new(path))?,
+            None => ensure_directory(default_models_dir(app_data_dir).as_path())?,
+        };
+        write_models_dir_setting(
+            app_data_dir,
+            model_directory
+                .map(str::trim)
+                .filter(|path| !path.is_empty())
+                .map(|_| resolved.as_path()),
+        )?;
+        self.emit(
+            correlation_id,
+            "model.manager.set_directory",
+            EventStage::Complete,
+            EventSeverity::Info,
+            json!({ "modelDirectory": resolved }),
+        );
+        Ok(resolved)
     }
 
     pub fn search_hf(
@@ -242,7 +268,7 @@ impl ModelManagerService {
             json!({ "repoId": repo, "fileName": file_name }),
         );
 
-        let models_dir = ensure_models_dir(app_data_dir)?;
+        let models_dir = resolve_models_dir(app_data_dir)?;
         let client = reqwest::blocking::Client::builder()
             .user_agent("arxell-model-manager/0.1")
             .build()
@@ -255,10 +281,10 @@ impl ModelManagerService {
                 .and_then(|s| s.to_str())
                 .unwrap_or("model.gguf"),
         );
-        let final_path = models_dir.join(local_name);
+        let final_path = models_dir.join(&local_name);
         let temp_path = final_path.with_extension("gguf.part");
         if final_path.exists() {
-            let existing = to_installed_model(&final_path)?;
+            let existing = to_installed_model(&final_path, local_name.clone())?;
             self.emit(
                 correlation_id,
                 "model.manager.download_hf",
@@ -364,7 +390,7 @@ impl ModelManagerService {
             return Err(err);
         }
 
-        let model = to_installed_model(&final_path)?;
+        let model = to_installed_model(&final_path, local_name)?;
         self.clear_download_cancel(correlation_id);
         self.emit(
             correlation_id,
@@ -395,11 +421,28 @@ impl ModelManagerService {
             json!({ "modelId": model_id }),
         );
 
-        let models_dir = ensure_models_dir(app_data_dir)?;
+        let models_dir = resolve_models_dir(app_data_dir)?;
         let base = models_dir
             .canonicalize()
             .map_err(|e| format!("failed to resolve models directory: {e}"))?;
-        let target = models_dir.join(model_id);
+        let relative_path = Path::new(model_id);
+        if relative_path.as_os_str().is_empty()
+            || relative_path.is_absolute()
+            || relative_path
+                .components()
+                .any(|component| !matches!(component, std::path::Component::Normal(_)))
+        {
+            let message = "invalid model path".to_string();
+            self.emit(
+                correlation_id,
+                "model.manager.delete_installed",
+                EventStage::Error,
+                EventSeverity::Error,
+                json!({ "modelId": model_id, "message": message }),
+            );
+            return Err(message);
+        }
+        let target = models_dir.join(relative_path);
         if !is_gguf(&target) {
             let message = "only .gguf files can be deleted".to_string();
             self.emit(
@@ -613,21 +656,96 @@ impl ModelManagerService {
     }
 }
 
-fn ensure_models_dir(app_data_dir: &Path) -> Result<PathBuf, String> {
-    let models_dir = app_data_dir.join("models");
-    std::fs::create_dir_all(&models_dir)
-        .map_err(|e| format!("failed to create models directory: {e}"))?;
-    Ok(models_dir)
+fn default_models_dir(app_data_dir: &Path) -> PathBuf {
+    app_data_dir.join("models")
 }
 
-fn to_installed_model(path: &Path) -> Result<ModelManagerInstalledModel, String> {
+fn settings_path(app_data_dir: &Path) -> PathBuf {
+    app_data_dir.join(SETTINGS_FILE_NAME)
+}
+
+fn resolve_models_dir(app_data_dir: &Path) -> Result<PathBuf, String> {
+    let settings = match std::fs::read_to_string(settings_path(app_data_dir)) {
+        Ok(raw) => serde_json::from_str::<ModelManagerSettings>(&raw)
+            .map_err(|e| format!("failed to read model manager settings: {e}"))?,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            ModelManagerSettings::default()
+        }
+        Err(error) => return Err(format!("failed to read model manager settings: {error}")),
+    };
+    let models_dir = settings
+        .model_directory
+        .filter(|path| !path.trim().is_empty())
+        .map(PathBuf::from)
+        .unwrap_or_else(|| default_models_dir(app_data_dir));
+    ensure_directory(models_dir.as_path())
+}
+
+fn ensure_directory(path: &Path) -> Result<PathBuf, String> {
+    if !path.is_absolute() {
+        return Err("model directory must be an absolute path".to_string());
+    }
+    std::fs::create_dir_all(path).map_err(|e| format!("failed to create model directory: {e}"))?;
+    path.canonicalize()
+        .map_err(|e| format!("failed to resolve model directory: {e}"))
+}
+
+fn write_models_dir_setting(
+    app_data_dir: &Path,
+    model_directory: Option<&Path>,
+) -> Result<(), String> {
+    std::fs::create_dir_all(app_data_dir)
+        .map_err(|e| format!("failed to create app data directory: {e}"))?;
+    let settings = ModelManagerSettings {
+        model_directory: model_directory.map(|path| path.to_string_lossy().to_string()),
+    };
+    let payload = serde_json::to_vec_pretty(&settings)
+        .map_err(|e| format!("failed to serialize model manager settings: {e}"))?;
+    let path = settings_path(app_data_dir);
+    let temporary_path = path.with_extension("json.tmp");
+    std::fs::write(&temporary_path, payload)
+        .map_err(|e| format!("failed to write model manager settings: {e}"))?;
+    std::fs::rename(&temporary_path, &path)
+        .map_err(|e| format!("failed to save model manager settings: {e}"))
+}
+
+fn find_gguf_files(models_dir: &Path) -> Result<Vec<PathBuf>, String> {
+    let mut files = Vec::new();
+    let mut pending = VecDeque::from([models_dir.to_path_buf()]);
+    while let Some(directory) = pending.pop_front() {
+        let entries = match std::fs::read_dir(&directory) {
+            Ok(entries) => entries,
+            Err(error) if directory == models_dir => {
+                return Err(format!("failed to read models directory: {error}"));
+            }
+            Err(_) => continue,
+        };
+        for entry in entries.flatten() {
+            let Ok(file_type) = entry.file_type() else {
+                continue;
+            };
+            let path = entry.path();
+            if file_type.is_dir() {
+                pending.push_back(path);
+            } else if file_type.is_file() && is_gguf(&path) {
+                files.push(path);
+            }
+        }
+    }
+    Ok(files)
+}
+
+fn relative_model_id(models_dir: &Path, model_path: &Path) -> Result<String, String> {
+    let relative = model_path
+        .strip_prefix(models_dir)
+        .map_err(|e| format!("model path is outside model directory: {e}"))?;
+    Ok(relative.to_string_lossy().replace('\\', "/"))
+}
+
+fn to_installed_model(path: &Path, id: String) -> Result<ModelManagerInstalledModel, String> {
     let metadata =
         std::fs::metadata(path).map_err(|e| format!("failed to stat model file: {e}"))?;
-    let name = path
-        .file_name()
-        .and_then(|s| s.to_str())
-        .unwrap_or("unknown.gguf")
-        .to_string();
+    let name = id.clone();
     let modified_ms = metadata
         .modified()
         .ok()
@@ -635,7 +753,7 @@ fn to_installed_model(path: &Path) -> Result<ModelManagerInstalledModel, String>
         .map(|d| d.as_millis() as i64)
         .unwrap_or(0);
     Ok(ModelManagerInstalledModel {
-        id: name.clone(),
+        id,
         name,
         path: path.to_string_lossy().to_string(),
         size_mb: metadata.len() / (1024 * 1024),
@@ -895,6 +1013,96 @@ fn read_cached_rows(cache_file: &Path) -> Vec<ModelManagerCatalogCsvRow> {
         Err(_) => return Vec::new(),
     };
     serde_json::from_str(&raw).unwrap_or_default()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::observability::EventHub;
+
+    fn test_dir(name: &str) -> PathBuf {
+        let unique = format!(
+            "arxell-model-manager-{name}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("system clock before Unix epoch")
+                .as_nanos()
+        );
+        std::env::temp_dir().join(unique)
+    }
+
+    #[test]
+    fn selected_directory_is_persisted_and_scanned_recursively() {
+        let app_data = test_dir("app-data");
+        let models = test_dir("models");
+        let nested = models.join("publisher").join("model");
+        std::fs::create_dir_all(&nested).expect("create nested model directory");
+        std::fs::write(nested.join("model.gguf"), b"GGUF").expect("write GGUF");
+        std::fs::write(nested.join("readme.txt"), b"not a model").expect("write readme");
+
+        let service = ModelManagerService::new(EventHub::new());
+        let selected = service
+            .set_model_directory(
+                "test",
+                &app_data,
+                Some(models.to_str().expect("UTF-8 path")),
+            )
+            .expect("set model directory");
+        assert_eq!(
+            selected,
+            models.canonicalize().expect("canonical models directory")
+        );
+
+        let installed = service
+            .list_installed("test", &app_data)
+            .expect("list models");
+        assert_eq!(installed.len(), 1);
+        assert_eq!(installed[0].id, "publisher/model/model.gguf");
+        assert_eq!(installed[0].name, "publisher/model/model.gguf");
+        assert_eq!(
+            installed[0].path,
+            nested.join("model.gguf").to_string_lossy()
+        );
+        assert_eq!(
+            service
+                .model_directory(&app_data)
+                .expect("read persisted model directory"),
+            selected
+        );
+
+        let _ = std::fs::remove_dir_all(&app_data);
+        let _ = std::fs::remove_dir_all(&models);
+    }
+
+    #[test]
+    fn deleting_nested_model_rejects_paths_outside_the_selected_directory() {
+        let app_data = test_dir("delete-app-data");
+        let models = test_dir("delete-models");
+        let nested = models.join("nested");
+        std::fs::create_dir_all(&nested).expect("create nested model directory");
+        let model = nested.join("model.gguf");
+        std::fs::write(&model, b"GGUF").expect("write GGUF");
+
+        let service = ModelManagerService::new(EventHub::new());
+        service
+            .set_model_directory(
+                "test",
+                &app_data,
+                Some(models.to_str().expect("UTF-8 path")),
+            )
+            .expect("set model directory");
+        service
+            .delete_installed("test", &app_data, "nested/model.gguf")
+            .expect("delete nested model");
+        assert!(!model.exists());
+        assert!(service
+            .delete_installed("test", &app_data, "../outside.gguf")
+            .is_err());
+
+        let _ = std::fs::remove_dir_all(&app_data);
+        let _ = std::fs::remove_dir_all(&models);
+    }
 }
 
 fn merge_rows(
