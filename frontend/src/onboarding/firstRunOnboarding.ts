@@ -1,5 +1,6 @@
 import { iconHtml } from "../icons";
 import { escapeHtml } from "../panels/utils";
+import { isFirstRunPrimaryActionDisabled, isValidFirstRunCustomGgufPath } from "./firstRunOnboardingRules";
 
 export type FirstRunOnboardingStep = "welcome" | "model";
 
@@ -33,7 +34,13 @@ export function renderFirstRunOnboardingModal(
     modelOptions[0];
   const busyAttr = state.firstRunBusy ? " disabled" : "";
   const step = state.firstRunOnboardingStep;
-  const nextDisabledAttr = state.firstRunBusy || (step === "welcome" && !state.firstRunTermsAccepted) ? " disabled" : "";
+  const nextDisabledAttr = isFirstRunPrimaryActionDisabled({
+    step,
+    busy: state.firstRunBusy,
+    termsAccepted: state.firstRunTermsAccepted,
+    customModelSelected: Boolean(selectedModel?.custom),
+    customModelPath: state.firstRunCustomModelPath
+  }) ? " disabled" : "";
   const stepsHtml = ["welcome", "model"]
     .map((item, idx) => `<span class="first-run-step${step === item ? " is-active" : ""}">${idx + 1}</span>`)
     .join("");
@@ -56,13 +63,19 @@ export function renderFirstRunOnboardingModal(
         <div class="tts-setup-modal-desc">Download a starter model or select an existing local .gguf file. Use Next when you are ready to continue.</div>
         <div class="first-run-model-list">
           ${modelOptions.map((model) => `
-            <label class="first-run-model-option${model.id === state.firstRunSelectedModelId ? " is-selected" : ""}">
-              <input type="radio" name="firstRunModel" value="${escapeHtml(model.id)}" ${model.id === state.firstRunSelectedModelId ? "checked" : ""}${busyAttr} />
-              <span class="first-run-model-copy">
-                <span class="first-run-model-title">${escapeHtml(model.name)} <small>${escapeHtml(model.size)}</small></span>
-                <span class="first-run-model-desc">${escapeHtml(model.description)}</span>
-              </span>
-            </label>
+            <div class="first-run-model-option${model.id === state.firstRunSelectedModelId ? " is-selected" : ""}">
+              <label class="first-run-model-choice">
+                <input type="radio" name="firstRunModel" value="${escapeHtml(model.id)}" ${model.id === state.firstRunSelectedModelId ? "checked" : ""}${busyAttr} />
+                <span class="first-run-model-copy">
+                  <span class="first-run-model-title">${escapeHtml(model.name)} <small>${escapeHtml(model.size)}</small></span>
+                  <span class="first-run-model-desc">${escapeHtml(model.description)}</span>
+                </span>
+              </label>
+              ${model.custom ? `<div class="first-run-model-actions">
+                <button type="button" class="tts-setup-modal-cancel-btn first-run-open-model-browser"${busyAttr}>Download</button>
+                <button type="button" class="tts-setup-modal-cancel-btn first-run-select-custom-model"${busyAttr}>Browse...</button>
+              </div>` : ""}
+            </div>
           `).join("")}
         </div>
         ${state.firstRunSelectedModelId === "custom-gguf" ? `<div class="first-run-custom-path">${escapeHtml(state.firstRunCustomModelPath || "No local model selected yet.")}</div>` : ""}`;
@@ -70,12 +83,12 @@ export function renderFirstRunOnboardingModal(
   const primaryAction =
     step === "welcome"
       ? `<button type="button" class="tts-setup-modal-bundle-btn first-run-next"${nextDisabledAttr}>Next</button>`
-      : `<button type="button" class="tts-setup-modal-bundle-btn first-run-next"${busyAttr}>Finish</button>`;
+      : `<button type="button" class="tts-setup-modal-bundle-btn first-run-next"${nextDisabledAttr}>Finish</button>`;
   const stepAction =
     step === "model"
-      ? selectedModel?.custom
-        ? `<button type="button" class="tts-setup-modal-cancel-btn first-run-select-custom-model"${busyAttr}>Select GGUF</button>`
-        : `<button type="button" class="tts-setup-modal-cancel-btn first-run-download-model"${busyAttr}>${state.firstRunBusy ? "Downloading..." : "Download"}</button>`
+      ? !selectedModel?.custom
+        ? `<button type="button" class="tts-setup-modal-cancel-btn first-run-download-model"${busyAttr}>${state.firstRunBusy ? "Downloading..." : "Download"}</button>`
+        : ""
       : "";
 
   return `<div class="tts-setup-modal-backdrop first-run-backdrop">
@@ -150,6 +163,8 @@ export function bindFirstRunOnboardingInteractions(deps: {
       if (deps.state.firstRunOnboardingStep === "welcome") {
         deps.state.firstRunOnboardingStep = "model";
       } else {
+        const selectedModel = deps.modelOptions.find((model) => model.id === deps.state.firstRunSelectedModelId);
+        if (selectedModel?.custom && !isValidFirstRunCustomGgufPath(deps.state.firstRunCustomModelPath)) return;
         dismiss();
         deps.autoStartLlamaRuntimeIfConfigured();
         return;
@@ -205,12 +220,35 @@ export function bindFirstRunOnboardingInteractions(deps: {
     };
   }
 
+  const firstRunOpenModelBrowser = document.querySelector<HTMLButtonElement>(".first-run-open-model-browser");
+  if (firstRunOpenModelBrowser) {
+    firstRunOpenModelBrowser.onclick = () => {
+      const url = "https://huggingface.co/models?pipeline_tag=text-generation&sort=likes";
+      const tauri = (window as any).__TAURI_INTERNALS__;
+      if (tauri?.invoke) {
+        void tauri.invoke("plugin:shell|open", { path: url }).catch(() => {
+          window.open(url, "_blank", "noopener,noreferrer");
+        });
+      } else {
+        window.open(url, "_blank", "noopener,noreferrer");
+      }
+    };
+  }
+
   const firstRunSelectCustomModel = document.querySelector<HTMLButtonElement>(".first-run-select-custom-model");
   if (firstRunSelectCustomModel) {
     firstRunSelectCustomModel.onclick = async () => {
       if (deps.state.firstRunBusy) return;
+      deps.state.firstRunSelectedModelId = "custom-gguf";
+      deps.state.firstRunMessage = null;
+      deps.render();
       const selectedPath = await deps.browseModelPath();
       if (!selectedPath) return;
+      if (!isValidFirstRunCustomGgufPath(selectedPath)) {
+        deps.state.firstRunMessage = "Please select a valid .gguf model file.";
+        deps.render();
+        return;
+      }
       deps.state.firstRunCustomModelPath = selectedPath;
       deps.state.llamaRuntimeModelPath = selectedPath;
       deps.persistLlamaModelPath(selectedPath);
