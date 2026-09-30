@@ -1382,7 +1382,10 @@ async fn cmd_llama_runtime_stop(
     state: State<'_, TauriBridgeState>,
     request: LlamaRuntimeStopRequest,
 ) -> Result<LlamaRuntimeStopResponse, String> {
-    state.runtime.stop(request.correlation_id.as_str())
+    let service = std::sync::Arc::clone(&state.runtime);
+    tokio::task::spawn_blocking(move || service.stop(request.correlation_id.as_str()))
+        .await
+        .map_err(|e| format!("llama runtime stop task failed: {e}"))?
 }
 
 #[cfg(feature = "tauri-runtime")]
