@@ -674,9 +674,7 @@ jobs:
             -v "$GITHUB_WORKSPACE/$APPIMAGE:/tmp/Arxell.AppImage:ro" \
             ubuntu:22.04 bash -euc '
               apt-get update -qq
-              DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
-                libfuse2 libasound2 libwebkit2gtk-4.1-0 libgtk-3-0 \
-                libayatana-appindicator3-1 librsvg2-2 xvfb xauth dbus-x11
+              DEBIAN_FRONTEND=noninteractive apt-get install -y -qq libfuse2 xvfb xauth dbus-x11
               dpkg -i /tmp/arxell.deb || apt-get install -f -y -qq
               mkdir -p /tmp/appimage-extract
               cd /tmp/appimage-extract
