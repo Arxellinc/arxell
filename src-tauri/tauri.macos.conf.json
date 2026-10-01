@@ -1,6 +1,7 @@
 {
   "bundle": {
     "resources": [
+      "resources/THIRD_PARTY_NOTICES.md",
       "resources/llama-runtime/*",
       "resources/llama-runtime/**/*",
       "resources/kokoro-runtime/*",

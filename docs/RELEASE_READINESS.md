@@ -1,15 +1,15 @@
 # Desktop release readiness
 
-Review baseline: `main` at `8930472` (Arxell 0.2.12), reviewed 2026-09-30.
+Review baseline: `main` at `9641539` (Arxell 0.2.12), packaging follow-up reviewed 2026-10-01.
 
-**Status: suitable only for a clearly labeled v0.2.12 preview, not a fully stable release.** Cross-platform CI and Linux clean-container package checks now pass, but physical clean-machine acceptance, broader model/provider/Pi acceptance, and signing/notarization remain incomplete.
+**Status: publication remains gated on fresh integrated-candidate checks; not a fully stable release.** Earlier PR #24 package checks passed on its old head, but main's newer Linux CI failed on a runner-native llama cache (SIGILL). This follow-up disables native CPU tuning for both llama and Whisper, validates the policy before accepting cached runtimes, and stages the actual packaged notices/licenses. Fresh cross-platform package CI is required before treating those older results as current evidence. Physical clean-machine acceptance, broader model/provider/Pi acceptance, and signing/notarization remain incomplete.
 
 ## Repository and release state
 
 - `main` already contains the Pi workspace, RPC-backed Looper, policy extension, provider bridge, and task scheduling fixes.
 - The initially checked-out `feature/model-directory-runtime` diverges from main: 15 commits only on main, 14 only on the feature branch. It lacks the merged Pi/task work. Preserve it and port useful model-directory/Linux packaging changes through reviewed PRs, rather than replacing main wholesale.
 - The latest published GitHub release is `v0.2.11` (2026-05-11); its assets are `.msi`, `.deb`, `.AppImage`, and an Apple Silicon `.dmg`. That tag predates the Pi service; current main's matching version number does not mean the downloadable release contains current main.
-- Main's last recorded desktop CI run passed on 2026-07-23. The later model-directory PR failed; neither is evidence that today's dependencies and released packages work on fresh machines.
+- PR #22 was merged as `9641539`; native Linux onboarding checks and Windows/macOS builds passed. Its Linux run `36918293129` failed before the app build when a cached native-tuned llama CPU server exited `-4` (SIGILL). Older green runs do not establish the integrated candidate's portability.
 
 ## Confirmed bugs addressed in this stabilization pass
 
@@ -39,6 +39,9 @@ Remove external-process killing. Report occupied/invalid ports and stop only the
 
 - **Pinned whisper.cpp runtime.** Upstream's latest release (`v1.9.4`) ships zero binary assets, so the old step silently bundled no whisper-server at all (STT broken out of the box) and its fallback could pick another platform's asset. The server is now built from the pinned source tag `v1.9.4` per platform, named to match the app's expectations (`src-tauri/src/stt/supervisor.rs`), with the shared-library closure (including Linux `libgomp.so.1`) bundled, a `--help` smoke test, and a fatal build failure instead of a silent `binary_not_found` manifest. STT model downloads remain non-fatal (voice degrades, the bundle does not break).
 
+- **Portable runtime build/cache policy (PR #24 follow-up).** Every llama and Whisper CMake cache must explicitly contain `GGML_NATIVE:BOOL=OFF`. Runtime manifests record `ggmlNative: false` and Linux OpenMP package provenance; the new portable-all cache namespace also keys on that package version. Always-run verification rejects pre-policy/native-tuned manifests, missing `libgomp.so.1`, and failed version/help probes, including SIGILL. Unix probes do not borrow inherited engine loader paths. This still targets AVX2/FMA/F16C/BMI2-capable x86-64 CPUs, not every historical x86-64 processor.
+- **Packaged notices.** Platform-specific Tauri resource arrays replace the base array: each must explicitly include `THIRD_PARTY_NOTICES.md`. The source and staged copy are synchronized, and Linux also stages the actual `libgomp1` package copyright/Runtime Library Exception and full GPL-3.0 text. Manifest/package cache provenance identifies the runtime package, which is not necessarily the GCC build compiler's version.
+
 - **Ubuntu 22.04 release baseline and clean-package smoke tests (PR #24).** Linux releases are built on Ubuntu 22.04/glibc 2.35, with pinned Vulkan headers and `glslc` and portable CPU targeting. CI installs and launches both `.deb` and AppImage packages in a clean Ubuntu 22.04 container and smoke-tests the bundled llama.cpp and Whisper binaries. The same cross-platform run validates Windows MSI install/launch/uninstall and mounts/validates the Apple Silicon DMG. Run `36771261380` passed all platform jobs.
 
 - **Truthful local-runtime readiness.** `start()` previously declared the runtime healthy the moment a TCP port opened — before the model finished loading — and a spawn failure left the status stuck at `starting`. Startup now waits for llama-server's `/health` to report ready (with bounded port and model-load deadlines), detects a child that exits during startup, emits real `llama.runtime.loading` progress from the same loop (replacing the racy background thread), and marks the state `failed` on every error path. The `/health` parser is unit-tested against loading/ready/unparseable bodies.
@@ -51,7 +54,7 @@ Remove external-process killing. Report occupied/invalid ports and stop only the
 
 | Priority | Finding / evidence | Required acceptance |
 |---|---|---|
-| P1 | Pi and Node are not bundled. Arxell accepts parseable Pi versions and installs the current Pi npm package privately when Node/npm (and Windows Git Bash) are available; Pi 0.84.2 and 0.99.1 passed only RPC startup, policy-extension load, and `get_state` smoke checks. Interactive Pi uses the user's profile; Looper uses Arxell credentials. | Test first-run install, interactive use, and complete Looper runs on clean Windows/macOS/Linux accounts; document the Node/npm/Git Bash prerequisites and separate interactive authentication. |
+| P1 | Pi and Node are not bundled. Main still has the legacy 0.81.x version gate; version-agnostic discovery/private setup are pending in PR #23/#26 and available only in the test branch. Pi 0.84.2 and 0.99.1 passed only RPC startup, policy-extension load, and `get_state` smoke checks there. Interactive Pi uses the user's profile; Looper uses Arxell credentials. | Test first-run install, interactive use, and complete Looper runs on clean Windows/macOS/Linux accounts; document the Node/npm/Git Bash prerequisites and separate interactive authentication. |
 | P1 | Pi executable discovery under PATH-poor GUI launches is mitigated (npm/`%APPDATA%`, Homebrew, timeouts), but unusual HOME paths, reboot persistence, and Windows npm-shim behavior remain untested hands-on. | Exercise setup on clean platform accounts, including spaces/non-ASCII paths and restart persistence. |
 | P1 | Chat's Rust provider and generated Looper model profiles use OpenAI-compatible Chat Completions. All profiles declare the same context/output limits. | Publish an explicit provider support matrix. Test OpenAI-compatible public APIs and local endpoints. Add native Anthropic/Gemini/Responses adapters if claiming those protocols; derive local context limits rather than advertising 131072 tokens for an 8192-token server. |
 | P1 | A real 4B GGUF CPU inference succeeded with the bundled llama.cpp from the Linux AppImage on this developer host. Linux `.deb`/AppImage install, launch, and sidecar smoke tests now pass in a clean Ubuntu 22.04 container; Windows MSI install/launch/uninstall and macOS DMG mount validation pass in CI. Physical clean-machine installs and installer-driven model/chat/Pi/keychain behavior are not verified; public-provider authentication has not been tested. | Execute the remaining acceptance matrix below with built artifacts on clean platform accounts. |
@@ -86,6 +89,10 @@ Run the following for Windows x64 MSI, Linux x64 `.deb`, Linux x64 `.AppImage`, 
 Keep results with OS/version, architecture, package checksum, runtime/Pi/model versions, backend, and logs stripped of secrets. See `SMOKE_TEST.md` for the credential test procedure.
 
 ## Evidence and limits
+
+- Packaging follow-up: a previously native-tuned engine reproduced SIGILL (exit 132) under an emulated Haswell CPU without AVX-512. Fresh `GGML_NATIVE=OFF` llama/Whisper builds from the pinned sources in Ubuntu 22.04 both pass startup on the same emulated CPU; llama also loaded the tiny GGUF and generated 4 tokens. Both copied closures load in a separate bare Ubuntu 22.04 container without installing libgomp1 there. This is CPU-ISA/loader regression evidence, not a hardware performance claim or full installed-app acceptance.
+- After reconciling PR #22: 11 packaging/checksum unit tests, clean npm install with 45 frontend tests/lint/build, Rust checks with/without desktop support, 167 desktop library tests (1 native-store test ignored), and the host production no-bundle build pass. Fresh integrated package CI remains pending; older green runs below are historical evidence only.
+- Release checksums now use flat asset basenames, matching GitHub downloads rather than artifact subdirectory paths; ambiguous names fail closed and the nested-artifact/flat-download regression is tested.
 
 - Baseline Linux: frontend build and TypeScript checks passed; 28 frontend tests and 155 desktop-feature Rust tests passed.
 - Credential-backend and failed-Pi-settlement regression tests were run before the fixes and failed as expected.
