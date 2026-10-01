@@ -1,6 +1,6 @@
 import { iconHtml } from "../icons";
 import { escapeHtml } from "../panels/utils";
-import { isFirstRunPrimaryActionDisabled, isValidFirstRunCustomGgufPath } from "./firstRunOnboardingRules";
+import { isFirstRunPrimaryActionDisabled } from "./firstRunOnboardingRules";
 
 export type FirstRunOnboardingStep = "welcome" | "model";
 
@@ -60,7 +60,7 @@ export function renderFirstRunOnboardingModal(
         </div>
         <label class="first-run-terms"><input type="checkbox" id="firstRunTermsCheckbox" ${state.firstRunTermsAccepted ? "checked" : ""}${busyAttr} /> I have read and agree to the terms of use.</label>`
       : `<div class="tts-setup-modal-title">Choose your first model</div>
-        <div class="tts-setup-modal-desc">Download a starter model or select an existing local .gguf file. Use Next when you are ready to continue.</div>
+        <div class="tts-setup-modal-desc">Download a starter model or select an existing local .gguf file. Use Finish when you are ready to continue.</div>
         <div class="first-run-model-list">
           ${modelOptions.map((model) => `
             <div class="first-run-model-option${model.id === state.firstRunSelectedModelId ? " is-selected" : ""}">
@@ -109,156 +109,4 @@ export function renderFirstRunOnboardingModal(
   </div>`;
 }
 
-export function bindFirstRunOnboardingInteractions(deps: {
-  state: FirstRunOnboardingState & { llamaRuntimeModelPath: string };
-  modelOptions: readonly FirstRunModelOption[];
-  getClient: () => { modelManagerDownloadHf: (request: { correlationId: string; repoId: string; fileName: string }) => Promise<{ model: { path: string; name: string } }> } | null;
-  nextCorrelationId: () => string;
-  browseModelPath: () => Promise<string | null>;
-  persistLlamaModelPath: (path: string) => void;
-  refreshModelManagerInstalled: () => Promise<void>;
-  persistFirstRunOnboardingDismissed: () => void;
-  autoStartLlamaRuntimeIfConfigured: () => Promise<void>;
-  render: () => void;
-}): void {
-  const dismiss = () => {
-    deps.state.firstRunOnboardingOpen = false;
-    deps.state.firstRunBusy = false;
-    deps.state.firstRunMessage = null;
-    deps.persistFirstRunOnboardingDismissed();
-    deps.render();
-  };
-
-  document.querySelectorAll<HTMLButtonElement>(".first-run-skip").forEach((btn) => {
-    btn.onclick = dismiss;
-  });
-
-  const termsCheckbox = document.querySelector<HTMLInputElement>("#firstRunTermsCheckbox");
-  if (termsCheckbox) {
-    termsCheckbox.onchange = () => {
-      deps.state.firstRunTermsAccepted = termsCheckbox.checked;
-      deps.state.firstRunMessage = null;
-      deps.render();
-    };
-  }
-
-  const firstRunSkipStep = document.querySelector<HTMLButtonElement>(".first-run-skip-step");
-  if (firstRunSkipStep) {
-    firstRunSkipStep.onclick = () => {
-      if (deps.state.firstRunOnboardingStep === "welcome") {
-        deps.state.firstRunOnboardingStep = "model";
-      } else {
-        dismiss();
-        return;
-      }
-      deps.state.firstRunMessage = null;
-      deps.render();
-    };
-  }
-
-  const firstRunNext = document.querySelector<HTMLButtonElement>(".first-run-next");
-  if (firstRunNext) {
-    firstRunNext.onclick = () => {
-      if (deps.state.firstRunOnboardingStep === "welcome" && !deps.state.firstRunTermsAccepted) return;
-      if (deps.state.firstRunOnboardingStep === "welcome") {
-        deps.state.firstRunOnboardingStep = "model";
-      } else {
-        const selectedModel = deps.modelOptions.find((model) => model.id === deps.state.firstRunSelectedModelId);
-        if (selectedModel?.custom && !isValidFirstRunCustomGgufPath(deps.state.firstRunCustomModelPath)) return;
-        dismiss();
-        deps.autoStartLlamaRuntimeIfConfigured();
-        return;
-      }
-      deps.state.firstRunMessage = null;
-      deps.render();
-    };
-  }
-
-  const firstRunBack = document.querySelector<HTMLButtonElement>(".first-run-back");
-  if (firstRunBack) {
-    firstRunBack.onclick = () => {
-      deps.state.firstRunOnboardingStep = "welcome";
-      deps.state.firstRunMessage = null;
-      deps.render();
-    };
-  }
-
-  document.querySelectorAll<HTMLInputElement>('input[name="firstRunModel"]').forEach((input) => {
-    input.onchange = () => {
-      deps.state.firstRunSelectedModelId = input.value;
-      deps.state.firstRunMessage = null;
-      deps.render();
-    };
-  });
-
-  const firstRunDownloadModel = document.querySelector<HTMLButtonElement>(".first-run-download-model");
-  if (firstRunDownloadModel) {
-    firstRunDownloadModel.onclick = async () => {
-      const client = deps.getClient();
-      if (!client || deps.state.firstRunBusy) return;
-      const model = deps.modelOptions.find((item) => item.id === deps.state.firstRunSelectedModelId) ?? deps.modelOptions[0];
-      if (!model || model.custom || !model.repoId || !model.fileName) return;
-      deps.state.firstRunBusy = true;
-      deps.state.firstRunMessage = `Downloading ${model.name}...`;
-      deps.render();
-      try {
-        const response = await client.modelManagerDownloadHf({
-          correlationId: deps.nextCorrelationId(),
-          repoId: model.repoId,
-          fileName: model.fileName
-        });
-        deps.state.llamaRuntimeModelPath = response.model.path;
-        deps.persistLlamaModelPath(response.model.path);
-        await deps.refreshModelManagerInstalled();
-        deps.state.firstRunMessage = `Downloaded ${response.model.name}.`;
-      } catch (error) {
-        deps.state.firstRunMessage = `Model download failed: ${String(error)}`;
-      } finally {
-        deps.state.firstRunBusy = false;
-      }
-      deps.render();
-    };
-  }
-
-  const firstRunOpenModelBrowser = document.querySelector<HTMLButtonElement>(".first-run-open-model-browser");
-  if (firstRunOpenModelBrowser) {
-    firstRunOpenModelBrowser.onclick = () => {
-      const url = "https://huggingface.co/models?pipeline_tag=text-generation&sort=likes";
-      const tauri = (window as any).__TAURI_INTERNALS__;
-      if (tauri?.invoke) {
-        void tauri.invoke("plugin:shell|open", { path: url }).catch(() => {
-          window.open(url, "_blank", "noopener,noreferrer");
-        });
-      } else {
-        window.open(url, "_blank", "noopener,noreferrer");
-      }
-    };
-  }
-
-  const firstRunSelectCustomModel = document.querySelector<HTMLButtonElement>(".first-run-select-custom-model");
-  if (firstRunSelectCustomModel) {
-    firstRunSelectCustomModel.onclick = async () => {
-      if (deps.state.firstRunBusy) return;
-      deps.state.firstRunSelectedModelId = "custom-gguf";
-      deps.state.firstRunMessage = null;
-      deps.render();
-      const selectedPath = await deps.browseModelPath();
-      if (!selectedPath) return;
-      if (!isValidFirstRunCustomGgufPath(selectedPath)) {
-        deps.state.firstRunMessage = "Please select a valid .gguf model file.";
-        deps.render();
-        return;
-      }
-      deps.state.firstRunCustomModelPath = selectedPath;
-      deps.state.llamaRuntimeModelPath = selectedPath;
-      deps.persistLlamaModelPath(selectedPath);
-      deps.state.firstRunMessage = `Selected local model: ${selectedPath}`;
-      deps.render();
-    };
-  }
-
-  const firstRunFinish = document.querySelector<HTMLButtonElement>(".first-run-finish");
-  if (firstRunFinish) {
-    firstRunFinish.onclick = dismiss;
-  }
-}
+export { bindFirstRunOnboardingInteractions } from "./firstRunOnboardingInteractions";
