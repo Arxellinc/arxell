@@ -87,6 +87,7 @@ Keep results with OS/version, architecture, package checksum, runtime/Pi/model v
 
 ## Evidence and limits
 
+- Follow-up renderer/IPC probe: the initial failure was a **test-build configuration error**. A direct Cargo build without `tauri/custom-protocol` loaded `devUrl` with no embedded frontend. A regression test reproduced the missing assets; the corrected `desktop-smoke` feature embeds them. The native Linux app then rendered a visible application frame and returned version `0.2.12` through real Rust IPC under a temporary profile/minimal PATH. macOS execution of this new probe remains pending CI; this is not package-install, model/provider, or upgrade acceptance.
 - Baseline Linux: frontend build and TypeScript checks passed; 28 frontend tests and 155 desktop-feature Rust tests passed.
 - Credential-backend and failed-Pi-settlement regression tests were run before the fixes and failed as expected.
 - After fixes: frontend build/type checks and 28 frontend tests passed; both Rust check modes and 160 desktop-feature Rust tests passed (one opt-in native-store test excluded from the normal suite).

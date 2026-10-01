@@ -7,6 +7,10 @@ Enable with:
 - `cargo run --features tauri-runtime`
 - or for checks: `cargo check --features tauri-runtime`
 
+### CI-only desktop probe
+
+The optional `desktop-smoke` feature enables `tauri-runtime` and `tauri/custom-protocol` so a direct Cargo build embeds the frontend instead of trying to reach `devUrl`. A feature-gated page-load probe checks rendered layout and calls the real `cmd_app_version`; the private `cmd_desktop_smoke_ready` handler checks the version and writes a bounded report to an environment-selected path. Neither the command nor the probe is compiled into normal release packages. There is no public contract change or general-purpose script execution endpoint. See `SMOKE_TEST.md` for commands and limits.
+
 ## Bridge State
 
 `TauriBridgeState` (in `src-tauri/src/ipc/tauri_bridge.rs`) holds managed state:

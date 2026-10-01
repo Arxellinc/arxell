@@ -23,6 +23,25 @@ Checks performed:
   - `"role":"user"`
   - `"role":"assistant"`
 
+## Renderer / native IPC handshake (CI-only)
+
+This probe loads the **embedded production frontend**, checks that `#app .app-frame` has a visible layout, invokes the real `cmd_app_version` Rust handler, and writes a bounded result after checking its version. It does not mock IPC or accept a merely live process as success.
+
+From the repository root, with a display session:
+
+```sh
+(cd frontend && npm ci && npm run build)
+cargo test --manifest-path src-tauri/Cargo.toml --features desktop-smoke --bin arxell desktop_smoke::tests
+cargo build --manifest-path src-tauri/Cargo.toml --release --features desktop-smoke
+python3 scripts/desktop_launch_smoke.py --require-report --output /tmp/arxell-renderer-smoke -- "$PWD/src-tauri/target/release/arxell"
+```
+
+On headless Linux, run the Python command under `dbus-run-session -- xvfb-run -a`. The harness uses a temporary profile, a minimal PATH, and no inherited provider credentials; it removes stale reports, fails on early exit/missing or malformed reports, and terminates its owned process group. Evidence includes `launch.log` and `renderer-ipc.json`; macOS also attempts a screenshot.
+
+**Build-mode regression:** `cargo build --release --features tauri-runtime` alone still uses Tauri's development URL unless the custom-protocol feature is enabled. `desktop-smoke` explicitly enables `tauri/custom-protocol`; its context regression test rejects an empty embedded frontend. The initial failing handshake was caused by this test-build configuration, not proof of a broken packaged app.
+
+**Never bundle or publish `desktop-smoke` builds.** Generate release packages with `tauri-runtime` via the Tauri CLI first. CI builds/runs the separate unbundled probe afterward. This test proves basic rendering and native IPC only—not clean-machine macOS acceptance, model/chat workflows, credentials, or upgrade persistence.
+
 ## Manual (UI side)
 1. Start frontend:
 - `cd frontend && npm install && npm run dev`
