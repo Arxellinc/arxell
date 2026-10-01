@@ -9,6 +9,14 @@
     "core:event:default",
     "dialog:allow-open",
     "dialog:allow-save",
+    {
+      "identifier": "opener:allow-open-url",
+      "allow": [
+        {
+          "url": "https://huggingface.co/models[?]pipeline_tag=text-generation&sort=likes"
+        }
+      ]
+    },
     "core:window:allow-minimize",
     "core:window:allow-maximize",
     "core:window:allow-unmaximize",

@@ -7,6 +7,10 @@ Enable with:
 - `cargo run --features tauri-runtime`
 - or for checks: `cargo check --features tauri-runtime`
 
+## Onboarding browser integration
+
+The desktop entry point registers Tauri Opener with automatic link interception disabled. The main-window capability grants `opener:allow-open-url` only for the fixed Hugging Face model catalog (with the query delimiter escaped in the glob scope). No default opener permissions, filesystem opening, arbitrary URLs, or CSP changes are enabled. Native opening failures surface in onboarding rather than falling back to a WebView popup. This uses built-in plugin IPC, not a new public Arxell command. See `FIRST_RUN_ONBOARDING.md` for behavior and manual acceptance.
+
 ## Bridge State
 
 `TauriBridgeState` (in `src-tauri/src/ipc/tauri_bridge.rs`) holds managed state:
