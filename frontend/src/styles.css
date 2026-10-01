@@ -5006,13 +5006,34 @@ body {
 
 .first-run-model-option {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
+  justify-content: space-between;
   gap: 10px;
   padding: 10px 12px;
   border: 1px solid var(--line);
   border-radius: 8px;
   background: var(--surface-soft);
+}
+
+.first-run-model-choice {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  align-items: flex-start;
+  gap: 10px;
   cursor: pointer;
+}
+
+.first-run-model-actions {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 6px;
+}
+
+.first-run-model-actions .tts-setup-modal-cancel-btn {
+  padding: 0 10px;
+  white-space: nowrap;
 }
 
 .first-run-model-option.is-selected {
@@ -5069,6 +5090,17 @@ body {
 .first-run-action-group {
   display: inline-flex;
   align-items: center;
+}
+
+@media (max-width: 560px) {
+  .first-run-model-option {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .first-run-model-actions {
+    margin-left: 28px;
+  }
 }
 
 .tts-download-progress {
