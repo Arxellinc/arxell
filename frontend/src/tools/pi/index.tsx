@@ -2,7 +2,7 @@ import { iconHtml } from "../../icons";
 import { PI_DATA_ATTR, PI_UI_ID } from "../ui/constants";
 import { renderToolToolbar } from "../ui/toolbar";
 import type { PiAgent, PiToolState } from "./state";
-import { getInstallCommand } from "./actions";
+import { getInstallCommand, shouldAutoInstallPi } from "./actions";
 import "./styles.css";
 
 export function renderPiToolActions(state: PiToolState): string {
@@ -38,9 +38,9 @@ export function renderPiToolActions(state: PiToolState): string {
 }
 
 export function renderPiToolBody(state: PiToolState): string {
-  if (state.busy && !state.agents.length) {
+  if ((state.busy || state.installChecking) && !state.agents.length) {
     return `<div class="pi-workspace">
-      <div class="pi-placeholder">Starting Pi...</div>
+      <div class="pi-placeholder">${state.installChecking ? "Checking Pi..." : "Starting Pi..."}</div>
     </div>`;
   }
 
@@ -88,20 +88,18 @@ function buildBreadcrumbSegments(cwd: string): string[] {
 }
 
 export function renderPiInstallModal(state: PiToolState): string {
-  if (!state.installModalOpen) return "";
+  if (!state.installModalOpen || (state.installed === true && state.runtimeStatus === "ready")) return "";
 
   const cmd = getInstallCommand();
-  const installDisabled = state.installChecking ||
-    state.nodeAvailable !== true ||
-    state.npmAvailable !== true ||
-    state.runtimeStatus === "missing_bash" ||
-    (/Windows/i.test(navigator.userAgent) && !state.bashPath);
+  const detected = state.installed === true;
+  const windows = typeof navigator !== "undefined" && /Windows/i.test(navigator.userAgent);
+  const installDisabled = state.installChecking || state.busy || !shouldAutoInstallPi(state, windows);
 
   return `<div class="modal-backdrop-fixed" id="${PI_UI_ID.installModalOverlay}">
     <div class="modal-box-fixed">
-      <div class="modal-title">${iconHtml("bot-message-square", { size: 16, tone: "dark" })} Pi CLI Setup</div>
-      <p>Arxell does not reject detected Pi versions by version number. If Pi is missing, Arxell can install the current release when Node.js 22.19 or newer and npm are available.</p>
-      <div class="pi-install-cmd">${escapeHtml(cmd)}</div>
+      <div class="modal-title">${iconHtml("bot-message-square", { size: 16, tone: "dark" })} ${detected ? "Pi Startup Issue" : "Pi Setup"}</div>
+      <p>${detected ? "Pi is already installed. Resolve the startup issue below, then retry. Arxell will not replace your installation." : "Pi was not found. Arxell can download and install a private copy when Node.js 22.19 or newer and npm are available."}</p>
+      ${detected ? "" : `<div class="pi-install-cmd">${escapeHtml(cmd)}</div>`}
       <label class="field">Pi executable path (optional)
         <input class="field-input-soft" type="text" value="${escapeHtml(state.executablePathDraft)}" placeholder="Auto-detect from PATH, npm, pnpm, Yarn, or Bun" ${PI_DATA_ATTR.action}="pi-executable-path" />
       </label>
@@ -113,11 +111,11 @@ export function renderPiInstallModal(state: PiToolState): string {
       <div class="modal-actions">
         <button type="button" class="modal-btn" ${PI_DATA_ATTR.action}="dismiss-install">Cancel</button>
         <button type="button" class="modal-btn" ${PI_DATA_ATTR.action}="recheck-install" ${state.installChecking ? "disabled" : ""}>
-          ${state.installChecking ? "Checking..." : "I've Installed It"}
+          ${state.installChecking ? "Checking..." : detected ? "Retry" : "Check Again"}
         </button>
-        <button type="button" class="modal-btn" ${PI_DATA_ATTR.action}="install-now" ${installDisabled ? "disabled" : ""}>
-          Install Now
-        </button>
+        ${detected ? "" : `<button type="button" class="modal-btn" ${PI_DATA_ATTR.action}="install-now" ${installDisabled ? "disabled" : ""}>
+          Download &amp; Install
+        </button>`}
       </div>
     </div>
   </div>`;

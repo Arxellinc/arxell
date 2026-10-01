@@ -170,7 +170,7 @@ Every layer communicates through typed contracts with correlation IDs, structure
 | STT | **Whisper** (streaming) |
 | TTS | **sherpa-onnx** (Kokoro · Piper · Matcha · Kitten) |
 | Local inference | **llama.cpp** runtime (bundled) |
-| Coding harness | **Pi 0.81.x** — interactive TUI and headless JSONL RPC |
+| Coding harness | **Pi** — detected runtime, interactive TUI and headless JSONL RPC |
 | Secret storage | **OS keychain** via `keyring`; explicitly acknowledged fallback when unavailable |
 | Database | **SQLite** via `rusqlite` |
 

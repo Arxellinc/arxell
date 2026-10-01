@@ -30,7 +30,7 @@ This builtin workspace tool wraps the [Pi coding harness](https://pi.dev/) insid
 1. User clicks Pi icon in workspace topbar
 2. Tab activation triggers `ensurePiInit` via `workspaceLifecycle.ts`
 3. `checkPiInstalled()` calls the backend Pi runtime probe (`pi --version`) through the Looper invoke gateway
-4. **If installed** — `spawnAgent()` creates the first agent ("Agent 1") with a new PTY session
+4. **If detected and ready** — `ensurePiSession()` immediately launches the first agent in a new PTY using that executable. There is no install/confirmation dialog, even for versions outside the former 0.81.x range. Reopening the tool does not create duplicate sessions.
 5. **If not installed** — when Node.js `>=22.19.0`/npm (and Windows Bash) are available, Arxell automatically installs the current npm package with lifecycle scripts disabled, then starts Pi. If prerequisites are missing or installation fails, the setup modal offers diagnostics and retry/recheck.
 
 ## Agent Lifecycle
@@ -118,7 +118,7 @@ Uses the backend runtime service without opening a PTY:
 2. Runs the selected executable with `--version`
 3. Accepts parseable Pi versions without a semver ceiling and checks Windows Bash readiness
 4. Returns typed path, version, Node/npm/Bash, and recovery diagnostics
-5. Automatically installs Pi when it is missing and prerequisites are available; otherwise opens setup UI with recheck and explicit-path controls
+5. Automatically installs Pi only for a genuine miss with working prerequisites; otherwise opens diagnostics with retry and explicit-path controls. A detected but unlaunchable runtime offers Retry/path correction and is never replaced by the installer. `Launch Pi` retries readiness rather than spawning an unchecked shell command.
 
 ## Terminal Session
 

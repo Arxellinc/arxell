@@ -134,7 +134,15 @@ See `PI_CODING_HARNESS.md` for runtime discovery and setup.
 3. On a machine without Pi but with Node.js/npm, verify Arxell installs the current package and then launches Pi; when prerequisites are missing, verify the setup UI explains what is needed.
 4. On Windows, verify missing Git Bash is diagnosed and `PI_SHELL_PATH` works for a nonstandard Bash installation.
 
+Optional real-runtime readiness regression (probes an existing installation without replacing it or using provider credentials):
+
+```sh
+ARXELL_TEST_PI_EXECUTABLE=/absolute/path/to/pi cargo test --manifest-path src-tauri/Cargo.toml real_pi_installation_is_ready_without_version_gate -- --ignored
+```
+
 ### Interactive workspace
+
+On first opening Pi with an installed, launchable runtime, verify a session starts immediately without an install/confirmation modal. Reopening the tool must not create a duplicate session. For a detected runtime with a genuine startup error, verify the dialog offers Retry/path correction, not a replacement install. Missing Pi with working prerequisites can install privately; missing prerequisites must show recovery without running npm.
 
 1. Launch two Pi sessions with different labels and working directories.
 2. Supply an initial prompt to one session and verify it arrives after the TUI is ready.

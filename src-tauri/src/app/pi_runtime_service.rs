@@ -453,6 +453,19 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "requires an explicitly selected real Pi installation"]
+    fn real_pi_installation_is_ready_without_version_gate() {
+        let path = env::var("ARXELL_TEST_PI_EXECUTABLE").expect("set ARXELL_TEST_PI_EXECUTABLE");
+        let service = PiRuntimeService::new(std::env::temp_dir());
+        let probe = service.probe(Some(&path));
+        assert_eq!(probe.status, PiRuntimeStatus::Ready, "{:?}", probe.error_code);
+        assert!(probe.installed);
+        assert!(probe.compatible);
+        assert!(parse_version(probe.version.as_deref().unwrap()).is_some());
+        assert!(service.selected_executable().is_some());
+    }
+
+    #[test]
     fn automatic_pi_install_requires_node_22_19_or_newer() {
         assert!(!is_supported_pi_node_version("v20.19.0"));
         assert!(!is_supported_pi_node_version("v22.18.9"));

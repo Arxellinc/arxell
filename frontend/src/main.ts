@@ -91,7 +91,7 @@ import type { WebSearchHistoryItem, WebTabState } from "./tools/webSearch/state"
 import type { FilesDeleteUndoEntry } from "./tools/files/state";
 import { getInitialPiState } from "./tools/pi/state";
 import type { PiToolState } from "./tools/pi/state";
-import { checkPiInstalled, installNow, shouldAutoInstallPi, spawnAgent } from "./tools/pi/actions";
+import { ensurePiSession } from "./tools/pi/actions";
 import type { PiActionsDeps } from "./tools/pi/actions";
 import { PI_UI_ID } from "./tools/ui/constants";
 import { getInitialLooperState } from "./tools/looper/state";
@@ -8337,12 +8337,7 @@ function attachWorkspaceInteractions(sendMessage: (text: string) => Promise<void
                   ? state.projectsById[state.projectsSelectedId]?.rootPath
                   : state.filesScopeRootPath ?? state.filesRootPath ?? undefined
               };
-              const installed = await checkPiInstalled(state.piState, piDeps, true);
-              if (installed) {
-                await spawnAgent(state.piState, piDeps, { label: "Agent 1" });
-              } else if (shouldAutoInstallPi(state.piState, /Windows/i.test(navigator.userAgent))) {
-                await installNow(state.piState, piDeps);
-              }
+              await ensurePiSession(state.piState, piDeps);
             },
 ensureLooperInit: async () => {
   const looperDeps: LooperActionsDeps = {
@@ -9234,12 +9229,7 @@ async function bootstrap(): Promise<void> {
             ? state.projectsById[state.projectsSelectedId]?.rootPath
             : state.filesScopeRootPath ?? state.filesRootPath ?? undefined
         };
-        const installed = await checkPiInstalled(state.piState, piDeps, true);
-        if (installed) {
-          await spawnAgent(state.piState, piDeps, { label: "Agent 1" });
-        } else if (shouldAutoInstallPi(state.piState, /Windows/i.test(navigator.userAgent))) {
-          await installNow(state.piState, piDeps);
-        }
+        await ensurePiSession(state.piState, piDeps);
       },
       ensureLooperInit: async () => {
         const looperDeps: LooperActionsDeps = {

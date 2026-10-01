@@ -21,7 +21,7 @@ npm install --prefix "$HOME/.arxell/pi-runtime" --ignore-scripts --no-audit --no
 npm install --prefix "%USERPROFILE%\.arxell\pi-runtime" --ignore-scripts --no-audit --no-fund @earendil-works/pi-coding-agent
 ```
 
-If automatic installation cannot run or fails, the setup dialog explains the missing prerequisite and permits retry/recheck. The current Pi package requires Node.js `>=22.19.0`; on Windows, install Git for Windows because Pi requires Bash. Set `PI_SHELL_PATH` when Bash is installed in a nonstandard location.
+When an installed runtime is ready, opening the Pi workspace launches it directly with no install or confirmation dialog. A genuine missing runtime is the only case eligible for automatic installation. If automatic installation cannot run or fails, the setup dialog explains the missing prerequisite and permits retry/recheck. A detected runtime with a launch/prerequisite problem offers retry/path correction, not replacement installation. The current Pi package requires Node.js `>=22.19.0`; on Windows, install Git for Windows because Pi requires Bash. Set `PI_SHELL_PATH` when Bash is installed in a nonstandard location.
 
 ## Authentication And Models
 

@@ -109,6 +109,18 @@ export async function checkPiInstalled(
   }
 }
 
+export async function ensurePiSession(
+  state: PiToolState,
+  deps: PiActionsDeps
+): Promise<void> {
+  if (state.busy || state.installChecking || state.agents.length) return;
+  if (await checkPiInstalled(state, deps, true)) {
+    await spawnAgent(state, deps, { label: `Agent ${state.nextAgentIndex}` });
+  } else if (shouldAutoInstallPi(state, isWindows())) {
+    await installNow(state, deps);
+  }
+}
+
 export async function spawnAgent(
   state: PiToolState,
   deps: PiActionsDeps,
@@ -222,7 +234,8 @@ export async function installNow(
   state: PiToolState,
   deps: PiActionsDeps
 ): Promise<void> {
-  if (state.busy) return;
+  // Never replace/reinstall a detected runtime or bypass missing prerequisites.
+  if (state.busy || !shouldAutoInstallPi(state, isWindows())) return;
   state.busy = true;
   state.installModalOpen = false;
   deps.renderAndBind();
