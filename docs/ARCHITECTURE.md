@@ -43,7 +43,7 @@ Forbidden:
 ## Subsystems
 
 ### Chat Service (`src-tauri/src/app/chat_service.rs`)
-Core chat orchestration: message handling, agent loop, tool binding, streaming. Routes user messages to LLM providers and manages conversation lifecycle including cancel, delete, and listing.
+Core chat orchestration: message handling, agent loop, tool binding, streaming. Routes user messages to LLM providers and manages conversation lifecycle including cancel, delete, and listing. Direct agent tools pass through the read-only policy adapter in `tools/agent_registry.rs`; file scope and action allowlists are owned by `tools/action_policy.rs`. Request construction and inspection share saved-context selection/rendering in `app/chat_context.rs`. Edits and shell execution use explicitly approved Pi-backed delegation rather than raw direct-chat tools.
 
 ### Terminal Service (`src-tauri/src/app/terminal_service.rs`)
 PTY-based terminal sessions: open, input, resize, close. Emits `terminal.output` streaming events.
@@ -64,7 +64,7 @@ Local model lifecycle: list installed GGUF models, search HuggingFace, download,
 Local inference runtime management: engine discovery, installation, start/stop with configurable parameters (context size, GPU layers, sampling). Startup rejects occupied or invalid ports; it never terminates an external process based on a port number. Only the child held by the service is eligible for runtime shutdown.
 
 ### Tasks Service (`src-tauri/src/app/tasks_service.rs`)
-Durable SQLite task, run-history, schedule, scheduler-lease, and notification storage. The service preserves explicit draft/approval state, separates stable project identity from canonical execution roots, computes timezone-aware calendar recurrence, clears one-time schedules after execution, and atomically leases due occurrences to prevent duplicate scheduler execution. `src-tauri/src/tools/invoke/tasks.rs` owns execution policy and delegates approved low-risk agent prompts to Pi-backed Looper runs.
+Durable SQLite task, run-history, schedule, scheduler-lease, and notification storage. The service preserves explicit draft/approval state, separates stable project identity from canonical execution roots, computes timezone-aware calendar recurrence, clears one-time schedules after execution, and atomically leases due occurrences to prevent duplicate scheduler execution. `src-tauri/src/tools/invoke/tasks.rs` owns execution policy and delegates approved low-risk agent prompts to Pi-backed Looper runs. Intent is persisted before launch. `app/task_run_service.rs` reconciles loop-state snapshots with durable active runs; terminal outcome, notification, completion time, claim release, and scheduling changes commit together. Active runs block overlap beyond lease expiry; startup fails interrupted work without automatic replay.
 
 ### API Registry Service (`src-tauri/src/api_registry.rs`)
 API connection CRUD: create, probe, verify, update, delete, import/export. Stores connection metadata in app data and stores raw API keys through the secret storage abstraction. Portable exports omit credentials; imported connections without credentials require key re-entry and verification.
@@ -79,7 +79,7 @@ Web search execution. Routes queries to configured search API connections.
 Filesystem operations: list directories, read/write files, create directories, delete paths. All operations go through permission checks.
 
 ### Permission Service (`src-tauri/src/app/permission_service.rs`)
-Permission enforcement for tool actions, file access, and runtime operations.
+Microphone permission/device probing. Model-selected tool authorization is separate and lives at the action-policy/dispatch boundary; workspace enablement is not a mutation grant.
 
 ### Voice Runtime Service (`src-tauri/src/app/voice_runtime_service.rs`)
 Voice session management with VAD method selection, duplex modes, handoff between VAD methods, shadow evaluation, and speculation.
@@ -97,7 +97,7 @@ Agent skill definitions: 8 specialized skills for orchestration, planning, produ
 Data persistence for conversations, API connections, workspace tool settings, and voice configuration.
 
 ### Memory Subsystem (`src-tauri/src/memory/`)
-Memory management for agent context and conversation history.
+Explicit user-saved memory uses SQLite beside the conversation database, with fallible save/read/delete operations. Selected entries are bounded and used by both real requests and inspection; chat/tool content is not automatically ingested. Conversation history remains in its separate repository. See `ASSISTANT_READINESS.md` for retention, cloud-context disclosure, policy trade-offs, and delegated-run recovery.
 
 ## Tool Contract Rules
 - Every tool implements a single common trait.

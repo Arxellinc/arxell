@@ -566,7 +566,7 @@ export function renderMemoryToolBody(state: MemoryToolState): string {
   const contextSection = `
       <section class="memory-section">
         <h3 class="memory-section-title">Context Breakdown</h3>
-        <p class="memory-section-desc">Every prompt component currently assembled for chat, with rough token estimates</p>
+        <p class="memory-section-desc">Default-loaded components are sent to your selected model, including cloud providers. Dynamic components are available but not sent. Do not store secrets.</p>
         <div class="memory-table">
           <div class="memory-header">
             <span>Type</span>
@@ -612,7 +612,7 @@ export function renderMemoryToolBody(state: MemoryToolState): string {
   const memorySection = `
       <section class="memory-section">
         <h3 class="memory-section-title">Memory Store</h3>
-        <p class="memory-section-desc">Stored memory namespaces currently available to the app</p>
+        <p class="memory-section-desc">User-saved entries persist locally. Default-loaded entries are sent to your selected chat model, including cloud providers. Deleting an entry affects new chat requests, not existing conversations or in-flight runs.</p>
         <div class="memory-table">
           <div class="memory-header memory-header-persistent">
             <span>Type</span>

@@ -87,6 +87,14 @@ See [Pi Coding Harness](docs/PI_CODING_HARNESS.md) for supported versions, insta
 
 ---
 
+## Assistant Safety And Memory
+
+- Direct chat reads workspace files and in-scope Sheets data; file edits and shell execution require the Planner's explicitly approved Pi-backed Looper path. Manual workspace editing remains available.
+- Saved Memory/preferences persist locally and selected entries accompany chat requests to your chosen model, including cloud providers. Do not store secrets; deletion stops future use, not existing conversation/provider retention.
+- Delegated task history reports the final execution outcome, not merely launch success. A task's runs do not overlap, and interrupted work is not automatically replayed on restart. Scheduling requires Arxell to remain running.
+
+See [Assistant Readiness](docs/ASSISTANT_READINESS.md) for policy boundaries, diagnostics, memory retention, and recovery behavior.
+
 ## Agent Skills
 
 Eight specialised agent skills ship out of the box, giving the AI structured playbooks for complex software-engineering workflows:

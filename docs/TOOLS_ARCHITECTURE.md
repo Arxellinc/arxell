@@ -158,7 +158,9 @@ Agent tools are gated by workspace tool enablement in `src-tauri/src/app/chat_se
 
 The binding table maps a workspace tool id to a function that returns one or more agent tools. For example, the `chart` workspace tool enables chart-specific agent behavior.
 
-`Sheets` is exposed as an agent tool with explicit action schema for inspect/read/edit/save operations. Agent edits route through `SheetsService` with `EditSource::Agent` and correlation-id propagation.
+Direct agent tools are wrapped at dispatch by `tools/agent_registry.rs`, using the canonical read scope and fail-closed action allowlist from `tools/action_policy.rs`. Direct chat does not bind shell or file/Notepad mutation tools. Explicitly approved Pi-backed delegation handles execution; manual workspace edits remain available.
+
+`Sheets` is exposed to direct chat with a read-only schema (inspect/read/range/formula lists). Workbook reads use an authorized immutable snapshot; opening a missing path cannot become a file creation. Scheduled `tool_invoke` actions use the same read policy plus normal enabled-tool dispatch rather than calling raw registry handlers. See `ASSISTANT_READINESS.md`.
 
 ## Custom And Plugin Tools
 
@@ -209,7 +211,7 @@ Use this checklist for a new builtin tool:
 - Category: `data`
 - Frontend role: canvas-based grid rendering, formula bar with autocomplete, selection/edit interactions, local view state (sorting/filtering), and optimistic cell updates.
 - Backend role: canonical workbook state, file open/save, formula evaluation, range/cell edits, undo/redo, resize operations, and capability reporting.
-- Agent role: direct sheet actions (create/open/inspect/read/edit/insert/delete/save) through the dedicated Sheets agent tool.
+- Agent role: policy-gated inspection/read/range/formula-list actions through the dedicated Sheets adapter; mutations require manual editing or approved delegation.
 
 Current format scope and capability shape:
 

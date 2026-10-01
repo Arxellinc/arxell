@@ -32,6 +32,12 @@ impl LooperCommandHandler {
         self.handler.shutdown();
     }
 
+    pub fn loop_statuses(
+        &self,
+    ) -> Result<std::collections::HashMap<String, crate::contracts::LooperLoopStatus>, String> {
+        self.handler.loop_statuses()
+    }
+
     pub async fn start(&self, req: LooperStartRequest) -> Result<LooperStartResponse, String> {
         self.hub.emit(self.hub.make_event(
             &req.correlation_id,

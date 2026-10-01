@@ -202,7 +202,13 @@ fn main() {
                 let mut interval = tokio::time::interval(std::time::Duration::from_secs(15));
                 loop {
                     interval.tick().await;
-                    let _ = run_due_scheduled_tasks(&scheduler_state, 16).await;
+                    if run_due_scheduled_tasks(&scheduler_state, 16).await.is_err() {
+                        scheduler_state.hub.emit(scheduler_state.hub.make_event(
+                            "task-scheduler", Subsystem::Service, "tasks.scheduler.error",
+                            EventStage::Error, EventSeverity::Error,
+                            serde_json::json!({"message": "Task scheduling or outcome persistence failed; durable run intent is retained."}),
+                        ));
+                    }
                 }
             });
             if let Some(window) = app.get_webview_window("main") {
