@@ -195,7 +195,7 @@ Every layer communicates through typed contracts with correlation IDs, structure
 ### Prerequisites
 
 - When building from source: [Rust](https://rustup.rs/) (latest stable), Tauri CLI 2, and [Node.js](https://nodejs.org/) >= 20.19 for frontend tooling
-- Platform-specific WebView2 (Windows) / WebKit (macOS &mdash; built-in) / webkit2gtk (Linux)
+- Platform-specific WebView2 (Windows) / WebKit (macOS &mdash; built-in) / WebKitGTK 4.1 (Linux; release builds target Ubuntu 22.04 and glibc 2.35; newer compatible distributions may work)
 - For the **Pi** workspace tool, **Looper**, and approved chat execution: Pi `>=0.81.0,<0.82.0` and Node.js >= 22.19
 - On Windows, Pi also requires Git for Windows/Bash
 - On Linux, API-key storage requires an unlocked desktop Secret Service (for example GNOME Keyring or a compatible KWallet). If unavailable, saving credentials fails unless you explicitly enable plaintext fallback; Arxell does not silently downgrade storage.

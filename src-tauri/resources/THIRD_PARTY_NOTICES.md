@@ -1,5 +1,14 @@
 # Third-Party Notices
 
+## GNU OpenMP runtime (Linux)
+
+The bundled Linux llama.cpp and Whisper server runtimes include `libgomp.so.1` from Ubuntu 22.04's `libgomp1` package. Its exact package version is recorded in each runtime manifest; the build compiler's version must not be assumed to be the runtime package version. The GCC runtime is copyright the Free Software Foundation and is distributed under GPL-3.0-or-later with the GCC Runtime Library Exception 3.1. The exception permits combining the runtime with the application; `libgomp` itself remains under its stated license.
+
+- Ubuntu package and corresponding GCC source-package downloads: https://packages.ubuntu.com/jammy/libgomp1 (currently built from `gcc-12`)
+- The package copyright/Runtime Library Exception and full GPL-3.0 text accompany Linux bundles in `resources/licenses/libgomp1-copyright.txt` and `resources/licenses/GPL-3.txt`.
+- GPL-3.0: https://www.gnu.org/licenses/gpl-3.0.html
+- GCC Runtime Library Exception 3.1: https://www.gnu.org/licenses/gcc-exception-3.1.en.html
+
 ## Pi Coding Agent
 
 Arxell integrates with `@earendil-works/pi-coding-agent`, authored by Mario Zechner and distributed under the MIT License.
