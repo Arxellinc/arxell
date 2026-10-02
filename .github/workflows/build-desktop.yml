@@ -179,8 +179,17 @@ jobs:
         working-directory: frontend
         run: npm test
 
-      - name: Test acceptance helpers
-        run: python -m unittest discover -s scripts/tests -v
+      - name: Stage bundled third-party notices
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp THIRD_PARTY_NOTICES.md src-tauri/resources/THIRD_PARTY_NOTICES.md
+          if [[ "$RUNNER_OS" == "Linux" ]]; then
+            mkdir -p src-tauri/resources/licenses
+            cp /usr/share/common-licenses/GPL-3 src-tauri/resources/licenses/GPL-3.txt
+            cp /usr/share/doc/libgomp1/copyright src-tauri/resources/licenses/libgomp1-copyright.txt
+          fi
+          python -m unittest discover -s scripts/tests -v
 
       - name: Run Rust tests
         run: cargo test --manifest-path src-tauri/Cargo.toml --features tauri-runtime
@@ -206,12 +215,17 @@ jobs:
           whisper_tag="v1.9.4"
           shaderc_tag="v2023.8"
           vulkan_headers_tag="vulkan-sdk-1.4.309.0"
-          kokoro_hash="$(python -c 'import hashlib,pathlib; print(hashlib.sha256(b"".join(pathlib.Path(p).read_bytes() for p in ["scripts/prepare_kokoro_runtime.py", "scripts/verify_kokoro_runtime_archive.py", "scripts/model_assets.py"])).hexdigest())')"
+          kokoro_hash="$(md5sum scripts/prepare_kokoro_runtime.py scripts/verify_kokoro_runtime_archive.py | md5sum | cut -d' ' -f1)"
           echo "llama_tag=${llama_tag}" >> "${GITHUB_OUTPUT}"
           echo "whisper_tag=${whisper_tag}" >> "${GITHUB_OUTPUT}"
           echo "shaderc_tag=${shaderc_tag}" >> "${GITHUB_OUTPUT}"
           echo "vulkan_headers_tag=${vulkan_headers_tag}" >> "${GITHUB_OUTPUT}"
           echo "kokoro_hash=${kokoro_hash}" >> "${GITHUB_OUTPUT}"
+          libgomp_version="none"
+          if [[ "$RUNNER_OS" == "Linux" ]]; then
+            libgomp_version="$(dpkg-query -W -f='${Version}' libgomp1)"
+          fi
+          echo "libgomp_version=${libgomp_version}" >> "${GITHUB_OUTPUT}"
           echo "Cache key: llama=${llama_tag} whisper=${whisper_tag} shaderc=${shaderc_tag} vulkan_headers=${vulkan_headers_tag} kokoro=${kokoro_hash}"
 
       - name: Cache bundled runtimes
@@ -223,7 +237,8 @@ jobs:
             src-tauri/resources/whisper-server
             src-tauri/resources/whisper
             src-tauri/resources/kokoro-runtime
-          key: runtimes-llama-source-v11-${{ runner.os }}-${{ runner.arch }}-${{ steps.runtime_versions.outputs.llama_tag }}-${{ steps.runtime_versions.outputs.whisper_tag }}-${{ steps.runtime_versions.outputs.shaderc_tag }}-${{ steps.runtime_versions.outputs.vulkan_headers_tag }}-${{ steps.runtime_versions.outputs.kokoro_hash }}
+          # Do not restore pre-policy/native-tuned caches, even when source tags match.
+          key: runtimes-llama-source-v11-portable-all-${{ runner.os }}-${{ runner.arch }}-${{ steps.runtime_versions.outputs.llama_tag }}-${{ steps.runtime_versions.outputs.whisper_tag }}-${{ steps.runtime_versions.outputs.shaderc_tag }}-${{ steps.runtime_versions.outputs.vulkan_headers_tag }}-${{ steps.runtime_versions.outputs.libgomp_version }}-${{ steps.runtime_versions.outputs.kokoro_hash }}
 
       - name: Build and install pinned SPIRV-Headers for Windows
         if: matrix.platform.os == 'windows-latest' && steps.cache_runtimes.outputs.cache-hit != 'true'
@@ -329,6 +344,7 @@ jobs:
               cmake -S "$source_dir" -B "$build_dir" \
                 -DCMAKE_BUILD_TYPE=Release -DLLAMA_BUILD_SERVER=ON -DGGML_NATIVE=OFF "$@"
             fi
+            python scripts/verify_runtime_bundle.py --cmake-cache "$build_dir/CMakeCache.txt"
             echo "[llama-runtime] building ${engine_id}"
             cmake --build "$build_dir" --config Release --target llama-server --parallel
             local server
@@ -405,6 +421,7 @@ jobs:
           import json
           import os
           import pathlib
+          import subprocess
 
           root = pathlib.Path("src-tauri/resources/llama-runtime")
           binary_name = "llama-server.exe" if os.environ["RUNNER_OS"] == "Windows" else "llama-server"
@@ -431,6 +448,10 @@ jobs:
                       "runnerOs": os.environ["RUNNER_OS"],
                       "runnerArch": os.environ["RUNNER_ARCH"],
                       "source": "https://github.com/ggml-org/llama.cpp",
+                      "ggmlNative": False,
+                      "libgompPackageVersion": subprocess.check_output(
+                          ["dpkg-query", "-W", "-f=${Version}", "libgomp1"], text=True
+                      ).strip() if os.environ["RUNNER_OS"] == "Linux" else None,
                       "engines": engines,
                   },
                   indent=2,
@@ -526,6 +547,7 @@ jobs:
           git clone --depth 1 --branch "$WHISPER_TAG" https://github.com/ggerganov/whisper.cpp.git "$source_dir"
           echo "[whisper-runtime] configuring"
           cmake -S "$source_dir" -B "$build_dir" -DCMAKE_BUILD_TYPE=Release -DGGML_NATIVE=OFF
+          python scripts/verify_runtime_bundle.py --cmake-cache "$build_dir/CMakeCache.txt"
           echo "[whisper-runtime] building whisper-server"
           cmake --build "$build_dir" --config Release --target whisper-server --parallel
 
@@ -569,6 +591,7 @@ jobs:
           import json
           import os
           import pathlib
+          import subprocess
 
           server_dir = pathlib.Path("src-tauri/resources/whisper-server")
           binary = server_dir / os.environ["TARGET_NAME"]
@@ -587,6 +610,10 @@ jobs:
               "binaryPath": str(binary),
               "supportFiles": support_files,
               "source": "https://github.com/ggerganov/whisper.cpp",
+              "ggmlNative": False,
+              "libgompPackageVersion": subprocess.check_output(
+                  ["dpkg-query", "-W", "-f=${Version}", "libgomp1"], text=True
+              ).strip() if os.environ["RUNNER_OS"] == "Linux" else None,
           }
           (server_dir / "manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
           print("[whisper-runtime] manifest written")
@@ -686,6 +713,17 @@ jobs:
           print(f"[kokoro-runtime] manifest written for {archive.name}")
           PY
 
+      - name: Verify portable runtime cache policy and closures
+        shell: bash
+        run: |
+          set -euo pipefail
+          python scripts/verify_runtime_bundle.py --runtime llama \
+            --root src-tauri/resources/llama-runtime --platform "$RUNNER_OS" \
+            --tag '${{ steps.runtime_versions.outputs.llama_tag }}'
+          python scripts/verify_runtime_bundle.py --runtime whisper \
+            --root src-tauri/resources/whisper-server --platform "$RUNNER_OS" \
+            --tag '${{ steps.runtime_versions.outputs.whisper_tag }}'
+
       - name: Build Tauri app bundle
         working-directory: src-tauri
         shell: bash
@@ -694,18 +732,20 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p "${XDG_CACHE_HOME}"
+          # Frontend verification/build already ran above; don't repeat a hook
+          # whose cwd varies across CLI versions (frontend/frontend locally).
           rm -rf target/release/bundle
           case "${{ matrix.platform.os }}" in
             ubuntu-22.04)
-              cargo tauri build --bundles deb -- --features tauri-runtime 2>&1
+              cargo tauri build --config '{"build":{"beforeBuildCommand":""}}' --bundles deb -- --features tauri-runtime 2>&1
               runtime_library_path="$GITHUB_WORKSPACE/src-tauri/resources/llama-runtime/llama.cpp-cpu:$GITHUB_WORKSPACE/src-tauri/resources/llama-runtime/llama.cpp-vulkan:$GITHUB_WORKSPACE/src-tauri/resources/whisper-server"
-              DEBUG=1 LD_LIBRARY_PATH="$runtime_library_path" cargo tauri build --verbose --bundles appimage -- --features tauri-runtime 2>&1
+              DEBUG=1 LD_LIBRARY_PATH="$runtime_library_path" cargo tauri build --config '{"build":{"beforeBuildCommand":""}}' --verbose --bundles appimage -- --features tauri-runtime 2>&1
               ;;
             windows-latest)
-              cargo tauri build --bundles msi -- --features tauri-runtime
+              cargo tauri build --config '{"build":{"beforeBuildCommand":""}}' --bundles msi -- --features tauri-runtime
               ;;
             macos-latest)
-              cargo tauri build --bundles dmg -- --features tauri-runtime
+              cargo tauri build --config '{"build":{"beforeBuildCommand":""}}' --bundles dmg -- --features tauri-runtime
               ;;
             *)
               echo "Unsupported platform: ${{ matrix.platform.os }}" >&2
@@ -749,6 +789,10 @@ jobs:
               cd /tmp/appimage-extract
               APPIMAGE_EXTRACT_AND_RUN=1 /tmp/Arxell.AppImage --appimage-extract >/dev/null
               appdir=/tmp/appimage-extract/squashfs-root/usr/lib/Arxell/resources
+              test -s "$appdir/THIRD_PARTY_NOTICES.md"
+              grep -q "GNU OpenMP" "$appdir/THIRD_PARTY_NOTICES.md"
+              test -s "$appdir/licenses/GPL-3.txt"
+              grep -q "GCC RUNTIME LIBRARY EXCEPTION" "$appdir/licenses/libgomp1-copyright.txt"
               llama_dir="$appdir/llama-runtime/llama.cpp-cpu"
               whisper_dir="$appdir/whisper-server"
               LD_LIBRARY_PATH="$llama_dir" "$llama_dir/llama-server" --version
@@ -967,10 +1011,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          (
-            cd release-assets
-            find . -type f -print0 | sort -z | xargs -0 -r sha256sum
-          ) > SHA256SUMS.txt
+          python3 scripts/generate_release_checksums.py release-assets > SHA256SUMS.txt
           test -s SHA256SUMS.txt
 
       - name: Publish GitHub Release assets

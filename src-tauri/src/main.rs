@@ -205,6 +205,12 @@ fn main() {
             let _ = (webview, payload);
         })
         .plugin(tauri_plugin_dialog::init())
+        // Only explicit onboarding catalog requests; don't intercept other links.
+        .plugin(
+            tauri_plugin_opener::Builder::new()
+                .open_js_links_on_click(false)
+                .build(),
+        )
         .setup(move |app| {
             attach_event_forwarder(app.handle().clone(), hub.clone());
             let scheduler_state = scheduler_state.clone();
