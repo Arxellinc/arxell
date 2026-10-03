@@ -17,6 +17,17 @@ impl FilesService {
         }
     }
 
+    /// Instance for an already authorized execution scope; never changes the UI's global root.
+    pub fn for_root(root: &Path) -> Result<Self, String> {
+        let root_path = root
+            .canonicalize()
+            .map_err(|_| "approved file scope is unavailable")?;
+        if !root_path.is_dir() {
+            return Err("approved file scope is not a directory".into());
+        }
+        Ok(Self { root_path })
+    }
+
     pub fn root_path(&self) -> &Path {
         self.root_path.as_path()
     }
@@ -230,6 +241,12 @@ fn resolve_writable_target_path(root: &Path, requested: &str) -> Result<PathBuf,
     if trimmed.is_empty() {
         return Err("path is required".to_string());
     }
+    if Path::new(trimmed)
+        .components()
+        .any(|part| matches!(part, std::path::Component::ParentDir))
+    {
+        return Err("parent traversal is not allowed in a writable path".into());
+    }
     let joined = resolve_requested_path(canonical_root.as_path(), trimmed);
     let existing_anchor = find_existing_ancestor(joined.as_path())
         .ok_or_else(|| "failed resolving requested path: no existing parent".to_string())?;
@@ -239,7 +256,14 @@ fn resolve_writable_target_path(root: &Path, requested: &str) -> Result<PathBuf,
     if !canonical_anchor.starts_with(canonical_root.as_path()) {
         return Err("requested path is outside workspace root".to_string());
     }
-    Ok(joined)
+    let suffix = joined
+        .strip_prefix(&existing_anchor)
+        .map_err(|_| "failed resolving writable path suffix")?;
+    if suffix.as_os_str().is_empty() {
+        Ok(canonical_anchor)
+    } else {
+        Ok(canonical_anchor.join(suffix))
+    }
 }
 
 fn list_directory_entries(path: &Path) -> Result<Vec<FilesListDirectoryEntry>, String> {
@@ -302,5 +326,46 @@ fn path_to_string(path: &Path) -> String {
     #[cfg(not(target_os = "windows"))]
     {
         s
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn manual_writes_cannot_escape_through_nonexistent_parent_paths() {
+        let temp = std::env::temp_dir().join(format!("arxell-file-write-{}", uuid::Uuid::new_v4()));
+        let root = temp.join("project");
+        std::fs::create_dir_all(&root).unwrap();
+        let files = FilesService::for_root(&root).unwrap();
+        assert!(files
+            .write_file(
+                "missing/../../escape.txt",
+                "private overwrite",
+                "test".into()
+            )
+            .is_err());
+        assert!(!temp.join("escape.txt").exists());
+        assert!(!root.join("missing").exists());
+        files
+            .write_file("note.txt", "first", "test".into())
+            .unwrap();
+        files
+            .write_file("note.txt", "second", "test".into())
+            .unwrap();
+        assert_eq!(
+            std::fs::read_to_string(root.join("note.txt")).unwrap(),
+            "second"
+        );
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(&temp, root.join("outside")).unwrap();
+            assert!(files
+                .write_file("outside/escape.txt", "private overwrite", "test".into())
+                .is_err());
+            assert!(!temp.join("escape.txt").exists());
+        }
+        std::fs::remove_dir_all(temp).unwrap();
     }
 }

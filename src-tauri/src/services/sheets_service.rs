@@ -79,6 +79,17 @@ impl SheetsService {
         }
     }
 
+    /// Isolated snapshot for authorized reads; cannot race a UI workbook switch.
+    pub fn read_snapshot(workbook: WorkbookState) -> Self {
+        let ai_model_id = workbook.ai_model_id.clone();
+        Self {
+            state: RwLock::new(Some(workbook)),
+            formula_engine: create_engine(None),
+            hub: None,
+            ai_model_id: Arc::new(RwLock::new(ai_model_id)),
+        }
+    }
+
     pub fn current_workbook(&self) -> Option<WorkbookState> {
         self.state
             .read()

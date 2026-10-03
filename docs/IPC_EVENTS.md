@@ -1,6 +1,6 @@
 # IPC and Event Contracts
 
-Contract version: `foundation-v7` (see `CONTRACT_VERSION.md`)
+Contract version: `foundation-v8` (see `CONTRACT_VERSION.md`)
 
 ## Event Channel
 - `app:event`
@@ -45,6 +45,18 @@ Contract version: `foundation-v7` (see `CONTRACT_VERSION.md`)
 - `chat.stream.error`
   - stage: `error`
   - payload: `{ message }`
+
+### Direct-agent tool diagnostics
+
+- `chat.agent.tool.start` / `chat.agent.tool.end`: `{ toolCallId, toolName }`
+- `chat.agent.tool.result`: `{ toolCallId, toolName, success }`
+- `toolCallId` is an opaque backend-local ID stable within a request; model-supplied identifiers are not diagnostic metadata. Unknown tool names are replaced with `unknown`.
+- No `display`, commands, arguments, raw output, or stderr. The hub enforces this allowlist; legacy frontend displays are ignored.
+- `tasks.scheduler.error`: `{ message }`, a fixed safe failure summary. Durable run intent remains available for recovery.
+
+Presentation events (`chat.stream.chunk`, `chat.stream.reasoning_chunk`, `terminal.output`, `notepad.document.sync`, `chart.definition.set`, `pi.message.delta`, `pi.message.final`) are broadcast but excluded from diagnostic history. Known credential fields are redacted recursively.
+
+Task run-history responses may contain `starting`; delegated `running` records have a null completion time. Completion notifications follow the reconciled terminal outcome, not launch acknowledgement. See `ASSISTANT_READINESS.md`.
 
 ### Persistence Actions
 - `conversation.append`
@@ -232,7 +244,7 @@ Looper phases emit lifecycle events (`looper.phase.start`, `looper.phase.complet
 | `pi.usage` | `loopId`, `phase`, token counts |
 | `pi.approval.requested` | `loopId`, `phase`, request ID/method, pending decision |
 
-Tool arguments, tool output, raw stderr, secrets, and complete file contents are not copied into Pi progress metadata.
+Tool arguments, tool output, raw stderr, secrets, and complete file contents are not copied into Pi progress metadata. `looper.loop.complete` / max-iteration `looper.loop.failed` use `reviewResult: "ship" | "revise"` labels, not review artifact text.
 
 ---
 
