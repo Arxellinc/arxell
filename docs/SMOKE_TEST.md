@@ -23,6 +23,25 @@ Checks performed:
   - `"role":"user"`
   - `"role":"assistant"`
 
+## Renderer / native IPC handshake (CI-only)
+
+This probe loads the **embedded production frontend**, checks that `#app .app-frame` has a visible layout, invokes the real `cmd_app_version` Rust handler, and writes a bounded result after checking its version. It does not mock IPC or accept a merely live process as success.
+
+From the repository root, with a display session:
+
+```sh
+(cd frontend && npm ci && npm run build)
+cargo test --manifest-path src-tauri/Cargo.toml --features desktop-smoke --bin arxell desktop_smoke::tests
+cargo build --manifest-path src-tauri/Cargo.toml --release --features desktop-smoke
+python3 scripts/desktop_launch_smoke.py --require-report --output /tmp/arxell-renderer-smoke -- "$PWD/src-tauri/target/release/arxell"
+```
+
+On headless Linux, run the Python command under `dbus-run-session -- xvfb-run -a`. The harness uses a temporary profile, a minimal PATH, and no inherited provider credentials; it removes stale reports, fails on early exit/missing or malformed reports, and terminates its owned process group. Evidence includes `launch.log` and `renderer-ipc.json`; macOS also attempts a screenshot.
+
+**Build-mode regression:** `cargo build --release --features tauri-runtime` alone still uses Tauri's development URL unless the custom-protocol feature is enabled. `desktop-smoke` explicitly enables `tauri/custom-protocol`; its context regression test rejects an empty embedded frontend. The initial failing handshake was caused by this test-build configuration, not proof of a broken packaged app.
+
+**Never bundle or publish `desktop-smoke` builds.** Generate release packages with `tauri-runtime` via the Tauri CLI first. CI builds/runs the separate unbundled probe afterward. This test proves basic rendering and native IPC only—not clean-machine macOS acceptance, model/chat workflows, credentials, or upgrade persistence.
+
 ## Manual (UI side)
 1. Start frontend:
 - `cd frontend && npm install && npm run dev`
@@ -106,16 +125,24 @@ The regular `desktop_keyring_backend_persists_until_deleted` test checks native 
 
 ## Pi Coding Harness
 
-See `PI_CODING_HARNESS.md` for installation and supported versions.
+See `PI_CODING_HARNESS.md` for runtime discovery and setup.
 
 ### Runtime readiness
 
-1. Run `pi --version` and confirm it is in the supported `>=0.81.0,<0.82.0` range.
-2. Open the Pi tool and verify the setup state reports the selected executable and version.
-3. On a machine without Pi, or with an incompatible fixture executable, verify the UI shows a typed recovery message rather than reporting ready.
+1. Run `pi --version`; verify Arxell detects the selected executable/version without rejecting it solely by version number.
+2. Open the Pi tool and verify an installed Pi launches automatically.
+3. On a machine without Pi but with Node.js/npm, verify Arxell installs the current package and then launches Pi; when prerequisites are missing, verify the setup UI explains what is needed.
 4. On Windows, verify missing Git Bash is diagnosed and `PI_SHELL_PATH` works for a nonstandard Bash installation.
 
+Optional real-runtime readiness regression (probes an existing installation without replacing it or using provider credentials):
+
+```sh
+ARXELL_TEST_PI_EXECUTABLE=/absolute/path/to/pi cargo test --manifest-path src-tauri/Cargo.toml real_pi_installation_is_ready_without_version_gate -- --ignored
+```
+
 ### Interactive workspace
+
+On first opening Pi with an installed, launchable runtime, verify a session starts immediately without an install/confirmation modal. Reopening the tool must not create a duplicate session. For a detected runtime with a genuine startup error, verify the dialog offers Retry/path correction, not a replacement install. Missing Pi with working prerequisites can install privately; missing prerequisites must show recovery without running npm.
 
 1. Launch two Pi sessions with different labels and working directories.
 2. Supply an initial prompt to one session and verify it arrives after the TUI is ready.
@@ -139,7 +166,7 @@ Automated fixtures cover RPC framing, settlement, malformed output, crashes, tim
 
 1. Create a low-risk task and verify it remains in Drafts after Save as Draft and app restart.
 2. Select a project, star the task, restart, and confirm project identity and priority survive backend synchronization.
-3. Use Save & Run and verify a real Pi-backed Looper record is created; a missing/incompatible Pi runtime must produce a visible task error rather than a successful run.
+3. Use Save & Run and verify a real Pi-backed Looper record is created; a missing or unlaunchable Pi runtime must produce a visible task error rather than a successful run.
 4. Schedule a one-time task in the near future, allow it to run, and verify it does not run again on later 15-second scheduler ticks.
 5. Start “Run due now” near a background scheduler tick and verify only one run record is created for the occurrence.
 6. Check daily/weekly local-time recurrence and a DST transition in the selected timezone.
@@ -163,6 +190,14 @@ See `Cron-Tasks.md` for lifecycle, execution, scheduling, overlap, and notificat
 3. Start runtime if an engine and model are available.
 4. Verify `endpoint` and `pid` are returned.
 5. Stop runtime (`cmd_llama_runtime_stop`), verify `stopped: true`.
+
+## Whisper relocation and lifecycle
+
+- Library tests cover private dependency staging, bundled English/Tiny model discovery, HTTP readiness, child exit, and cancellation/reaping during loading.
+- To test a real prepared/package binary through the same staging helper used by the app:
+  `ARXELL_TEST_WHISPER_BINARY=/absolute/path/to/whisper-server cargo test --manifest-path src-tauri/Cargo.toml --features tauri-runtime real_whisper_runs_from_staged_closure -- --ignored`
+- In the installed app, start voice with a bundled model, stop while loading, restart, then terminate only its owned Whisper child and confirm an error status and cleared endpoint. Stopping must not leave staged runtime directories or child processes.
+- Both bundled English quantized models are resolved under `whisper/` and `resources/whisper/`; the model download URL is the Hugging Face model repository, not its nonexistent datasets endpoint.
 
 ## TTS Engine Reset Behavior
 

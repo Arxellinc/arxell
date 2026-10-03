@@ -582,18 +582,9 @@ jobs:
             exit 1
           fi
 
-          # STT models are optional inputs: a failed download degrades voice
-          # features but must not block the app bundle.
-          for model in ggml-base.en-q8_0.bin ggml-tiny.en-q8_0.bin; do
-            if [[ ! -f "$whisper_models_dir/$model" ]]; then
-              echo "[whisper-runtime] downloading model ${model}"
-              if ! curl -fL --retry 3 -o "$whisper_models_dir/$model" \
-                  "https://huggingface.co/datasets/ggerganov/whisper.cpp/resolve/main/${model}"; then
-                echo "[whisper-runtime] WARNING: failed to download ${model}; voice input is degraded"
-                rm -f "$whisper_models_dir/$model"
-              fi
-            fi
-          done
+          # A release claiming bundled voice must include verified models.
+          # Download errors are fatal, never cached as a silently degraded bundle.
+          python scripts/model_assets.py whisper "$whisper_models_dir"
 
           WHISPER_TAG="$WHISPER_TAG" RUNNER_OS="$RUNNER_OS" RUNNER_ARCH="$RUNNER_ARCH" \
           TARGET_NAME="$target_name" python - <<'PY_MANIFEST'
@@ -907,6 +898,33 @@ jobs:
           test -x "$app_copy/Contents/MacOS/$executable"
           file "$app_copy/Contents/MacOS/$executable" | grep -q 'arm64'
           echo "Validated copied Apple Silicon app bundle: $app_copy"
+
+      - name: Build CI-only renderer IPC probe (never bundle or publish)
+        if: runner.os == 'Linux' || runner.os == 'macOS'
+        run: |
+          cargo test --manifest-path src-tauri/Cargo.toml --features desktop-smoke --bin arxell desktop_smoke::tests
+          cargo build --manifest-path src-tauri/Cargo.toml --release --features desktop-smoke
+
+      - name: Require renderer and real Rust IPC handshake
+        if: runner.os == 'Linux' || runner.os == 'macOS'
+        shell: bash
+        run: |
+          set -euo pipefail
+          binary="$GITHUB_WORKSPACE/src-tauri/target/release/arxell"
+          if [[ "$RUNNER_OS" == "Linux" ]]; then
+            sudo apt-get install -y xvfb xauth dbus-x11
+            dbus-run-session -- xvfb-run -a python scripts/desktop_launch_smoke.py --require-report --output "$RUNNER_TEMP/acceptance/renderer-ipc" -- "$binary"
+          else
+            python scripts/desktop_launch_smoke.py --require-report --output "$RUNNER_TEMP/acceptance/renderer-ipc" -- "$binary"
+          fi
+
+      - name: Upload acceptance evidence even on failure
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.platform.name }}-acceptance-evidence
+          path: ${{ runner.temp }}/acceptance
+          if-no-files-found: ignore
 
       - name: Upload Tauri bundle artifact
         uses: actions/upload-artifact@v4

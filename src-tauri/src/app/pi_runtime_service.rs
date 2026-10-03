@@ -6,9 +6,6 @@ use std::process::{Command, Output, Stdio};
 use std::sync::RwLock;
 use std::time::Duration;
 
-pub const PI_MIN_VERSION: (u64, u64, u64) = (0, 81, 0);
-pub const PI_MAX_EXCLUSIVE_VERSION: (u64, u64, u64) = (0, 82, 0);
-
 const PROBE_TIMEOUT_SECS: u64 = 10;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -79,7 +76,8 @@ impl PiRuntimeService {
             discover_pi_candidates(&self.state_root)
         };
 
-        let node_available = command_succeeds("node", &["--version"]);
+        let found_candidate = candidates.iter().any(|candidate| candidate.is_file());
+        let node_available = node_version_supported();
         let npm_available = command_succeeds("npm", &["--version"]);
         let bash_path = discover_bash();
         let mut last_error = None;
@@ -88,25 +86,6 @@ impl PiRuntimeService {
             match probe_candidate(&candidate) {
                 Ok(version) => {
                     let executable = canonical_display(&candidate);
-                    let compatible = version_is_supported(&version);
-                    if !compatible {
-                        return PiRuntimeProbe {
-                            status: PiRuntimeStatus::IncompatibleVersion,
-                            installed: true,
-                            compatible: false,
-                            version: Some(version),
-                            executable_path: Some(executable),
-                            bash_path,
-                            node_available,
-                            npm_available,
-                            error_code: Some("incompatible_version".to_string()),
-                            error_message: Some(format!(
-                                "Arxell supports Pi >= {} and < {}.",
-                                format_version(PI_MIN_VERSION),
-                                format_version(PI_MAX_EXCLUSIVE_VERSION)
-                            )),
-                        };
-                    }
                     if cfg!(target_os = "windows") && bash_path.is_none() {
                         return PiRuntimeProbe {
                             status: PiRuntimeStatus::MissingBash,
@@ -149,12 +128,12 @@ impl PiRuntimeService {
             .filter(|value| !value.is_empty())
             .is_some();
         PiRuntimeProbe {
-            status: if explicit {
+            status: if explicit || found_candidate {
                 PiRuntimeStatus::LaunchFailed
             } else {
                 PiRuntimeStatus::NotFound
             },
-            installed: false,
+            installed: found_candidate,
             compatible: false,
             version: None,
             executable_path: None,
@@ -163,12 +142,14 @@ impl PiRuntimeService {
             npm_available,
             error_code: Some(if explicit {
                 "invalid_executable_path".to_string()
+            } else if found_candidate {
+                "pi_launch_failed".to_string()
             } else {
                 "pi_not_found".to_string()
             }),
             error_message: Some(last_error.unwrap_or_else(|| {
                 if !node_available {
-                    "Pi was not found and Node.js is unavailable. Install Node.js, then install Pi."
+                    "Automatic Pi installation requires Node.js 22.19.0 or newer and npm. Install or update Node.js, then retry."
                         .to_string()
                 } else {
                     "Pi was not found in managed, explicit, PATH, npm, pnpm, Yarn, or Bun locations."
@@ -194,10 +175,6 @@ fn discover_pi_candidates(state_root: &Path) -> Vec<PathBuf> {
     } else {
         &["pi"]
     };
-    for name in executable_names {
-        candidates.push(state_root.join("pi-runtime").join("bin").join(name));
-    }
-
     if let Some(path) = env::var_os("PATH") {
         for directory in env::split_paths(&path) {
             for name in executable_names {
@@ -241,6 +218,14 @@ fn discover_pi_candidates(state_root: &Path) -> Vec<PathBuf> {
             }
         }
     }
+
+    // Prefer an existing user/system installation. The app-managed copy is a fallback only.
+    for name in executable_names {
+        let managed_runtime = state_root.join("pi-runtime");
+        candidates.push(managed_runtime.join("node_modules").join(".bin").join(name));
+        candidates.push(managed_runtime.join("bin").join(name));
+    }
+
     let mut seen = HashSet::new();
     candidates
         .into_iter()
@@ -366,10 +351,20 @@ fn probe_candidate(candidate: &Path) -> Result<String, String> {
     Ok(version)
 }
 
-fn version_is_supported(version: &str) -> bool {
-    parse_version(version)
-        .map(|parsed| parsed >= PI_MIN_VERSION && parsed < PI_MAX_EXCLUSIVE_VERSION)
-        .unwrap_or(false)
+fn node_version_supported() -> bool {
+    let mut command = Command::new("node");
+    command.arg("--version");
+    let Some(output) =
+        run_probe_with_timeout(&mut command, Duration::from_secs(PROBE_TIMEOUT_SECS))
+    else {
+        return false;
+    };
+    let version = String::from_utf8_lossy(&output.stdout);
+    output.status.success() && is_supported_pi_node_version(version.trim())
+}
+
+fn is_supported_pi_node_version(value: &str) -> bool {
+    parse_version(value).is_some_and(|version| version >= (22, 19, 0))
 }
 
 fn parse_version(value: &str) -> Option<(u64, u64, u64)> {
@@ -381,10 +376,6 @@ fn parse_version(value: &str) -> Option<(u64, u64, u64)> {
         parts.next()?.parse().ok()?,
         parts.next()?.parse().ok()?,
     ))
-}
-
-fn format_version(version: (u64, u64, u64)) -> String {
-    format!("{}.{}.{}", version.0, version.1, version.2)
 }
 
 fn canonical_display(path: &Path) -> String {
@@ -454,12 +445,33 @@ mod tests {
     use super::*;
 
     #[test]
-    fn supported_version_range_is_explicit() {
-        assert!(version_is_supported("0.81.0"));
-        assert!(version_is_supported("v0.81.99"));
-        assert!(!version_is_supported("0.80.9"));
-        assert!(!version_is_supported("0.82.0"));
-        assert!(!version_is_supported("invalid"));
+    fn semantic_versions_are_parsed_without_a_supported_range_gate() {
+        assert!(parse_version("0.81.1").is_some());
+        assert!(parse_version("v0.84.2").is_some());
+        assert!(parse_version("0.99.1").is_some());
+        assert!(parse_version("invalid").is_none());
+    }
+
+    #[test]
+    #[ignore = "requires an explicitly selected real Pi installation"]
+    fn real_pi_installation_is_ready_without_version_gate() {
+        let path = env::var("ARXELL_TEST_PI_EXECUTABLE").expect("set ARXELL_TEST_PI_EXECUTABLE");
+        let service = PiRuntimeService::new(std::env::temp_dir());
+        let probe = service.probe(Some(&path));
+        assert_eq!(probe.status, PiRuntimeStatus::Ready, "{:?}", probe.error_code);
+        assert!(probe.installed);
+        assert!(probe.compatible);
+        assert!(parse_version(probe.version.as_deref().unwrap()).is_some());
+        assert!(service.selected_executable().is_some());
+    }
+
+    #[test]
+    fn automatic_pi_install_requires_node_22_19_or_newer() {
+        assert!(!is_supported_pi_node_version("v20.19.0"));
+        assert!(!is_supported_pi_node_version("v22.18.9"));
+        assert!(is_supported_pi_node_version("v22.19.0"));
+        assert!(is_supported_pi_node_version("v24.0.0"));
+        assert!(!is_supported_pi_node_version("not-node"));
     }
 
     #[test]
@@ -492,32 +504,31 @@ mod tests {
     }
 
     #[test]
-    fn explicit_runtime_probe_reports_ready_and_incompatible_versions() {
-        let Some(ready) = fake_version_executable("0.81.1", "ready") else {
+    fn explicit_runtime_probe_accepts_newer_versions() {
+        let Some(previous) = fake_version_executable("0.81.1", "previous") else {
             return;
         };
-        let Some(incompatible) = fake_version_executable("0.82.0", "incompatible") else {
+        let Some(newer) = fake_version_executable("0.84.2", "newer") else {
             return;
         };
-        let service = PiRuntimeService::new(std::env::temp_dir());
+        let Some(current) = fake_version_executable("0.99.1", "current") else {
+            return;
+        };
 
-        let ready_probe = service.probe(ready.to_str());
-        assert_eq!(ready_probe.status, PiRuntimeStatus::Ready);
-        assert!(ready_probe.compatible);
-        assert_eq!(ready_probe.version.as_deref(), Some("0.81.1"));
+        for (path, version) in [
+            (&previous, "0.81.1"),
+            (&newer, "0.84.2"),
+            (&current, "0.99.1"),
+        ] {
+            let probe = PiRuntimeService::new(std::env::temp_dir()).probe(path.to_str());
+            assert_eq!(probe.status, PiRuntimeStatus::Ready);
+            assert!(probe.compatible);
+            assert_eq!(probe.version.as_deref(), Some(version));
+        }
 
-        let incompatible_probe =
-            PiRuntimeService::new(std::env::temp_dir()).probe(incompatible.to_str());
-        assert_eq!(
-            incompatible_probe.status,
-            PiRuntimeStatus::IncompatibleVersion
-        );
-        assert_eq!(
-            incompatible_probe.error_code.as_deref(),
-            Some("incompatible_version")
-        );
-        let _ = std::fs::remove_file(ready);
-        let _ = std::fs::remove_file(incompatible);
+        let _ = std::fs::remove_file(previous);
+        let _ = std::fs::remove_file(newer);
+        let _ = std::fs::remove_file(current);
     }
 
     #[test]
@@ -538,9 +549,7 @@ mod tests {
         #[cfg(target_os = "macos")]
         assert!(supplemental.contains(&PathBuf::from("/opt/homebrew/bin")));
         #[cfg(target_os = "windows")]
-        assert!(supplemental
-            .iter()
-            .any(|dir| dir.ends_with("npm")));
+        assert!(supplemental.iter().any(|dir| dir.ends_with("npm")));
 
         let base = if cfg!(target_os = "windows") {
             env::join_paths([PathBuf::from("C:\\tools")]).unwrap()
@@ -550,13 +559,13 @@ mod tests {
         let augmented = augment_path_from(Some(base));
         let entries: Vec<PathBuf> = env::split_paths(&augmented).collect();
         assert_eq!(entries.first(), supplemental.first());
-        assert!(entries.contains(&PathBuf::from(
-            if cfg!(target_os = "windows") {
+        assert!(
+            entries.contains(&PathBuf::from(if cfg!(target_os = "windows") {
                 "C:\\tools"
             } else {
                 "/custom/bin"
-            }
-        )));
+            }))
+        );
         // A supplemental directory already present in PATH must not duplicate.
         let with_dup = augment_path_from(Some(env::join_paths([supplemental[0].clone()]).unwrap()));
         let dup_entries: Vec<PathBuf> = env::split_paths(&with_dup).collect();
@@ -615,13 +624,34 @@ mod tests {
         let _ = std::fs::remove_file(&path);
 
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .contains("did not finish within"));
+        assert!(result.unwrap_err().contains("did not finish within"));
         assert!(
             elapsed < Duration::from_secs(PROBE_TIMEOUT_SECS + 10),
             "probe took {elapsed:?}"
         );
+    }
+
+    #[test]
+    fn managed_npm_binary_is_discovered() {
+        let root =
+            std::env::temp_dir().join(format!("arxell-managed-pi-runtime-{}", std::process::id()));
+        let executable_name = if cfg!(target_os = "windows") {
+            "pi.cmd"
+        } else {
+            "pi"
+        };
+        let executable = root
+            .join("pi-runtime")
+            .join("node_modules")
+            .join(".bin")
+            .join(executable_name);
+        std::fs::create_dir_all(executable.parent().unwrap()).unwrap();
+        std::fs::write(&executable, "managed pi fixture").unwrap();
+
+        let candidates = discover_pi_candidates(&root);
+        assert!(candidates.contains(&executable));
+
+        let _ = std::fs::remove_dir_all(root);
     }
 
     fn fake_version_executable(version: &str, label: &str) -> Option<PathBuf> {

@@ -9,17 +9,19 @@ Arxell uses the [Pi coding harness](https://pi.dev/) in two modes:
 
 ## Supported Runtime
 
-Arxell `0.2.11` uses a system-installed Pi runtime. Arxell supports Pi versions `>=0.81.0` and `<0.82.0`; incompatible versions are rejected instead of being used optimistically.
+Arxell uses an installed Pi runtime without a hard-coded semantic-version ceiling. A candidate must return a parseable version from `pi --version`; Arxell then launches it and reports actual launch/RPC failures rather than telling users to replace an otherwise detected version. This is intentionally version-agnostic, not a guarantee that every future Pi protocol change will work. Pi `0.84.2` and `0.99.1` were manually verified to start in RPC mode, load the bundled policy extension, and answer `get_state`; the `0.99.1` check used a disposable npm installation. This is a startup/protocol smoke test, not a credentialed inference test.
 
-Install the supported package:
+Arxell checks an explicit path, `ARXELL_PI_EXECUTABLE`, `PATH`, standard npm/pnpm/Yarn/Bun locations, and finally its private managed-runtime location. If no Pi is found and Node.js `>=22.19.0`/npm are available (and Bash is present on Windows), opening the Pi workspace automatically installs the current package into its private `~/.arxell/pi-runtime` directory without lifecycle scripts. This leaves a user's global Pi installation untouched. The equivalent manual commands are:
 
 ```sh
-npm install -g --ignore-scripts @earendil-works/pi-coding-agent@0.81.1
+# macOS/Linux
+npm install --prefix "$HOME/.arxell/pi-runtime" --ignore-scripts --no-audit --no-fund @earendil-works/pi-coding-agent
+
+# Windows Command Prompt
+npm install --prefix "%USERPROFILE%\.arxell\pi-runtime" --ignore-scripts --no-audit --no-fund @earendil-works/pi-coding-agent
 ```
 
-Arxell checks an explicit path, `ARXELL_PI_EXECUTABLE`, its managed-runtime location, `PATH`, and standard npm, pnpm, Yarn, and Bun install directories. The Pi setup dialog can recheck an explicit executable path. This avoids depending solely on the environment inherited by a graphical app bundle.
-
-The supported Pi package requires Node.js `>=22.19.0`. On Windows, install Git for Windows because Pi requires Bash. Set `PI_SHELL_PATH` when Bash is installed in a nonstandard location.
+When an installed runtime is ready, opening the Pi workspace launches it directly with no install or confirmation dialog. A genuine missing runtime is the only case eligible for automatic installation. If automatic installation cannot run or fails, the setup dialog explains the missing prerequisite and permits retry/recheck. A detected runtime with a launch/prerequisite problem offers retry/path correction, not replacement installation. The current Pi package requires Node.js `>=22.19.0`; on Windows, install Git for Windows because Pi requires Bash. Set `PI_SHELL_PATH` when Bash is installed in a nonstandard location.
 
 ## Authentication And Models
 
@@ -55,8 +57,8 @@ The policy extension is defense in depth, not an operating-system sandbox. Pi ru
 - `PI_SHELL_PATH`: explicit Bash executable, primarily for Windows.
 - `PI_TELEMETRY=0` and `PI_SKIP_VERSION_CHECK=1` are set by Arxell-launched processes.
 
-Runtime errors distinguish missing Pi, invalid executable paths, unsupported versions, missing Node/npm, and missing Windows Bash. Use the setup dialog's recheck action after correcting the reported issue. The Looper setup dialog uses the same readiness contract and will not treat an installed but incompatible executable as ready.
+Runtime errors distinguish missing Pi, invalid executable paths, missing Node/npm, and missing Windows Bash. Pi versions are not rejected solely for being newer or older than a pinned range. Use the setup dialog's recheck action after correcting the reported issue. Looper uses the same version-agnostic readiness result.
 
 ## Distribution And Licensing
 
-Pi is not bundled in Arxell `0.2.11`; users install the supported system package. Arxell bundles its own policy extension and Pi's required MIT attribution in `THIRD_PARTY_NOTICES.md`. Changing the supported Pi version requires coordinated runtime tests, documentation, and notice review.
+Pi is not bundled in Arxell `0.2.11`; an existing system package is preferred, and the Pi workspace can install a private copy under `~/.arxell/pi-runtime` when none is found. Arxell bundles its own policy extension and Pi's required MIT attribution in `THIRD_PARTY_NOTICES.md`. Runtime behavior should be revalidated when Pi changes its RPC or extension APIs.

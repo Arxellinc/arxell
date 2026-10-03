@@ -7,6 +7,9 @@ Enable with:
 - `cargo run --features tauri-runtime`
 - or for checks: `cargo check --features tauri-runtime`
 
+### CI-only desktop probe
+
+The optional `desktop-smoke` feature enables `tauri-runtime` and `tauri/custom-protocol` so a direct Cargo build embeds the frontend instead of trying to reach `devUrl`. A feature-gated page-load probe checks rendered layout and calls the real `cmd_app_version`; the private `cmd_desktop_smoke_ready` handler checks the version and writes a bounded report to an environment-selected path. Neither the command nor the probe is compiled into normal release packages. There is no public contract change or general-purpose script execution endpoint. See `SMOKE_TEST.md` for commands and limits.
 ## Onboarding browser integration
 
 The desktop entry point registers Tauri Opener with automatic link interception disabled. The main-window capability grants `opener:allow-open-url` only for the fixed Hugging Face model catalog (with the query delimiter escaped in the glob scope). No default opener permissions, filesystem opening, arbitrary URLs, or CSP changes are enabled. Native opening failures surface in onboarding rather than falling back to a WebView popup. This uses built-in plugin IPC, not a new public Arxell command. See `FIRST_RUN_ONBOARDING.md` for behavior and manual acceptance.

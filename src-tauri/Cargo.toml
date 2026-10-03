@@ -9,6 +9,8 @@ name = "arxell_lite"
 [features]
 default = []
 tauri-runtime = ["tauri", "dep:tauri-plugin-opener"]
+# Only for CI renderer/IPC tests; never enable when generating release assets.
+desktop-smoke = ["tauri-runtime", "tauri/custom-protocol"]
 ironcalc-engine = []
 
 [dependencies]

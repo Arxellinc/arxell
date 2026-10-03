@@ -90,15 +90,11 @@ Use a hybrid integration:
 
 ## Runtime Distribution Decision
 
-Arxell `0.2.11` uses a verified, system-installed Pi runtime rather than bundling Pi or Node. The supported package is pinned to `0.81.1`, and the accepted runtime range is `>=0.81.0,<0.82.0`:
+Arxell `0.2.11` initially used a system-installed Pi runtime, pinned to `0.81.1` with the range `>=0.81.0,<0.82.0`. That strict gate has since been superseded: detected Pi executables with parseable semantic versions are accepted, and real launch/RPC errors are surfaced instead of prompting users to replace a newer working version. Pi `0.84.2` and `0.99.1` have been verified to start in RPC mode, load the bundled policy extension, and answer `get_state`; `0.99.1` used a disposable npm installation. This is not credentialed inference acceptance.
 
-```bash
-npm install -g --ignore-scripts @earendil-works/pi-coding-agent@0.81.1
-```
+`PiRuntimeService` resolves an explicit UI-selected path, `ARXELL_PI_EXECUTABLE`, `PATH`, and standard npm, pnpm, Yarn, and Bun locations before falling back to Arxell's private managed candidate. If no Pi is detected, the Pi workspace runs npm with `--prefix ~/.arxell/pi-runtime --ignore-scripts` automatically when Node.js/npm (and Windows Bash) are available. This private install does not replace a user's global Pi installation.
 
-`PiRuntimeService` resolves an explicit UI-selected path, `ARXELL_PI_EXECUTABLE`, an Arxell-managed candidate location, `PATH`, and standard npm, pnpm, Yarn, and Bun locations. It probes the executable directly with `--version`, rejects incompatible releases, and reports typed Node/npm/Windows Bash diagnostics.
-
-This decision keeps distribution explicit while avoiding accidental dependence on a graphical app's inherited shell `PATH`. A bundled managed Pi/Node runtime is a possible future release feature, not a blocker or hidden fallback for this migration.
+This keeps normal use on the user's system Pi while making first-run setup automatic where prerequisites exist. Arxell does not promise compatibility with every future protocol change; runtime failures are reported at launch/use rather than inferred from semver.
 
 ## Security And Privacy Design
 
@@ -259,12 +255,12 @@ Frontend tasks:
 
 - [x] Replace the OpenCode install modal with Pi runtime diagnostics.
 - [x] Prefer `npm install -g --ignore-scripts ...` over a one-click `curl | bash` flow.
-- [x] Show missing Node, npm, Bash, incompatible version, and executable-path errors separately.
+- [x] Show missing Node/npm/Bash, executable-path, and launch errors separately; the initial incompatible-version gate was later removed.
 - [x] Provide Recheck and Select Executable actions.
 
 Tests:
 
-- [x] Probe success/failure/incompatible-version unit tests.
+- [x] Probe success/failure/version unit tests; initial range-rejection tests were replaced by newer-version acceptance tests.
 - [x] Linux/macOS/Windows command-resolution tests run through the existing cross-platform Rust CI matrix.
 - [x] Child cleanup tests.
 
@@ -439,7 +435,7 @@ Acceptance:
 Status: `completed`
 
 - [x] Choose and implement system or managed Pi distribution for release.
-- [x] Pin and verify the supported Pi version.
+- [x] Initially pin and verify Pi; this was later superseded by version-agnostic runtime detection.
 - [x] Not applicable: the first release uses verified system Pi discovery rather than a managed runtime.
 - [x] Add Windows Git Bash/custom shell diagnostics.
 - [x] Validate executable discovery for npm, pnpm, Yarn, and Bun.
@@ -515,7 +511,7 @@ Because Arxell has no telemetry, continuing acceptance evidence uses explicit lo
 
 There is no OpenCode runtime fallback. If a Pi regression is found:
 
-- reject unsupported Pi versions through the readiness contract;
+- accept parseable Pi versions and surface actual launch, RPC, or extension incompatibilities through typed errors;
 - stop active Pi process trees and preserve bounded diagnostic state;
 - fix forward or revert the relevant Pi integration commit through the normal PR workflow;
 - never resume an interrupted run under a different harness or protocol version;
@@ -525,8 +521,8 @@ There is no OpenCode runtime fallback. If a Pi regression is found:
 
 | Risk | Mitigation |
 |------|------------|
-| Pi protocol changes | Pin/test a version range and validate RPC capability at probe time |
-| Global CLI/version drift | Enforce the tested range, expose the selected executable/version, and fail with installation guidance |
+| Pi protocol changes | Validate representative versions, keep protocol handling defensive, and surface actual RPC/extension failures |
+| Global CLI/version drift | Accept parseable versions, expose the selected executable/version, and report launch or protocol failures instead of forcing downgrades |
 | No built-in sandbox | Arxell policy extension plus optional OS-level isolation |
 | Secret duplication | Rust-owned secret-storage lookup and per-process environment injection |
 | Headless project trust ambiguity | Explicit Arxell trust state; default automated runs to no approval |

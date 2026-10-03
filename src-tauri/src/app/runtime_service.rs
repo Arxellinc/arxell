@@ -12,6 +12,7 @@ use std::ffi::OsString;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -51,12 +52,16 @@ struct RuntimeState {
 pub struct LlamaRuntimeService {
     hub: EventHub,
     state: Arc<Mutex<RuntimeState>>,
+    lifecycle: Arc<Mutex<()>>,
+    stop_generation: Arc<AtomicU64>,
 }
 
 impl LlamaRuntimeService {
     pub fn new(hub: EventHub) -> Self {
         Self {
             hub,
+            lifecycle: Arc::new(Mutex::new(())),
+            stop_generation: Arc::new(AtomicU64::new(0)),
             state: Arc::new(Mutex::new(RuntimeState {
                 status: "idle".to_string(),
                 active: None,
@@ -296,6 +301,21 @@ impl LlamaRuntimeService {
         request: &LlamaRuntimeStartRequest,
         app_data_dir: &Path,
     ) -> Result<LlamaRuntimeStartResponse, String> {
+        // Serialize ownership changes, while stop can cancel an unpublished child.
+        let generation = self.stop_generation.load(Ordering::SeqCst);
+        let _operation = self.lifecycle.lock().map_err(|_| "llama lifecycle lock poisoned")?;
+        if self.stop_generation.load(Ordering::SeqCst) != generation {
+            return Err("llama-server startup cancelled".to_string());
+        }
+        self.start_inner(request, app_data_dir, generation)
+    }
+
+    fn start_inner(
+        &self,
+        request: &LlamaRuntimeStartRequest,
+        app_data_dir: &Path,
+        generation: u64,
+    ) -> Result<LlamaRuntimeStartResponse, String> {
         self.emit(
             request.correlation_id.as_str(),
             "llama.runtime.start",
@@ -522,6 +542,9 @@ impl LlamaRuntimeService {
         let ready_deadline = started_at + Duration::from_secs(MODEL_READY_TIMEOUT_SECS);
         let mut last_emitted_progress: Option<f64> = None;
         let readiness_error: Option<String> = loop {
+            if self.stop_generation.load(Ordering::SeqCst) != generation {
+                break Some("llama-server startup cancelled".to_string());
+            }
             if let Some(status) = child.try_wait().ok().flatten() {
                 break Some(format!("llama-server exited during startup ({status})"));
             }
@@ -582,15 +605,25 @@ impl LlamaRuntimeService {
         );
 
         {
-            if let Ok(mut state) = self.state.try_lock() {
-                state.status = "healthy".to_string();
-                state.active = Some(ActiveRuntime {
-                    engine_id: request.engine_id.clone(),
-                    port,
-                    model_path: request.model_path.clone(),
-                    child,
-                });
+            let mut state = match self.state.lock() {
+                Ok(state) => state,
+                Err(_) => {
+                    let _ = terminate_process(child);
+                    return Err("llama runtime state lock poisoned".to_string());
+                }
+            };
+            if self.stop_generation.load(Ordering::SeqCst) != generation {
+                let _ = terminate_process(child);
+                state.status = "stopped".to_string();
+                return Err("llama-server startup cancelled".to_string());
             }
+            state.status = "healthy".to_string();
+            state.active = Some(ActiveRuntime {
+                engine_id: request.engine_id.clone(),
+                port,
+                model_path: request.model_path.clone(),
+                child,
+            });
         }
 
         let endpoint = format!("http://127.0.0.1:{}/v1", port);
@@ -616,6 +649,8 @@ impl LlamaRuntimeService {
     }
 
     pub fn stop(&self, correlation_id: &str) -> Result<LlamaRuntimeStopResponse, String> {
+        self.stop_generation.fetch_add(1, Ordering::SeqCst);
+        let _operation = self.lifecycle.lock().map_err(|_| "llama lifecycle lock poisoned")?;
         self.emit(
             correlation_id,
             "llama.runtime.stop",
@@ -624,8 +659,11 @@ impl LlamaRuntimeService {
             json!({}),
         );
         let active = {
-            match self.state.try_lock() {
-                Ok(mut state) => state.active.take(),
+            match self.state.lock() {
+                Ok(mut state) => {
+                    state.status = "stopped".to_string();
+                    state.active.take()
+                }
                 Err(_) => {
                     return Err("llama runtime state lock poisoned".to_string());
                 }
@@ -663,6 +701,8 @@ impl LlamaRuntimeService {
     }
 
     pub fn shutdown(&self, correlation_id: &str) {
+        self.stop_generation.fetch_add(1, Ordering::SeqCst);
+        let Ok(_operation) = self.lifecycle.lock() else { return };
         let active = {
             match self.state.try_lock() {
                 Ok(mut state) => state.active.take(),
@@ -1450,6 +1490,53 @@ fn find_binary_recursive(root: &Path, binary_name: &str) -> Option<PathBuf> {
 #[cfg(test)]
 mod port_tests {
     use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn stop_cancels_loading_child_and_reaps_it() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!("arxell-runtime-cancel-{}-{}", std::process::id(), SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()));
+        let binary = engine_binary_path(&dir, "llama.cpp-cpu");
+        std::fs::create_dir_all(binary.parent().unwrap()).unwrap();
+        let pid_file = dir.join("child.pid");
+        std::fs::write(&binary, "#!/bin/sh\nprintf '%s' \"$$\" > \"$2\"\nexec sleep 60\n").unwrap();
+        std::fs::set_permissions(&binary, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        drop(listener);
+        let request: LlamaRuntimeStartRequest = serde_json::from_value(json!({
+            "correlationId": "cancel-test", "engineId": "llama.cpp-cpu",
+            "modelPath": pid_file, "port": port
+        })).unwrap();
+        let service = LlamaRuntimeService::new(EventHub::new());
+        let worker_service = service.clone();
+        let worker_dir = dir.clone();
+        let worker = std::thread::spawn(move || worker_service.start(&request, &worker_dir));
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        while !pid_file.exists() && std::time::Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        // Always cancel/join even if the fixture failed to start.
+        let stopped_at = std::time::Instant::now();
+        service.stop("cancel-test").unwrap();
+        let result = worker.join().unwrap();
+        assert!(result.unwrap_err().contains("cancelled"));
+        assert!(stopped_at.elapsed() < Duration::from_secs(5));
+        assert_eq!(service.state.lock().unwrap().status, "stopped");
+        assert!(service.state.lock().unwrap().active.is_none());
+        let pid: i32 = std::fs::read_to_string(&pid_file).unwrap().parse().unwrap();
+        assert_eq!(unsafe { libc::kill(pid, 0) }, -1, "loading child must be reaped");
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn stop_invalidates_queued_start() {
+        let service = LlamaRuntimeService::new(EventHub::new());
+        let generation = service.stop_generation.load(Ordering::SeqCst);
+        service.stop("stop-idle").unwrap();
+        assert_ne!(service.stop_generation.load(Ordering::SeqCst), generation);
+        assert_eq!(service.state.lock().unwrap().status, "stopped");
+    }
 
     #[test]
     fn occupied_port_is_rejected_without_disrupting_its_owner() {

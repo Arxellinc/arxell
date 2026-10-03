@@ -49,7 +49,7 @@ Core chat orchestration: message handling, agent loop, tool binding, streaming. 
 PTY-based terminal sessions: open, input, resize, close. Emits `terminal.output` streaming events.
 
 ### Pi Runtime Service (`src-tauri/src/app/pi_runtime_service.rs`)
-Cross-platform Pi discovery and readiness checks. It resolves explicit, managed, PATH, npm, pnpm, Yarn, and Bun locations; enforces the supported `>=0.81.0,<0.82.0` range; and reports typed Node/npm/Bash diagnostics without shell `which`/`where` parsing.
+Cross-platform Pi discovery and readiness checks. It resolves explicit, PATH, npm, pnpm, Yarn, and Bun installations before falling back to Arxell's private managed runtime; accepts parseable Pi versions without a semver ceiling; and reports typed Node/npm/Bash diagnostics without shell `which`/`where` parsing. The Pi workspace automatically installs the current npm package when no Pi is found and prerequisites are available.
 
 ### Pi RPC Service (`src-tauri/src/app/pi_rpc_service.rs`)
 Headless Pi process integration over strict JSONL stdin/stdout. It owns RPC command correlation, event streaming, `agent_settled` completion, bounded output, approval responses, timeout/abort behavior, and cross-platform process-tree shutdown. Settlement alone is not success: final assistant errors, aborts, output-limit truncation, exhausted retries, and extension failures reject the run. A successful retry clears only the earlier assistant failure, never an extension failure. Automated runs use ephemeral profiles, receive secret-storage-backed credentials only through child environment variables, disable unrelated extension discovery, and explicitly load `src-tauri/resources/pi/arxell-policy.ts`. The extension validates standard file-tool paths against the canonical project root, protects sensitive paths, and gates destructive shell patterns through fail-closed Arxell approval. This policy is defense in depth rather than an OS sandbox. See `PI_CODING_HARNESS.md` for the supported runtime and operational model.
@@ -61,7 +61,7 @@ PRD/build loop orchestration with multi-phase execution, interactive questions, 
 Local model lifecycle: list installed GGUF models, search HuggingFace, download, delete, and browse catalog CSV lists. The Unsloth UD Quants catalog auto-updates from the HuggingFace Collections API — on startup, the app fetches the collection at `huggingface.co/api/collections/unsloth/unsloth-dynamic-20-quants`, diffs against the bundled CSV, and fetches details only for new repos. Discovered rows are cached locally in `{app_data_dir}/catalog-cache/unsloth-ud.json` so subsequent startups are instant. Falls back to the bundled CSV when offline.
 
 ### LLaMA Runtime Service (`src-tauri/src/app/runtime_service.rs`)
-Local inference runtime management: engine discovery, installation, start/stop with configurable parameters (context size, GPU layers, sampling). Startup rejects occupied or invalid ports; it never terminates an external process based on a port number. Only the child held by the service is eligible for runtime shutdown.
+Local inference runtime management: engine discovery, installation, start/stop with configurable parameters (context size, GPU layers, sampling). Startup rejects occupied or invalid ports; it never terminates an external process based on a port number. Only the child held by the service is eligible for runtime shutdown. Start/stop/shutdown ownership changes are serialized; stop/shutdown invalidate queued starts and cancel model-loading children before they can become active. Blocking lifecycle work runs off the async IPC executor.
 
 ### Tasks Service (`src-tauri/src/app/tasks_service.rs`)
 Durable SQLite task, run-history, schedule, scheduler-lease, and notification storage. The service preserves explicit draft/approval state, separates stable project identity from canonical execution roots, computes timezone-aware calendar recurrence, clears one-time schedules after execution, and atomically leases due occurrences to prevent duplicate scheduler execution. `src-tauri/src/tools/invoke/tasks.rs` owns execution policy and delegates approved low-risk agent prompts to Pi-backed Looper runs.
@@ -85,7 +85,7 @@ Permission enforcement for tool actions, file access, and runtime operations.
 Voice session management with VAD method selection, duplex modes, handoff between VAD methods, shadow evaluation, and speculation.
 
 ### STT Subsystem (`src-tauri/src/stt/`)
-Speech-to-text: backend selection, model management, streaming transcription via Whisper-compatible servers.
+Speech-to-text: backend selection, model management, streaming transcription via Whisper-compatible servers. Whisper lifecycle changes are serialized with startup cancellation; the supervisor stages a private executable/shared-library closure and sets the child loader path, checks HTTP `/health` plus child liveness, cleans up failed startup, and clears the endpoint/status on health failure. Model listing and startup share bundled/user model discovery.
 
 ### TTS Subsystem (`src-tauri/src/tts/`)
 Text-to-speech: multi-engine support (Kokoro, Piper, Matcha, Kitten), voice selection, settings management, self-test, model download.
