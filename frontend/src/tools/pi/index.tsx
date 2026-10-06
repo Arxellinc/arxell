@@ -2,7 +2,7 @@ import { iconHtml } from "../../icons";
 import { PI_DATA_ATTR, PI_UI_ID } from "../ui/constants";
 import { renderToolToolbar } from "../ui/toolbar";
 import type { PiAgent, PiToolState } from "./state";
-import { getInstallCommand } from "./actions";
+import { getInstallCommand, shouldAutoInstallPi } from "./actions";
 import "./styles.css";
 
 export function renderPiToolActions(state: PiToolState): string {
@@ -38,9 +38,9 @@ export function renderPiToolActions(state: PiToolState): string {
 }
 
 export function renderPiToolBody(state: PiToolState): string {
-  if (state.busy && !state.agents.length) {
+  if ((state.busy || state.installChecking) && !state.agents.length) {
     return `<div class="pi-workspace">
-      <div class="pi-placeholder">Starting Pi...</div>
+      <div class="pi-placeholder">${state.installChecking ? "Checking Pi..." : "Starting Pi..."}</div>
     </div>`;
   }
 
@@ -88,31 +88,34 @@ function buildBreadcrumbSegments(cwd: string): string[] {
 }
 
 export function renderPiInstallModal(state: PiToolState): string {
-  if (!state.installModalOpen) return "";
+  if (!state.installModalOpen || (state.installed === true && state.runtimeStatus === "ready")) return "";
 
   const cmd = getInstallCommand();
+  const detected = state.installed === true;
+  const windows = typeof navigator !== "undefined" && /Windows/i.test(navigator.userAgent);
+  const installDisabled = state.installChecking || state.busy || !shouldAutoInstallPi(state, windows);
 
   return `<div class="modal-backdrop-fixed" id="${PI_UI_ID.installModalOverlay}">
     <div class="modal-box-fixed">
-      <div class="modal-title">${iconHtml("bot-message-square", { size: 16, tone: "dark" })} Pi CLI Required</div>
-      <p>Install the supported Pi coding harness with npm, then recheck availability.</p>
-      <div class="pi-install-cmd">${escapeHtml(cmd)}</div>
+      <div class="modal-title">${iconHtml("bot-message-square", { size: 16, tone: "dark" })} ${detected ? "Pi Startup Issue" : "Pi Setup"}</div>
+      <p>${detected ? "Pi is already installed. Resolve the startup issue below, then retry. Arxell will not replace your installation." : "Pi was not found. Arxell can download and install a private copy when Node.js 22.19 or newer and npm are available."}</p>
+      ${detected ? "" : `<div class="pi-install-cmd">${escapeHtml(cmd)}</div>`}
       <label class="field">Pi executable path (optional)
         <input class="field-input-soft" type="text" value="${escapeHtml(state.executablePathDraft)}" placeholder="Auto-detect from PATH, npm, pnpm, Yarn, or Bun" ${PI_DATA_ATTR.action}="pi-executable-path" />
       </label>
       ${state.version ? `<p>Detected Pi ${escapeHtml(state.version)}${state.executablePath ? ` at ${escapeHtml(state.executablePath)}` : ""}</p>` : ""}
-      ${state.nodeAvailable === false ? `<p class="pi-error">Node.js is missing or cannot be launched.</p>` : ""}
+      ${state.nodeAvailable === false ? `<p class="pi-error">Automatic installation needs Node.js 22.19 or newer and npm. Install or update Node.js, then retry.</p>` : ""}
       ${state.npmAvailable === false ? `<p class="pi-error">npm is unavailable; use another package manager or select an existing Pi executable.</p>` : ""}
       ${state.runtimeStatus === "missing_bash" ? `<p class="pi-error">Git Bash is required on Windows.</p>` : ""}
       ${state.error ? `<p class="pi-error">${escapeHtml(state.error)}</p>` : ""}
       <div class="modal-actions">
         <button type="button" class="modal-btn" ${PI_DATA_ATTR.action}="dismiss-install">Cancel</button>
         <button type="button" class="modal-btn" ${PI_DATA_ATTR.action}="recheck-install" ${state.installChecking ? "disabled" : ""}>
-          ${state.installChecking ? "Checking..." : "I've Installed It"}
+          ${state.installChecking ? "Checking..." : detected ? "Retry" : "Check Again"}
         </button>
-        <button type="button" class="modal-btn" ${PI_DATA_ATTR.action}="install-now" ${state.installChecking ? "disabled" : ""}>
-          Install Now
-        </button>
+        ${detected ? "" : `<button type="button" class="modal-btn" ${PI_DATA_ATTR.action}="install-now" ${installDisabled ? "disabled" : ""}>
+          Download &amp; Install
+        </button>`}
       </div>
     </div>
   </div>`;

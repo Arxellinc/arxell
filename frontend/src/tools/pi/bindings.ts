@@ -28,9 +28,13 @@ export function handlePiClick(
       return true;
     }
     if (actionValue === "new-agent") {
-      void import("./actions").then(({ openSpawnModal }) => {
-        openSpawnModal(state);
-        deps.renderAndBind();
+      void import("./actions").then(({ ensurePiSession, openSpawnModal }) => {
+        if (state.installed !== true || state.runtimeStatus !== "ready") {
+          void ensurePiSession(state, deps);
+        } else {
+          openSpawnModal(state);
+          deps.renderAndBind();
+        }
       });
       return true;
     }

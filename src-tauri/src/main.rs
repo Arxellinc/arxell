@@ -164,6 +164,8 @@ impl AppResourceUsageState {
 
 #[cfg(feature = "tauri-runtime")]
 fn main() {
+    #[cfg(feature = "desktop-smoke")]
+    eprintln!("[desktop-smoke] initializing application");
     let app_context = match AppContext::new() {
         Ok(app_context) => app_context,
         Err(err) => {
@@ -171,6 +173,8 @@ fn main() {
             std::process::exit(1);
         }
     };
+    #[cfg(feature = "desktop-smoke")]
+    eprintln!("[desktop-smoke] application services initialized");
     let hub = app_context.ipc.event_hub();
     let state = TauriBridgeState {
         chat: std::sync::Arc::new(app_context.ipc.chat.clone()),
@@ -194,7 +198,19 @@ fn main() {
     let scheduler_state = state.clone();
 
     tauri::Builder::default()
+        .on_page_load(|webview, payload| {
+            #[cfg(feature = "desktop-smoke")]
+            desktop_smoke::page_loaded(webview, payload);
+            #[cfg(not(feature = "desktop-smoke"))]
+            let _ = (webview, payload);
+        })
         .plugin(tauri_plugin_dialog::init())
+        // Only explicit onboarding catalog requests; don't intercept other links.
+        .plugin(
+            tauri_plugin_opener::Builder::new()
+                .open_js_links_on_click(false)
+                .build(),
+        )
         .setup(move |app| {
             attach_event_forwarder(app.handle().clone(), hub.clone());
             let scheduler_state = scheduler_state.clone();
@@ -301,6 +317,8 @@ fn main() {
             cmd_web_search,
             cmd_devices_probe_microphone,
             cmd_app_version,
+            #[cfg(feature = "desktop-smoke")]
+            cmd_desktop_smoke_ready,
             cmd_check_for_updates,
             cmd_app_resource_usage,
             cmd_llama_runtime_status,
@@ -1224,6 +1242,15 @@ async fn cmd_devices_probe_microphone(
         .map_err(|e| format!("devices probe task failed: {e}"))?
 }
 
+#[cfg(feature = "desktop-smoke")]
+mod desktop_smoke;
+
+#[cfg(feature = "desktop-smoke")]
+#[tauri::command]
+fn cmd_desktop_smoke_ready(app: tauri::AppHandle, version: String) -> Result<(), String> {
+    desktop_smoke::ready(app, version)
+}
+
 #[cfg(feature = "tauri-runtime")]
 #[tauri::command]
 async fn cmd_app_version() -> Result<AppVersionResponse, String> {
@@ -1388,7 +1415,10 @@ async fn cmd_llama_runtime_stop(
     state: State<'_, TauriBridgeState>,
     request: LlamaRuntimeStopRequest,
 ) -> Result<LlamaRuntimeStopResponse, String> {
-    state.runtime.stop(request.correlation_id.as_str())
+    let service = std::sync::Arc::clone(&state.runtime);
+    tokio::task::spawn_blocking(move || service.stop(request.correlation_id.as_str()))
+        .await
+        .map_err(|e| format!("llama runtime stop task failed: {e}"))?
 }
 
 #[cfg(feature = "tauri-runtime")]

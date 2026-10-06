@@ -8,7 +8,9 @@ name = "arxell_lite"
 
 [features]
 default = []
-tauri-runtime = ["tauri"]
+tauri-runtime = ["tauri", "dep:tauri-plugin-opener"]
+# Only for CI renderer/IPC tests; never enable when generating release assets.
+desktop-smoke = ["tauri-runtime", "tauri/custom-protocol"]
 ironcalc-engine = []
 
 [dependencies]
@@ -19,6 +21,8 @@ serde_json = "1"
 thiserror = "1"
 async-trait = "0.1"
 tauri-plugin-dialog = "2"
+# Keep this onboarding-only addition on the existing Tauri 2.10-compatible line.
+tauri-plugin-opener = { version = "~2.5.5", optional = true }
 dirs = "5"
 portable-pty = "0.8.1"
 rusqlite = { version = "0.32", features = ["bundled"] }

@@ -199,6 +199,8 @@ Additional file operations via `cmd_tool_invoke` (`toolId: "files"`):
 
 ## App Meta Commands
 
+CI-only exception: builds with the `desktop-smoke` feature additionally register `cmd_desktop_smoke_ready(version: String) -> ()` for the renderer/native-IPC probe. It validates the running package version and reports only `frontendRendered` and `ipcVersion` to an environment-selected file; it emits no `app:event` payload. This private test hook is absent from normal release builds and is not part of the versioned public contract. See `SMOKE_TEST.md`.
+
 | Command | Input | Output |
 |---------|-------|--------|
 | `cmd_app_version` | — | `AppVersionResponse` |

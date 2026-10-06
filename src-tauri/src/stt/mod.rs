@@ -5,6 +5,8 @@
 //! - WhisperClient for HTTP communication with the whisper server
 //! - Tauri commands for start, stop, transcribe, and status
 
+#[cfg(any(feature = "tauri-runtime", test))]
+mod runtime_files;
 #[cfg(feature = "tauri-runtime")]
 pub mod client;
 #[cfg(feature = "tauri-runtime")]
@@ -128,10 +130,9 @@ fn stream_config() -> &'static Mutex<StreamConfig> {
 
 #[cfg(feature = "tauri-runtime")]
 async fn transcribe_with_supervisor(
-    supervisor: &Arc<Mutex<supervisor::WhisperSupervisor>>,
+    supervisor: &Arc<supervisor::WhisperSupervisor>,
     pcm_samples: &[f32],
 ) -> Result<String, String> {
-    let supervisor = supervisor.lock().await;
     let endpoint = supervisor
         .endpoint()
         .await
@@ -153,59 +154,10 @@ fn list_installed_whisper_model_names(app: &tauri::AppHandle) -> Vec<String> {
         Err(_) => PathBuf::new(),
     };
     let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap_or_default();
-    let candidates: Vec<(&str, Vec<PathBuf>)> = vec![
-        (
-            "ggml-base-q8_0.bin",
-            vec![
-                app_data_dir
-                    .join("STT")
-                    .join("models")
-                    .join("ggml-base-q8_0.bin"),
-                app_data_dir
-                    .join("stt")
-                    .join("models")
-                    .join("ggml-base-q8_0.bin"),
-                app_data_dir.join("models").join("ggml-base-q8_0.bin"),
-                resource_dir.join("whisper").join("ggml-base-q8_0.bin"),
-                resource_dir.join("models").join("ggml-base-q8_0.bin"),
-                PathBuf::from(&manifest_dir)
-                    .join("resources")
-                    .join("whisper")
-                    .join("ggml-base-q8_0.bin"),
-            ],
-        ),
-        (
-            "ggml-base.en-q8_0.bin",
-            vec![
-                app_data_dir
-                    .join("STT")
-                    .join("models")
-                    .join("ggml-base.en-q8_0.bin"),
-                app_data_dir
-                    .join("stt")
-                    .join("models")
-                    .join("ggml-base.en-q8_0.bin"),
-                app_data_dir.join("models").join("ggml-base.en-q8_0.bin"),
-            ],
-        ),
-        (
-            "ggml-tiny.en-q8_0.bin",
-            vec![
-                app_data_dir
-                    .join("STT")
-                    .join("models")
-                    .join("ggml-tiny.en-q8_0.bin"),
-                app_data_dir
-                    .join("stt")
-                    .join("models")
-                    .join("ggml-tiny.en-q8_0.bin"),
-                app_data_dir.join("models").join("ggml-tiny.en-q8_0.bin"),
-            ],
-        ),
-    ];
-
-    for (name, paths) in candidates {
-        if paths.iter().any(|path| path.is_file()) {
+    let mut candidates = runtime_files::model_candidates(&app_data_dir, &resource_dir);
+    candidates.extend(runtime_files::MODEL_NAMES.iter().map(|name| PathBuf::from(&manifest_dir).join("resources/whisper").join(name)));
+    for name in runtime_files::MODEL_NAMES {
+        if candidates.iter().any(|path| path.file_name().and_then(|n| n.to_str()) == Some(*name) && path.is_file()) {
             names.push(name.to_string());
         }
     }
@@ -227,7 +179,7 @@ async fn transcribe_backend(
 /// Managed state for the STT system
 #[cfg(feature = "tauri-runtime")]
 pub struct STTState {
-    pub supervisor: Arc<Mutex<supervisor::WhisperSupervisor>>,
+    pub supervisor: Arc<supervisor::WhisperSupervisor>,
     pub backend: Arc<Mutex<STTBackend>>,
 }
 
@@ -241,7 +193,7 @@ impl STTState {
         #[cfg(feature = "tauri-runtime")]
         {
             Self {
-                supervisor: Arc::new(Mutex::new(supervisor::WhisperSupervisor::new())),
+                supervisor: Arc::new(supervisor::WhisperSupervisor::new()),
                 backend: Arc::new(Mutex::new(STTBackend::WhisperCpp)),
             }
         }
@@ -348,8 +300,7 @@ pub async fn start_stt(
     match backend {
         STTBackend::WhisperCpp => {
             info!("Starting STT service backend={}", backend.as_str());
-            let supervisor = state.supervisor.lock().await;
-            supervisor.start(&app).await
+            state.supervisor.start(&app).await
         }
     }
 }
@@ -364,8 +315,7 @@ pub async fn stop_stt(state: tauri::State<'_, STTState>) -> Result<(), String> {
     match backend {
         STTBackend::WhisperCpp => {
             info!("Stopping STT service backend={}", backend.as_str());
-            let supervisor = state.supervisor.lock().await;
-            supervisor.stop().await
+            state.supervisor.stop().await
         }
     }
 }
@@ -439,11 +389,11 @@ pub async fn stt_download_model(
     let whisper_models = [
         (
             "ggml-base.en-q8_0.bin",
-            "https://huggingface.co/datasets/ggerganov/whisper.cpp/resolve/main/ggml-base.en-q8_0.bin",
+            "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en-q8_0.bin",
         ),
         (
             "ggml-tiny.en-q8_0.bin",
-            "https://huggingface.co/datasets/ggerganov/whisper.cpp/resolve/main/ggml-tiny.en-q8_0.bin",
+            "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.en-q8_0.bin",
         ),
     ];
 
@@ -826,8 +776,7 @@ pub async fn stt_status(
     let backend = *state.backend.lock().await;
     match backend {
         STTBackend::WhisperCpp => {
-            let supervisor = state.supervisor.lock().await;
-            let status = supervisor.status().await;
+            let status = state.supervisor.status().await;
             match status {
                 supervisor::SupervisorStatus::Starting => Ok(events::STTStatusPayload {
                     status: "starting".to_string(),

@@ -11,6 +11,7 @@
 //!
 //! This ensures all AI supervisors share a common interface for future phases.
 
+use super::runtime_files::{self, StagedWhisper};
 #[cfg(feature = "tauri-runtime")]
 use crate::app_paths;
 #[cfg(feature = "tauri-runtime")]
@@ -18,11 +19,10 @@ use crate::stt::events::{PipelineErrorPayload, STTStatusPayload};
 use log::{info, warn};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::Arc;
 #[cfg(feature = "tauri-runtime")]
 use tauri::{AppHandle, Emitter, Manager};
-use tokio::net::TcpStream;
 use tokio::process::Child;
 use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
@@ -68,12 +68,14 @@ pub enum SupervisorStatus {
 
 /// WhisperSupervisor manages the whisper.cpp server process.
 pub struct WhisperSupervisor {
-    status: Mutex<SupervisorStatus>,
+    status: Arc<Mutex<SupervisorStatus>>,
     port: AtomicU32,
-    endpoint: Mutex<Option<String>>,
-    child: Mutex<Option<Child>>,
+    endpoint: Arc<Mutex<Option<String>>>,
+    child: Arc<Mutex<Option<Child>>>,
     model_path: Mutex<Option<PathBuf>>,
-    staged_binary_path: Mutex<Option<PathBuf>>,
+    staged_runtime: Mutex<Option<StagedWhisper>>,
+    lifecycle: Mutex<()>,
+    stop_generation: AtomicU64,
     shutdown_requested: Arc<AtomicBool>,
     health_check_task: Mutex<Option<JoinHandle<()>>>,
 }
@@ -82,12 +84,14 @@ impl WhisperSupervisor {
     /// Create a new WhisperSupervisor without spawning the process.
     pub fn new() -> Self {
         Self {
-            status: Mutex::new(SupervisorStatus::Stopped),
+            status: Arc::new(Mutex::new(SupervisorStatus::Stopped)),
             port: AtomicU32::new(0),
-            endpoint: Mutex::new(None),
-            child: Mutex::new(None),
+            endpoint: Arc::new(Mutex::new(None)),
+            child: Arc::new(Mutex::new(None)),
             model_path: Mutex::new(None),
-            staged_binary_path: Mutex::new(None),
+            staged_runtime: Mutex::new(None),
+            lifecycle: Mutex::new(()),
+            stop_generation: AtomicU64::new(0),
             shutdown_requested: Arc::new(AtomicBool::new(false)),
             health_check_task: Mutex::new(None),
         }
@@ -110,6 +114,33 @@ impl WhisperSupervisor {
 
     /// Start the whisper.cpp server.
     pub async fn start(&self, app: &AppHandle) -> Result<(), String> {
+        let generation = self.stop_generation.load(Ordering::SeqCst);
+        let _operation = self.lifecycle.lock().await;
+        if generation != self.stop_generation.load(Ordering::SeqCst) {
+            return Err("Whisper startup cancelled".to_string());
+        }
+        if !matches!(*self.status.lock().await, SupervisorStatus::Running) {
+            self.stop_inner().await?;
+        }
+        let result = self.start_inner(app, generation).await;
+        if let Err(ref message) = result {
+            let _ = self.stop_inner().await;
+            *self.status.lock().await = SupervisorStatus::Error(message.clone());
+            let _ = app.emit(
+                "stt://status",
+                STTStatusPayload {
+                    status: "error".to_string(),
+                    message: Some(message.clone()),
+                },
+            );
+        }
+        result
+    }
+
+    async fn start_inner(&self, app: &AppHandle, generation: u64) -> Result<(), String> {
+        if self.stop_generation.load(Ordering::SeqCst) != generation {
+            return Err("Whisper startup cancelled".to_string());
+        }
         // Check if already running
         {
             let status = self.status.lock().await;
@@ -142,8 +173,9 @@ impl WhisperSupervisor {
 
         // Resolve binary path
         let binary_path = resolve_whisper_binary(app)?;
-        let launch_binary_path = stage_whisper_binary_for_launch(&binary_path)?;
-        *self.staged_binary_path.lock().await = Some(launch_binary_path.clone());
+        let staged = runtime_files::stage(&binary_path)?;
+        let launch_binary_path = staged.binary.clone();
+        *self.staged_runtime.lock().await = Some(staged);
 
         // Resolve model path
         let model_path = resolve_model_path(app)?;
@@ -165,21 +197,6 @@ impl WhisperSupervisor {
             }
         }
 
-        #[cfg(target_os = "macos")]
-        {
-            // Remove quarantine attribute on macOS
-            let result = std::process::Command::new("xattr")
-                .args([
-                    "-dr",
-                    "com.apple.quarantine",
-                    &launch_binary_path.to_string_lossy(),
-                ])
-                .output();
-            if let Err(e) = result {
-                warn!("Failed to remove quarantine attribute: {}", e);
-            }
-        }
-
         // Calculate thread count (half of logical CPUs, clamped to [2, 8])
         let threads = num_cpus::get();
         let threads = (threads / 2).max(2).min(8);
@@ -193,7 +210,20 @@ impl WhisperSupervisor {
         info!("Model path: {}", model_path.display());
 
         // Spawn the whisper.cpp server
-        let mut child = tokio::process::Command::new(&launch_binary_path)
+        let mut command = tokio::process::Command::new(&launch_binary_path);
+        let loader_var = if cfg!(target_os = "windows") {
+            "PATH"
+        } else if cfg!(target_os = "macos") {
+            "DYLD_LIBRARY_PATH"
+        } else {
+            "LD_LIBRARY_PATH"
+        };
+        command.env(
+            loader_var,
+            runtime_files::loader_path(&launch_binary_path, std::env::var_os(loader_var))?,
+        );
+        let mut child = command
+            .kill_on_drop(true)
             .args([
                 "--host",
                 "127.0.0.1",
@@ -226,9 +256,11 @@ impl WhisperSupervisor {
 
         // Wait for server to be ready
         let endpoint = format!("http://127.0.0.1:{}", port);
-        if let Err(e) = wait_for_ready(&endpoint, Duration::from_secs(10)).await {
-            // Clean up failed process
-            let _ = self.stop().await;
+        if let Err(e) = self
+            .wait_for_ready(&endpoint, generation, Duration::from_secs(60))
+            .await
+        {
+            // The serialized start wrapper cleans up on every failure path.
             *self.status.lock().await = SupervisorStatus::Error(e.clone());
 
             // Emit error event
@@ -281,6 +313,12 @@ impl WhisperSupervisor {
 
     /// Stop the whisper.cpp server gracefully.
     pub async fn stop(&self) -> Result<(), String> {
+        self.stop_generation.fetch_add(1, Ordering::SeqCst);
+        let _operation = self.lifecycle.lock().await;
+        self.stop_inner().await
+    }
+
+    async fn stop_inner(&self) -> Result<(), String> {
         self.shutdown_requested.store(true, Ordering::SeqCst);
         if let Some(task) = self.health_check_task.lock().await.take() {
             task.abort();
@@ -329,15 +367,8 @@ impl WhisperSupervisor {
 
         *self.endpoint.lock().await = None;
         *self.status.lock().await = SupervisorStatus::Stopped;
-        if let Some(path) = self.staged_binary_path.lock().await.take() {
-            if let Err(e) = std::fs::remove_file(&path) {
-                warn!(
-                    "Failed to remove staged whisper binary {}: {}",
-                    path.display(),
-                    e
-                );
-            }
-        }
+        self.staged_runtime.lock().await.take();
+        self.port.store(0, Ordering::SeqCst);
 
         info!("Whisper.cpp server stopped");
         Ok(())
@@ -350,14 +381,13 @@ impl WhisperSupervisor {
         self.start(app).await
     }
 
-    /// Health check - returns true if server is responsive.
-    /// Note: whisper.cpp doesn't have a /health endpoint, so we use /inference
+    /// Health requires an HTTP /health response, not merely a listening socket.
     pub async fn health_check(&self) -> bool {
         let port = self.port();
         if port == 0 {
             return false;
         }
-        is_port_open(port, Duration::from_millis(800)).await
+        server_healthy(port, Duration::from_millis(800)).await
     }
 
     /// Internal: create a cloneable reference for background tasks
@@ -365,13 +395,55 @@ impl WhisperSupervisor {
         WhisperSupervisorInner {
             port: self.port.load(Ordering::SeqCst),
             shutdown_requested: Arc::clone(&self.shutdown_requested),
+            status: Arc::clone(&self.status),
+            endpoint: Arc::clone(&self.endpoint),
+            child: Arc::clone(&self.child),
         }
+    }
+
+    async fn wait_for_ready(
+        &self,
+        endpoint: &str,
+        generation: u64,
+        timeout: Duration,
+    ) -> Result<(), String> {
+        let port = endpoint
+            .rsplit(':')
+            .next()
+            .and_then(|p| p.parse().ok())
+            .ok_or("Invalid Whisper endpoint")?;
+        let deadline = tokio::time::Instant::now() + timeout;
+        while tokio::time::Instant::now() < deadline {
+            if self.stop_generation.load(Ordering::SeqCst) != generation {
+                return Err("Whisper startup cancelled".to_string());
+            }
+            let mut guard = self.child.lock().await;
+            let child = guard.as_mut().ok_or("Whisper startup child missing")?;
+            if let Some(status) = child
+                .try_wait()
+                .map_err(|e| format!("Failed checking Whisper process: {e}"))?
+            {
+                return Err(format!("Whisper exited during startup ({status})"));
+            }
+            drop(guard);
+            if server_healthy(port, Duration::from_millis(800)).await {
+                if self.stop_generation.load(Ordering::SeqCst) != generation {
+                    return Err("Whisper startup cancelled".to_string());
+                }
+                return Ok(());
+            }
+            tokio::time::sleep(Duration::from_millis(200)).await;
+        }
+        Err(format!("Whisper did not become healthy within {timeout:?}"))
     }
 }
 
 struct WhisperSupervisorInner {
     port: u32,
     shutdown_requested: Arc<AtomicBool>,
+    status: Arc<Mutex<SupervisorStatus>>,
+    endpoint: Arc<Mutex<Option<String>>>,
+    child: Arc<Mutex<Option<Child>>>,
 }
 
 /// Find a free TCP port by binding to a random port.
@@ -432,51 +504,6 @@ fn resolve_whisper_binary(app: &AppHandle) -> Result<PathBuf, String> {
     ))
 }
 
-/// Copy the whisper executable into a temp location before spawning.
-/// This avoids ETXTBSY when the resource binary is being updated or scanned.
-fn stage_whisper_binary_for_launch(binary_path: &PathBuf) -> Result<PathBuf, String> {
-    let mut dir = std::env::temp_dir();
-    dir.push("arxell");
-    dir.push("whisper-server");
-    std::fs::create_dir_all(&dir).map_err(|e| {
-        format!(
-            "Failed to create whisper staging dir {}: {}",
-            dir.display(),
-            e
-        )
-    })?;
-
-    let ts = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_err(|e| format!("Failed to compute timestamp for whisper staging: {}", e))?
-        .as_millis();
-    let pid = std::process::id();
-    let staged_name = format!("{}-{}-{}", WHISPER_BINARY, pid, ts);
-    let staged_path = dir.join(staged_name);
-
-    std::fs::copy(binary_path, &staged_path).map_err(|e| {
-        format!(
-            "Failed to stage whisper binary from {} to {}: {}",
-            binary_path.display(),
-            staged_path.display(),
-            e
-        )
-    })?;
-
-    #[cfg(not(target_os = "windows"))]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let mut perms = std::fs::metadata(&staged_path)
-            .map_err(|e| format!("Failed to read staged whisper metadata: {}", e))?
-            .permissions();
-        perms.set_mode(0o755);
-        std::fs::set_permissions(&staged_path, perms)
-            .map_err(|e| format!("Failed to chmod staged whisper binary: {}", e))?;
-    }
-
-    Ok(staged_path)
-}
-
 /// Resolve the path to the Whisper model file.
 fn resolve_model_path(app: &AppHandle) -> Result<PathBuf, String> {
     let app_data_dir = app_paths::app_data_dir();
@@ -485,41 +512,15 @@ fn resolve_model_path(app: &AppHandle) -> Result<PathBuf, String> {
         .resource_dir()
         .map_err(|e| format!("Failed to get resource directory: {}", e))?;
 
-    // Try different model file naming conventions
-    let candidates = [
-        app_data_dir
-            .join("STT")
-            .join("models")
-            .join("ggml-base-q8_0.bin"),
-        app_data_dir
-            .join("STT")
-            .join("models")
-            .join("ggml-base.en-q8_0.bin"),
-        app_data_dir
-            .join("stt")
-            .join("models")
-            .join("ggml-base-q8_0.bin"),
-        app_data_dir
-            .join("stt")
-            .join("models")
-            .join("ggml-base.en-q8_0.bin"),
-        app_data_dir.join("models").join("ggml-base-q8_0.bin"),
-        app_data_dir.join("models").join("ggml-base.en-q8_0.bin"),
-        app_data_dir.join("models").join("ggml-tiny.en-q8_0.bin"),
-        resource_dir.join("whisper").join("ggml-base-q8_0.bin"),
-        resource_dir.join("models").join("ggml-base-q8_0.bin"),
-        resource_dir
-            .join("resources")
-            .join("whisper")
-            .join("ggml-base-q8_0.bin"),
-        {
-            let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap_or_default();
-            PathBuf::from(manifest_dir)
-                .join("resources")
-                .join("whisper")
-                .join("ggml-base-q8_0.bin")
-        },
-    ];
+    let mut candidates =
+        runtime_files::model_candidates(&app_data_dir, &strip_unc_prefix(&resource_dir));
+    if let Ok(manifest_dir) = std::env::var("CARGO_MANIFEST_DIR") {
+        candidates.extend(runtime_files::MODEL_NAMES.iter().map(|name| {
+            PathBuf::from(&manifest_dir)
+                .join("resources/whisper")
+                .join(name)
+        }));
+    }
 
     for path in &candidates {
         if path.is_file() {
@@ -528,29 +529,6 @@ fn resolve_model_path(app: &AppHandle) -> Result<PathBuf, String> {
     }
 
     Err(format!("Model file not found. Searched: {:?}", candidates))
-}
-
-/// Wait for the whisper.cpp server to be ready.
-// The whisper.cpp server doesn't have a dedicated /health endpoint.
-// Instead, we check if the port is open by making a request to the inference endpoint.
-async fn wait_for_ready(endpoint: &str, timeout_duration: Duration) -> Result<(), String> {
-    let port = endpoint
-        .strip_prefix("http://127.0.0.1:")
-        .and_then(|s| s.parse::<u32>().ok())
-        .ok_or_else(|| format!("Invalid STT endpoint: {}", endpoint))?;
-    let start = std::time::Instant::now();
-
-    while start.elapsed() < timeout_duration {
-        if is_port_open(port, Duration::from_millis(500)).await {
-            return Ok(());
-        }
-        tokio::time::sleep(Duration::from_millis(200)).await;
-    }
-
-    Err(format!(
-        "Server did not become ready within {:?}",
-        timeout_duration
-    ))
 }
 
 /// Background health check loop.
@@ -565,10 +543,24 @@ async fn health_check_loop(supervisor: Arc<WhisperSupervisorInner>, app: AppHand
 
         // Perform health check via HTTP
         let port = supervisor.port;
-        let healthy = is_port_open(port, Duration::from_millis(800)).await;
+        let exited = match supervisor.child.lock().await.as_mut() {
+            Some(child) => !matches!(child.try_wait(), Ok(None)),
+            None => true,
+        };
+        let healthy = !exited && server_healthy(port, Duration::from_millis(800)).await;
 
         if !healthy {
             warn!("Whisper.cpp health check failed");
+            *supervisor.status.lock().await =
+                SupervisorStatus::Error("Whisper server is unavailable".to_string());
+            *supervisor.endpoint.lock().await = None;
+            let _ = app.emit(
+                "stt://status",
+                STTStatusPayload {
+                    status: "error".to_string(),
+                    message: Some("Whisper server is unavailable".to_string()),
+                },
+            );
 
             // Emit error event; this implementation does not currently restart automatically.
             let _ = app.emit(
@@ -579,14 +571,101 @@ async fn health_check_loop(supervisor: Arc<WhisperSupervisorInner>, app: AppHand
                     details: Some(format!("port={}", port)),
                 },
             );
+            break;
         }
     }
 }
 
-async fn is_port_open(port: u32, timeout: Duration) -> bool {
-    let addr = format!("127.0.0.1:{}", port);
-    match tokio::time::timeout(timeout, TcpStream::connect(addr)).await {
-        Ok(Ok(_)) => true,
-        _ => false,
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn health_rejects_loading_and_accepts_ready() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        async fn response(body: &'static str) -> u32 {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let port = listener.local_addr().unwrap().port();
+            tokio::spawn(async move {
+                let (mut stream, _) = listener.accept().await.unwrap();
+                let mut request = [0; 1024];
+                let _ = stream.read(&mut request).await;
+                let reply = format!("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len());
+                stream.write_all(reply.as_bytes()).await.unwrap();
+            });
+            port as u32
+        }
+        assert!(
+            !server_healthy(
+                response(r#"{"status":"loading"}"#).await,
+                Duration::from_secs(1)
+            )
+            .await
+        );
+        assert!(server_healthy(response(r#"{"status":"ok"}"#).await, Duration::from_secs(1)).await);
     }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn readiness_detects_child_exit_and_stop_cancels_loading() {
+        let supervisor = Arc::new(WhisperSupervisor::new());
+        let mut exited = tokio::process::Command::new("sh")
+            .args(["-c", "exit 7"])
+            .spawn()
+            .unwrap();
+        exited.wait().await.unwrap();
+        *supervisor.child.lock().await = Some(exited);
+        assert!(supervisor
+            .wait_for_ready("http://127.0.0.1:1", 0, Duration::from_secs(1))
+            .await
+            .unwrap_err()
+            .contains("exited"));
+        let child = tokio::process::Command::new("sleep")
+            .arg("60")
+            .kill_on_drop(true)
+            .spawn()
+            .unwrap();
+        let pid = child.id().unwrap();
+        *supervisor.child.lock().await = Some(child);
+        let (started, ready) = tokio::sync::oneshot::channel();
+        let worker = Arc::clone(&supervisor);
+        let task = tokio::spawn(async move {
+            let _operation = worker.lifecycle.lock().await;
+            started.send(()).unwrap();
+            worker
+                .wait_for_ready("http://127.0.0.1:1", 0, Duration::from_secs(60))
+                .await
+        });
+        ready.await.unwrap();
+        tokio::time::timeout(Duration::from_secs(5), supervisor.stop())
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(task.await.unwrap().unwrap_err().contains("cancelled"));
+        assert!(supervisor.child.lock().await.is_none());
+        assert_eq!(unsafe { libc::kill(pid as i32, 0) }, -1);
+        assert!(matches!(
+            supervisor.status().await,
+            SupervisorStatus::Stopped
+        ));
+    }
+}
+
+async fn server_healthy(port: u32, timeout: Duration) -> bool {
+    let Ok(client) = reqwest::Client::builder().timeout(timeout).build() else {
+        return false;
+    };
+    let Ok(response) = client
+        .get(format!("http://127.0.0.1:{port}/health"))
+        .send()
+        .await
+    else {
+        return false;
+    };
+    response.status().is_success()
+        && response
+            .json::<serde_json::Value>()
+            .await
+            .map(|body| body.get("status").and_then(|v| v.as_str()) == Some("ok"))
+            .unwrap_or(false)
 }
