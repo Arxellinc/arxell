@@ -1,3 +1,4 @@
+pub mod chat_context;
 pub mod chat_service;
 pub mod files_service;
 pub mod image_generation_service;
@@ -6,6 +7,7 @@ pub mod permission_service;
 pub mod pi_rpc_service;
 pub mod pi_runtime_service;
 pub mod runtime_service;
+pub mod task_run_service;
 pub mod tasks_service;
 pub mod terminal_service;
 pub mod user_projects_service;
@@ -16,7 +18,7 @@ pub mod web_search_service;
 
 use crate::api_registry::ApiRegistryService;
 use crate::ipc::IpcLayer;
-use crate::memory::InMemoryMemoryManager;
+use crate::memory::SqliteMemoryManager;
 use crate::observability::EventHub;
 use crate::persistence::SqliteConversationRepository;
 use crate::services::sheets_service::SheetsService;
@@ -54,7 +56,9 @@ impl AppContext {
         tasks_db_path: std::path::PathBuf,
     ) -> Result<Self, String> {
         let hub = EventHub::new();
-        let memory = Arc::new(InMemoryMemoryManager::new());
+        let memory = Arc::new(SqliteMemoryManager::new(
+            conversation_db_path.with_file_name("memory.sqlite3"),
+        )?);
         let conversation_repo = Arc::new(
             SqliteConversationRepository::new(conversation_db_path)
                 .map_err(|err| format!("failed to initialize conversation repository: {err}"))?,
@@ -92,6 +96,15 @@ impl AppContext {
         ));
         looper.set_data_path(workspace_tools.state_root_path().join("looper-state.json"));
         looper.load_from_disk();
+        task_run_service::reconcile_task_runs(
+            &tasks,
+            &looper.loop_statuses()?,
+            true,
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|duration| duration.as_millis() as i64)
+                .unwrap_or(0),
+        )?;
         #[cfg(feature = "tauri-runtime")]
         looper.start_event_listener();
         let service = Arc::new(chat_service::ChatService::new(

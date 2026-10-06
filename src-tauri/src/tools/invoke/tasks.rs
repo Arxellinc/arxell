@@ -5,7 +5,7 @@ use crate::app::tasks_service::{
 };
 use crate::contracts::{LooperLoopType, LooperStartRequest};
 use crate::ipc::tauri_bridge::TauriBridgeState;
-use crate::tools::invoke::build_registry;
+use crate::tools::action_policy::ReadOnlyPolicy;
 use crate::tools::invoke::registry::{InvokeRegistry, ToolInvokeFuture};
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -169,56 +169,34 @@ async fn delete_task(state: &TauriBridgeState, payload: Value) -> Result<Value, 
 
 async fn run_task_now(state: &TauriBridgeState, payload: Value) -> Result<Value, String> {
     let req: RunTaskNowRequest = decode_payload(payload)?;
+    reconcile_runs(state)?;
     let Some(task) = state.tasks.get_task(req.task_id.as_str())? else {
         return Err("task not found".to_string());
     };
     if task.state != "approved" {
         return Err("task must be approved before run".to_string());
     }
-    let canonical_root = resolve_task_project_root(&task)?;
     let now = now_ms();
     if !state.tasks.claim_task_for_run(req.task_id.as_str(), now)? {
         return Err("task is already running".to_string());
     }
-    let (status, policy_decision, policy_reason, result_json, error) =
-        execute_task_payload(state, &task, canonical_root.as_path()).await;
-    let task_id = req.task_id.clone();
-    let run = DurableTaskRunRecord {
-        id: format!("R{}", now),
-        task_id,
-        status,
-        trigger_reason: "manual".to_string(),
-        policy_decision,
-        policy_reason,
-        result_json,
-        error,
-        created_at_ms: now,
-        started_at_ms: Some(now),
-        completed_at_ms: Some(now),
-    };
-    let appended = match state.tasks.append_run(run) {
-        Ok(run) => run,
-        Err(err) => {
-            let _ = state.tasks.release_task_claim(req.task_id.as_str());
-            return Err(err);
-        }
-    };
-    let _ = emit_task_run_notification(
-        state,
-        &task,
-        appended.status.as_str(),
-        appended.error.as_str(),
-        "manual",
-        now,
-    );
-    let _ = state.tasks.advance_next_run_at(req.task_id.as_str(), now);
-    Ok(json!({ "run": appended }))
+    let run = execute_claimed_task(state, &task, "manual", now).await?;
+    Ok(json!({ "run": run }))
 }
 
 pub async fn run_due_scheduled_tasks(
     state: &TauriBridgeState,
     limit: usize,
 ) -> Result<usize, String> {
+    reconcile_runs(state)?;
+    if !state
+        .workspace_tools
+        .list()
+        .iter()
+        .any(|tool| tool.tool_id == "tasks" && tool.enabled)
+    {
+        return Ok(0);
+    }
     let now = now_ms();
     let due = state.tasks.claim_due_scheduled_tasks(now, limit)?;
     if due.is_empty() {
@@ -226,79 +204,57 @@ pub async fn run_due_scheduled_tasks(
     }
     let mut executed = 0usize;
     for task in due {
-        let canonical_root = match resolve_task_project_root(&task) {
-            Ok(root) => root,
-            Err(_) => {
-                let _ = state.tasks.advance_next_run_at(task.id.as_str(), now);
-                continue;
-            }
-        };
-        let (status, policy_decision, policy_reason, result_json, error) =
-            execute_task_payload(state, &task, canonical_root.as_path()).await;
-        let run = DurableTaskRunRecord {
-            id: format!("R{}{}", now, executed),
-            task_id: task.id.clone(),
-            status,
-            trigger_reason: "scheduled".to_string(),
-            policy_decision,
-            policy_reason,
-            result_json,
-            error,
-            created_at_ms: now,
-            started_at_ms: Some(now),
-            completed_at_ms: Some(now),
-        };
-        let _ = state.tasks.append_run(run.clone());
-        let _ = emit_task_run_notification(
-            state,
-            &task,
-            run.status.as_str(),
-            run.error.as_str(),
-            "scheduled",
-            now,
-        );
-        let _ = state.tasks.advance_next_run_at(task.id.as_str(), now);
+        execute_claimed_task(state, &task, "scheduled", now).await?;
         executed += 1;
     }
     Ok(executed)
 }
 
-fn emit_task_run_notification(
-    state: &TauriBridgeState,
-    task: &DurableTaskRecord,
-    status: &str,
-    error: &str,
-    trigger_reason: &str,
-    now: i64,
-) -> Result<(), String> {
-    let (title, tone) = match status {
-        "succeeded" => (format!("Task complete: {}", task.name), "success"),
-        "running" => (format!("Task started: {}", task.name), "info"),
-        "blocked" => (format!("Task blocked: {}", task.name), "warn"),
-        _ => (format!("Task failed: {}", task.name), "error"),
-    };
-    let mut description = format!("{} run for task {}.", trigger_reason, task.id);
-    if !error.trim().is_empty() {
-        description.push(' ');
-        description.push_str(error.trim());
-    }
-    let row = DurableNotificationRecord {
-        id: format!("N{}{}", now, task.id),
-        title,
-        description,
-        tone: tone.to_string(),
-        read: false,
-        actions_json: json!([
-            { "id": format!("open-task:{}", task.id), "label": "Open Task" }
-        ]),
-        created_at_ms: now,
-        updated_at_ms: now,
-    };
-    let _ = state.tasks.upsert_notification(row)?;
+fn reconcile_runs(state: &TauriBridgeState) -> Result<(), String> {
+    crate::app::task_run_service::reconcile_task_runs(
+        &state.tasks,
+        &state.looper_handler.loop_statuses()?,
+        false,
+        now_ms(),
+    )?;
     Ok(())
 }
 
+async fn execute_claimed_task(
+    state: &TauriBridgeState,
+    task: &DurableTaskRecord,
+    trigger: &str,
+    claimed_at: i64,
+) -> Result<DurableTaskRunRecord, String> {
+    let mut run = state.tasks.begin_claimed_run(task, trigger, claimed_at)?;
+    let outcome = match resolve_task_project_root(task) {
+        Ok(root) => execute_task_payload(state, task, &root, &run).await,
+        Err(_) => (
+            "blocked".into(),
+            "deny".into(),
+            "project_scope_invalid".into(),
+            json!({}),
+            "Approved project root is unavailable.".into(),
+        ),
+    };
+    run.status = outcome.0;
+    run.policy_decision = outcome.1;
+    run.policy_reason = outcome.2;
+    run.result_json = outcome.3;
+    run.error = outcome.4;
+    let completed = now_ms();
+    run.completed_at_ms = if run.status == "running" {
+        None
+    } else {
+        Some(completed)
+    };
+    // Intent remains durable and blocks replay if outcome persistence fails after side effects.
+    state.tasks.record_run_outcome(&run, completed)?;
+    Ok(run)
+}
+
 async fn scheduler_status(state: &TauriBridgeState, _payload: Value) -> Result<Value, String> {
+    reconcile_runs(state)?;
     let now = now_ms();
     let due = state.tasks.list_due_scheduled_tasks(now, 1000)?;
     Ok(json!({
@@ -323,6 +279,7 @@ async fn execute_task_payload(
     state: &TauriBridgeState,
     task: &DurableTaskRecord,
     canonical_root: &Path,
+    run: &DurableTaskRunRecord,
 ) -> (String, String, String, Value, String) {
     if task.risk_level != "low" {
         return (
@@ -333,10 +290,25 @@ async fn execute_task_payload(
             "auto-safe allows low-risk tasks only".to_string(),
         );
     }
+    if matches!(task.payload_kind.as_str(), "agent_prompt" | "looper_run")
+        && !state
+            .workspace_tools
+            .list()
+            .iter()
+            .any(|tool| tool.tool_id == "looper" && tool.enabled)
+    {
+        return (
+            "blocked".into(),
+            "deny".into(),
+            "looper_disabled".into(),
+            json!({}),
+            "Looper is disabled.".into(),
+        );
+    }
     match task.payload_kind.as_str() {
-        "agent_prompt" => run_agent_prompt_payload(state, task, canonical_root).await,
-        "tool_invoke" => run_tool_invoke_payload(state, task, canonical_root).await,
-        "looper_run" => run_looper_payload(state, task, canonical_root).await,
+        "agent_prompt" => run_agent_prompt_payload(state, task, canonical_root, run).await,
+        "tool_invoke" => run_tool_invoke_payload(state, task, canonical_root, run).await,
+        "looper_run" => run_looper_payload(state, task, canonical_root, run).await,
         _ => (
             "failed".to_string(),
             "deny".to_string(),
@@ -351,6 +323,7 @@ async fn run_agent_prompt_payload(
     state: &TauriBridgeState,
     task: &DurableTaskRecord,
     canonical_root: &Path,
+    run: &DurableTaskRunRecord,
 ) -> (String, String, String, Value, String) {
     let prompt = task
         .payload_json
@@ -369,7 +342,9 @@ async fn run_agent_prompt_payload(
         );
     }
 
-    let request = build_agent_looper_request(task, canonical_root, prompt, now_ms());
+    let mut request = build_agent_looper_request(task, canonical_root, prompt, now_ms());
+    request.loop_id = run.result_json["loopId"].as_str().unwrap_or("").to_string();
+    request.correlation_id = format!("task-run-{}", run.id);
     let loop_id = request.loop_id.clone();
     let correlation_id = request.correlation_id.clone();
 
@@ -445,6 +420,7 @@ async fn run_tool_invoke_payload(
     state: &TauriBridgeState,
     task: &DurableTaskRecord,
     canonical_root: &Path,
+    run: &DurableTaskRunRecord,
 ) -> (String, String, String, Value, String) {
     let tool_id = task
         .payload_json
@@ -472,41 +448,97 @@ async fn run_tool_invoke_payload(
             "tool_invoke payload must include toolId and action".to_string(),
         );
     }
-    if tool_id == "files" {
-        if let Err(err) = validate_files_payload_in_scope(&payload, canonical_root) {
+    let policy = match ReadOnlyPolicy::new(canonical_root) {
+        Ok(policy) => policy,
+        Err(error) => {
             return (
-                "blocked".to_string(),
-                "deny".to_string(),
-                "project_scope_violation".to_string(),
+                "blocked".into(),
+                "deny".into(),
+                "scope_invalid".into(),
                 json!({}),
-                err,
-            );
+                error,
+            )
+        }
+    };
+    let mut payload = match policy.invoke_parameters(&tool_id, &action, payload) {
+        Ok(payload) => payload,
+        Err(error) => {
+            return (
+                "blocked".into(),
+                "deny".into(),
+                "read_policy".into(),
+                json!({}),
+                error,
+            )
+        }
+    };
+    let correlation_id = format!("task-run-{}", run.id);
+    payload["correlationId"] = json!(correlation_id);
+    let mut scoped_state = state.clone();
+    if tool_id == "files" {
+        match crate::app::files_service::FilesService::for_root(canonical_root) {
+            Ok(files) => scoped_state.files = std::sync::Arc::new(files),
+            Err(error) => {
+                return (
+                    "blocked".into(),
+                    "deny".into(),
+                    "scope_invalid".into(),
+                    json!({}),
+                    error,
+                )
+            }
         }
     }
-    let registry = build_registry();
-    let Some(handler) = registry.get(tool_id.as_str(), action.as_str()) else {
-        return (
-            "failed".to_string(),
-            "deny".to_string(),
-            "unsupported_tool_action".to_string(),
-            json!({}),
-            format!("unsupported tool invoke target: {}.{}", tool_id, action),
+    if tool_id == "sheets" {
+        let Some(workbook) = state.sheets.current_workbook() else {
+            return (
+                "failed".into(),
+                "deny".into(),
+                "missing_workbook".into(),
+                json!({}),
+                "No workbook is open.".into(),
+            );
+        };
+        if let Some(path) = &workbook.file_path {
+            if let Err(error) = policy.resolve_read(path) {
+                return (
+                    "blocked".into(),
+                    "deny".into(),
+                    "scope_invalid".into(),
+                    json!({}),
+                    error,
+                );
+            }
+        }
+        scoped_state.sheets = std::sync::Arc::new(
+            crate::services::sheets_service::SheetsService::read_snapshot(workbook),
         );
-    };
-    match handler(state, payload).await {
-        Ok(data) => (
-            "succeeded".to_string(),
-            "allow".to_string(),
-            "tool_invoke".to_string(),
-            data,
+    }
+    let response = crate::ipc::tool_runtime::invoke_tool(
+        &scoped_state,
+        crate::contracts::ToolInvokeRequest {
+            tool_id: tool_id.clone(),
+            action: action.clone(),
+            correlation_id,
+            mode: crate::contracts::ToolMode::Sandbox,
+            payload,
+        },
+    )
+    .await;
+    match response {
+        Ok(response) if response.ok => (
+            "succeeded".into(),
+            "allow".into(),
+            "tool_read".into(),
+            json!({"toolId": tool_id, "action": action, "ok": true}),
             String::new(),
         ),
-        Err(err) => (
-            "failed".to_string(),
-            "allow".to_string(),
-            "tool_invoke".to_string(),
+        _ => (
+            "failed".into(),
+            "allow".into(),
+            "tool_read".into(),
             json!({}),
-            err,
+            "Registered read action failed or is disabled.".into(),
         ),
     }
 }
@@ -515,12 +547,22 @@ async fn run_looper_payload(
     state: &TauriBridgeState,
     task: &DurableTaskRecord,
     canonical_root: &Path,
+    run: &DurableTaskRunRecord,
 ) -> (String, String, String, Value, String) {
-    let payload = task
+    let mut payload = task
         .payload_json
         .get("payload")
         .cloned()
         .unwrap_or_else(|| json!({}));
+    if !payload.is_object() {
+        return (
+            "failed".into(),
+            "deny".into(),
+            "invalid_payload".into(),
+            json!({}),
+            "Looper payload must be an object.".into(),
+        );
+    }
     if let Some(cwd) = payload.get("cwd").and_then(Value::as_str) {
         match resolve_candidate_path(cwd) {
             Ok(candidate) if candidate.starts_with(canonical_root) => {}
@@ -548,34 +590,39 @@ async fn run_looper_payload(
             }
         }
     }
-    let registry = build_registry();
-    let Some(handler) = registry.get("looper", "start") else {
-        return (
-            "failed".to_string(),
-            "deny".to_string(),
-            "looper_unavailable".to_string(),
-            json!({}),
-            "looper.start handler unavailable".to_string(),
-        );
-    };
-    match handler(state, payload).await {
-        Ok(data) => (
-            "succeeded".to_string(),
-            "allow".to_string(),
-            "looper_run".to_string(),
-            data,
+    payload["cwd"] = json!(canonical_root.to_string_lossy());
+    payload["loopId"] = run.result_json["loopId"].clone();
+    payload["correlationId"] = json!(format!("task-run-{}", run.id));
+    let response = crate::ipc::tool_runtime::invoke_tool(
+        state,
+        crate::contracts::ToolInvokeRequest {
+            tool_id: "looper".into(),
+            action: "start".into(),
+            correlation_id: format!("task-run-{}", run.id),
+            mode: crate::contracts::ToolMode::Sandbox,
+            payload,
+        },
+    )
+    .await;
+    match response {
+        Ok(response) if response.ok => (
+            "running".into(),
+            "allow".into(),
+            "looper_run".into(),
+            json!({"loopId": run.result_json["loopId"], "status": "running"}),
             String::new(),
         ),
-        Err(err) => (
-            "failed".to_string(),
-            "allow".to_string(),
-            "looper_run".to_string(),
+        _ => (
+            "failed".into(),
+            "allow".into(),
+            "looper_run".into(),
             json!({}),
-            err,
+            "Delegated Looper launch failed.".into(),
         ),
     }
 }
 
+#[cfg(test)]
 fn validate_files_payload_in_scope(payload: &Value, project_root: &Path) -> Result<(), String> {
     let canonical_root = project_root
         .canonicalize()
@@ -792,7 +839,7 @@ mod tests {
             created_at_ms: 0,
             updated_at_ms: 0,
         };
-        let saved = state.tasks.upsert_task(task).expect("upsert task");
+        let saved = state.tasks.upsert_task(task.clone()).expect("upsert task");
         let executed = super::run_due_scheduled_tasks(&state, 16)
             .await
             .expect("run due tasks");
@@ -807,12 +854,44 @@ mod tests {
             || n.title.contains("Task failed")
             || n.title.contains("Task blocked")));
 
+        let target = tmp.join("protected-by-policy.txt");
+        fs::write(&target, "original").unwrap();
+        let mut mutation = task;
+        mutation.id = "T-MUTATION".into();
+        mutation.project_root = tmp.canonicalize().unwrap().to_string_lossy().into_owned();
+        mutation.payload_kind = "tool_invoke".into();
+        mutation.payload_json = json!({"toolId": "files", "action": "write-file", "payload": {"path": target, "content": "injected overwrite"}});
+        let mutation = state.tasks.upsert_task(mutation).unwrap();
+        assert_eq!(super::run_due_scheduled_tasks(&state, 16).await.unwrap(), 1);
+        assert_eq!(fs::read_to_string(&target).unwrap(), "original");
+        assert_eq!(
+            state.tasks.list_runs(&mutation.id).unwrap()[0].status,
+            "blocked"
+        );
+        assert!(state
+            .tasks
+            .get_task(&mutation.id)
+            .unwrap()
+            .unwrap()
+            .next_run_at_ms
+            .is_none());
+
+        let mut read = mutation;
+        read.id = "T-READ".into();
+        read.payload_json = json!({"toolId": "files", "action": "read-file", "payload": {"path": "protected-by-policy.txt"}});
+        let read = state.tasks.upsert_task(read).unwrap();
+        assert_eq!(super::run_due_scheduled_tasks(&state, 16).await.unwrap(), 1);
+        let runs = state.tasks.list_runs(&read.id).unwrap();
+        assert_eq!(runs[0].status, "succeeded");
+        assert!(!serde_json::to_string(&runs).unwrap().contains("original"));
+
         let _ = fs::remove_file(db_path);
         let _ = fs::remove_dir_all(tmp);
     }
 }
 
 async fn list_task_runs(state: &TauriBridgeState, payload: Value) -> Result<Value, String> {
+    reconcile_runs(state)?;
     let req: ListTaskRunsRequest = decode_payload(payload)?;
     let runs = state.tasks.list_runs(req.task_id.as_str())?;
     Ok(json!({ "runs": runs }))
@@ -844,6 +923,7 @@ fn now_ms() -> i64 {
 }
 
 async fn list_notifications(state: &TauriBridgeState, _payload: Value) -> Result<Value, String> {
+    reconcile_runs(state)?;
     let rows = state.tasks.list_notifications()?;
     Ok(json!({ "notifications": rows }))
 }

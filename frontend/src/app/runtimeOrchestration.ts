@@ -12,7 +12,8 @@ export function parseAgentToolPayload(
   return {
     toolCallId: value.toolCallId,
     toolName: value.toolName,
-    display: typeof value.display === "string" ? value.display : "",
+    // Tool diagnostics are metadata-only, including when receiving older payloads.
+    display: "",
     success: typeof value.success === "boolean" ? value.success : null
   };
 }
@@ -41,8 +42,14 @@ export function toolIconName(rawToolName: string): IconName {
 }
 
 export function formatRuntimeEventLine(event: AppEvent): string {
-  const payloadText =
-    event.payload && typeof event.payload === "object"
+  const toolMetadata = event.action.startsWith("chat.agent.tool.")
+    ? parseAgentToolPayload(event.payload)
+    : null;
+  const payloadText = event.action.startsWith("chat.agent.tool.")
+    ? JSON.stringify(toolMetadata
+        ? { toolCallId: toolMetadata.toolCallId, toolName: toolMetadata.toolName, success: toolMetadata.success }
+        : {})
+    : event.payload && typeof event.payload === "object"
       ? JSON.stringify(event.payload)
       : String(event.payload);
   const payloadObj =

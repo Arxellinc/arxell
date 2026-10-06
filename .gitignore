@@ -57,3 +57,4 @@ coverage/
 *.tsbuildinfo
 
 agent/target/
+__pycache__/

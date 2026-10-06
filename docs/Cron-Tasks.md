@@ -10,6 +10,7 @@ Primary implementation:
 - Durable service: `src-tauri/src/app/tasks_service.rs`
 - Tool-invoke and execution policy: `src-tauri/src/tools/invoke/tasks.rs`
 - Scheduler loop: `src-tauri/src/main.rs`
+- Outcome reconciliation: `src-tauri/src/app/task_run_service.rs`
 
 ## Task Lifecycle
 
@@ -34,12 +35,12 @@ The backend also persists priority (`starred`), source (`user` or `agent`), sche
 Tasks currently support these durable payload kinds:
 
 - `agent_prompt`: delegates an approved task to a real Planner → Executor → Validator → Critic Looper run backed by Pi RPC. The selected task model is applied to all phases when present.
-- `tool_invoke`: invokes a registered tool action after task policy and project-scope checks.
+- `tool_invoke`: allows only scoped file reads/listing and Sheets inspection/range reads, using the shared read-action policy and normal enabled-tool gateway. A low-risk label does not authorize mutation or recursive registry invocation.
 - `looper_run`: starts an explicitly supplied Looper request after validating its working directory.
 
 Automated execution remains fail-closed for non-low-risk tasks. Agent prompts run with `reviewBeforeExecute: false` because scheduled execution cannot answer an interactive planning blocker.
 
-Run records distinguish running, succeeded, blocked, and failed outcomes. Frontend actions inspect `ToolInvokeResponse.ok`; failed saves, runs, deletes, scheduler calls, and run-history loads are surfaced instead of being reported as successful.
+Run intent is persisted as `starting` before side effects, with a unique run/loop identity. Delegation changes it to `running` with a null completion timestamp; both `agent_prompt` and `looper_run` use this behavior. The reconciliation service consumes loop-state snapshots on scheduler ticks and history/notification/status reads to record succeeded or failed/stopped outcomes. Completion time, notification, claim release, and schedule changes commit together and reconciliation is idempotent. Startup preserves known terminal outcomes and records unfinished/missing work as interrupted failures, without automatic replay. Active tasks cannot be edited/deleted until stopped and reconciled. Frontend actions inspect `ToolInvokeResponse.ok`; failed saves, runs, deletes, scheduler calls, and run-history loads are surfaced instead of being reported as successful.
 
 ## Scheduling
 
@@ -56,14 +57,18 @@ The Tauri runtime checks for due work every 15 seconds. Due tasks must be approv
 
 ### Correctness and overlap policy
 
-- One-time schedules clear `nextRunAtMs` after their first execution.
+- One-time schedules consume/clear `nextRunAtMs` when durable launch intent is created, avoiding ambiguous-crash replay.
+- Manual runs do not consume an unrelated schedule.
 - Due tasks are claimed atomically in an immediate SQLite transaction.
-- Claims use an expiring lease so another scheduler cannot execute the same occurrence concurrently and crashed processes can recover.
+- Claims use an expiring launch lease. A persisted `starting`/`running` record additionally blocks manual/scheduled overlap, even after that lease expires.
+- Recurring occurrences due during execution are skipped; completion selects the next future occurrence. Unfinished runs are recovered as failures on startup, not blindly retried.
 - Daily and weekly recurrences preserve the original local time and weekday.
 - Monthly and yearly recurrences clamp invalid calendar days, such as February after a day-31 anchor.
 - Time-of-day schedules are constructed in the selected IANA timezone, not from UTC midnight.
 - DST gaps advance to the first valid local minute; ambiguous times choose the earlier occurrence.
 - Invalid timezones, recurrence values, and time-of-day values are rejected.
+
+The scheduler requires Arxell to be running; no closed-app reminder support is implied. Persistence/scheduling failures emit a safe `tasks.scheduler.error` event rather than silent success. See `ASSISTANT_READINESS.md` for migration and regression coverage.
 
 The Notifications tab exposes scheduler status and a manual “Run due now” control. Both use the same atomic claim path.
 

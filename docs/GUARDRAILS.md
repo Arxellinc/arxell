@@ -20,8 +20,17 @@
 
 ## Security Guardrails
 - Never include secrets in event payloads.
-- Redact known secret-like fields before emission.
-- Tool policy checks happen before tool execution.
+- Redact known secret-like fields recursively before emission.
+- Direct-agent tool diagnostics use allowlisted metadata only; never include raw displays, arguments, commands, output, or stderr.
+- Do not retain deliberate content-bearing presentation events in diagnostic history.
+- Tool policy checks happen before tool execution. Direct chat and automatic invoke tasks are read-scoped; unknown actions fail closed. A risk label is not authorization.
+- Keep API credentials out of all prompt/context-inspection material, not merely event payloads.
+
+## Memory Guardrails
+- Save explicit user memory durably and propagate persistence failures.
+- Use one saved-context selector/renderer for requests and inspection; distinguish selected from available material.
+- Do not automatically ingest chat, tool, mailbox, or attachment contents.
+- Disclose that selected saved entries are sent to the selected model, including cloud providers.
 
 ## Platform Guardrails
 - Platform branches are allowed only in tool/runtime modules.
@@ -39,7 +48,10 @@
 
 ## Tasks Guardrails
 - Persist draft and approved states exactly; never infer approval from a low risk level.
-- Scheduled execution must atomically claim an occurrence before side effects.
+- Scheduled execution must atomically claim an occurrence and persist run intent before side effects.
+- A launch acknowledgement is not success. Reconcile terminal delegated outcomes before recording completion time or completion notifications.
+- Durable active runs block overlap past lease expiry. Never replay ambiguous interrupted runs automatically on restart.
+- Commit terminal outcomes, notifications, schedule updates, and claim release together; reconciliation must be idempotent.
 - One-time schedules must clear after execution, and recurring schedules must preserve local calendar intent.
 - Stable project IDs and canonical execution roots are distinct values; execution uses the validated root.
 - Agent task runs must invoke Pi-backed Looper or return an explicit failure—never record placeholder work as success.
