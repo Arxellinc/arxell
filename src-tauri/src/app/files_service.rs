@@ -21,6 +21,7 @@ impl FilesService {
     pub fn for_root(root: &Path) -> Result<Self, String> {
         let root_path = root
             .canonicalize()
+            .map(strip_unc)
             .map_err(|_| "approved file scope is unavailable")?;
         if !root_path.is_dir() {
             return Err("approved file scope is not a directory".into());
@@ -252,6 +253,7 @@ fn resolve_writable_target_path(root: &Path, requested: &str) -> Result<PathBuf,
         .ok_or_else(|| "failed resolving requested path: no existing parent".to_string())?;
     let canonical_anchor = existing_anchor
         .canonicalize()
+        .map(strip_unc)
         .map_err(|e| format!("failed resolving requested path: {e}"))?;
     if !canonical_anchor.starts_with(canonical_root.as_path()) {
         return Err("requested path is outside workspace root".to_string());
