@@ -73,7 +73,14 @@ def main():
         shutil.copytree(args.resources / "llama-runtime/llama.cpp-cpu", cpu)
         shutil.copytree(args.resources / "whisper-server", whisper)
         llama = cpu / ("llama-server.exe" if os.name == "nt" else "llama-server")
-        whisper_binary = next(whisper.glob("whisper-server-*"))
+        whisper_pattern = (
+            "whisper-server-windows-*.exe"
+            if os.name == "nt"
+            else "whisper-server-macos-*"
+            if sys.platform == "darwin"
+            else "whisper-server-linux-*"
+        )
+        whisper_binary = next(whisper.glob(whisper_pattern))
         model = args.resources / "whisper/ggml-tiny.en-q8_0.bin"
         if not model.is_file():
             raise RuntimeError("Bundled Tiny English model missing")

@@ -240,18 +240,18 @@ jobs:
           whisper_tag="v1.9.4"
           shaderc_tag="v2023.8"
           vulkan_headers_tag="vulkan-sdk-1.4.309.0"
-          kokoro_hash="$(python -c 'import hashlib,pathlib; print(hashlib.sha256(b"".join(pathlib.Path(p).read_bytes() for p in ["scripts/prepare_kokoro_runtime.py", "scripts/verify_kokoro_runtime_archive.py", "scripts/kokoro-runtime-requirements.txt"])).hexdigest())')"
           echo "llama_tag=${llama_tag}" >> "${GITHUB_OUTPUT}"
           echo "whisper_tag=${whisper_tag}" >> "${GITHUB_OUTPUT}"
           echo "shaderc_tag=${shaderc_tag}" >> "${GITHUB_OUTPUT}"
           echo "vulkan_headers_tag=${vulkan_headers_tag}" >> "${GITHUB_OUTPUT}"
-          echo "kokoro_hash=${kokoro_hash}" >> "${GITHUB_OUTPUT}"
           libgomp_version="none"
           if [[ "$RUNNER_OS" == "Linux" ]]; then
             libgomp_version="$(dpkg-query -W -f='${Version}' libgomp1)"
           fi
           echo "libgomp_version=${libgomp_version}" >> "${GITHUB_OUTPUT}"
-          echo "Cache key: llama=${llama_tag} whisper=${whisper_tag} shaderc=${shaderc_tag} vulkan_headers=${vulkan_headers_tag} libgomp=${libgomp_version} kokoro=${kokoro_hash}"
+          # Clear any git-tracked foreign-OS whisper binary before cache restore
+          rm -f src-tauri/resources/whisper-server/whisper-server-*
+          echo "Cache key: llama=${llama_tag} whisper=${whisper_tag} shaderc=${shaderc_tag} vulkan_headers=${vulkan_headers_tag} libgomp=${libgomp_version}"
 
       - name: Restore cached llama.cpp runtime closure
         id: cache_llama
@@ -269,13 +269,6 @@ jobs:
             src-tauri/resources/whisper-server
             src-tauri/resources/whisper
           key: whisper-closure-v12-portable-${{ matrix.platform.os }}-${{ runner.arch }}-${{ steps.runtime_versions.outputs.whisper_tag }}-${{ steps.runtime_versions.outputs.libgomp_version }}-${{ hashFiles('scripts/model_assets.py') }}
-
-      - name: Restore cached Kokoro archive
-        id: cache_kokoro
-        uses: actions/cache/restore@v4
-        with:
-          path: src-tauri/resources/kokoro-runtime
-          key: kokoro-archive-v2-${{ matrix.platform.os }}-${{ runner.arch }}-${{ steps.runtime_versions.outputs.kokoro_hash }}
 
       - name: Cache Linux shader compiler and Vulkan headers
         if: runner.os == 'Linux' && steps.cache_llama.outputs.cache-hit != 'true'
@@ -674,95 +667,6 @@ jobs:
           echo "[whisper-runtime] final resources:"
           ls -la "$whisper_server_dir" "$whisper_models_dir"
 
-      - name: Prepare bundled Kokoro runtime archive
-        if: steps.cache_kokoro.outputs.cache-hit != 'true'
-        shell: bash
-        run: |
-          set -euo pipefail
-          if command -v python3 >/dev/null 2>&1; then
-            PY=python3
-          elif command -v python >/dev/null 2>&1; then
-            PY=python
-          else
-            echo "Python executable not found on runner" >&2
-            exit 1
-          fi
-          "$PY" scripts/prepare_kokoro_runtime.py
-
-      - name: Verify bundled Kokoro runtime archive
-        shell: bash
-        run: |
-          set -euo pipefail
-          if command -v python3 >/dev/null 2>&1; then
-            PY=python3
-          elif command -v python >/dev/null 2>&1; then
-            PY=python
-          else
-            echo "Python executable not found on runner" >&2
-            exit 1
-          fi
-          "$PY" scripts/verify_kokoro_runtime_archive.py
-
-      - name: Generate Kokoro runtime manifest
-        shell: bash
-        run: |
-          set -euo pipefail
-          if command -v python3 >/dev/null 2>&1; then
-            PY=python3
-          elif command -v python >/dev/null 2>&1; then
-            PY=python
-          else
-            echo "Python executable not found on runner" >&2
-            exit 1
-          fi
-          "$PY" - <<'PY'
-          import hashlib
-          import json
-          import pathlib
-          import platform
-
-          def expected_archive_name() -> str:
-            system = platform.system().lower()
-            machine = platform.machine().lower()
-            if machine in {"amd64", "x86_64", "x64"}:
-              arch = "x86_64"
-            elif machine in {"arm64", "aarch64"}:
-              arch = "aarch64"
-            else:
-              raise RuntimeError(f"Unsupported architecture: {machine}")
-
-            if system == "linux":
-              os_tag = "linux"
-            elif system == "darwin":
-              os_tag = "macos"
-            elif system == "windows":
-              os_tag = "windows"
-            else:
-              raise RuntimeError(f"Unsupported platform: {system}")
-            return f"kokoro-runtime-{os_tag}-{arch}.zip"
-
-          repo_root = pathlib.Path(".").resolve()
-          runtime_dir = repo_root / "src-tauri" / "resources" / "kokoro-runtime"
-          archive = runtime_dir / expected_archive_name()
-          if not archive.exists():
-            raise RuntimeError(f"Kokoro runtime archive missing: {archive}")
-
-          sha256 = hashlib.sha256(archive.read_bytes()).hexdigest()
-          manifest = {
-            "runnerOs": platform.system(),
-            "runnerArch": platform.machine(),
-            "archiveName": archive.name,
-            "archivePath": str(archive.relative_to(repo_root)),
-            "archiveSizeBytes": archive.stat().st_size,
-            "sha256": sha256,
-          }
-          (runtime_dir / "manifest.json").write_text(
-            json.dumps(manifest, indent=2) + "\n",
-            encoding="utf-8",
-          )
-          print(f"[kokoro-runtime] manifest written for {archive.name}")
-          PY
-
       - name: Verify portable runtime cache policy and closures
         shell: bash
         run: |
@@ -778,7 +682,15 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          binary=$(find "$GITHUB_WORKSPACE/src-tauri/resources/whisper-server" -type f -name 'whisper-server-*' | head -1)
+          case "$RUNNER_OS/$RUNNER_ARCH" in
+            "Linux/X64") target_name="whisper-server-linux-x86_64" ;;
+            "Windows/X64") target_name="whisper-server-windows-x86_64.exe" ;;
+            "macOS/ARM64") target_name="whisper-server-macos-aarch64" ;;
+            "macOS/X64") target_name="whisper-server-macos-x86_64" ;;
+            *) echo "Unsupported runner: $RUNNER_OS/$RUNNER_ARCH" >&2; exit 1 ;;
+          esac
+          binary="$GITHUB_WORKSPACE/src-tauri/resources/whisper-server/$target_name"
+          test -f "$binary"
           ARXELL_TEST_WHISPER_BINARY="$binary" cargo test --manifest-path src-tauri/Cargo.toml --features tauri-runtime real_whisper_runs_from_staged_closure -- --ignored
           python scripts/model_assets.py whisper src-tauri/resources/whisper
 
@@ -797,13 +709,6 @@ jobs:
             src-tauri/resources/whisper-server
             src-tauri/resources/whisper
           key: ${{ steps.cache_whisper.outputs.cache-primary-key }}
-
-      - name: Save verified Kokoro archive before packaging
-        if: steps.cache_kokoro.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v4
-        with:
-          path: src-tauri/resources/kokoro-runtime
-          key: ${{ steps.cache_kokoro.outputs.cache-primary-key }}
 
       - name: Build Tauri app bundle
         working-directory: src-tauri
@@ -871,6 +776,7 @@ jobs:
               -v "$GITHUB_WORKSPACE/scripts:/test-scripts:ro" \
               -v "$RUNNER_TEMP/acceptance:/evidence" \
               ubuntu:22.04 bash -euc '
+                trap "chmod -R a+rX /evidence 2>/dev/null || true" EXIT
                 apt-get update -qq
                 DEBIAN_FRONTEND=noninteractive apt-get install -y -qq ca-certificates python3 xvfb xauth dbus-x11
                 useradd --create-home tester
@@ -1039,20 +945,6 @@ jobs:
           name: ${{ matrix.platform.name }}-v${{ steps.app_version.outputs.version }}-whisper-runtime-manifest
           path: src-tauri/resources/whisper-server/manifest.json
           if-no-files-found: warn
-
-      - name: Upload bundled Kokoro runtime manifest
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ matrix.platform.name }}-v${{ steps.app_version.outputs.version }}-kokoro-runtime-manifest
-          path: src-tauri/resources/kokoro-runtime/manifest.json
-          if-no-files-found: error
-
-      - name: Upload bundled Kokoro runtime archive
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ matrix.platform.name }}-v${{ steps.app_version.outputs.version }}-kokoro-runtime
-          path: src-tauri/resources/kokoro-runtime/kokoro-runtime-*.zip
-          if-no-files-found: error
 
       - name: Upload release bundle artifact
         uses: actions/upload-artifact@v4

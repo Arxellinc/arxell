@@ -38,6 +38,7 @@ def download(url, destination, expected):
                     output.write(chunk)
         if digest(temporary) != expected:
             raise RuntimeError(f"Model checksum mismatch: {destination.name}")
+        temporary.chmod(0o644)
         temporary.replace(destination)
         return destination
     finally:

@@ -42,7 +42,12 @@ class PackagedRuntimeSmokeTests(unittest.TestCase):
             (resources / "llama-runtime/llama.cpp-cpu").mkdir(parents=True)
             (resources / "llama-runtime/llama.cpp-cpu/llama-server").write_text("", encoding="utf-8")
             (resources / "whisper-server").mkdir(parents=True)
-            (resources / "whisper-server/whisper-server-linux-x86_64").write_text("", encoding="utf-8")
+            for name in [
+                "whisper-server-linux-x86_64",
+                "whisper-server-macos-aarch64",
+                "whisper-server-windows-x86_64.exe",
+            ]:
+                (resources / "whisper-server" / name).write_text("", encoding="utf-8")
             output = root / "out"
 
             def fake_download(_url, destination, _expected):
