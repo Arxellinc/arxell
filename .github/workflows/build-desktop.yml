@@ -872,7 +872,7 @@ jobs:
               -v "$RUNNER_TEMP/acceptance:/evidence" \
               ubuntu:22.04 bash -euc '
                 apt-get update -qq
-                DEBIAN_FRONTEND=noninteractive apt-get install -y -qq python3 xvfb xauth dbus-x11
+                DEBIAN_FRONTEND=noninteractive apt-get install -y -qq ca-certificates python3 xvfb xauth dbus-x11
                 useradd --create-home tester
                 if [ "$PACKAGE" = deb ]; then
                   DEBIAN_FRONTEND=noninteractive apt-get install -y -qq /tmp/arxell.deb
@@ -883,6 +883,8 @@ jobs:
                   mkdir /tmp/extracted
                   cd /tmp/extracted
                   APPIMAGE_EXTRACT_AND_RUN=1 /tmp/Arxell.AppImage --appimage-extract >/dev/null
+                  chmod -R a+rX /tmp/extracted
+                  cd /tmp
                   resources=/tmp/extracted/squashfs-root/usr/lib/Arxell/resources
                   binary=/tmp/Arxell.AppImage
                 fi
