@@ -52,7 +52,7 @@ jobs:
     runs-on: ${{ matrix.platform.os }}
     timeout-minutes: 90
     env:
-      MACOSX_DEPLOYMENT_TARGET: ${{ runner.os == 'macOS' && '14.0' || '' }}
+      MACOSX_DEPLOYMENT_TARGET: ${{ matrix.platform.os == 'macos-14' && '14.0' || '' }}
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
       APPIMAGE_EXTRACT_AND_RUN: "1"
       ARCH: x86_64
