@@ -4,7 +4,7 @@ This guide walks through setting up the Arxell build environment on macOS for bu
 
 ## Prerequisites
 
-- macOS 11 (Big Sur) or later
+- macOS 14 or later on Apple Silicon for the currently tested release baseline. Intel/universal builds are not currently release-tested.
 - Administrator access on the Mac
 - Internet connection
 - Xcode Command Line Tools
@@ -117,11 +117,9 @@ cd ..
 ## Step 8: Install Tauri CLI
 
 ```bash
-# Install Tauri CLI globally
-npm install -g @tauri-apps/cli
-
-# Verify installation
-cargo tauri --version
+# The frontend npm lockfile pins the native Tauri CLI (installed by npm ci).
+# Verify it from the repository root:
+frontend/node_modules/.bin/tauri --version
 ```
 
 ## Step 9: Install Additional Dependencies
@@ -138,11 +136,11 @@ brew install pkg-config
 
 ## Step 10: Development Build
 
-To run the development build:
+To run the development build from `src-tauri`:
 
 ```bash
 # Start the development server
-cargo tauri dev
+../frontend/node_modules/.bin/tauri dev -- --features tauri-runtime
 ```
 
 This will:
@@ -154,8 +152,8 @@ This will:
 To create a distributable macOS application:
 
 ```bash
-# Build the release version
-cargo tauri build
+# From src-tauri, build the release version with prepared runtime resources
+../frontend/node_modules/.bin/tauri build -- --features tauri-runtime
 ```
 
 The built application will be located at:

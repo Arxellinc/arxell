@@ -5,8 +5,6 @@
       "resources/licenses/*",
       "resources/llama-runtime/*",
       "resources/llama-runtime/**/*",
-      "resources/kokoro-runtime/*",
-      "resources/kokoro-runtime/**/*",
       "resources/kokoro/*",
       "resources/espeak-ng/**/*",
       "resources/model-lists/*",
