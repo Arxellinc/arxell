@@ -203,7 +203,8 @@ Every layer communicates through typed contracts with correlation IDs, structure
 ### Prerequisites
 
 - When building from source: [Rust](https://rustup.rs/) (latest stable), Tauri CLI 2, and [Node.js](https://nodejs.org/) >= 20.19 for frontend tooling
-- Platform-specific WebView2 (Windows) / WebKit (macOS &mdash; built-in) / WebKitGTK 4.1 (Linux; release builds target Ubuntu 22.04 and glibc 2.35; newer compatible distributions may work)
+- Platform-specific WebView2 (Windows) / WebKit (macOS &mdash; built-in; current builds target Apple Silicon on macOS 14+) / WebKitGTK 4.1 (Linux; release builds target Ubuntu 22.04 and glibc 2.35; newer compatible distributions may work)
+- Bundled x86-64 local engines currently target AVX2/FMA/F16C/BMI2-capable CPUs, not every historical x86-64 processor. Runner-native CPU tuning is disabled for both llama.cpp and Whisper.
 - For automatic Pi setup when Pi is not already installed: Node.js (>= 22.19 for the current Pi package) and npm
 - On Windows, Pi also requires Git for Windows/Bash
 - On Linux, API-key storage requires an unlocked desktop Secret Service (for example GNOME Keyring or a compatible KWallet). If unavailable, saving credentials fails unless you explicitly enable plaintext fallback; Arxell does not silently downgrade storage.

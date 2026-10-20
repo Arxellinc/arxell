@@ -9,14 +9,50 @@ on:
   pull_request:
   workflow_dispatch:
 
+concurrency:
+  group: desktop-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+
 permissions:
-  contents: write
+  contents: read
 
 jobs:
+  changes:
+    name: Classify desktop changes
+    runs-on: ubuntu-latest
+    outputs:
+      build: ${{ steps.classify.outputs.build }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: classify
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json, os, subprocess
+          event = json.load(open(os.environ['GITHUB_EVENT_PATH']))
+          ref = os.environ['GITHUB_REF']
+          build = True
+          if os.environ['GITHUB_EVENT_NAME'] != 'workflow_dispatch' and not (ref.startswith('refs/tags/') or ref.startswith('refs/heads/release/')):
+              base = event.get('pull_request', {}).get('base', {}).get('sha') or event.get('before')
+              if base and base.strip('0'):
+                  paths = subprocess.check_output(['git', 'diff', '--name-only', base, os.environ['GITHUB_SHA']], text=True).splitlines()
+                  build = any(not (path.endswith('.md') or path.startswith('docs/')) for path in paths)
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              output.write(f'build={str(build).lower()}\n')
+          print('Build required:', build)
+          PY
+
   build:
     name: Build (${{ matrix.platform.name }})
+    needs: changes
+    if: needs.changes.outputs.build == 'true'
     runs-on: ${{ matrix.platform.os }}
+    timeout-minutes: 90
     env:
+      MACOSX_DEPLOYMENT_TARGET: ${{ runner.os == 'macOS' && '14.0' || '' }}
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
       APPIMAGE_EXTRACT_AND_RUN: "1"
       ARCH: x86_64
@@ -30,7 +66,7 @@ jobs:
           - name: linux-x64
             os: ubuntu-22.04
           - name: macos-arm64
-            os: macos-latest
+            os: macos-14
           - name: windows-x64
             os: windows-latest
 
@@ -84,17 +120,6 @@ jobs:
 
       - name: Setup Rust toolchain
         uses: dtolnay/rust-toolchain@stable
-
-      - name: Cache Tauri CLI
-        id: cache_tauri_cli
-        uses: actions/cache@v4
-        with:
-          path: ~/.cargo/bin/cargo-tauri
-          key: tauri-cli-${{ runner.os }}-v2
-
-      - name: Install Tauri CLI
-        if: steps.cache_tauri_cli.outputs.cache-hit != 'true'
-        run: cargo install tauri-cli --locked --version "^2.0.0"
 
       - name: Cache Rust build artifacts
         uses: Swatinem/rust-cache@v2
@@ -215,7 +240,7 @@ jobs:
           whisper_tag="v1.9.4"
           shaderc_tag="v2023.8"
           vulkan_headers_tag="vulkan-sdk-1.4.309.0"
-          kokoro_hash="$(md5sum scripts/prepare_kokoro_runtime.py scripts/verify_kokoro_runtime_archive.py | md5sum | cut -d' ' -f1)"
+          kokoro_hash="$(python -c 'import hashlib,pathlib; print(hashlib.sha256(b"".join(pathlib.Path(p).read_bytes() for p in ["scripts/prepare_kokoro_runtime.py", "scripts/verify_kokoro_runtime_archive.py", "scripts/kokoro-runtime-requirements.txt"])).hexdigest())')"
           echo "llama_tag=${llama_tag}" >> "${GITHUB_OUTPUT}"
           echo "whisper_tag=${whisper_tag}" >> "${GITHUB_OUTPUT}"
           echo "shaderc_tag=${shaderc_tag}" >> "${GITHUB_OUTPUT}"
@@ -226,22 +251,44 @@ jobs:
             libgomp_version="$(dpkg-query -W -f='${Version}' libgomp1)"
           fi
           echo "libgomp_version=${libgomp_version}" >> "${GITHUB_OUTPUT}"
-          echo "Cache key: llama=${llama_tag} whisper=${whisper_tag} shaderc=${shaderc_tag} vulkan_headers=${vulkan_headers_tag} kokoro=${kokoro_hash}"
+          echo "Cache key: llama=${llama_tag} whisper=${whisper_tag} shaderc=${shaderc_tag} vulkan_headers=${vulkan_headers_tag} libgomp=${libgomp_version} kokoro=${kokoro_hash}"
 
-      - name: Cache bundled runtimes
-        id: cache_runtimes
+      - name: Restore cached llama.cpp runtime closure
+        id: cache_llama
+        uses: actions/cache/restore@v4
+        with:
+          path: src-tauri/resources/llama-runtime
+          # Do not restore pre-policy/native-tuned caches, even when source tags match.
+          key: llama-closure-v12-portable-${{ matrix.platform.os }}-${{ runner.arch }}-${{ steps.runtime_versions.outputs.llama_tag }}-${{ steps.runtime_versions.outputs.vulkan_headers_tag }}-${{ steps.runtime_versions.outputs.libgomp_version }}
+
+      - name: Restore cached Whisper runtime and verified models
+        id: cache_whisper
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            src-tauri/resources/whisper-server
+            src-tauri/resources/whisper
+          key: whisper-closure-v12-portable-${{ matrix.platform.os }}-${{ runner.arch }}-${{ steps.runtime_versions.outputs.whisper_tag }}-${{ steps.runtime_versions.outputs.libgomp_version }}-${{ hashFiles('scripts/model_assets.py') }}
+
+      - name: Restore cached Kokoro archive
+        id: cache_kokoro
+        uses: actions/cache/restore@v4
+        with:
+          path: src-tauri/resources/kokoro-runtime
+          key: kokoro-archive-v2-${{ matrix.platform.os }}-${{ runner.arch }}-${{ steps.runtime_versions.outputs.kokoro_hash }}
+
+      - name: Cache Linux shader compiler and Vulkan headers
+        if: runner.os == 'Linux' && steps.cache_llama.outputs.cache-hit != 'true'
+        id: cache_linux_tools
         uses: actions/cache@v4
         with:
           path: |
-            src-tauri/resources/llama-runtime
-            src-tauri/resources/whisper-server
-            src-tauri/resources/whisper
-            src-tauri/resources/kokoro-runtime
-          # Do not restore pre-policy/native-tuned caches, even when source tags match.
-          key: runtimes-llama-source-v11-portable-all-${{ runner.os }}-${{ runner.arch }}-${{ steps.runtime_versions.outputs.llama_tag }}-${{ steps.runtime_versions.outputs.whisper_tag }}-${{ steps.runtime_versions.outputs.shaderc_tag }}-${{ steps.runtime_versions.outputs.vulkan_headers_tag }}-${{ steps.runtime_versions.outputs.libgomp_version }}-${{ steps.runtime_versions.outputs.kokoro_hash }}
+            ${{ runner.temp }}/shaderc-bin
+            ${{ runner.temp }}/vulkan-headers-install
+          key: linux-vulkan-tools-v1-${{ matrix.platform.os }}-${{ steps.runtime_versions.outputs.shaderc_tag }}-${{ steps.runtime_versions.outputs.vulkan_headers_tag }}
 
       - name: Build and install pinned SPIRV-Headers for Windows
-        if: matrix.platform.os == 'windows-latest' && steps.cache_runtimes.outputs.cache-hit != 'true'
+        if: matrix.platform.os == 'windows-latest' && steps.cache_llama.outputs.cache-hit != 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -260,7 +307,7 @@ jobs:
           echo "Installed SPIRV-Headers package: $install_dir"
 
       - name: Build and install pinned Vulkan headers for Linux
-        if: matrix.platform.os == 'ubuntu-22.04' && steps.cache_runtimes.outputs.cache-hit != 'true'
+        if: runner.os == 'Linux' && steps.cache_llama.outputs.cache-hit != 'true' && steps.cache_linux_tools.outputs.cache-hit != 'true'
         shell: bash
         env:
           VULKAN_HEADERS_TAG: ${{ steps.runtime_versions.outputs.vulkan_headers_tag }}
@@ -278,7 +325,7 @@ jobs:
           echo "Installed Vulkan headers $VULKAN_HEADERS_TAG: $install_dir"
 
       - name: Build pinned glslc for Linux Vulkan runtime
-        if: matrix.platform.os == 'ubuntu-22.04' && steps.cache_runtimes.outputs.cache-hit != 'true'
+        if: runner.os == 'Linux' && steps.cache_llama.outputs.cache-hit != 'true' && steps.cache_linux_tools.outputs.cache-hit != 'true'
         shell: bash
         env:
           SHADERC_TAG: ${{ steps.runtime_versions.outputs.shaderc_tag }}
@@ -306,8 +353,13 @@ jobs:
           "$bin_dir/glslc" --version
           echo "$bin_dir" >> "$GITHUB_PATH"
 
+      - name: Restore Linux shader compiler PATH
+        if: runner.os == 'Linux' && steps.cache_llama.outputs.cache-hit != 'true'
+        shell: bash
+        run: echo "$RUNNER_TEMP/shaderc-bin" >> "$GITHUB_PATH"
+
       - name: Build bundled llama.cpp runtimes from pinned source
-        if: steps.cache_runtimes.outputs.cache-hit != 'true'
+        if: steps.cache_llama.outputs.cache-hit != 'true'
         shell: bash
         env:
           LLAMA_TAG: ${{ steps.runtime_versions.outputs.llama_tag }}
@@ -516,7 +568,7 @@ jobs:
           PY
 
       - name: Build bundled whisper runtimes from pinned source
-        if: steps.cache_runtimes.outputs.cache-hit != 'true'
+        if: steps.cache_whisper.outputs.cache-hit != 'true'
         shell: bash
         env:
           WHISPER_TAG: ${{ steps.runtime_versions.outputs.whisper_tag }}
@@ -623,7 +675,7 @@ jobs:
           ls -la "$whisper_server_dir" "$whisper_models_dir"
 
       - name: Prepare bundled Kokoro runtime archive
-        if: steps.cache_runtimes.outputs.cache-hit != 'true'
+        if: steps.cache_kokoro.outputs.cache-hit != 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -638,7 +690,6 @@ jobs:
           "$PY" scripts/prepare_kokoro_runtime.py
 
       - name: Verify bundled Kokoro runtime archive
-        if: steps.cache_runtimes.outputs.cache-hit != 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -653,7 +704,6 @@ jobs:
           "$PY" scripts/verify_kokoro_runtime_archive.py
 
       - name: Generate Kokoro runtime manifest
-        if: steps.cache_runtimes.outputs.cache-hit != 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -724,6 +774,37 @@ jobs:
             --root src-tauri/resources/whisper-server --platform "$RUNNER_OS" \
             --tag '${{ steps.runtime_versions.outputs.whisper_tag }}'
 
+      - name: Verify real staged Whisper closure
+        shell: bash
+        run: |
+          set -euo pipefail
+          binary=$(find "$GITHUB_WORKSPACE/src-tauri/resources/whisper-server" -type f -name 'whisper-server-*' | head -1)
+          ARXELL_TEST_WHISPER_BINARY="$binary" cargo test --manifest-path src-tauri/Cargo.toml --features tauri-runtime real_whisper_runs_from_staged_closure -- --ignored
+          python scripts/model_assets.py whisper src-tauri/resources/whisper
+
+      - name: Save verified llama closure before packaging
+        if: steps.cache_llama.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: src-tauri/resources/llama-runtime
+          key: ${{ steps.cache_llama.outputs.cache-primary-key }}
+
+      - name: Save verified Whisper closure before packaging
+        if: steps.cache_whisper.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            src-tauri/resources/whisper-server
+            src-tauri/resources/whisper
+          key: ${{ steps.cache_whisper.outputs.cache-primary-key }}
+
+      - name: Save verified Kokoro archive before packaging
+        if: steps.cache_kokoro.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: src-tauri/resources/kokoro-runtime
+          key: ${{ steps.cache_kokoro.outputs.cache-primary-key }}
+
       - name: Build Tauri app bundle
         working-directory: src-tauri
         shell: bash
@@ -737,15 +818,15 @@ jobs:
           rm -rf target/release/bundle
           case "${{ matrix.platform.os }}" in
             ubuntu-22.04)
-              cargo tauri build --config '{"build":{"beforeBuildCommand":""}}' --bundles deb -- --features tauri-runtime 2>&1
+              ../frontend/node_modules/.bin/tauri build --config '{"build":{"beforeBuildCommand":""}}' --bundles deb -- --features tauri-runtime 2>&1
               runtime_library_path="$GITHUB_WORKSPACE/src-tauri/resources/llama-runtime/llama.cpp-cpu:$GITHUB_WORKSPACE/src-tauri/resources/llama-runtime/llama.cpp-vulkan:$GITHUB_WORKSPACE/src-tauri/resources/whisper-server"
-              DEBUG=1 LD_LIBRARY_PATH="$runtime_library_path" cargo tauri build --config '{"build":{"beforeBuildCommand":""}}' --verbose --bundles appimage -- --features tauri-runtime 2>&1
+              DEBUG=1 LD_LIBRARY_PATH="$runtime_library_path" ../frontend/node_modules/.bin/tauri build --config '{"build":{"beforeBuildCommand":""}}' --verbose --bundles appimage -- --features tauri-runtime 2>&1
               ;;
             windows-latest)
-              cargo tauri build --config '{"build":{"beforeBuildCommand":""}}' --bundles msi -- --features tauri-runtime
+              ../frontend/node_modules/.bin/tauri build --config '{"build":{"beforeBuildCommand":""}}' --bundles msi -- --features tauri-runtime
               ;;
-            macos-latest)
-              cargo tauri build --config '{"build":{"beforeBuildCommand":""}}' --bundles dmg -- --features tauri-runtime
+            macos-14)
+              ../frontend/node_modules/.bin/tauri build --config '{"build":{"beforeBuildCommand":""}}' --bundles dmg -- --features tauri-runtime
               ;;
             *)
               echo "Unsupported platform: ${{ matrix.platform.os }}" >&2
@@ -778,44 +859,41 @@ jobs:
           set -euo pipefail
           DEB=$(find src-tauri/target/release/bundle/deb -name "*.deb" | head -1)
           APPIMAGE=$(find src-tauri/target/release/bundle/appimage -name "*.AppImage" | head -1)
-          docker run --rm \
-            -v "$GITHUB_WORKSPACE/$DEB:/tmp/arxell.deb:ro" \
-            -v "$GITHUB_WORKSPACE/$APPIMAGE:/tmp/Arxell.AppImage:ro" \
-            ubuntu:22.04 bash -euc '
-              apt-get update -qq
-              DEBIAN_FRONTEND=noninteractive apt-get install -y -qq libfuse2 xvfb xauth dbus-x11
-              dpkg -i /tmp/arxell.deb || apt-get install -f -y -qq
-              mkdir -p /tmp/appimage-extract
-              cd /tmp/appimage-extract
-              APPIMAGE_EXTRACT_AND_RUN=1 /tmp/Arxell.AppImage --appimage-extract >/dev/null
-              appdir=/tmp/appimage-extract/squashfs-root/usr/lib/Arxell/resources
-              test -s "$appdir/THIRD_PARTY_NOTICES.md"
-              grep -q "GNU OpenMP" "$appdir/THIRD_PARTY_NOTICES.md"
-              test -s "$appdir/licenses/GPL-3.txt"
-              grep -q "GCC RUNTIME LIBRARY EXCEPTION" "$appdir/licenses/libgomp1-copyright.txt"
-              llama_dir="$appdir/llama-runtime/llama.cpp-cpu"
-              whisper_dir="$appdir/whisper-server"
-              LD_LIBRARY_PATH="$llama_dir" "$llama_dir/llama-server" --version
-              LD_LIBRARY_PATH="$whisper_dir" "$whisper_dir/whisper-server-linux-x86_64" --help >/dev/null
-              cd /
-              smoke_launch() {
-                set +e
-                timeout --signal=TERM --kill-after=5s 25s xvfb-run -a "$@" >/tmp/arxell-launch.log 2>&1
-                result=$?
-                set -e
-                if [ "$result" -ne 124 ]; then
-                  cat /tmp/arxell-launch.log
-                  echo "Arxell exited before the clean-machine launch timeout (status $result)" >&2
-                  exit 1
+          mkdir -p "$RUNNER_TEMP/acceptance"
+          chmod 777 "$RUNNER_TEMP/acceptance"
+          # Separate containers: installing the deb must not hide missing
+          # AppImage dependencies, and the deb container must pull its own
+          # declared runtime dependencies via apt rather than pre-installing them.
+          for package in deb appimage; do
+            docker run --rm -e PACKAGE="$package" \
+              -v "$GITHUB_WORKSPACE/$DEB:/tmp/arxell.deb:ro" \
+              -v "$GITHUB_WORKSPACE/$APPIMAGE:/tmp/Arxell.AppImage:ro" \
+              -v "$GITHUB_WORKSPACE/scripts:/test-scripts:ro" \
+              -v "$RUNNER_TEMP/acceptance:/evidence" \
+              ubuntu:22.04 bash -euc '
+                apt-get update -qq
+                DEBIAN_FRONTEND=noninteractive apt-get install -y -qq python3 xvfb xauth dbus-x11
+                useradd --create-home tester
+                if [ "$PACKAGE" = deb ]; then
+                  DEBIAN_FRONTEND=noninteractive apt-get install -y -qq /tmp/arxell.deb
+                  resources=/usr/lib/Arxell/resources
+                  binary=/usr/bin/arxell
+                else
+                  DEBIAN_FRONTEND=noninteractive apt-get install -y -qq libfuse2 libwebkit2gtk-4.1-0 libasound2
+                  mkdir /tmp/extracted
+                  cd /tmp/extracted
+                  APPIMAGE_EXTRACT_AND_RUN=1 /tmp/Arxell.AppImage --appimage-extract >/dev/null
+                  resources=/tmp/extracted/squashfs-root/usr/lib/Arxell/resources
+                  binary=/tmp/Arxell.AppImage
                 fi
-                if grep -Eq "GLIBC_[0-9.]+.*not found|error while loading shared libraries" /tmp/arxell-launch.log; then
-                  cat /tmp/arxell-launch.log
-                  exit 1
-                fi
-              }
-              smoke_launch /usr/bin/arxell
-              smoke_launch env APPIMAGE_EXTRACT_AND_RUN=1 /tmp/Arxell.AppImage
-            '
+                test -s "$resources/THIRD_PARTY_NOTICES.md"
+                grep -q "GNU OpenMP" "$resources/THIRD_PARTY_NOTICES.md"
+                test -s "$resources/licenses/GPL-3.txt"
+                grep -q "GCC RUNTIME LIBRARY EXCEPTION" "$resources/licenses/libgomp1-copyright.txt"
+                runuser -u tester -- python3 /test-scripts/packaged_runtime_smoke.py "$resources" --output "/evidence/$PACKAGE-runtimes"
+                runuser -u tester -- dbus-run-session -- xvfb-run -a python3 /test-scripts/desktop_launch_smoke.py --output "/evidence/$PACKAGE-launch" -- "$binary"
+              '
+          done
 
       - name: Verify Tauri bundle output
         shell: bash
@@ -832,7 +910,7 @@ jobs:
           expected_suffixes = {
               "ubuntu-22.04": {".deb", ".appimage"},
               "windows-latest": {".msi"},
-              "macos-latest": {".dmg"},
+              "macos-14": {".dmg"},
           }.get(platform_os)
           if expected_suffixes is None:
               raise SystemExit(f"Unsupported platform: {platform_os}")
@@ -879,7 +957,7 @@ jobs:
           if ($uninstall.ExitCode -notin @(0, 3010)) { throw "MSI uninstall failed with exit code $($uninstall.ExitCode)" }
 
       - name: Mount and validate macOS DMG installation
-        if: matrix.platform.os == 'macos-latest'
+        if: runner.os == 'macOS'
         shell: bash
         run: |
           set -euo pipefail
@@ -897,7 +975,16 @@ jobs:
           executable=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$app_copy/Contents/Info.plist")
           test -x "$app_copy/Contents/MacOS/$executable"
           file "$app_copy/Contents/MacOS/$executable" | grep -q 'arm64'
-          echo "Validated copied Apple Silicon app bundle: $app_copy"
+          # Remove build-tree libraries so copied bundle checks cannot resolve
+          # dependencies accidentally from the compiler workspace.
+          rm -rf "$RUNNER_TEMP"/llama-build-* "$RUNNER_TEMP/whisper-build"
+          python scripts/desktop_launch_smoke.py --output "$RUNNER_TEMP/acceptance/macos-installed" -- "$app_copy/Contents/MacOS/$executable"
+          resources=$(find "$app_copy/Contents/Resources" -type d -name llama-runtime -print -quit)
+          test -n "$resources"
+          resources_root="$(dirname "$resources")"
+          test -s "$resources_root/THIRD_PARTY_NOTICES.md"
+          python scripts/packaged_runtime_smoke.py "$resources_root" --output "$RUNNER_TEMP/acceptance/macos-runtimes"
+          echo "Launched copied Apple Silicon app and tested packaged CPU inference/transcription"
 
       - name: Build CI-only renderer IPC probe (never bundle or publish)
         if: runner.os == 'Linux' || runner.os == 'macOS'
