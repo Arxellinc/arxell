@@ -174,7 +174,7 @@ export function openMemoryModalState(state: AnyState, section: MemorySection, in
   const namespaceKey = section === "memory" ? item.key.split(":") : [];
   const isIndex = item.category === "skill-index" || item.category === "tool-index";
   const isReadOnlyKey = item.key === "Skill Index" || item.key === "Tool Index" || item.key === "Runtime metadata" || item.key === "Verified API registry context";
-  const isSystemPrompt = section === "context" && item.key === "Base system prompt";
+  const isSystemPrompt = section === "context" && item.category === "system" && item.key === "Base system prompt";
   const isCustomContext = section === "context" && item.category === "custom-context";
   const isCustomTool = section === "tools" && item.category === "tool-note";
   const isSkillFile = section === "skills" && !!item.sourcePath;

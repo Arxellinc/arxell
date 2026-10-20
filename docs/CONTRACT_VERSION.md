@@ -1,7 +1,7 @@
 # Contract Version
 
 ## Current Version
-- `foundation-v7`
+- `foundation-v8`
 
 ## Scope
 This version pins the shared contracts between the TypeScript frontend (`frontend/src/contracts.ts`) and the Rust backend (`src-tauri/src/contracts.rs`).
@@ -152,6 +152,14 @@ This version pins the shared contracts between the TypeScript frontend (`fronten
   2. update `IPC_EVENTS.md`
   3. document migration impact in PR/changeset
 
+## foundation-v8 Migration
+
+- Direct-agent tool events are metadata-only: `toolCallId`, `toolName`, optional `success`; `display` is removed. Frontend consumers must not require or render raw displays. Looper `reviewResult` events carry only `ship`/`revise` labels, not artifact text.
+- Task history may expose `starting`; delegated `running` records have `completedAtMs: null` until a terminal outcome is reconciled.
+- Memory saves now fail on persistence/validation errors. Context load labels distinguish selected entries from available-but-unsent entries.
+- `CONTRACT_VERSION` constants in frontend/Rust contracts are synchronized; this does not add a new IPC handshake.
+- See `ASSISTANT_READINESS.md` for policy and persistence migration behavior.
+
 ## Correlation Rule
 `correlationId` must remain identical from request to all related events and final response.
 
@@ -165,3 +173,4 @@ This version pins the shared contracts between the TypeScript frontend (`fronten
 | `foundation-v5` | Terminal, workspace tools, API connections, files, llama runtime, flow, looper, STT, TTS, voice/VAD, devices, app meta, catalog CSV, tool invoke, custom tool/plugin capabilities, reasoning chunk streaming |
 | `foundation-v6` | Replaced OpenCode contracts and workspace integration with Pi; Pi runtime probes report the detected version. |
 | `foundation-v7` | Added typed Pi runtime readiness diagnostics, executable selection, RPC approval responses, and Pi-backed provider metadata. |
+| `foundation-v8` | Metadata-only direct-tool diagnostics, durable saved memory with truthful context selection, and reconciled delegated task lifecycle including `starting` and nonterminal completion timestamps. |

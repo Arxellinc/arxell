@@ -1,3 +1,5 @@
+export const CONTRACT_VERSION = "foundation-v8" as const;
+
 export type ToolMode = "sandbox" | "shell" | "root";
 
 export interface ToolInvokeRequest {

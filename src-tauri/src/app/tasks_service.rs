@@ -9,7 +9,7 @@ use std::path::PathBuf;
 use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DurableTaskRecord {
     pub id: String,
@@ -200,7 +200,10 @@ impl TaskAutomationService {
     }
 
     fn open_connection(&self) -> Result<Connection, String> {
-        Connection::open(&self.path).map_err(|e| format!("failed opening tasks db: {e}"))
+        let conn = Connection::open(&self.path).map_err(|_| "failed opening tasks db")?;
+        conn.busy_timeout(std::time::Duration::from_secs(5))
+            .map_err(|_| "failed configuring tasks db")?;
+        Ok(conn)
     }
 
     pub fn list_tasks(&self, project_id: Option<&str>) -> Result<Vec<DurableTaskRecord>, String> {
@@ -240,6 +243,11 @@ impl TaskAutomationService {
             .lock()
             .map_err(|_| "tasks write lock poisoned".to_string())?;
         let conn = self.open_connection()?;
+        let active: bool = conn.query_row("SELECT EXISTS(SELECT 1 FROM durable_task_runs WHERE task_id=?1 AND status IN ('starting','running'))", [&task.id], |row| row.get(0))
+            .map_err(|_| "failed checking active task run")?;
+        if active {
+            return Err("stop the active run before editing its task".into());
+        }
         let now = now_ms();
         let created = if task.created_at_ms > 0 {
             task.created_at_ms
@@ -344,6 +352,7 @@ impl TaskAutomationService {
                    AND is_schedule_enabled = 1
                    AND next_run_at_ms IS NOT NULL
                    AND next_run_at_ms <= ?1
+                   AND NOT EXISTS (SELECT 1 FROM durable_task_runs r WHERE r.task_id = durable_tasks.id AND r.status IN ('starting', 'running'))
                    AND (schedule_claimed_at_ms IS NULL OR schedule_claimed_at_ms <= ?1 - ?3)
                  ORDER BY next_run_at_ms ASC
                  LIMIT ?2",
@@ -384,6 +393,7 @@ impl TaskAutomationService {
                        AND is_schedule_enabled = 1
                        AND next_run_at_ms IS NOT NULL
                        AND next_run_at_ms <= ?1
+                       AND NOT EXISTS (SELECT 1 FROM durable_task_runs r WHERE r.task_id = durable_tasks.id AND r.status IN ('starting', 'running'))
                        AND (schedule_claimed_at_ms IS NULL OR schedule_claimed_at_ms <= ?1 - ?3)
                      ORDER BY next_run_at_ms ASC
                      LIMIT ?2",
@@ -423,7 +433,8 @@ impl TaskAutomationService {
             .execute(
                 "UPDATE durable_tasks
                  SET schedule_claimed_at_ms = ?2
-                 WHERE id = ?1
+                 WHERE id = ?1 AND state = 'approved'
+                   AND NOT EXISTS (SELECT 1 FROM durable_task_runs r WHERE r.task_id = durable_tasks.id AND r.status IN ('starting', 'running'))
                    AND (schedule_claimed_at_ms IS NULL OR schedule_claimed_at_ms <= ?2 - ?3)",
                 params![task_id, now_ms, TASK_CLAIM_LEASE_MS],
             )
@@ -500,6 +511,11 @@ impl TaskAutomationService {
             .lock()
             .map_err(|_| "tasks write lock poisoned".to_string())?;
         let conn = self.open_connection()?;
+        let active: bool = conn.query_row("SELECT EXISTS(SELECT 1 FROM durable_task_runs WHERE task_id=?1 AND status IN ('starting','running'))", [task_id], |row| row.get(0))
+            .map_err(|_| "failed checking active task run")?;
+        if active {
+            return Err("stop the active run before deleting its task".into());
+        }
         conn.execute(
             "DELETE FROM durable_task_runs WHERE task_id = ?1",
             params![task_id],
@@ -509,6 +525,130 @@ impl TaskAutomationService {
             .execute("DELETE FROM durable_tasks WHERE id = ?1", params![task_id])
             .map_err(|e| format!("failed deleting task: {e}"))?;
         Ok(changed > 0)
+    }
+
+    /// Persist intent before side effects. A durable active run outlives the launch lease.
+    pub fn begin_claimed_run(
+        &self,
+        task: &DurableTaskRecord,
+        trigger: &str,
+        now: i64,
+    ) -> Result<DurableTaskRunRecord, String> {
+        let _guard = self
+            .write_lock
+            .lock()
+            .map_err(|_| "tasks write lock poisoned")?;
+        let mut conn = self.open_connection()?;
+        let tx = conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(|_| "failed starting run transaction")?;
+        let eligible: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM durable_tasks t WHERE t.id=?1 AND t.state='approved' AND t.schedule_claimed_at_ms=?2 AND NOT EXISTS(SELECT 1 FROM durable_task_runs r WHERE r.task_id=t.id AND r.status IN ('starting','running')))", params![task.id, now], |row| row.get(0)).map_err(|_| "failed checking run eligibility")?;
+        if !eligible {
+            return Err("task is no longer approved or already running".into());
+        }
+        let current = tx.query_row("SELECT id, project_id, name, description, task_type, agent_owner, state, risk_level, payload_kind, payload_json, estimate_json, scheduled_at_ms, repeat, repeat_time_of_day_ms, repeat_timezone, is_schedule_enabled, next_run_at_ms, created_at_ms, updated_at_ms, project_root, starred, source FROM durable_tasks WHERE id=?1", [&task.id], row_to_task)
+            .map_err(|_| "failed reading approved task snapshot")?;
+        if &current != task {
+            return Err("task changed after claim; run was not started".into());
+        }
+        let id = format!("R{}", uuid::Uuid::new_v4());
+        let loop_id = format!("task-run-{id}");
+        let run = DurableTaskRunRecord {
+            id,
+            task_id: task.id.clone(),
+            status: "starting".into(),
+            trigger_reason: trigger.into(),
+            policy_decision: "pending".into(),
+            policy_reason: "preflight".into(),
+            result_json: if matches!(task.payload_kind.as_str(), "agent_prompt" | "looper_run") {
+                serde_json::json!({"loopId": loop_id})
+            } else {
+                serde_json::json!({})
+            },
+            error: String::new(),
+            created_at_ms: now,
+            started_at_ms: Some(now),
+            completed_at_ms: None,
+        };
+        tx.execute("INSERT INTO durable_task_runs(id,task_id,status,trigger_reason,policy_decision,policy_reason,result_json,error,created_at_ms,started_at_ms,completed_at_ms) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?9,NULL)",
+            params![run.id,run.task_id,run.status,run.trigger_reason,run.policy_decision,run.policy_reason,run.result_json.to_string(),run.error,now]).map_err(|_| "failed persisting run intent")?;
+        if trigger == "scheduled" {
+            let next = next_after_occurrence(task, now)?;
+            tx.execute(
+                "UPDATE durable_tasks SET next_run_at_ms=?2 WHERE id=?1",
+                params![task.id, next],
+            )
+            .map_err(|_| "failed consuming scheduled occurrence")?;
+        }
+        tx.commit().map_err(|_| "failed committing run intent")?;
+        Ok(run)
+    }
+
+    pub fn record_run_outcome(&self, run: &DurableTaskRunRecord, now: i64) -> Result<bool, String> {
+        if !matches!(
+            run.status.as_str(),
+            "running" | "succeeded" | "blocked" | "failed"
+        ) {
+            return Err("invalid run outcome".into());
+        }
+        let terminal = run.status != "running";
+        let task = self
+            .get_task(&run.task_id)?
+            .ok_or("run task is unavailable")?;
+        let _guard = self
+            .write_lock
+            .lock()
+            .map_err(|_| "tasks write lock poisoned")?;
+        let mut conn = self.open_connection()?;
+        let tx = conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(|_| "failed starting outcome transaction")?;
+        let changed = tx.execute("UPDATE durable_task_runs SET status=?2,policy_decision=?3,policy_reason=?4,result_json=?5,error=?6,completed_at_ms=?7 WHERE id=?1 AND status IN ('starting','running')",
+            params![run.id,run.status,run.policy_decision,run.policy_reason,run.result_json.to_string(),run.error,if terminal {Some(now)} else {None}]).map_err(|_| "failed recording run outcome")?;
+        if changed == 0 {
+            return Ok(false);
+        }
+        if terminal {
+            // Skip missed recurring occurrences rather than overlapping or replaying them.
+            if run.trigger_reason == "scheduled" {
+                let next = next_after_occurrence(&task, now)?;
+                tx.execute(
+                    "UPDATE durable_tasks SET next_run_at_ms=?2 WHERE id=?1",
+                    params![task.id, next],
+                )
+                .map_err(|_| "failed advancing task schedule")?;
+            }
+            tx.execute(
+                "UPDATE durable_tasks SET schedule_claimed_at_ms=NULL WHERE id=?1",
+                [&task.id],
+            )
+            .map_err(|_| "failed releasing run claim")?;
+        }
+        let (label, tone) = match run.status.as_str() {
+            "running" => ("started", "info"),
+            "succeeded" => ("complete", "success"),
+            "blocked" => ("blocked", "warn"),
+            _ => ("failed", "error"),
+        };
+        let notification_id = format!("task-run:{}", run.id);
+        let actions =
+            serde_json::json!([{ "id": format!("open-task:{}",task.id), "label": "Open Task" }])
+                .to_string();
+        tx.execute("INSERT INTO durable_notifications(id,title,description,tone,read,actions_json,created_at_ms,updated_at_ms) VALUES(?1,?2,?3,?4,0,?5,?6,?6) ON CONFLICT(id) DO UPDATE SET title=excluded.title,description=excluded.description,tone=excluded.tone,read=0,updated_at_ms=excluded.updated_at_ms",
+            params![notification_id,format!("Task {label}: {}",task.name),format!("{} run {}.",run.trigger_reason,label),tone,actions,now]).map_err(|_| "failed recording task notification")?;
+        tx.commit().map_err(|_| "failed committing run outcome")?;
+        Ok(true)
+    }
+
+    pub fn active_runs(&self) -> Result<Vec<DurableTaskRunRecord>, String> {
+        let conn = self.open_connection()?;
+        let mut stmt = conn.prepare("SELECT id,task_id,status,trigger_reason,policy_decision,policy_reason,result_json,error,created_at_ms,started_at_ms,completed_at_ms FROM durable_task_runs WHERE status IN ('starting','running')")
+            .map_err(|_| "failed querying active runs")?;
+        let rows = stmt
+            .query_map([], row_to_run)
+            .map_err(|_| "failed querying active runs")?;
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(|_| "failed reading active runs".into())
     }
 
     pub fn append_run(&self, run: DurableTaskRunRecord) -> Result<DurableTaskRunRecord, String> {
@@ -551,24 +691,7 @@ impl TaskAutomationService {
             )
             .map_err(|e| format!("failed preparing list_runs query: {e}"))?;
         let rows = stmt
-            .query_map(params![task_id], |row| {
-                let result_json_raw: String = row.get(6)?;
-                let result_json = serde_json::from_str::<Value>(&result_json_raw)
-                    .unwrap_or_else(|_| Value::Object(Default::default()));
-                Ok(DurableTaskRunRecord {
-                    id: row.get(0)?,
-                    task_id: row.get(1)?,
-                    status: row.get(2)?,
-                    trigger_reason: row.get(3)?,
-                    policy_decision: row.get(4)?,
-                    policy_reason: row.get(5)?,
-                    result_json,
-                    error: row.get(7)?,
-                    created_at_ms: row.get(8)?,
-                    started_at_ms: row.get(9)?,
-                    completed_at_ms: row.get(10)?,
-                })
-            })
+            .query_map(params![task_id], row_to_run)
             .map_err(|e| format!("failed querying runs: {e}"))?;
         let mut out = Vec::new();
         for row in rows {
@@ -735,6 +858,38 @@ fn row_to_task(row: &rusqlite::Row<'_>) -> Result<DurableTaskRecord, rusqlite::E
         created_at_ms: row.get(17)?,
         updated_at_ms: row.get(18)?,
     })
+}
+
+fn row_to_run(row: &rusqlite::Row<'_>) -> rusqlite::Result<DurableTaskRunRecord> {
+    let raw: String = row.get(6)?;
+    Ok(DurableTaskRunRecord {
+        id: row.get(0)?,
+        task_id: row.get(1)?,
+        status: row.get(2)?,
+        trigger_reason: row.get(3)?,
+        policy_decision: row.get(4)?,
+        policy_reason: row.get(5)?,
+        result_json: serde_json::from_str(&raw)
+            .unwrap_or_else(|_| Value::Object(Default::default())),
+        error: row.get(7)?,
+        created_at_ms: row.get(8)?,
+        started_at_ms: row.get(9)?,
+        completed_at_ms: row.get(10)?,
+    })
+}
+
+fn next_after_occurrence(task: &DurableTaskRecord, now: i64) -> Result<Option<i64>, String> {
+    if task.repeat == "none" {
+        return Ok(None);
+    }
+    compute_next_run_at_ms(
+        task.scheduled_at_ms,
+        &task.repeat,
+        task.repeat_time_of_day_ms,
+        &task.repeat_timezone,
+        task.is_schedule_enabled,
+        now,
+    )
 }
 
 fn default_task_source() -> String {
@@ -911,6 +1066,168 @@ mod tests {
         ));
         let _ = fs::create_dir_all(&root);
         root.join("tasks.sqlite3")
+    }
+
+    #[test]
+    fn stale_claim_owners_and_changed_task_snapshots_cannot_start_work() {
+        let path = temp_db_path();
+        let service = TaskAutomationService::new(path.clone()).unwrap();
+        let task = service.upsert_task(base_task("approved", "low")).unwrap();
+        assert!(service.claim_task_for_run(&task.id, 100).unwrap());
+        let newer = 100 + super::TASK_CLAIM_LEASE_MS * 2;
+        assert!(service.claim_task_for_run(&task.id, newer).unwrap());
+        assert!(service.begin_claimed_run(&task, "manual", 100).is_err());
+        let mut edited = task.clone();
+        edited.description = "Changed approved work".into();
+        let edited = service.upsert_task(edited).unwrap();
+        assert!(service.begin_claimed_run(&task, "manual", newer).is_err());
+        assert!(service.begin_claimed_run(&edited, "manual", newer).is_ok());
+        drop(service);
+        fs::remove_dir_all(path.parent().unwrap()).unwrap();
+    }
+
+    #[test]
+    fn delegated_run_is_durable_nonterminal_and_blocks_overlap_until_settlement() {
+        let path = temp_db_path();
+        let service = TaskAutomationService::new(path.clone()).unwrap();
+        let task = service.upsert_task(base_task("approved", "low")).unwrap();
+        assert!(service.claim_task_for_run(&task.id, 100).unwrap());
+        let mut run = service.begin_claimed_run(&task, "manual", 100).unwrap();
+        assert!(run.completed_at_ms.is_none());
+        run.status = "running".into();
+        run.policy_decision = "allow".into();
+        service.record_run_outcome(&run, 200).unwrap();
+        assert!(service.list_runs(&task.id).unwrap()[0]
+            .completed_at_ms
+            .is_none());
+        assert!(!service
+            .claim_task_for_run(&task.id, 100 + super::TASK_CLAIM_LEASE_MS * 2)
+            .unwrap());
+        assert!(service.upsert_task(task.clone()).is_err());
+        assert!(service.delete_task(&task.id).is_err());
+        drop(service);
+        let service = TaskAutomationService::new(path.clone()).unwrap();
+        let loop_id = run.result_json["loopId"].as_str().unwrap().to_string();
+        let loops = std::collections::HashMap::from([(
+            loop_id,
+            crate::contracts::LooperLoopStatus::Completed,
+        )]);
+        assert_eq!(
+            crate::app::task_run_service::reconcile_task_runs(&service, &loops, false, 300)
+                .unwrap(),
+            1
+        );
+        let ended = &service.list_runs(&task.id).unwrap()[0];
+        assert_eq!(ended.status, "succeeded");
+        assert_eq!(ended.completed_at_ms, Some(300));
+        assert_eq!(
+            crate::app::task_run_service::reconcile_task_runs(&service, &loops, false, 400)
+                .unwrap(),
+            0
+        );
+        let notifications = service.list_notifications().unwrap();
+        assert_eq!(notifications.len(), 1);
+        assert!(notifications[0].title.contains("Task complete"));
+        assert!(service.claim_task_for_run(&task.id, 500).unwrap());
+        drop(service);
+        fs::remove_dir_all(path.parent().unwrap()).unwrap();
+    }
+
+    #[test]
+    fn recurring_occurrences_skip_overlap_and_manual_runs_do_not_consume_schedule() {
+        let path = temp_db_path();
+        let service = TaskAutomationService::new(path.clone()).unwrap();
+        let now = super::now_ms();
+        let mut task = base_task("approved", "low");
+        task.scheduled_at_ms = Some(now - 1_000);
+        task.repeat = "hourly".into();
+        let task = service.upsert_task(task).unwrap();
+        let now = task.next_run_at_ms.unwrap() + 1;
+        assert_eq!(service.claim_due_scheduled_tasks(now, 10).unwrap().len(), 1);
+        let mut run = service.begin_claimed_run(&task, "scheduled", now).unwrap();
+        run.status = "running".into();
+        service.record_run_outcome(&run, now + 100).unwrap();
+        let later = now + 7_200_000;
+        assert!(service
+            .claim_due_scheduled_tasks(later, 10)
+            .unwrap()
+            .is_empty());
+        assert!(!service.claim_task_for_run(&task.id, later).unwrap());
+        run.status = "succeeded".into();
+        service.record_run_outcome(&run, later).unwrap();
+        let scheduled = service.get_task(&task.id).unwrap().unwrap().next_run_at_ms;
+        assert!(scheduled.unwrap() > later);
+        service.claim_task_for_run(&task.id, later + 1).unwrap();
+        let current = service.get_task(&task.id).unwrap().unwrap();
+        let mut manual = service
+            .begin_claimed_run(&current, "manual", later + 1)
+            .unwrap();
+        manual.status = "succeeded".into();
+        service.record_run_outcome(&manual, later + 2).unwrap();
+        assert_eq!(
+            service.get_task(&task.id).unwrap().unwrap().next_run_at_ms,
+            scheduled
+        );
+        drop(service);
+        fs::remove_dir_all(path.parent().unwrap()).unwrap();
+    }
+
+    #[test]
+    fn restart_fails_interrupted_runs_without_replaying_occurrences() {
+        let path = temp_db_path();
+        let service = TaskAutomationService::new(path.clone()).unwrap();
+        let now = super::now_ms();
+        let mut task = base_task("approved", "low");
+        task.scheduled_at_ms = Some(now - 10_000);
+        let task = service.upsert_task(task).unwrap();
+        assert_eq!(service.claim_due_scheduled_tasks(now, 10).unwrap().len(), 1);
+        let run = service.begin_claimed_run(&task, "scheduled", now).unwrap();
+        assert!(service
+            .get_task(&task.id)
+            .unwrap()
+            .unwrap()
+            .next_run_at_ms
+            .is_none());
+        drop(service);
+        let service = TaskAutomationService::new(path.clone()).unwrap();
+        let loops = std::collections::HashMap::from([(
+            run.result_json["loopId"].as_str().unwrap().into(),
+            crate::contracts::LooperLoopStatus::Running,
+        )]);
+        crate::app::task_run_service::reconcile_task_runs(&service, &loops, true, now + 100)
+            .unwrap();
+        let ended = &service.list_runs(&task.id).unwrap()[0];
+        assert_eq!(ended.status, "failed");
+        assert!(ended.error.contains("restart"));
+        assert!(service
+            .claim_due_scheduled_tasks(now + 1_000_000, 10)
+            .unwrap()
+            .is_empty());
+        drop(service);
+        fs::remove_dir_all(path.parent().unwrap()).unwrap();
+    }
+
+    #[test]
+    fn failed_or_cancelled_delegation_has_a_terminal_outcome_and_one_notification() {
+        let path = temp_db_path();
+        let service = TaskAutomationService::new(path.clone()).unwrap();
+        let task = service.upsert_task(base_task("approved", "low")).unwrap();
+        service.claim_task_for_run(&task.id, 100).unwrap();
+        let mut run = service.begin_claimed_run(&task, "manual", 100).unwrap();
+        run.status = "running".into();
+        service.record_run_outcome(&run, 101).unwrap();
+        let loops = std::collections::HashMap::from([(
+            run.result_json["loopId"].as_str().unwrap().into(),
+            crate::contracts::LooperLoopStatus::Failed,
+        )]);
+        crate::app::task_run_service::reconcile_task_runs(&service, &loops, false, 200).unwrap();
+        assert_eq!(service.list_runs(&task.id).unwrap()[0].status, "failed");
+        assert!(service.list_notifications().unwrap()[0]
+            .title
+            .contains("Task failed"));
+        assert!(!service.record_run_outcome(&run, 300).unwrap());
+        drop(service);
+        fs::remove_dir_all(path.parent().unwrap()).unwrap();
     }
 
     fn base_task(state: &str, risk_level: &str) -> DurableTaskRecord {

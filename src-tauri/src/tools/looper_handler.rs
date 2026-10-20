@@ -399,6 +399,7 @@ pub struct LooperHandler {
     loops: Arc<RwLock<HashMap<String, LooperLoop>>>,
     data_path: Arc<RwLock<Option<PathBuf>>>,
     active_runs: Arc<Mutex<HashMap<String, ActivePiRun>>>,
+    draining_runs: Arc<Mutex<HashMap<String, usize>>>,
     pi_executable_override: Arc<RwLock<Option<PathBuf>>>,
     pi_policy_path: Arc<RwLock<Option<PathBuf>>>,
     pi_runtime: Arc<PiRuntimeService>,
@@ -409,6 +410,37 @@ struct ActivePiRun {
     phase: String,
     cancel: watch::Sender<bool>,
     approval: mpsc::UnboundedSender<PiRpcUiResponse>,
+}
+
+// Cancellation removes command controls immediately, but process-tree cleanup is async.
+// Keep task reconciliation nonterminal until the RPC worker has finished draining.
+struct DrainingRun {
+    counts: Arc<Mutex<HashMap<String, usize>>>,
+    loop_id: String,
+}
+
+impl DrainingRun {
+    fn new(counts: Arc<Mutex<HashMap<String, usize>>>, loop_id: String) -> Self {
+        *counts
+            .lock()
+            .expect("RPC drain lock poisoned")
+            .entry(loop_id.clone())
+            .or_default() += 1;
+        Self { counts, loop_id }
+    }
+}
+
+impl Drop for DrainingRun {
+    fn drop(&mut self) {
+        if let Ok(mut counts) = self.counts.lock() {
+            if let Some(count) = counts.get_mut(&self.loop_id) {
+                *count = count.saturating_sub(1);
+                if *count == 0 {
+                    counts.remove(&self.loop_id);
+                }
+            }
+        }
+    }
 }
 
 struct PiModelSelection {
@@ -503,6 +535,7 @@ impl LooperHandler {
             loops: Arc::new(RwLock::new(HashMap::new())),
             data_path: Arc::new(RwLock::new(None)),
             active_runs: Arc::new(Mutex::new(HashMap::new())),
+            draining_runs: Arc::new(Mutex::new(HashMap::new())),
             pi_executable_override: Arc::new(RwLock::new(None)),
             pi_policy_path: Arc::new(RwLock::new(pi_policy_path)),
             pi_runtime,
@@ -535,6 +568,26 @@ impl LooperHandler {
         if let Ok(json) = serde_json::to_string_pretty(&records) {
             let _ = fs::write(&path, json);
         }
+    }
+
+    pub fn loop_statuses(&self) -> Result<HashMap<String, LooperLoopStatus>, String> {
+        let loops = self
+            .loops
+            .read()
+            .map_err(|_| "loop state lock unavailable")?;
+        let draining = self
+            .draining_runs
+            .lock()
+            .map_err(|_| "RPC drain lock unavailable")?;
+        let mut statuses: HashMap<_, _> = loops
+            .iter()
+            .map(|(id, record)| (id.clone(), record.status.clone()))
+            .collect();
+        for id in draining.keys() {
+            // A close/remove operation must not hide a child that is still shutting down.
+            statuses.insert(id.clone(), LooperLoopStatus::Running);
+        }
+        Ok(statuses)
     }
 
     pub fn load_from_disk(&self) {
@@ -743,8 +796,26 @@ impl LooperHandler {
         );
 
         // Start the planner phase
-        self.start_phase(&loop_id, "planner", &req.correlation_id)
-            .await?;
+        if let Err(error) = self
+            .start_phase(&loop_id, "planner", &req.correlation_id)
+            .await
+        {
+            let paused = self
+                .loops
+                .read()
+                .map_err(|_| "loop state lock unavailable")?
+                .get(&loop_id)
+                .is_some_and(|record| record.status == LooperLoopStatus::Paused);
+            if paused {
+                self.save_to_disk();
+                return Ok(LooperStartResponse {
+                    correlation_id: req.correlation_id,
+                    loop_id,
+                    status: LooperLoopStatus::Paused,
+                });
+            }
+            return Err(error);
+        }
 
         self.save_to_disk();
 
@@ -813,6 +884,14 @@ impl LooperHandler {
             let mut loops = self.loops.write().map_err(|e| e.to_string())?;
             match loops.get_mut(&req.loop_id) {
                 Some(l) => {
+                    if matches!(
+                        l.status,
+                        LooperLoopStatus::Idle
+                            | LooperLoopStatus::Completed
+                            | LooperLoopStatus::Failed
+                    ) {
+                        return Err("loop is not active; start a new loop".into());
+                    }
                     if req.paused {
                         let active_phase = l.active_phase.clone();
                         let mut session_to_close = None;
@@ -866,12 +945,16 @@ impl LooperHandler {
                     req.loop_id
                 ));
             };
+            {
+                let mut loops = self.loops.write().map_err(|e| e.to_string())?;
+                let loopy = loops.get_mut(&req.loop_id).ok_or("loop is unavailable")?;
+                if loopy.status != LooperLoopStatus::Paused {
+                    return Err("loop changed before resume".into());
+                }
+                loopy.status = LooperLoopStatus::Running;
+            }
             self.start_phase(&req.loop_id, phase_name, &req.correlation_id)
                 .await?;
-            let mut loops = self.loops.write().map_err(|e| e.to_string())?;
-            if let Some(l) = loops.get_mut(&req.loop_id) {
-                l.status = LooperLoopStatus::Running;
-            }
         }
 
         self.emit_event(
@@ -1378,7 +1461,7 @@ impl LooperHandler {
         }
     }
 
-    /// Starts a phase in a dedicated headless Pi RPC process.
+    /// All phase-launch errors must produce a terminal loop outcome, not a stuck task.
     fn start_phase<'a>(
         &'a self,
         loop_id: &'a str,
@@ -1386,6 +1469,30 @@ impl LooperHandler {
         correlation_id: &'a str,
     ) -> Pin<Box<dyn Future<Output = Result<(), String>> + Send + 'a>> {
         Box::pin(async move {
+            let result = self.launch_phase(loop_id, phase, correlation_id).await;
+            let active = self
+                .loops
+                .read()
+                .map_err(|_| "loop state lock unavailable")?
+                .get(loop_id)
+                .is_some_and(|record| record.status == LooperLoopStatus::Running);
+            if result.is_err() && active {
+                self.cancel_active_run(loop_id);
+                self.fail_rpc_phase(loop_id, phase, "", correlation_id, "Phase startup failed");
+            }
+            result
+        })
+    }
+
+    /// Starts a phase in a dedicated headless Pi RPC process.
+    fn launch_phase<'a>(
+        &'a self,
+        loop_id: &'a str,
+        phase: &'a str,
+        correlation_id: &'a str,
+    ) -> Pin<Box<dyn Future<Output = Result<(), String>> + Send + 'a>> {
+        Box::pin(async move {
+            let draining = DrainingRun::new(Arc::clone(&self.draining_runs), loop_id.to_string());
             let (
                 prompt,
                 raw_model,
@@ -1443,12 +1550,15 @@ impl LooperHandler {
                 }
             }
 
-            let run_id = format!("pi-{}-{}-{}", loop_id, phase, now_ms());
+            let run_id = format!("pi-{}-{}-{}", loop_id, phase, uuid::Uuid::new_v4());
             {
                 let mut loops = self.loops.write().map_err(|e| e.to_string())?;
                 let loopy = loops
                     .get_mut(loop_id)
                     .ok_or_else(|| format!("loop not found: {}", loop_id))?;
+                if loopy.status != LooperLoopStatus::Running {
+                    return Err("phase cancelled before launch".into());
+                }
                 let phase_state = loopy
                     .phases
                     .get_mut(phase)
@@ -1551,7 +1661,11 @@ impl LooperHandler {
             let loop_id = loop_id.to_string();
             let phase = phase.to_string();
             let correlation_id = correlation_id.to_string();
+            if *cancellation.borrow() {
+                return Err("phase cancelled before launch".into());
+            }
             tokio::spawn(async move {
+                let _draining = draining;
                 let (event_sender, mut event_receiver) = mpsc::unbounded_channel();
                 let event_handler = handler.clone();
                 let event_loop_id = loop_id.clone();
@@ -1863,6 +1977,17 @@ impl LooperHandler {
                 .get_mut(loop_id)
                 .ok_or_else(|| format!("loop not found: {}", loop_id))?;
 
+            if !matches!(
+                loopy.status,
+                LooperLoopStatus::Running | LooperLoopStatus::Paused | LooperLoopStatus::Blocked
+            ) {
+                return Err("loop is not active; start a new loop".into());
+            }
+            if !loopy.phases.contains_key(next_phase) {
+                return Err("unsupported phase".into());
+            }
+            // This explicit advance is also the user's approval of a blocked planner phase.
+            loopy.status = LooperLoopStatus::Running;
             // Capture current_phase before we modify state
             current_phase = loopy.active_phase.clone().unwrap_or_default();
 
@@ -2210,7 +2335,7 @@ impl LooperHandler {
                     "loopId": loop_id,
                     "iteration": loop_record.iteration,
                     "status": "completed",
-                    "reviewResult": loop_record.review_result,
+                    "reviewResult": "ship",
                 }),
             );
             return CriticDecision::Ship;
@@ -2242,7 +2367,7 @@ impl LooperHandler {
                     "iteration": current_iteration,
                     "status": "failed",
                     "reason": "max_iterations_exceeded",
-                    "reviewResult": review_result,
+                    "reviewResult": "revise",
                 }),
             );
             return CriticDecision::FailMaxIterations;
@@ -2958,6 +3083,64 @@ mod tests {
         )
     }
 
+    #[test]
+    fn task_status_remains_nonterminal_until_all_cancelled_rpc_workers_drain() {
+        let handler = sample_handler();
+        let mut loopy = sample_loop();
+        loopy.status = LooperLoopStatus::Failed;
+        handler
+            .loops
+            .write()
+            .unwrap()
+            .insert(loopy.id.clone(), loopy);
+        let first = DrainingRun::new(handler.draining_runs.clone(), "loop-1".into());
+        let second = DrainingRun::new(handler.draining_runs.clone(), "loop-1".into());
+        assert_eq!(
+            handler.loop_statuses().unwrap()["loop-1"],
+            LooperLoopStatus::Running
+        );
+        drop(first);
+        assert_eq!(
+            handler.loop_statuses().unwrap()["loop-1"],
+            LooperLoopStatus::Running
+        );
+        handler.loops.write().unwrap().remove("loop-1");
+        assert_eq!(
+            handler.loop_statuses().unwrap()["loop-1"],
+            LooperLoopStatus::Running
+        );
+        drop(second);
+        assert!(!handler.loop_statuses().unwrap().contains_key("loop-1"));
+    }
+
+    #[tokio::test]
+    async fn noninitial_phase_launch_errors_fail_the_loop_and_release_drain_tracker() {
+        let handler = sample_handler();
+        let mut loopy = sample_loop();
+        loopy.cwd = std::env::temp_dir()
+            .join(format!("missing-{}", uuid::Uuid::new_v4()))
+            .to_string_lossy()
+            .into_owned();
+        handler
+            .loops
+            .write()
+            .unwrap()
+            .insert(loopy.id.clone(), loopy);
+        assert!(handler
+            .start_phase("loop-1", "executor", "corr-failure")
+            .await
+            .is_err());
+        assert_eq!(
+            handler.loop_statuses().unwrap()["loop-1"],
+            LooperLoopStatus::Failed
+        );
+        assert!(handler.draining_runs.lock().unwrap().is_empty());
+        assert_eq!(
+            handler.loops.read().unwrap()["loop-1"].phases["executor"].status,
+            LooperPhaseStatus::Error
+        );
+    }
+
     fn sample_loop() -> LooperLoop {
         let mut phases = HashMap::new();
         phases.insert(
@@ -3186,15 +3369,33 @@ mod tests {
             .unwrap()
             .insert(loopy.id.clone(), loopy);
 
-        let decision =
-            handler.apply_critic_decision("loop-1", "corr-ship", Some("SHIP".to_string()));
+        let decision = handler.apply_critic_decision(
+            "loop-1",
+            "corr-ship",
+            Some("SHIP\nprivate artifact".to_string()),
+        );
 
         let loops = handler.loops.read().unwrap();
         let loopy = loops.get("loop-1").unwrap();
         assert_eq!(decision, CriticDecision::Ship);
         assert_eq!(loopy.status, LooperLoopStatus::Completed);
         assert!(loopy.completed_at_ms.is_some());
-        assert_eq!(loopy.review_result.as_deref(), Some("SHIP"));
+        assert_eq!(
+            loopy.review_result.as_deref(),
+            Some("SHIP\nprivate artifact")
+        );
+        let events = handler.hub.recent_events(100);
+        assert!(!serde_json::to_string(&events)
+            .unwrap()
+            .contains("private artifact"));
+        assert_eq!(
+            events
+                .iter()
+                .find(|event| event.action == "looper.loop.complete")
+                .unwrap()
+                .payload["reviewResult"],
+            "ship"
+        );
     }
 
     #[test]
@@ -3477,8 +3678,11 @@ mod tests {
             .unwrap()
             .insert(loopy.id.clone(), loopy);
 
-        let decision =
-            handler.apply_critic_decision("loop-1", "corr-revise-max", Some("REVISE".to_string()));
+        let decision = handler.apply_critic_decision(
+            "loop-1",
+            "corr-revise-max",
+            Some("REVISE\nprivate artifact".to_string()),
+        );
 
         let loops = handler.loops.read().unwrap();
         let loopy = loops.get("loop-1").unwrap();
@@ -3486,5 +3690,17 @@ mod tests {
         assert_eq!(loopy.status, LooperLoopStatus::Failed);
         assert!(loopy.completed_at_ms.is_some());
         assert_eq!(loopy.iteration, loopy.max_iterations);
+        let events = handler.hub.recent_events(100);
+        assert!(!serde_json::to_string(&events)
+            .unwrap()
+            .contains("private artifact"));
+        assert_eq!(
+            events
+                .iter()
+                .find(|event| event.action == "looper.loop.failed")
+                .unwrap()
+                .payload["reviewResult"],
+            "revise"
+        );
     }
 }
