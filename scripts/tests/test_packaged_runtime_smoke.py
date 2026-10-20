@@ -17,11 +17,23 @@ class PackagedRuntimeSmokeTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             binary = root / "fake-server"
-            binary.write_text("#!/bin/sh\nexit 3\n", encoding="utf-8")
-            binary.chmod(0o755)
             log = root / "server.log"
-            with self.assertRaisesRegex(RuntimeError, "Packaged fake-server exited: 3"):
-                smoke.run_server(binary, [], lambda _: None, log)
+
+            class ExitedProcess:
+                returncode = 3
+
+                def poll(self):
+                    return 3
+
+                def terminate(self):
+                    pass
+
+                def wait(self, timeout=None):
+                    return 3
+
+            with patch.object(smoke.subprocess, "Popen", return_value=ExitedProcess()):
+                with self.assertRaisesRegex(RuntimeError, "Packaged fake-server exited: 3"):
+                    smoke.run_server(binary, [], lambda _: None, log)
 
     def test_missing_bundled_whisper_model_fails_before_server_launch(self):
         with tempfile.TemporaryDirectory() as directory:
