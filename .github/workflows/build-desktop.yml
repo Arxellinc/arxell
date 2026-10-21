@@ -242,7 +242,17 @@ jobs:
           path: |
             src-tauri/resources/whisper-server
             src-tauri/resources/whisper
-          key: whisper-closure-v12-portable-${{ matrix.platform.os }}-${{ runner.arch }}-${{ steps.runtime_versions.outputs.whisper_tag }}-${{ steps.runtime_versions.outputs.libgomp_version }}-${{ hashFiles('scripts/model_assets.py') }}
+          key: whisper-closure-v13-portable-${{ matrix.platform.os }}-${{ runner.arch }}-${{ steps.runtime_versions.outputs.whisper_tag }}-${{ steps.runtime_versions.outputs.libgomp_version }}-${{ hashFiles('scripts/model_assets.py', 'src-tauri/resources/whisper/ggml-base-q8_0.bin') }}
+
+      - name: Prune non-bundled Whisper models
+        shell: bash
+        run: |
+          set -euo pipefail
+          models_dir="src-tauri/resources/whisper"
+          keep="ggml-base-q8_0.bin"
+          test -f "$models_dir/$keep"
+          find "$models_dir" -maxdepth 1 -type f ! -name "$keep" -delete
+          echo "Bundled Whisper models: $(find "$models_dir" -maxdepth 1 -type f -printf '%f ' | sort)"
 
       - name: Build bundled whisper runtimes from pinned source
         if: steps.cache_whisper.outputs.cache-hit != 'true'
@@ -311,10 +321,6 @@ jobs:
             exit 1
           fi
 
-          # A release claiming bundled voice must include verified models.
-          # Download errors are fatal, never cached as a silently degraded bundle.
-          python scripts/model_assets.py whisper "$whisper_models_dir"
-
           WHISPER_TAG="$WHISPER_TAG" RUNNER_OS="$RUNNER_OS" RUNNER_ARCH="$RUNNER_ARCH" \
           TARGET_NAME="$target_name" python - <<'PY_MANIFEST'
           import json
@@ -373,7 +379,6 @@ jobs:
           binary="$GITHUB_WORKSPACE/src-tauri/resources/whisper-server/$target_name"
           test -f "$binary"
           ARXELL_TEST_WHISPER_BINARY="$binary" cargo test --manifest-path src-tauri/Cargo.toml --features tauri-runtime real_whisper_runs_from_staged_closure -- --ignored
-          python scripts/model_assets.py whisper src-tauri/resources/whisper
 
       - name: Save verified Whisper closure before packaging
         if: steps.cache_whisper.outputs.cache-hit != 'true'

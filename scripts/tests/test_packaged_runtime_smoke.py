@@ -59,7 +59,7 @@ class PackagedRuntimeSmokeTests(unittest.TestCase):
             with patch.object(smoke, "download", side_effect=fake_download), patch.object(
                 sys, "argv", ["packaged_runtime_smoke.py", str(resources), "--output", str(output)]
             ):
-                with self.assertRaisesRegex(RuntimeError, "Bundled Tiny English model missing"):
+                with self.assertRaisesRegex(RuntimeError, "Bundled Whisper base model missing"):
                     smoke.main()
 
 

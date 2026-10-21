@@ -143,4 +143,22 @@ mod tests {
             }
         }
     }
+
+    /// Guards the trimmed English-only espeak data (dictionaries/lang files).
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn bundled_espeak_data_phonemizes_english() {
+        let resources = Path::new("resources");
+        if !resources.join("espeak-ng/bin/espeak-ng").is_file() {
+            eprintln!("skipping: bundled espeak-ng not present");
+            return;
+        }
+        let phonemizer =
+            EspeakPhonemizer::new(resources).expect("load bundled espeak-ng and data");
+        let phonemes = phonemizer
+            .phonemize("Hello world. This is a test.")
+            .expect("phonemize with bundled data");
+        assert!(!phonemes.trim().is_empty());
+        assert!(!phonemes.contains("not found"), "unexpected data error: {phonemes}");
+    }
 }

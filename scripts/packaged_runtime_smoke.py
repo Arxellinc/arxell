@@ -77,9 +77,9 @@ def main():
             else "whisper-server-linux-*"
         )
         whisper_binary = next(whisper.glob(whisper_pattern))
-        model = args.resources / "whisper/ggml-tiny.en-q8_0.bin"
+        model = args.resources / "whisper/ggml-base-q8_0.bin"
         if not model.is_file():
-            raise RuntimeError("Bundled Tiny English model missing")
+            raise RuntimeError("Bundled Whisper base model missing")
 
         def transcription(base):
             boundary = "arxell-smoke-boundary"

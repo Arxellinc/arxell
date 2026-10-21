@@ -108,6 +108,22 @@ class RuntimePackagingTests(unittest.TestCase):
         self.assertIn(b"GNU OpenMP", source)
         self.assertIn(b"Tauri Opener", source)
 
+    def test_only_one_whisper_model_is_bundled(self):
+        models = sorted(
+            path.name for path in (ROOT / "src-tauri/resources/whisper").iterdir() if path.is_file()
+        )
+        self.assertEqual(models, ["ggml-base-q8_0.bin"])
+
+    def test_espeak_data_is_english_only(self):
+        data = ROOT / "src-tauri/resources/espeak-ng/share/espeak-ng-data"
+        self.assertTrue((data / "en_dict").is_file())
+        dictionaries = sorted(path.name for path in data.glob("*_dict"))
+        self.assertEqual(dictionaries, ["en_dict"])
+        self.assertFalse((data / "voices").exists())
+        self.assertFalse((data / "mbrola_ph").exists())
+        languages = sorted(path.name for path in (data / "lang").iterdir())
+        self.assertEqual(languages, ["gmw"])
+
 
 if __name__ == "__main__":
     unittest.main()
