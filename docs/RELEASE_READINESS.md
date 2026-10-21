@@ -1,14 +1,15 @@
 # Desktop release readiness
 
-Review baseline: `main` at `9b71c2b` (Arxell 0.2.12), reviewed 2026-10-20.
+Review baseline: `main` at `74543e1` (Arxell 0.2.12), reviewed 2026-10-21.
 
-**Status: suitable for a clearly labeled v0.2.12 preview once fresh CI completes on the unified candidate; not a fully stable release.** Cross-platform CI, renderer/IPC handshake probes, assistant authorization/memory/task hardening (#25), and Linux/macOS/Windows package smoke checks are integrated on `main`. Physical clean-machine acceptance, broader model/provider/Pi acceptance, and signing/notarization remain incomplete.
+**Status: suitable for a clearly labeled v0.2.12 preview; not a fully stable release.** The unified candidate (#29 + #30) passed cross-platform CI, including Linux `.deb`/AppImage install and launch in a clean Ubuntu 22.04 container, renderer/IPC handshakes, Windows MSI install/launch/uninstall, and macOS DMG mount validation. A local Linux release build produced a 94 MiB `.deb` and passed startup plus renderer/IPC smoke tests. Physical clean-machine acceptance, broader model/provider/Pi acceptance, and signing/notarization remain incomplete.
 
 ## Repository and release state
 
 - `main` now integrates the Pi workspace, RPC-backed Looper, policy extension, provider bridge, custom GGUF onboarding (#22), Ubuntu 22.04 portable runtime packaging (#24), assistant authorization/privacy/SQLite memory/task lifecycle hardening (#25), and runtime lifecycle + renderer IPC acceptance (#26).
 - The older `feature/model-directory-runtime` branch predates the Pi/task/assistant hardening merges; keep it isolated and port any remaining configurable model-directory work through a separate PR.
 - The latest published GitHub release is `v0.2.11` (2026-05-11); its assets are `.msi`, `.deb`, `.AppImage`, and an Apple Silicon `.dmg`. That tag predates the Pi service; current main's matching version number does not mean the downloadable release contains current main.
+- `main` now includes on-demand llama.cpp/Kokoro runtimes and onboarding notifications (#28), trimmed Whisper/espeak assets with a portable `espeak-ng` baseline (#29), and model-name truncation in the chat header/status bar (#30). The `v0.2.12` tag has not been published.
 - Integrated cross-platform CI passed across Linux, macOS, and Windows on PR #26 (`37017220493`), `main` (`37091951959`), and PR #25 (`37475138253`).
 
 ## Confirmed bugs addressed in this stabilization pass
@@ -31,7 +32,10 @@ Reject final errors, aborts, output-limit truncation, and exhausted retries; per
 
 Remove external-process killing. Report occupied/invalid ports and stop only the child owned by the runtime service. Port preflight is not a reservation; startup health checks still require further hardening below.
 
-## Addressed in this pass (PR #20–#28)
+## Addressed in this pass (PR #20–#30)
+
+- **Installer size reduction.** On-demand runtimes plus trimmed assets and deduplicated ONNX Runtime cut the locally built Linux `.deb` from 449 MiB (v0.2.11) to 94 MiB. Tauri dereferences symlinks when copying resources, so the Linux bundle now lists only the real `libonnxruntime.so.1.20.1` instead of globbing three 16.5 MiB aliases; a Python packaging test guards that config. AppImage, macOS, and Windows sizes are measured by CI on the release tag.
+- **Chat header model-name handling.** Long model IDs render in an overlay label with ellipsis and a full-name tooltip; the native select is transparent and the status bar truncates too, preventing horizontal scrolling (#30).
 
 - **On-demand `llama.cpp` runtime installation and update notifications.** Instead of compiling `llama.cpp` and `glslc` from C++ source in CI and bundling ~100 MB of engine binaries into every installer, Arxell downloads prebuilt `llama.cpp` engines on demand (pinned to tested `b11757` by default, or the newest compatible release from `/releases?per_page=10` that ships a matching binary archive for the platform/backend). First-run onboarding includes a dedicated **Install Local Runtimes** step, and skipping it surfaces an **Install now** toast notification. Startup and panel refresh checks also notify users when a newer `llama.cpp` build release is available (**Install now** / **Ignore** toast and **Upgrade** button in the `llama.cpp` panel).
 - **On-demand Kokoro TTS model and voice pack installation.** The 115 MB Kokoro ONNX model (`model_quantized.onnx`) and voice embeddings (`voices-v1.0.bin`) are downloaded and verified on demand via `cmd_tts_download_model` (from the onboarding modal, toast notification, or TTS panel) rather than bundled into the installer, while the unused `kokoro-runtime-*.zip` Python virtualenv archive has been removed completely.

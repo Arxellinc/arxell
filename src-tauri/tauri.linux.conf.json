@@ -6,7 +6,7 @@
       "resources/kokoro/config.json",
       "resources/espeak-ng/**/*",
       "resources/model-lists/*",
-      "resources/onnxruntime/linux-x64/**/*",
+      "resources/onnxruntime/linux-x64/libonnxruntime.so.1.20.1",
       "resources/voice/*",
       "resources/voice/**/*",
       "resources/whisper/*",
