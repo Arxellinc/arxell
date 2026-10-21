@@ -53,7 +53,7 @@ Arxell brings AI workflows into secure local infrastructure, letting teams run l
   <tr>
     <td>
       <h3>&#x1F4BE; Local Model Inference</h3>
-      <p>Download GGUF models from HuggingFace, run them through the bundled LLaMA runtime with GPU offload, context-size tuning, and sampling controls.</p>
+      <p>Download GGUF models from HuggingFace, run them through the on-demand LLaMA runtime with GPU offload, context-size tuning, and sampling controls.</p>
     </td>
     <td>
       <h3>&#x1F510; OS-Keychain Secrets</h3>
@@ -177,7 +177,7 @@ Every layer communicates through typed contracts with correlation IDs, structure
 | Spreadsheets | **IronCalc** |
 | STT | **Whisper** (streaming) |
 | TTS | **sherpa-onnx** (Kokoro · Piper · Matcha · Kitten) |
-| Local inference | **llama.cpp** runtime (bundled) |
+| Local inference | **llama.cpp** runtime (downloaded on demand) |
 | Coding harness | **Pi** — detected runtime, interactive TUI and headless JSONL RPC |
 | Secret storage | **OS keychain** via `keyring`; explicitly acknowledged fallback when unavailable |
 | Database | **SQLite** via `rusqlite` |
@@ -204,7 +204,7 @@ Every layer communicates through typed contracts with correlation IDs, structure
 
 - When building from source: [Rust](https://rustup.rs/) (latest stable), Tauri CLI 2, and [Node.js](https://nodejs.org/) >= 20.19 for frontend tooling
 - Platform-specific WebView2 (Windows) / WebKit (macOS &mdash; built-in; current builds target Apple Silicon on macOS 14+) / WebKitGTK 4.1 (Linux; release builds target Ubuntu 22.04 and glibc 2.35; newer compatible distributions may work)
-- Bundled x86-64 local engines currently target AVX2/FMA/F16C/BMI2-capable CPUs, not every historical x86-64 processor. Runner-native CPU tuning is disabled for both llama.cpp and Whisper.
+- Local inference and voice runtimes are downloaded on demand; first run offers an **Install Local Runtimes** step (llama.cpp and the optional Kokoro voice pack). Downloaded x86-64 engines currently target AVX2/FMA/F16C/BMI2-capable CPUs, not every historical x86-64 processor. Runner-native CPU tuning is disabled for both llama.cpp and Whisper.
 - For automatic Pi setup when Pi is not already installed: Node.js (>= 22.19 for the current Pi package) and npm
 - On Windows, Pi also requires Git for Windows/Bash
 - On Linux, API-key storage requires an unlocked desktop Secret Service (for example GNOME Keyring or a compatible KWallet). If unavailable, saving credentials fails unless you explicitly enable plaintext fallback; Arxell does not silently downgrade storage.
@@ -247,11 +247,12 @@ See [Release readiness](docs/RELEASE_READINESS.md) for outstanding packaging and
 
 ### Run a Local Model
 
-1. Open the **Model Manager** (sidebar)
-2. Browse catalog (Unsloth UD Quants auto-updated from HuggingFace, more to come)
-3. Download a GGUF model
-4. Configure the LLaMA runtime (context size, GPU layers)
-5. Start inference — no API key needed
+1. Complete the first-run **Install Local Runtimes** step, or use the **Install now** notification, to download llama.cpp
+2. Open the **Model Manager** (sidebar)
+3. Browse catalog (Unsloth UD Quants auto-updated from HuggingFace, more to come)
+4. Download a GGUF model
+5. Configure the LLaMA runtime (context size, GPU layers)
+6. Start inference — no API key needed
 
 ---
 

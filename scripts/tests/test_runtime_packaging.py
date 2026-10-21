@@ -13,6 +13,16 @@ spec.loader.exec_module(policy)
 
 
 class RuntimePackagingTests(unittest.TestCase):
+    def test_linux_bundle_does_not_dereference_onnxruntime_aliases(self):
+        config = json.loads((ROOT / "src-tauri/tauri.linux.conf.json").read_text())
+        resources = config["bundle"]["resources"]
+        onnxruntime = [entry for entry in resources if "onnxruntime" in entry]
+        self.assertEqual(
+            onnxruntime,
+            ["resources/onnxruntime/linux-x64/libonnxruntime.so.1.20.1"],
+            "bundle only the real ONNX Runtime library; Tauri dereferences symlink aliases into duplicate copies",
+        )
+
     def test_cmake_requires_explicit_native_off(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "CMakeCache.txt"
