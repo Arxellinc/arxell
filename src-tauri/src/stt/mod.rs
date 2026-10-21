@@ -375,73 +375,147 @@ pub async fn stt_set_threads(
 }
 
 #[cfg(feature = "tauri-runtime")]
+const WHISPER_MODEL_REVISION: &str = "5359861c739e955e79d9a303bcbc70fb988958b1";
+
+#[cfg(feature = "tauri-runtime")]
+const WHISPER_MODEL_ASSETS: &[(&str, &str)] = &[
+    (
+        "ggml-base-q8_0.bin",
+        "c577b9a86e7e048a0b7eada054f4dd79a56bbfa911fbdacf900ac5b567cbb7d9",
+    ),
+    (
+        "ggml-base.en-q8_0.bin",
+        "a4d4a0768075e13cfd7e19df3ae2dbc4a68d37d36a7dad45e8410c9a34f8c87e",
+    ),
+    (
+        "ggml-tiny.en-q8_0.bin",
+        "5bc2b3860aa151a4c6e7bb095e1fcce7cf12c7b020ca08dcec0c6d018bb7dd94",
+    ),
+];
+
+#[cfg(feature = "tauri-runtime")]
+fn sha256_hex(path: &std::path::Path) -> Result<String, String> {
+    use sha2::{Digest, Sha256};
+    use std::io::Read as _;
+    let mut file = fs::File::open(path)
+        .map_err(|e| format!("Failed to open {} for checksum: {}", path.display(), e))?;
+    let mut hasher = Sha256::new();
+    let mut buffer = vec![0u8; 64 * 1024];
+    loop {
+        let read = file
+            .read(&mut buffer)
+            .map_err(|e| format!("Failed to read {} for checksum: {}", path.display(), e))?;
+        if read == 0 {
+            break;
+        }
+        hasher.update(&buffer[..read]);
+    }
+    Ok(hex::encode(hasher.finalize()))
+}
+
+#[cfg(feature = "tauri-runtime")]
 #[tauri::command]
 pub async fn stt_download_model(
     app: tauri::AppHandle,
     _state: tauri::State<'_, STTState>,
     file_name: String,
 ) -> Result<String, String> {
-    use log::info;
+    use log::{info, warn};
 
-    info!("Starting STT model download: {}", file_name);
+    let Some((name, expected_sha256)) = WHISPER_MODEL_ASSETS
+        .iter()
+        .find(|(candidate, _)| *candidate == file_name)
+    else {
+        return Err(format!("Whisper model not found: {}", file_name));
+    };
+    let name = *name;
+    let expected_sha256 = *expected_sha256;
 
+    info!("Starting STT model download: {}", name);
     let app_data_dir = app_paths::app_data_dir();
-    let whisper_models = [
-        (
-            "ggml-base.en-q8_0.bin",
-            "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en-q8_0.bin",
-        ),
-        (
-            "ggml-tiny.en-q8_0.bin",
-            "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.en-q8_0.bin",
-        ),
-    ];
-
-    let (download_dir, target_url) =
-        if let Some((_, url)) = whisper_models.iter().find(|(name, _)| name == &file_name) {
-            (app_data_dir.join("STT").join("models"), (*url).to_string())
-        } else {
-            return Err(format!("Whisper model not found: {}", file_name));
-        };
-
-    // Create download directory if needed
+    let download_dir = app_data_dir.join("STT").join("models");
     fs::create_dir_all(&download_dir)
-        .map_err(|e| format!("Failed to create download directory: {}", e))?;
+        .map_err(|e| format!("Failed to create download directory: {e}"))?;
+    let download_path = download_dir.join(name);
 
-    let download_path = download_dir.join(&file_name);
+    if download_path.is_file() {
+        if sha256_hex(&download_path).ok().as_deref() == Some(expected_sha256) {
+            info!("STT model already verified: {}", download_path.display());
+            return Ok(describe_installed_whisper_models(&app, name));
+        }
+        warn!(
+            "Removing unverified STT model before re-download: {}",
+            download_path.display()
+        );
+        fs::remove_file(&download_path)
+            .map_err(|e| format!("Failed to replace unverified model: {e}"))?;
+    }
 
-    info!("Downloading model to: {}", download_path.display());
+    let url = format!(
+        "https://huggingface.co/ggerganov/whisper.cpp/resolve/{WHISPER_MODEL_REVISION}/{name}"
+    );
+    let target_path = download_path.clone();
+    let temporary = download_dir.join(format!(".{name}.{}.tmp", uuid::Uuid::new_v4()));
+    let temporary_for_worker = temporary.clone();
 
     tokio::task::spawn_blocking(move || -> Result<(), String> {
         let mut response = Client::builder()
+            .timeout(std::time::Duration::from_secs(600))
             .build()
             .map_err(|e| format!("failed creating HTTP client: {e}"))?
-            .get(&target_url)
+            .get(&url)
+            .header("User-Agent", crate::app_paths::APP_USER_AGENT)
             .send()
-            .map_err(|e| format!("failed downloading model archive: {e}"))?;
+            .map_err(|e| format!("failed downloading model: {e}"))?;
         if !response.status().is_success() {
             return Err(format!("download failed with HTTP {}", response.status()));
         }
-
-        let mut out = fs::File::create(&download_path)
-            .map_err(|e| format!("failed creating archive path: {e}"))?;
-        std::io::copy(&mut response, &mut out)
-            .map_err(|e| format!("failed writing downloaded archive: {e}"))?;
-        Ok(())
+        let result = (|| -> Result<(), String> {
+            let mut out = fs::File::create(&temporary_for_worker)
+                .map_err(|e| format!("failed creating temporary model file: {e}"))?;
+            std::io::copy(&mut response, &mut out)
+                .map_err(|e| format!("failed writing downloaded model: {e}"))?;
+            out.sync_all()
+                .map_err(|e| format!("failed flushing downloaded model: {e}"))?;
+            drop(out);
+            let actual = sha256_hex(&temporary_for_worker)?;
+            if actual != expected_sha256 {
+                return Err(format!(
+                    "checksum mismatch for {name}: expected {expected_sha256}, got {actual}"
+                ));
+            }
+            if target_path.exists() {
+                fs::remove_file(&target_path)
+                    .map_err(|e| format!("failed replacing existing model: {e}"))?;
+            }
+            fs::rename(&temporary_for_worker, &target_path)
+                .map_err(|e| format!("failed installing downloaded model: {e}"))?;
+            Ok(())
+        })();
+        if result.is_err() {
+            let _ = fs::remove_file(&temporary_for_worker);
+        }
+        result
     })
     .await
     .map_err(|e| format!("download worker join error: {e}"))??;
 
-    let installed = list_installed_whisper_model_names(&app);
-    Ok(format!(
+    info!("Downloaded STT model: {}", download_path.display());
+    Ok(describe_installed_whisper_models(&app, name))
+}
+
+#[cfg(feature = "tauri-runtime")]
+fn describe_installed_whisper_models(app: &tauri::AppHandle, downloaded: &str) -> String {
+    let installed = list_installed_whisper_model_names(app);
+    format!(
         "Downloaded {}. Available Whisper models: {}",
-        file_name,
+        downloaded,
         if installed.is_empty() {
             "none detected".to_string()
         } else {
             installed.join(", ")
         }
-    ))
+    )
 }
 
 #[cfg(feature = "tauri-runtime")]

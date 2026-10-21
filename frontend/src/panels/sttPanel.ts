@@ -67,9 +67,14 @@ export function renderSttBody(state: PrimaryPanelRenderState): string {
   const threadOptions = [1, 2, 4, 6, 8];
   const sttModels: Array<{name: string; fileName: string; note: string}> = [
     {
-      name: "Whisper Base English (Default bundled model)",
+      name: "Whisper Base (Default bundled model)",
+      fileName: "ggml-base-q8_0.bin",
+      note: "Multilingual, higher accuracy"
+    },
+    {
+      name: "Whisper Base English",
       fileName: "ggml-base.en-q8_0.bin",
-      note: "Higher accuracy, larger model"
+      note: "English-only, same size as Base"
     },
     {
       name: "Whisper Tiny English",
@@ -163,8 +168,8 @@ export function renderSttBody(state: PrimaryPanelRenderState): string {
         <details class="stt-model-downloads" style="margin-top: 16px;" open>
           <summary class="stt-advanced-title">Model Downloads</summary>
           <div class="tts-download-copy" style="margin-top: 8px;">
-            <strong>Base is the default Whisper model.</strong>
-            <span>Download smaller Whisper variants only if you want a different latency or runtime profile.</span>
+            <strong>Whisper Base is the default bundled model.</strong>
+            <span>Download alternate Whisper variants only if you want a different language or latency profile.</span>
           </div>
           <table class="config-table" style="width: 100%; margin-top: 8px;">
             <tbody>
