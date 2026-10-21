@@ -1092,6 +1092,17 @@ body {
   overflow: hidden;
 }
 
+.runtime-item.is-model {
+  max-width: 34ch;
+}
+
+.runtime-item.is-model .runtime-value {
+  display: inline-block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .runtime-label {
   color: var(--muted);
   flex: 0 0 auto;
@@ -1227,6 +1238,7 @@ body {
   display: inline-flex;
   align-items: center;
   gap: 0.35rem;
+  min-width: 0;
 }
 
 .chat-header-model-wrap {
@@ -1236,33 +1248,67 @@ body {
   transform: translate(-50%, -50%);
   display: inline-flex;
   align-items: center;
+  min-width: 96px;
+  max-width: min(280px, 45%);
+  height: 20px;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 0.75rem;
+  font-weight: 500;
+}
+
+.chat-header-model-label {
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  pointer-events: none;
 }
 
 .chat-header-model-select {
-  border: 0px solid var(--panel);
-  color: var(--muted);
-  border-radius: 0;
-  height: 20px;
-  min-width: 132px;
-  max-width: 280px;
-  font-size: 0.75rem;
-  font-weight: 500;
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  max-width: 100%;
+  opacity: 0;
+  cursor: pointer;
+  border: 0;
   outline: none;
   box-shadow: none;
 }
 
-.chat-header-model-select:hover,
-.chat-header-model-select:focus,
-.chat-header-model-select:focus-visible,
-.chat-header-model-select:active {
-  border-color: var(--line) !important;
-  outline: none !important;
-  box-shadow: none !important;
+.chat-header-model-chevron {
+  flex: 0 0 auto;
+  margin-left: 2px;
+  color: var(--muted);
+  font-size: 0.65rem;
+  line-height: 1;
+  pointer-events: none;
+  position: relative;
+  z-index: 1;
+}
+
+.chat-header-model-wrap:hover .chat-header-model-label,
+.chat-header-model-wrap:hover .chat-header-model-chevron {
+  color: var(--ink);
+}
+
+.chat-header-model-wrap:focus-within {
+  outline: 1px solid var(--active-line);
+  outline-offset: 1px;
+  border-radius: 3px;
 }
 
 .chat-header-model-fallback {
   font-size: 0.72rem;
   color: var(--muted);
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .pane-title-note {
@@ -1657,6 +1703,7 @@ body {
 .messages {
   padding: 0.8rem;
   overflow-y: auto;
+  overflow-x: hidden;
   scrollbar-gutter: stable;
   display: flex;
   flex-direction: column;
@@ -3591,11 +3638,19 @@ body {
 
 .llama-input {
   width: 100%;
+  min-width: 0;
+  max-width: 100%;
   background: rgba(255, 255, 255, 0.06);
   border: 1px solid rgba(255, 255, 255, 0.14);
   color: inherit;
   border-radius: 8px;
   padding: 6px 10px;
+}
+
+select.llama-input {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .llama-input-with-action {

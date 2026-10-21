@@ -5,6 +5,10 @@ import type { CONSOLE_DATA_ATTR } from "../tools/ui/constants";
 import { renderToolToolbar } from "../tools/ui/toolbar";
 import { APP_ICON } from "../icons/map";
 import { renderPaneMenu } from "../layout/paneMenu";
+import {
+  renderChatHeaderModelSelect,
+  type HeaderModelOption
+} from "./chatHeaderModelSelect";
 
 export function modelNameFromPath(path: string): string {
   const trimmed = path.trim();
@@ -91,36 +95,6 @@ export function buildBottomStatus(input: {
     speedText: input.showBottomSpeed ? speedText : null,
     ttsLatencyText: input.showBottomTtsLatency ? ttsLatencyText : null
   };
-}
-
-export interface HeaderModelOption {
-  id: string;
-  label: string;
-}
-
-export function renderChatHeaderModelSelect(input: {
-  options: HeaderModelOption[];
-  activeModelId: string;
-  paneId: string;
-  scopeId?: string;
-}): string {
-  const options = input.options;
-  if (!options.length) {
-    return '<span class="chat-header-model-wrap"><span class="chat-header-model-fallback">No models</span></span>';
-  }
-  const optionsHtml = options
-    .map((option) => {
-      const selected = option.id === input.activeModelId ? " selected" : "";
-      return `<option value="${escapeHtml(option.id)}"${selected}>${escapeHtml(option.label)}</option>`;
-    })
-    .join("");
-  return `
-    <span class="chat-header-model-wrap">
-      <select id="chatHeaderModelSelect${input.scopeId ?? ""}" class="chat-header-model-select" title="Select chat model" data-chat-pane-id="${escapeHtml(input.paneId)}">
-        ${optionsHtml}
-      </select>
-    </span>
-  `;
 }
 
 export function resolveTtsLoadedHeaderSuffix(input: {
