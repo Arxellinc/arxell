@@ -64,15 +64,11 @@ def main():
     args = parser.parse_args()
     args.output.mkdir(parents=True, exist_ok=True)
     # These are test fixtures, not additional bundled user-facing models.
-    gguf = download(GGUF_URL, args.output / "stories15M-q4_0.gguf", GGUF_SHA256).resolve()
     wav = download(JFK_URL, args.output / "jfk.wav", JFK_SHA256)
     with tempfile.TemporaryDirectory(prefix="arxell-relocated-") as temporary:
         root = Path(temporary)
-        cpu = root / "llama"
         whisper = root / "whisper"
-        shutil.copytree(args.resources / "llama-runtime/llama.cpp-cpu", cpu)
         shutil.copytree(args.resources / "whisper-server", whisper)
-        llama = cpu / ("llama-server.exe" if os.name == "nt" else "llama-server")
         whisper_pattern = (
             "whisper-server-windows-*.exe"
             if os.name == "nt"
@@ -85,11 +81,6 @@ def main():
         if not model.is_file():
             raise RuntimeError("Bundled Tiny English model missing")
 
-        def completion(base):
-            result = http(base + "/completion", json.dumps({"prompt": "Once upon a time", "n_predict": 8, "temperature": 0, "stream": False}).encode(), {"Content-Type": "application/json"})
-            if not result.get("content", "").strip():
-                raise RuntimeError("Packaged llama.cpp returned no generated text")
-
         def transcription(base):
             boundary = "arxell-smoke-boundary"
             body = (f"--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"jfk.wav\"\r\nContent-Type: audio/wav\r\n\r\n".encode()
@@ -98,9 +89,22 @@ def main():
             if "country" not in result.get("text", "").lower():
                 raise RuntimeError("Packaged Whisper failed known-speech transcription")
 
-        run_server(llama, ["--model", str(gguf), "--ctx-size", "256", "-ngl", "0", "--threads", "2"], completion, args.output / "llama.log")
+        llama_source = args.resources / "llama-runtime/llama.cpp-cpu"
+        if llama_source.is_dir():
+            gguf = download(GGUF_URL, args.output / "stories15M-q4_0.gguf", GGUF_SHA256).resolve()
+            cpu = root / "llama"
+            shutil.copytree(llama_source, cpu)
+            llama = cpu / ("llama-server.exe" if os.name == "nt" else "llama-server")
+
+            def completion(base):
+                result = http(base + "/completion", json.dumps({"prompt": "Once upon a time", "n_predict": 8, "temperature": 0, "stream": False}).encode(), {"Content-Type": "application/json"})
+                if not result.get("content", "").strip():
+                    raise RuntimeError("Packaged llama.cpp returned no generated text")
+
+            run_server(llama, ["--model", str(gguf), "--ctx-size", "256", "-ngl", "0", "--threads", "2"], completion, args.output / "llama.log")
+
         run_server(whisper_binary, ["--model", str(model.resolve()), "--threads", "2"], transcription, args.output / "whisper.log")
-    print("PASS: packaged, relocated CPU GGUF inference and known-speech transcription")
+    print("PASS: packaged, relocated runtime closure smoke test")
 
 
 if __name__ == "__main__":

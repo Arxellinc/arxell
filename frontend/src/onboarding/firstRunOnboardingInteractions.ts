@@ -5,12 +5,19 @@ import { openFirstRunModelCatalog } from "./firstRunModelBrowser.js";
 export interface FirstRunOnboardingDeps {
   state: FirstRunOnboardingState & { llamaRuntimeModelPath: string };
   modelOptions: readonly FirstRunModelOption[];
-  getClient: () => { modelManagerDownloadHf: (request: { correlationId: string; repoId: string; fileName: string }) => Promise<{ model: { path: string; name: string } }> } | null;
+  getClient: () => {
+    modelManagerDownloadHf: (request: { correlationId: string; repoId: string; fileName: string }) => Promise<{ model: { path: string; name: string } }>;
+    installLlamaRuntimeEngine?: (request: { correlationId: string; engineId: string }) => Promise<unknown>;
+    ttsDownloadModel?: (request: { correlationId: string }) => Promise<{ ok: boolean; message: string }>;
+  } | null;
   nextCorrelationId: () => string;
   browseModelPath: () => Promise<string | null>;
   openModelCatalog?: () => Promise<void>;
   persistLlamaModelPath: (path: string) => void;
   refreshModelManagerInstalled: () => Promise<void>;
+  refreshLlamaRuntime?: () => Promise<void>;
+  refreshTtsState?: () => Promise<void>;
+  notifySkippedRuntimes?: () => void;
   persistFirstRunOnboardingDismissed: () => void;
   autoStartLlamaRuntimeIfConfigured: () => Promise<void>;
   render: () => void;
@@ -23,6 +30,7 @@ export function bindFirstRunOnboardingInteractions(deps: FirstRunOnboardingDeps)
     deps.state.firstRunOnboardingOpen = false;
     deps.state.firstRunMessage = null;
     deps.persistFirstRunOnboardingDismissed();
+    deps.notifySkippedRuntimes?.();
     deps.render();
   };
 
@@ -45,6 +53,9 @@ export function bindFirstRunOnboardingInteractions(deps: FirstRunOnboardingDeps)
     firstRunSkipStep.onclick = () => {
       if (deps.state.firstRunBusy) return;
       if (deps.state.firstRunOnboardingStep === "welcome") {
+        deps.state.firstRunOnboardingStep = "runtime";
+      } else if (deps.state.firstRunOnboardingStep === "runtime") {
+        deps.notifySkippedRuntimes?.();
         deps.state.firstRunOnboardingStep = "model";
       } else {
         dismiss();
@@ -68,6 +79,9 @@ export function bindFirstRunOnboardingInteractions(deps: FirstRunOnboardingDeps)
         customModelPath: deps.state.firstRunCustomModelPath
       })) return;
       if (deps.state.firstRunOnboardingStep === "welcome") {
+        deps.state.firstRunOnboardingStep = "runtime";
+      } else if (deps.state.firstRunOnboardingStep === "runtime") {
+        deps.notifySkippedRuntimes?.();
         deps.state.firstRunOnboardingStep = "model";
       } else {
         // Restore the selected custom path if a preset was downloaded meanwhile.
@@ -89,9 +103,66 @@ export function bindFirstRunOnboardingInteractions(deps: FirstRunOnboardingDeps)
   if (firstRunBack) {
     firstRunBack.onclick = () => {
       if (deps.state.firstRunBusy) return;
-      deps.state.firstRunOnboardingStep = "welcome";
+      if (deps.state.firstRunOnboardingStep === "model") {
+        deps.state.firstRunOnboardingStep = "runtime";
+      } else {
+        deps.state.firstRunOnboardingStep = "welcome";
+      }
       deps.state.firstRunMessage = null;
       deps.render();
+    };
+  }
+
+  const firstRunInstallLlama = document.querySelector<HTMLButtonElement>(".first-run-install-llama-runtime");
+  if (firstRunInstallLlama) {
+    firstRunInstallLlama.onclick = async () => {
+      const client = deps.getClient();
+      if (!client?.installLlamaRuntimeEngine || deps.state.firstRunBusy) return;
+      const engines = deps.state.llamaRuntime?.engines.filter((engine) => engine.isApplicable) ?? [];
+      const selected =
+        engines.find((engine) => engine.engineId === deps.state.llamaRuntimeSelectedEngineId) ??
+        engines[0];
+      const engineId = selected?.engineId || deps.state.llamaRuntimeSelectedEngineId || "llama.cpp-cpu";
+      const label = selected?.label || engineId;
+      deps.state.firstRunBusy = true;
+      deps.state.firstRunMessage = `Installing ${label}...`;
+      deps.render();
+      try {
+        await client.installLlamaRuntimeEngine({
+          correlationId: deps.nextCorrelationId(),
+          engineId
+        });
+        await deps.refreshLlamaRuntime?.();
+        deps.state.firstRunMessage = `Installed ${label}.`;
+      } catch (error) {
+        deps.state.firstRunMessage = `Runtime install failed: ${String(error)}`;
+      } finally {
+        deps.state.firstRunBusy = false;
+        deps.render();
+      }
+    };
+  }
+
+  const firstRunInstallKokoro = document.querySelector<HTMLButtonElement>(".first-run-install-kokoro");
+  if (firstRunInstallKokoro) {
+    firstRunInstallKokoro.onclick = async () => {
+      const client = deps.getClient();
+      if (!client?.ttsDownloadModel || deps.state.firstRunBusy) return;
+      deps.state.firstRunBusy = true;
+      deps.state.firstRunMessage = "Downloading Kokoro voice assets (~115 MB)...";
+      deps.render();
+      try {
+        const response = await client.ttsDownloadModel({
+          correlationId: deps.nextCorrelationId()
+        });
+        await deps.refreshTtsState?.();
+        deps.state.firstRunMessage = response.message || "Installed Kokoro voice pack.";
+      } catch (error) {
+        deps.state.firstRunMessage = `Voice pack install failed: ${String(error)}`;
+      } finally {
+        deps.state.firstRunBusy = false;
+        deps.render();
+      }
     };
   }
 

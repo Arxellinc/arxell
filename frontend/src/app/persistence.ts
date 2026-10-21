@@ -523,3 +523,24 @@ export function persistModelManagerDisabledModelIds(modelIds: string[]): void {
     window.localStorage.setItem(MODEL_MANAGER_DISABLED_MODEL_IDS_KEY, JSON.stringify(modelIds));
   } catch {}
 }
+
+const LLAMA_RUNTIME_UPDATE_NOTIFIED_VERSION_KEY = "arxell.llamaRuntime.updateNotifiedVersion";
+
+export function loadPersistedLlamaRuntimeUpdateNotifiedVersion(): string {
+  try {
+    return (window.localStorage.getItem(LLAMA_RUNTIME_UPDATE_NOTIFIED_VERSION_KEY) || "").trim();
+  } catch {
+    return "";
+  }
+}
+
+export function persistLlamaRuntimeUpdateNotifiedVersion(version: string): void {
+  try {
+    const normalized = version.trim();
+    if (!normalized) {
+      window.localStorage.removeItem(LLAMA_RUNTIME_UPDATE_NOTIFIED_VERSION_KEY);
+      return;
+    }
+    window.localStorage.setItem(LLAMA_RUNTIME_UPDATE_NOTIFIED_VERSION_KEY, normalized);
+  } catch {}
+}

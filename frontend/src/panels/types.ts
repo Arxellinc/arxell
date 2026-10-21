@@ -300,6 +300,9 @@ export interface PrimaryPanelRenderState {
   apiDetectedModels: string[];
   conversations: ConversationSummaryRecord[];
   llamaRuntime: LlamaRuntimeStatusResponse | null;
+  llamaRuntimeCurrentVersion: string;
+  llamaRuntimeLatestVersion: string;
+  llamaRuntimeHasUpdate: boolean;
   llamaRuntimeSelectedEngineId: string;
   llamaRuntimeModelPath: string;
   llamaRuntimeActiveModelPath: string;
@@ -448,7 +451,9 @@ export interface PrimaryPanelBindings {
   onExportConversation: (conversationId: string) => Promise<void>;
   onDeleteConversation: (conversationId: string) => Promise<void>;
   onLlamaRuntimeRefresh: () => Promise<void>;
+  onLlamaRuntimeSelectEngine: (engineId: string) => Promise<void>;
   onLlamaRuntimeInstall: (engineId: string) => Promise<void>;
+  onLlamaRuntimeUpgradeSelectedEngine: () => Promise<void>;
   onLlamaRuntimeBrowseModelPath: () => Promise<void>;
   onLlamaRuntimeSetMaxTokens: (maxTokens: number | null) => Promise<void>;
   onLlamaRuntimeClearLogs: () => Promise<void>;

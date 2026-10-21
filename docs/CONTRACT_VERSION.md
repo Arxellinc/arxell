@@ -1,7 +1,7 @@
 # Contract Version
 
 ## Current Version
-- `foundation-v8`
+- `foundation-v9`
 
 ## Scope
 This version pins the shared contracts between the TypeScript frontend (`frontend/src/contracts.ts`) and the Rust backend (`src-tauri/src/contracts.rs`).
@@ -53,8 +53,9 @@ This version pins the shared contracts between the TypeScript frontend (`fronten
 - invoke actions: `read-file`, `write-file`, `create-directory`, `delete-path` (via `cmd_tool_invoke`)
 
 ### LLaMA Runtime
-- command: `cmd_llama_runtime_status` → `LlamaRuntimeStatusRequest` / `LlamaRuntimeStatusResponse`
-- command: `cmd_llama_runtime_install_engine` → `LlamaRuntimeInstallRequest` / `LlamaRuntimeInstallResponse`
+- command: `cmd_llama_runtime_status` → `LlamaRuntimeStatusRequest` / `LlamaRuntimeStatusResponse` (`currentVersion`)
+- command: `cmd_llama_runtime_install_engine` → `LlamaRuntimeInstallRequest` (`forceRefresh?`) / `LlamaRuntimeInstallResponse`
+- command: `cmd_check_llama_runtime_updates` → `LlamaRuntimeUpdateCheckRequest?` / `LlamaRuntimeUpdateCheckResponse`
 - command: `cmd_llama_runtime_start` → `LlamaRuntimeStartRequest` / `LlamaRuntimeStartResponse`
 - command: `cmd_llama_runtime_stop` → `LlamaRuntimeStopRequest` / `LlamaRuntimeStopResponse`
 
@@ -152,6 +153,13 @@ This version pins the shared contracts between the TypeScript frontend (`fronten
   2. update `IPC_EVENTS.md`
   3. document migration impact in PR/changeset
 
+## foundation-v9 Migration
+
+- `LlamaRuntimeStatusResponse` includes `currentVersion`.
+- `LlamaRuntimeInstallRequest` accepts optional `forceRefresh` to upgrade an installed engine from the latest compatible upstream `llama.cpp` release.
+- Added `cmd_check_llama_runtime_updates` (`LlamaRuntimeUpdateCheckRequest` / `LlamaRuntimeUpdateCheckResponse`).
+- Restored `cmd_tts_download_model` (`TtsDownloadModelRequest` / `TtsDownloadModelResponse`) for on-demand Kokoro ONNX model and voice pack installation.
+
 ## foundation-v8 Migration
 
 - Direct-agent tool events are metadata-only: `toolCallId`, `toolName`, optional `success`; `display` is removed. Frontend consumers must not require or render raw displays. Looper `reviewResult` events carry only `ship`/`revise` labels, not artifact text.
@@ -174,3 +182,4 @@ This version pins the shared contracts between the TypeScript frontend (`fronten
 | `foundation-v6` | Replaced OpenCode contracts and workspace integration with Pi; Pi runtime probes report the detected version. |
 | `foundation-v7` | Added typed Pi runtime readiness diagnostics, executable selection, RPC approval responses, and Pi-backed provider metadata. |
 | `foundation-v8` | Metadata-only direct-tool diagnostics, durable saved memory with truthful context selection, and reconciled delegated task lifecycle including `starting` and nonterminal completion timestamps. |
+| `foundation-v9` | Added `cmd_check_llama_runtime_updates`, `forceRefresh` runtime upgrade support, `currentVersion` in runtime status, and `cmd_tts_download_model` for on-demand Kokoro voice asset installation. |

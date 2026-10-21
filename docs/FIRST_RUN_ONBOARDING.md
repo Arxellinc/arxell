@@ -1,8 +1,12 @@
-# First-run GGUF onboarding
+# First-run onboarding
 
 ## Scope and behavior
 
-The custom GGUF row provides **Download** and **Browse**. Download opens the fixed Hugging Face text-generation catalog in the system browser; it does not download a model into Arxell or set the runtime model path. The user downloads a GGUF file externally and then selects it with Browse. Preset downloads continue to use the existing model-manager IPC.
+First-run onboarding guides the user through three steps (`welcome` → `runtime` → `model`):
+
+1. **Welcome (`welcome`):** Introduces local/API models, on-demand runtimes, safety expectations, and terms acceptance.
+2. **Install Local Runtimes (`runtime`):** Lets the user install the detected/recommended `llama.cpp` inference engine (GPU or CPU) and the optional `Kokoro` neural TTS voice pack (~115 MB) on demand. If the user skips this step or closes onboarding with runtimes uninstalled, Arxell surfaces toast notifications with an **Install now** action so either runtime can be installed with one click later.
+3. **Choose Your First Model (`model`):** The custom GGUF row provides **Download** and **Browse**. Download opens the fixed Hugging Face text-generation catalog in the system browser; it does not download a model into Arxell or set the runtime model path. The user downloads a GGUF file externally and then selects it with Browse. Preset downloads continue to use the existing model-manager IPC.
 
 - Browse cancellation preserves the prior model selection and paths.
 - Invalid extensions and rejected picker promises produce an inline message without persisting a new path.

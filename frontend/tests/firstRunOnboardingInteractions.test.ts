@@ -5,7 +5,7 @@ import { bindFirstRunOnboardingInteractions, type FirstRunOnboardingDeps } from 
 type State = FirstRunOnboardingDeps["state"];
 function harness(t: TestContext, initial: Partial<State> = {}) {
   const controls = new Map<string, { onclick: (() => void | Promise<void>) | null; onchange: (() => void) | null; value: string; checked: boolean }>();
-  for (const selector of [".first-run-next", ".first-run-back", ".first-run-skip", ".first-run-skip-step", ".first-run-select-custom-model", ".first-run-open-model-browser", ".first-run-download-model", "#firstRunTermsCheckbox", 'input[name="firstRunModel"]']) {
+  for (const selector of [".first-run-next", ".first-run-back", ".first-run-skip", ".first-run-skip-step", ".first-run-select-custom-model", ".first-run-open-model-browser", ".first-run-download-model", ".first-run-install-llama-runtime", ".first-run-install-kokoro", "#firstRunTermsCheckbox", 'input[name="firstRunModel"]']) {
     controls.set(selector, { onclick: null, onchange: null, value: "preset", checked: false });
   }
   const previous = Object.getOwnPropertyDescriptor(globalThis, "document");
@@ -64,12 +64,14 @@ test("Finish handler rejects invalid custom paths and busy state, not just disab
   assert.equal(h.calls.dismissed, 0);
 });
 
-test("Next handler enforces terms acceptance", (t) => {
+test("Next handler enforces terms acceptance and transitions through runtime to model", (t) => {
   const h = harness(t, { firstRunOnboardingStep: "welcome", firstRunTermsAccepted: false });
   h.bind();
   h.click(".first-run-next");
   assert.equal(h.state.firstRunOnboardingStep, "welcome");
   h.state.firstRunTermsAccepted = true;
+  h.click(".first-run-next");
+  assert.equal(h.state.firstRunOnboardingStep, "runtime");
   h.click(".first-run-next");
   assert.equal(h.state.firstRunOnboardingStep, "model");
 });
@@ -157,4 +159,35 @@ test("catalog opening explains the external-download/Browse flow", async (t) => 
   assert.equal(h.calls.catalogs, 1);
   assert.match(h.state.firstRunMessage!, /then use Browse/);
   assert.equal(h.state.firstRunBusy, false);
+});
+
+test("runtime step installs llama.cpp and Kokoro and notifies when skipped", async (t) => {
+  const installedEngines: string[] = [];
+  let kokoroDownloads = 0;
+  let skipNotifications = 0;
+  const h = harness(t, {
+    firstRunOnboardingStep: "runtime",
+    llamaRuntimeSelectedEngineId: "llama.cpp-vulkan"
+  });
+  h.deps.getClient = () => ({
+    modelManagerDownloadHf: async () => ({ model: { path: "/m.gguf", name: "m" } }),
+    installLlamaRuntimeEngine: async (req) => { installedEngines.push(req.engineId); },
+    ttsDownloadModel: async () => { kokoroDownloads++; return { ok: true, message: "Installed Kokoro voice assets." }; }
+  });
+  h.deps.notifySkippedRuntimes = () => { skipNotifications++; };
+  h.bind();
+
+  await h.click(".first-run-install-llama-runtime");
+  assert.deepEqual(installedEngines, ["llama.cpp-vulkan"]);
+  assert.equal(h.state.firstRunBusy, false);
+  assert.match(h.state.firstRunMessage!, /Installed llama\.cpp-vulkan/);
+
+  await h.click(".first-run-install-kokoro");
+  assert.equal(kokoroDownloads, 1);
+  assert.equal(h.state.firstRunBusy, false);
+  assert.match(h.state.firstRunMessage!, /Installed Kokoro voice assets/);
+
+  h.click(".first-run-skip-step");
+  assert.equal(h.state.firstRunOnboardingStep, "model");
+  assert.equal(skipNotifications, 1);
 });
