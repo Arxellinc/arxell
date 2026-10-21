@@ -207,6 +207,18 @@ jobs:
           fi
           python -m unittest discover -s scripts/tests -v
 
+      - name: Verify bundled espeak-ng on the release baseline
+        if: matrix.platform.os == 'ubuntu-22.04'
+        shell: bash
+        run: |
+          set -euo pipefail
+          binary="$GITHUB_WORKSPACE/src-tauri/resources/espeak-ng/bin/espeak-ng"
+          data="$GITHUB_WORKSPACE/src-tauri/resources/espeak-ng/share/espeak-ng-data"
+          test -x "$binary"
+          output="$(ESPEAK_DATA_PATH="$data" "$binary" -q --ipa -v en-us "Hello world.")"
+          test -n "$output"
+          echo "espeak-ng baseline check: $output"
+
       - name: Run Rust tests
         run: cargo test --manifest-path src-tauri/Cargo.toml --features tauri-runtime
 
