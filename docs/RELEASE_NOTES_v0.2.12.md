@@ -24,7 +24,7 @@ Download `SHA256SUMS.txt` with the installers and verify the checksum before ins
 
 - Linux: Ubuntu 22.04 or a compatible/newer distribution with WebKitGTK 4.1 and the listed package dependencies. Older glibc systems are not supported.
 - Pi coding tools: Arxell uses an existing Pi installation when detected. If Pi is absent, it can install a private copy when Node.js/npm are available (and Git Bash is available on Windows). Interactive Pi uses the user's Pi profile; Looper uses Arxell's configured connection.
-- Local models: no API key is needed, but model files must be downloaded separately. Bundled x86-64 engines require AVX2/FMA/F16C/BMI2-capable CPUs; disabling runner-native tuning does not support every historical x86-64 processor. CPU inference is the fallback; GPU acceleration depends on the platform and installed driver.
+- Local models: no API key is needed, but model files and the llama.cpp engine are downloaded separately. Downloaded x86-64 engines require AVX2/FMA/F16C/BMI2-capable CPUs; disabling runner-native tuning does not support every historical x86-64 processor. CPU inference is the fallback; GPU acceleration depends on the platform and installed driver.
 - Cloud chat and Looper currently use OpenAI Chat Completions-compatible endpoints, including compatible local servers. Native Anthropic and Gemini APIs are not supported directly; use an OpenAI-compatible gateway.
 
 ## Important limitations
