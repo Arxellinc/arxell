@@ -2,10 +2,11 @@
 
 use crate::app_paths;
 use crate::contracts::{
-    AppEvent, EventSeverity, EventStage, Subsystem, TtsListVoicesRequest, TtsListVoicesResponse,
-    TtsSelfTestRequest, TtsSelfTestResponse, TtsSettingsGetRequest, TtsSettingsGetResponse,
-    TtsSettingsSetRequest, TtsSettingsSetResponse, TtsSpeakRequest, TtsSpeakResponse,
-    TtsSpeakStreamResponse, TtsStatusRequest, TtsStatusResponse, TtsStopRequest, TtsStopResponse,
+    AppEvent, EventSeverity, EventStage, Subsystem, TtsDownloadModelRequest,
+    TtsDownloadModelResponse, TtsListVoicesRequest, TtsListVoicesResponse, TtsSelfTestRequest,
+    TtsSelfTestResponse, TtsSettingsGetRequest, TtsSettingsGetResponse, TtsSettingsSetRequest,
+    TtsSettingsSetResponse, TtsSpeakRequest, TtsSpeakResponse, TtsSpeakStreamResponse,
+    TtsStatusRequest, TtsStatusResponse, TtsStopRequest, TtsStopResponse,
 };
 use base64::Engine;
 use serde::{Deserialize, Serialize};
@@ -448,7 +449,6 @@ fn ensure_assets(_app: &AppHandle) -> Result<KokoroPaths, String> {
 
 fn bundled_kokoro_model_path(app: &AppHandle) -> Option<PathBuf> {
     let resource_dir = app.path().resource_dir().ok()?;
-    let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap_or_default();
     [
         resource_dir.join("kokoro").join("model_quantized.onnx"),
         resource_dir
@@ -463,10 +463,6 @@ fn bundled_kokoro_model_path(app: &AppHandle) -> Option<PathBuf> {
             .join("kokoro-runtime")
             .join("onnx")
             .join("model_q8f16.onnx"),
-        PathBuf::from(&manifest_dir)
-            .join("resources")
-            .join("kokoro")
-            .join("model_quantized.onnx"),
     ]
     .into_iter()
     .find(|path| path.is_file())
@@ -1669,6 +1665,214 @@ pub fn stop(request: TtsStopRequest, tts_state: &TTSState) -> Result<TtsStopResp
     Ok(TtsStopResponse {
         correlation_id: request.correlation_id,
         stopped: true,
+    })
+}
+
+const KOKORO_MODEL_URL: &str =
+    "https://huggingface.co/onnx-community/Kokoro-82M-v1.0-ONNX/resolve/main/onnx/model_quantized.onnx";
+const KOKORO_MODEL_SIZE_BYTES: u64 = 92_361_116;
+const KOKORO_VOICES_URL: &str =
+    "https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.1/voices-v1.0.bin";
+const KOKORO_VOICES_SIZE_BYTES: u64 = 28_214_398;
+
+fn verify_kokoro_asset(path: &Path, expected_size: Option<u64>, is_model: bool) -> Result<(), String> {
+    let actual_size = file_size(path).unwrap_or(0);
+    if actual_size == 0 {
+        return Err(format!("downloaded asset is empty: {}", path.display()));
+    }
+    if let Some(expected) = expected_size {
+        if actual_size != expected {
+            return Err(format!(
+                "size mismatch for {}: expected {} bytes, got {} bytes",
+                path.display(),
+                expected,
+                actual_size
+            ));
+        }
+    }
+    if is_model {
+        if !file_contains_bytes(path, b"sample_rate") {
+            return Err(format!(
+                "invalid Kokoro ONNX model (missing sample_rate metadata): {}",
+                path.display()
+            ));
+        }
+    } else {
+        let voices = kokoro_voice::list_voices_in_pack(path)?;
+        if voices.is_empty() {
+            return Err(format!(
+                "invalid Kokoro voice pack (no voices found): {}",
+                path.display()
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn download_verified_kokoro_asset(
+    url: &str,
+    destination: &Path,
+    expected_size: Option<u64>,
+    is_model: bool,
+) -> Result<PathBuf, String> {
+    if destination.is_file() && verify_kokoro_asset(destination, expected_size, is_model).is_ok() {
+        return Ok(destination.to_path_buf());
+    }
+    let parent = destination
+        .parent()
+        .ok_or_else(|| format!("invalid destination path: {}", destination.display()))?;
+    fs::create_dir_all(parent).map_err(|e| format!("failed creating kokoro asset directory: {e}"))?;
+    let temp = parent.join(format!(
+        ".{}.{}.tmp",
+        destination
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("kokoro-asset"),
+        now_ms()
+    ));
+    let result = (|| -> Result<PathBuf, String> {
+        let client = reqwest::blocking::Client::builder()
+            .connect_timeout(std::time::Duration::from_secs(10))
+            .timeout(std::time::Duration::from_secs(300))
+            .build()
+            .map_err(|e| format!("failed creating HTTP client: {e}"))?;
+        let mut response = client
+            .get(url)
+            .header("User-Agent", app_paths::APP_USER_AGENT)
+            .send()
+            .map_err(|e| format!("failed downloading {}: {e}", destination.display()))?
+            .error_for_status()
+            .map_err(|e| format!("failed downloading {}: {e}", destination.display()))?;
+        let mut out = fs::File::create(&temp)
+            .map_err(|e| format!("failed creating temporary file {}: {e}", temp.display()))?;
+        std::io::copy(&mut response, &mut out)
+            .map_err(|e| format!("failed writing {}: {e}", temp.display()))?;
+        drop(out);
+        verify_kokoro_asset(&temp, expected_size, is_model)?;
+        if destination.exists() {
+            let _ = fs::remove_file(destination);
+        }
+        fs::rename(&temp, destination)
+            .map_err(|e| format!("failed installing {}: {e}", destination.display()))?;
+        Ok(destination.to_path_buf())
+    })();
+    if result.is_err() {
+        let _ = fs::remove_file(&temp);
+    }
+    result
+}
+
+pub async fn download_model(
+    app: &AppHandle,
+    request: TtsDownloadModelRequest,
+    tts_state: &TTSState,
+) -> Result<TtsDownloadModelResponse, String> {
+    emit_tts_event(
+        app,
+        &request.correlation_id,
+        "tts.install",
+        EventStage::Start,
+        EventSeverity::Info,
+        json!({"engine": "kokoro", "message": "Preparing Kokoro voice assets..."}),
+    );
+    let app_data_dir = app_paths::app_data_dir();
+    let kokoro_dir = app_data_dir.join("kokoro");
+    fs::create_dir_all(&kokoro_dir)
+        .map_err(|e| format!("failed creating kokoro directory: {e}"))?;
+
+    let model_dest = kokoro_dir.join("model_quantized.onnx");
+    let voices_dest = kokoro_dir.join("voices-v1.0.bin");
+    let app_for_worker = app.clone();
+    let correlation_for_worker = request.correlation_id.clone();
+
+    let (model_path, voices_path) = tokio::task::spawn_blocking(move || -> Result<(PathBuf, PathBuf), String> {
+        let model_override = std::env::var("ARXELL_KOKORO_MODEL_URL").ok();
+        let voices_override = std::env::var("ARXELL_KOKORO_VOICES_URL").ok();
+        let model_url = model_override
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .unwrap_or(KOKORO_MODEL_URL);
+        let voices_url = voices_override
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .unwrap_or(KOKORO_VOICES_URL);
+
+        emit_tts_event(
+            &app_for_worker,
+            &correlation_for_worker,
+            "tts.install",
+            EventStage::Progress,
+            EventSeverity::Info,
+            json!({"engine": "kokoro", "message": "Downloading Kokoro ONNX model (~88 MB)..."}),
+        );
+        let model = download_verified_kokoro_asset(
+            model_url,
+            &model_dest,
+            if model_override.is_some() {
+                None
+            } else {
+                Some(KOKORO_MODEL_SIZE_BYTES)
+            },
+            true,
+        )?;
+
+        emit_tts_event(
+            &app_for_worker,
+            &correlation_for_worker,
+            "tts.install",
+            EventStage::Progress,
+            EventSeverity::Info,
+            json!({"engine": "kokoro", "message": "Downloading Kokoro voice embeddings (~27 MB)..."}),
+        );
+        let voices = download_verified_kokoro_asset(
+            voices_url,
+            &voices_dest,
+            if voices_override.is_some() {
+                None
+            } else {
+                Some(KOKORO_VOICES_SIZE_BYTES)
+            },
+            false,
+        )?;
+        Ok((model, voices))
+    })
+    .await
+    .map_err(|e| format!("kokoro download worker failed: {e}"))?
+    .map_err(|message| {
+        emit_tts_event(
+            app,
+            &request.correlation_id,
+            "tts.install",
+            EventStage::Error,
+            EventSeverity::Error,
+            json!({"engine": "kokoro", "message": message}),
+        );
+        message
+    })?;
+
+    tts_state.shutdown();
+    emit_tts_event(
+        app,
+        &request.correlation_id,
+        "tts.install",
+        EventStage::Complete,
+        EventSeverity::Info,
+        json!({
+            "engine": "kokoro",
+            "modelPath": model_path.to_string_lossy(),
+            "voicesPath": voices_path.to_string_lossy(),
+            "message": "Kokoro voice assets installed."
+        }),
+    );
+
+    Ok(TtsDownloadModelResponse {
+        correlation_id: request.correlation_id,
+        ok: true,
+        message: "Kokoro voice assets installed.".to_string(),
+        model_path: model_path.to_string_lossy().to_string(),
+        voices_path: voices_path.to_string_lossy().to_string(),
     })
 }
 

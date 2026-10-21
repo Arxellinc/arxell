@@ -3,9 +3,7 @@
     "resources": [
       "resources/THIRD_PARTY_NOTICES.md",
       "resources/licenses/*",
-      "resources/llama-runtime/*",
-      "resources/llama-runtime/**/*",
-      "resources/kokoro/*",
+      "resources/kokoro/config.json",
       "resources/espeak-ng/**/*",
       "resources/model-lists/*",
       "resources/onnxruntime/linux-x64/**/*",

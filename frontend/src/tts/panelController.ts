@@ -51,9 +51,17 @@ export function createTtsPanelBindings(deps: {
       const client = deps.getClient();
       if (!client) return;
       state.tts.status = "busy";
-      state.tts.message = `Starting ${state.tts.engine} TTS engine...`;
+      state.tts.message = state.tts.ready
+        ? `Starting ${state.tts.engine} TTS engine...`
+        : `Downloading ${state.tts.engine} voice assets (~115 MB)...`;
       deps.render();
       try {
+        if (!state.tts.ready && state.tts.engine === "kokoro") {
+          await client.ttsDownloadModel({
+            correlationId: deps.nextCorrelationId()
+          });
+          await deps.refreshTtsState();
+        }
         const response = await client.ttsSelfTest({
           correlationId: deps.nextCorrelationId()
         });

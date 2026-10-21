@@ -36,7 +36,8 @@ use arxell_lite::contracts::{
     ImageGenerationStatusRequest, ImageGenerationStatusResponse, LlamaRuntimeInstallRequest,
     LlamaRuntimeInstallResponse, LlamaRuntimeStartRequest, LlamaRuntimeStartResponse,
     LlamaRuntimeStatusRequest, LlamaRuntimeStatusResponse, LlamaRuntimeStopRequest,
-    LlamaRuntimeStopResponse, LooperPreviewRequest, LooperPreviewResponse, MemoryDeleteRequest,
+    LlamaRuntimeStopResponse, LlamaRuntimeUpdateCheckRequest, LlamaRuntimeUpdateCheckResponse,
+    LooperPreviewRequest, LooperPreviewResponse, MemoryDeleteRequest,
     MemoryDeleteResponse, MemoryUpsertRequest, MemoryUpsertResponse,
     ModelManagerCancelDownloadRequest, ModelManagerCancelDownloadResponse,
     ModelManagerDeleteInstalledRequest, ModelManagerDeleteInstalledResponse,
@@ -50,7 +51,8 @@ use arxell_lite::contracts::{
     SystemPromptSetResponse, TerminalCloseSessionRequest, TerminalCloseSessionResponse,
     TerminalInputRequest, TerminalInputResponse, TerminalOpenSessionRequest,
     TerminalOpenSessionResponse, TerminalResizeRequest, TerminalResizeResponse, ToolInvokeRequest,
-    ToolInvokeResponse, TtsListVoicesRequest, TtsListVoicesResponse, TtsSelfTestRequest,
+    ToolInvokeResponse, TtsDownloadModelRequest, TtsDownloadModelResponse, TtsListVoicesRequest,
+    TtsListVoicesResponse, TtsSelfTestRequest,
     TtsSelfTestResponse, TtsSettingsGetRequest, TtsSettingsGetResponse, TtsSettingsSetRequest,
     TtsSettingsSetResponse, TtsSpeakRequest, TtsSpeakResponse, TtsSpeakStreamResponse,
     TtsStatusRequest, TtsStatusResponse, TtsStopRequest, TtsStopResponse, UserProjectEnsureRequest,
@@ -320,6 +322,7 @@ fn main() {
             #[cfg(feature = "desktop-smoke")]
             cmd_desktop_smoke_ready,
             cmd_check_for_updates,
+            cmd_check_llama_runtime_updates,
             cmd_app_resource_usage,
             cmd_llama_runtime_status,
             cmd_llama_runtime_install_engine,
@@ -366,6 +369,7 @@ fn main() {
             cmd_tts_self_test,
             cmd_tts_settings_get,
             cmd_tts_settings_set,
+            cmd_tts_download_model,
             cmd_voice_list_vad_methods,
             cmd_voice_get_vad_settings,
             cmd_voice_set_vad_method,
@@ -529,6 +533,16 @@ async fn cmd_tts_settings_set(
     request: TtsSettingsSetRequest,
 ) -> Result<TtsSettingsSetResponse, String> {
     arxell_lite::tts::settings_set(&app, &tts_state, request)
+}
+
+#[cfg(feature = "tauri-runtime")]
+#[tauri::command]
+async fn cmd_tts_download_model(
+    app: tauri::AppHandle,
+    tts_state: tauri::State<'_, TTSState>,
+    request: TtsDownloadModelRequest,
+) -> Result<TtsDownloadModelResponse, String> {
+    arxell_lite::tts::download_model(&app, request, &tts_state).await
 }
 
 #[cfg(feature = "tauri-runtime")]
@@ -1295,6 +1309,105 @@ async fn cmd_check_for_updates() -> Result<CheckForUpdatesResponse, String> {
 
 #[cfg(feature = "tauri-runtime")]
 #[tauri::command]
+async fn cmd_check_llama_runtime_updates(
+    request: Option<LlamaRuntimeUpdateCheckRequest>,
+) -> Result<LlamaRuntimeUpdateCheckResponse, String> {
+    use arxell_lite::app::runtime_service::{
+        detect_engine_runtime_version, detect_installed_runtime_version,
+        fetch_latest_release_metadata_for_engine,
+    };
+
+    let requested_engine_id = request
+        .and_then(|r| r.engine_id)
+        .unwrap_or_default()
+        .trim()
+        .to_string();
+
+    let app_data = app_paths::app_data_dir();
+    let requested_engine_id_for_detect = requested_engine_id.clone();
+    let current_version = tokio::task::spawn_blocking(move || {
+        if requested_engine_id_for_detect.is_empty() {
+            detect_installed_runtime_version(app_data.as_path()).unwrap_or_default()
+        } else {
+            detect_engine_runtime_version(
+                app_data.as_path(),
+                requested_engine_id_for_detect.as_str(),
+            )
+            .unwrap_or_default()
+        }
+    })
+    .await
+    .map_err(|e| format!("llama version detection task failed: {e}"))?;
+
+    let engine_for_fetch = requested_engine_id.clone();
+    let release = tokio::task::spawn_blocking(move || {
+        fetch_latest_release_metadata_for_engine(
+            (!engine_for_fetch.is_empty()).then_some(engine_for_fetch.as_str()),
+        )
+    })
+    .await
+    .map_err(|e| format!("llama update check task failed: {e}"))??;
+
+    let latest = release.tag_name.trim().trim_start_matches('v').to_string();
+    let has_update = runtime_update_available(current_version.as_str(), latest.as_str());
+    Ok(LlamaRuntimeUpdateCheckResponse {
+        has_update,
+        engine_id: requested_engine_id,
+        current_version,
+        latest_version: latest,
+        html_url: format!(
+            "https://github.com/ggml-org/llama.cpp/releases/tag/{}",
+            release.tag_name
+        ),
+    })
+}
+
+#[cfg(feature = "tauri-runtime")]
+fn runtime_update_available(current: &str, latest: &str) -> bool {
+    let cur = current.trim();
+    let lat = latest.trim();
+    if cur.is_empty() || lat.is_empty() || cur.eq_ignore_ascii_case(lat) {
+        return false;
+    }
+    if let (Some(c), Some(l)) = (parse_build_tag(cur), parse_build_tag(lat)) {
+        return l > c;
+    }
+    if let (Some(c), Some(l)) = (parse_numeric_version(cur), parse_numeric_version(lat)) {
+        if c.len() == l.len() {
+            return l > c;
+        }
+    }
+    true
+}
+
+#[cfg(feature = "tauri-runtime")]
+fn parse_build_tag(value: &str) -> Option<u64> {
+    let trimmed = value.trim().trim_start_matches('v');
+    if !trimmed.starts_with('b') {
+        return None;
+    }
+    trimmed[1..].parse::<u64>().ok()
+}
+
+#[cfg(feature = "tauri-runtime")]
+fn parse_numeric_version(value: &str) -> Option<Vec<u64>> {
+    let trimmed = value.trim().trim_start_matches('v');
+    let mut out = Vec::new();
+    for piece in trimmed.split('.') {
+        if piece.is_empty() {
+            return None;
+        }
+        let digits: String = piece.chars().take_while(|c| c.is_ascii_digit()).collect();
+        if digits.is_empty() {
+            return None;
+        }
+        out.push(digits.parse::<u64>().ok()?);
+    }
+    Some(out)
+}
+
+#[cfg(feature = "tauri-runtime")]
+#[tauri::command]
 async fn cmd_app_resource_usage(
     request: AppResourceUsageRequest,
     state: State<'_, AppResourceUsageState>,
@@ -1359,10 +1472,16 @@ async fn cmd_llama_runtime_status(
     state: State<'_, TauriBridgeState>,
     request: LlamaRuntimeStatusRequest,
 ) -> Result<LlamaRuntimeStatusResponse, String> {
+    use arxell_lite::app::runtime_service::{
+        detect_installed_runtime_version, migrate_legacy_runtime_layout,
+    };
     let app_data = app_paths::app_data_dir();
+    let _ = migrate_legacy_runtime_layout(app_data.as_path());
     let mut status = state
         .runtime
         .status(request.correlation_id.as_str(), app_data.as_path());
+    status.current_version =
+        detect_installed_runtime_version(app_data.as_path()).unwrap_or_default();
     for engine in status.engines.iter_mut() {
         engine.is_bundled =
             resolve_bundled_engine_binary(&app, engine.engine_id.as_str()).is_some();
@@ -1377,11 +1496,14 @@ async fn cmd_llama_runtime_install_engine(
     state: State<'_, TauriBridgeState>,
     request: LlamaRuntimeInstallRequest,
 ) -> Result<LlamaRuntimeInstallResponse, String> {
+    use arxell_lite::app::runtime_service::migrate_legacy_runtime_layout;
     let app_data = app_paths::app_data_dir();
+    let _ = migrate_legacy_runtime_layout(app_data.as_path());
     let bundled = resolve_bundled_engine_binary(&app, request.engine_id.as_str());
     let runtime = std::sync::Arc::clone(&state.runtime);
     let correlation_id = request.correlation_id.clone();
     let engine_id = request.engine_id.clone();
+    let force_refresh = request.force_refresh.unwrap_or(false);
     let app_data_owned = app_data.clone();
     tokio::task::spawn_blocking(move || {
         runtime.install_engine(
@@ -1389,6 +1511,7 @@ async fn cmd_llama_runtime_install_engine(
             engine_id.as_str(),
             app_data_owned.as_path(),
             bundled,
+            force_refresh,
         )
     })
     .await
@@ -1402,7 +1525,9 @@ async fn cmd_llama_runtime_start(
     state: State<'_, TauriBridgeState>,
     request: LlamaRuntimeStartRequest,
 ) -> Result<LlamaRuntimeStartResponse, String> {
+    use arxell_lite::app::runtime_service::migrate_legacy_runtime_layout;
     let app_data = app_paths::app_data_dir();
+    let _ = migrate_legacy_runtime_layout(app_data.as_path());
     let service = std::sync::Arc::clone(&state.runtime);
     tokio::task::spawn_blocking(move || service.start(&request, app_data.as_path()))
         .await

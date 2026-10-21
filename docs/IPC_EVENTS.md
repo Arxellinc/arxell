@@ -158,6 +158,7 @@ Additional file operations via `cmd_tool_invoke` (`toolId: "files"`):
 |---------|-------|--------|
 | `cmd_llama_runtime_status` | `LlamaRuntimeStatusRequest` | `LlamaRuntimeStatusResponse` |
 | `cmd_llama_runtime_install_engine` | `LlamaRuntimeInstallRequest` | `LlamaRuntimeInstallResponse` |
+| `cmd_check_llama_runtime_updates` | `LlamaRuntimeUpdateCheckRequest?` | `LlamaRuntimeUpdateCheckResponse` |
 | `cmd_llama_runtime_start` | `LlamaRuntimeStartRequest` | `LlamaRuntimeStartResponse` |
 | `cmd_llama_runtime_stop` | `LlamaRuntimeStopRequest` | `LlamaRuntimeStopResponse` |
 

@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-pub const CONTRACT_VERSION: &str = "foundation-v8";
+pub const CONTRACT_VERSION: &str = "foundation-v9";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -1138,6 +1138,8 @@ pub struct LlamaRuntimeEngine {
 pub struct LlamaRuntimeStatusResponse {
     pub correlation_id: String,
     pub state: String,
+    #[serde(default)]
+    pub current_version: String,
     pub active_engine_id: Option<String>,
     pub active_model_path: Option<String>,
     pub endpoint: Option<String>,
@@ -1150,6 +1152,24 @@ pub struct LlamaRuntimeStatusResponse {
 pub struct LlamaRuntimeInstallRequest {
     pub correlation_id: String,
     pub engine_id: String,
+    #[serde(default)]
+    pub force_refresh: Option<bool>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct LlamaRuntimeUpdateCheckRequest {
+    pub engine_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LlamaRuntimeUpdateCheckResponse {
+    pub has_update: bool,
+    pub engine_id: String,
+    pub current_version: String,
+    pub latest_version: String,
+    pub html_url: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -2235,6 +2255,22 @@ pub struct TtsSettingsSetResponse {
     pub engine: String,
     pub voice: String,
     pub speed: f32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct TtsDownloadModelRequest {
+    pub correlation_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TtsDownloadModelResponse {
+    pub correlation_id: String,
+    pub ok: bool,
+    pub message: String,
+    pub model_path: String,
+    pub voices_path: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

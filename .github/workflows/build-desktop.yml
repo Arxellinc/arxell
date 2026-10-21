@@ -150,9 +150,7 @@ jobs:
             librsvg2-common \
             shared-mime-info \
             cmake \
-            ninja-build \
-            libvulkan-dev \
-            spirv-headers
+            ninja-build
           sudo /usr/lib/x86_64-linux-gnu/gdk-pixbuf-2.0/gdk-pixbuf-query-loaders --update-cache
           sudo /usr/lib/x86_64-linux-gnu/libgtk3-nocsd.so.0 || true
           sudo gtk-query-immodules-3.0 --update-cache 2>/dev/null || true
@@ -184,13 +182,6 @@ jobs:
           echo "PKG_CONFIG_PATH=${overlay_dir}${PKG_CONFIG_PATH:+:${PKG_CONFIG_PATH}}" >> "${GITHUB_ENV}"
           pkg-config --modversion librsvg-2.0
           PKG_CONFIG_PATH="${overlay_dir}${PKG_CONFIG_PATH:+:${PKG_CONFIG_PATH}}" pkg-config --variable=libdir librsvg-2.0
-
-      - name: Install Vulkan SDK for Windows llama.cpp build
-        if: matrix.platform.os == 'windows-latest'
-        uses: humbletim/install-vulkan-sdk@v1.2
-        with:
-          version: 1.4.309.0
-          cache: true
 
       - name: Install frontend dependencies
         working-directory: frontend
@@ -230,20 +221,11 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          # v0.4.1 is the latest stable llama.cpp release and ships no upstream
-          # binary assets, so engines are built from this pinned source tag
-          # below. Bump deliberately and re-validate inference before changing.
-          llama_tag="v0.4.1"
           # v1.9.4 ships no upstream binary assets, so the server is
           # built from this pinned source tag below. Bump deliberately
           # and re-validate voice input before changing.
           whisper_tag="v1.9.4"
-          shaderc_tag="v2023.8"
-          vulkan_headers_tag="vulkan-sdk-1.4.309.0"
-          echo "llama_tag=${llama_tag}" >> "${GITHUB_OUTPUT}"
           echo "whisper_tag=${whisper_tag}" >> "${GITHUB_OUTPUT}"
-          echo "shaderc_tag=${shaderc_tag}" >> "${GITHUB_OUTPUT}"
-          echo "vulkan_headers_tag=${vulkan_headers_tag}" >> "${GITHUB_OUTPUT}"
           libgomp_version="none"
           if [[ "$RUNNER_OS" == "Linux" ]]; then
             libgomp_version="$(dpkg-query -W -f='${Version}' libgomp1)"
@@ -251,15 +233,7 @@ jobs:
           echo "libgomp_version=${libgomp_version}" >> "${GITHUB_OUTPUT}"
           # Clear any git-tracked foreign-OS whisper binary before cache restore
           rm -f src-tauri/resources/whisper-server/whisper-server-*
-          echo "Cache key: llama=${llama_tag} whisper=${whisper_tag} shaderc=${shaderc_tag} vulkan_headers=${vulkan_headers_tag} libgomp=${libgomp_version}"
-
-      - name: Restore cached llama.cpp runtime closure
-        id: cache_llama
-        uses: actions/cache/restore@v4
-        with:
-          path: src-tauri/resources/llama-runtime
-          # Do not restore pre-policy/native-tuned caches, even when source tags match.
-          key: llama-closure-v12-portable-${{ matrix.platform.os }}-${{ runner.arch }}-${{ steps.runtime_versions.outputs.llama_tag }}-${{ steps.runtime_versions.outputs.vulkan_headers_tag }}-${{ steps.runtime_versions.outputs.libgomp_version }}
+          echo "Cache key: whisper=${whisper_tag} libgomp=${libgomp_version}"
 
       - name: Restore cached Whisper runtime and verified models
         id: cache_whisper
@@ -269,296 +243,6 @@ jobs:
             src-tauri/resources/whisper-server
             src-tauri/resources/whisper
           key: whisper-closure-v12-portable-${{ matrix.platform.os }}-${{ runner.arch }}-${{ steps.runtime_versions.outputs.whisper_tag }}-${{ steps.runtime_versions.outputs.libgomp_version }}-${{ hashFiles('scripts/model_assets.py') }}
-
-      - name: Cache Linux shader compiler and Vulkan headers
-        if: runner.os == 'Linux' && steps.cache_llama.outputs.cache-hit != 'true'
-        id: cache_linux_tools
-        uses: actions/cache@v4
-        with:
-          path: |
-            ${{ runner.temp }}/shaderc-bin
-            ${{ runner.temp }}/vulkan-headers-install
-          key: linux-vulkan-tools-v1-${{ matrix.platform.os }}-${{ steps.runtime_versions.outputs.shaderc_tag }}-${{ steps.runtime_versions.outputs.vulkan_headers_tag }}
-
-      - name: Build and install pinned SPIRV-Headers for Windows
-        if: matrix.platform.os == 'windows-latest' && steps.cache_llama.outputs.cache-hit != 'true'
-        shell: bash
-        run: |
-          set -euo pipefail
-          source_dir="$RUNNER_TEMP/SPIRV-Headers"
-          build_dir="$RUNNER_TEMP/spirv-headers-build"
-          install_dir="$RUNNER_TEMP/spirv-headers-install"
-          # Match the Vulkan SDK version above. The SDK action supplies Vulkan
-          # itself but not the SPIRV-Headers CMake package required by llama.cpp.
-          git clone --depth 1 --branch vulkan-sdk-1.4.309.0 \
-            https://github.com/KhronosGroup/SPIRV-Headers.git "$source_dir"
-          cmake -S "$source_dir" -B "$build_dir" \
-            -DSPIRV_HEADERS_ENABLE_TESTS=OFF \
-            -DCMAKE_INSTALL_PREFIX="$install_dir"
-          cmake --build "$build_dir" --config Release --target install
-          test -f "$install_dir/share/cmake/SPIRV-Headers/SPIRV-HeadersConfig.cmake"
-          echo "Installed SPIRV-Headers package: $install_dir"
-
-      - name: Build and install pinned Vulkan headers for Linux
-        if: runner.os == 'Linux' && steps.cache_llama.outputs.cache-hit != 'true' && steps.cache_linux_tools.outputs.cache-hit != 'true'
-        shell: bash
-        env:
-          VULKAN_HEADERS_TAG: ${{ steps.runtime_versions.outputs.vulkan_headers_tag }}
-        run: |
-          set -euo pipefail
-          source_dir="$RUNNER_TEMP/Vulkan-Headers"
-          build_dir="$RUNNER_TEMP/vulkan-headers-build"
-          install_dir="$RUNNER_TEMP/vulkan-headers-install"
-          git clone --depth 1 --branch "$VULKAN_HEADERS_TAG" \
-            https://github.com/KhronosGroup/Vulkan-Headers.git "$source_dir"
-          cmake -S "$source_dir" -B "$build_dir" \
-            -DCMAKE_INSTALL_PREFIX="$install_dir"
-          cmake --build "$build_dir" --target install --parallel "$(nproc)"
-          test -f "$install_dir/include/vulkan/vulkan.h"
-          echo "Installed Vulkan headers $VULKAN_HEADERS_TAG: $install_dir"
-
-      - name: Build pinned glslc for Linux Vulkan runtime
-        if: runner.os == 'Linux' && steps.cache_llama.outputs.cache-hit != 'true' && steps.cache_linux_tools.outputs.cache-hit != 'true'
-        shell: bash
-        env:
-          SHADERC_TAG: ${{ steps.runtime_versions.outputs.shaderc_tag }}
-        run: |
-          set -euo pipefail
-          source_dir="$RUNNER_TEMP/shaderc"
-          build_dir="$RUNNER_TEMP/shaderc-build"
-          bin_dir="$RUNNER_TEMP/shaderc-bin"
-          rm -rf "$source_dir" "$build_dir" "$bin_dir"
-          git clone --depth 1 --branch "$SHADERC_TAG" \
-            https://github.com/google/shaderc.git "$source_dir"
-          python3 "$source_dir/utils/git-sync-deps"
-          cmake -S "$source_dir" -B "$build_dir" -G Ninja \
-            -DCMAKE_BUILD_TYPE=Release
-          cmake --build "$build_dir" --target glslc_exe --parallel "$(nproc)"
-          glslc_binary="$(find "$build_dir" -type f -name glslc -executable | head -1)"
-          test -n "$glslc_binary" && test -x "$glslc_binary"
-          mkdir -p "$bin_dir"
-          install -m 755 "$glslc_binary" "$bin_dir/glslc"
-          if ldd "$bin_dir/glslc" | grep -q 'not found'; then
-            ldd "$bin_dir/glslc" >&2
-            echo "Pinned glslc has unresolved runtime libraries" >&2
-            exit 1
-          fi
-          "$bin_dir/glslc" --version
-          echo "$bin_dir" >> "$GITHUB_PATH"
-
-      - name: Restore Linux shader compiler PATH
-        if: runner.os == 'Linux' && steps.cache_llama.outputs.cache-hit != 'true'
-        shell: bash
-        run: echo "$RUNNER_TEMP/shaderc-bin" >> "$GITHUB_PATH"
-
-      - name: Build bundled llama.cpp runtimes from pinned source
-        if: steps.cache_llama.outputs.cache-hit != 'true'
-        shell: bash
-        env:
-          LLAMA_TAG: ${{ steps.runtime_versions.outputs.llama_tag }}
-        run: |
-          set -euo pipefail
-          # Make the SDK Vulkan loader visible to the engine smoke test.
-          if [[ -n "${VULKAN_SDK:-}" && -d "${VULKAN_SDK}" ]]; then
-            export PATH="$VULKAN_SDK/Bin:$VULKAN_SDK/RunTimes/x64:$VULKAN_SDK/Runtime/x64:$PATH"
-          fi
-          source_dir="$RUNNER_TEMP/llama.cpp"
-          resources_dir="$GITHUB_WORKSPACE/src-tauri/resources/llama-runtime"
-          rm -rf "$source_dir" "$resources_dir"
-          echo "[llama-runtime] cloning ${LLAMA_TAG}"
-          git clone --depth 1 --branch "$LLAMA_TAG" https://github.com/ggml-org/llama.cpp.git "$source_dir"
-          mkdir -p "$resources_dir"
-
-          build_engine() {
-            local engine_id="$1"
-            shift
-            local build_dir="$RUNNER_TEMP/llama-build-${engine_id}"
-            local binary_name="llama-server"
-            if [[ "$RUNNER_OS" == "Windows" ]]; then binary_name="llama-server.exe"; fi
-            echo "[llama-runtime] configuring ${engine_id}"
-            # Keep release binaries portable across CPUs; never use runner-native ISA tuning.
-            if [[ "$RUNNER_OS" == "Windows" ]]; then
-              cmake -S "$source_dir" -B "$build_dir" \
-                -DCMAKE_BUILD_TYPE=Release -DLLAMA_BUILD_SERVER=ON -DGGML_NATIVE=OFF \
-                "-DCMAKE_PREFIX_PATH=$RUNNER_TEMP/spirv-headers-install" "$@"
-            elif [[ "$RUNNER_OS" == "Linux" ]]; then
-              cmake -S "$source_dir" -B "$build_dir" \
-                -DCMAKE_BUILD_TYPE=Release -DLLAMA_BUILD_SERVER=ON -DGGML_NATIVE=OFF \
-                "-DVulkan_INCLUDE_DIR=$RUNNER_TEMP/vulkan-headers-install/include" "$@"
-            else
-              cmake -S "$source_dir" -B "$build_dir" \
-                -DCMAKE_BUILD_TYPE=Release -DLLAMA_BUILD_SERVER=ON -DGGML_NATIVE=OFF "$@"
-            fi
-            python scripts/verify_runtime_bundle.py --cmake-cache "$build_dir/CMakeCache.txt"
-            echo "[llama-runtime] building ${engine_id}"
-            cmake --build "$build_dir" --config Release --target llama-server --parallel
-            local server
-            server="$(find "$build_dir" -type f -name "$binary_name" | head -1)"
-            if [[ -z "$server" ]]; then
-              echo "[llama-runtime] ERROR: ${binary_name} not found under ${build_dir}" >&2
-              find "$build_dir" -maxdepth 4 -type f | head -40 >&2
-              return 1
-            fi
-            local engine_dir="$resources_dir/$engine_id"
-            mkdir -p "$engine_dir"
-            cp "$server" "$engine_dir/$binary_name"
-            # Complete runtime dependency closure: shared libraries and Metal
-            # kernels when the build does not embed them. GGML_METAL_EMBED_LIBRARY
-            # defaults to ON at v0.4.1, so macOS usually has no extra files.
-            # Preserve the loader-visible sonames as regular files in the
-            # portable bundle: Linux/macOS builds commonly expose them as
-            # symlinks to versioned library files, and `-type f` misses those.
-            find "$build_dir" \( -type f -o -type l \) \( \
-              -name '*.so' -o -name '*.so.*' -o -name '*.dylib' -o -name '*.dll' \
-              -o -name '*.metallib' -o -name '*.metal' \
-            \) -exec cp -L {} "$engine_dir"/ \;
-            if [[ "$RUNNER_OS" == "Linux" ]]; then
-              local libgomp
-              libgomp="$(LD_LIBRARY_PATH="$build_dir/bin${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" ldd "$server" \
-                | awk '$1 == "libgomp.so.1" && $2 == "=>" { print $3; exit }')"
-              if [[ -z "$libgomp" || ! -f "$libgomp" ]]; then
-                echo "[llama-runtime] ERROR: libgomp.so.1 dependency was not found for ${engine_id}" >&2
-                ldd "$server" >&2
-                return 1
-              fi
-              cp -L "$libgomp" "$engine_dir/libgomp.so.1"
-            fi
-            if [[ "$RUNNER_OS" != "Windows" ]]; then chmod +x "$engine_dir/$binary_name"; fi
-            # Match runtime_service.rs: copied shared libraries live beside
-            # the executable and must be discoverable after cache restore.
-            if [[ "$RUNNER_OS" == "Linux" ]]; then
-              export LD_LIBRARY_PATH="$engine_dir${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
-            elif [[ "$RUNNER_OS" == "macOS" ]]; then
-              export DYLD_LIBRARY_PATH="$engine_dir${DYLD_LIBRARY_PATH:+:$DYLD_LIBRARY_PATH}"
-            fi
-            echo "[llama-runtime] smoke test ${engine_id}"
-            if ! "$engine_dir/$binary_name" --version; then
-              echo "[llama-runtime] ERROR: ${engine_id} failed the --version smoke test" >&2
-              return 1
-            fi
-            echo "[llama-runtime] prepared ${engine_id}:"
-            ls -la "$engine_dir"
-          }
-
-          case "$RUNNER_OS" in
-            Linux)
-              build_engine llama.cpp-cpu -DGGML_VULKAN=OFF
-              build_engine llama.cpp-vulkan -DGGML_VULKAN=ON
-              required_engines='["llama.cpp-cpu", "llama.cpp-vulkan"]'
-              ;;
-            Windows)
-              build_engine llama.cpp-cpu -DGGML_VULKAN=OFF
-              build_engine llama.cpp-vulkan -DGGML_VULKAN=ON
-              required_engines='["llama.cpp-cpu", "llama.cpp-vulkan"]'
-              ;;
-            macOS)
-              build_engine llama.cpp-cpu -DGGML_METAL=OFF
-              build_engine llama.cpp-metal -DGGML_METAL=ON
-              required_engines='["llama.cpp-cpu", "llama.cpp-metal"]'
-              ;;
-            *)
-              echo "Unsupported runner: $RUNNER_OS" >&2
-              exit 1
-              ;;
-          esac
-
-          LLAMA_TAG="$LLAMA_TAG" RUNNER_OS="$RUNNER_OS" RUNNER_ARCH="$RUNNER_ARCH" REQUIRED_ENGINES="$required_engines" python - <<'PY_MANIFEST'
-          import json
-          import os
-          import pathlib
-          import subprocess
-
-          root = pathlib.Path("src-tauri/resources/llama-runtime")
-          binary_name = "llama-server.exe" if os.environ["RUNNER_OS"] == "Windows" else "llama-server"
-          engines = {}
-          for engine_id in json.loads(os.environ["REQUIRED_ENGINES"]):
-              engine_dir = root / engine_id
-              binary = engine_dir / binary_name
-              if not binary.is_file():
-                  raise SystemExit(f"Missing bundled runtime: {binary}")
-              support_files = sorted(
-                  entry.name
-                  for entry in engine_dir.iterdir()
-                  if entry.is_file() and entry.name != binary_name
-              )
-              engines[engine_id] = {
-                  "binaryPath": str(binary),
-                  "source": "built-from-source",
-                  "supportFiles": support_files,
-              }
-          (root / "manifest.json").write_text(
-              json.dumps(
-                  {
-                      "releaseTag": os.environ["LLAMA_TAG"],
-                      "runnerOs": os.environ["RUNNER_OS"],
-                      "runnerArch": os.environ["RUNNER_ARCH"],
-                      "source": "https://github.com/ggml-org/llama.cpp",
-                      "ggmlNative": False,
-                      "libgompPackageVersion": subprocess.check_output(
-                          ["dpkg-query", "-W", "-f=${Version}", "libgomp1"], text=True
-                      ).strip() if os.environ["RUNNER_OS"] == "Linux" else None,
-                      "engines": engines,
-                  },
-                  indent=2,
-              ),
-              encoding="utf-8",
-          )
-          print("[llama-runtime] manifest written")
-          PY_MANIFEST
-
-      - name: Verify bundled llama.cpp runtimes
-        shell: bash
-        env:
-          LLAMA_TAG: ${{ steps.runtime_versions.outputs.llama_tag }}
-          RUNNER_OS: ${{ runner.os }}
-        run: |
-          set -euo pipefail
-          python - <<'PY'
-          import json
-          import os
-          import pathlib
-          import subprocess
-
-          root = pathlib.Path("src-tauri/resources/llama-runtime")
-          manifest = json.loads((root / "manifest.json").read_text(encoding="utf-8"))
-          expected_tag = os.environ["LLAMA_TAG"]
-          if manifest.get("releaseTag") != expected_tag:
-              raise SystemExit(
-                  f"Expected llama.cpp {expected_tag}, got {manifest.get('releaseTag')!r}"
-              )
-          expected = {
-              "Linux": ["llama.cpp-cpu", "llama.cpp-vulkan"],
-              "Windows": ["llama.cpp-cpu", "llama.cpp-vulkan"],
-              "macOS": ["llama.cpp-cpu", "llama.cpp-metal"],
-          }[os.environ["RUNNER_OS"]]
-          binary_name = (
-              "llama-server.exe" if os.environ["RUNNER_OS"] == "Windows" else "llama-server"
-          )
-          for engine_id in expected:
-              binary = root / engine_id / binary_name
-              if not binary.is_file():
-                  raise SystemExit(f"Missing bundled runtime: {binary}")
-              # Test the relocated runtime closure, not the runner's CMake
-              # build-tree RPATH. This is the loader path the app configures
-              # when it starts a bundled engine.
-              env = os.environ.copy()
-              loader_var = {
-                  "Linux": "LD_LIBRARY_PATH",
-                  "macOS": "DYLD_LIBRARY_PATH",
-                  "Windows": "PATH",
-              }[os.environ["RUNNER_OS"]]
-              prior = env.get(loader_var, "")
-              env[loader_var] = str(binary.parent) + (os.pathsep + prior if prior else "")
-              result = subprocess.run(
-                  [str(binary), "--version"], capture_output=True, text=True, env=env
-              )
-              if result.returncode != 0:
-                  raise SystemExit(
-                      f"{binary} --version failed ({result.returncode})\n"
-                      f"stdout: {result.stdout[-4000:]}\nstderr: {result.stderr[-4000:]}"
-                  )
-          print(f"Verified llama.cpp {expected_tag} runtime bundle: {expected}")
-          PY
 
       - name: Build bundled whisper runtimes from pinned source
         if: steps.cache_whisper.outputs.cache-hit != 'true'
@@ -671,9 +355,6 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          python scripts/verify_runtime_bundle.py --runtime llama \
-            --root src-tauri/resources/llama-runtime --platform "$RUNNER_OS" \
-            --tag '${{ steps.runtime_versions.outputs.llama_tag }}'
           python scripts/verify_runtime_bundle.py --runtime whisper \
             --root src-tauri/resources/whisper-server --platform "$RUNNER_OS" \
             --tag '${{ steps.runtime_versions.outputs.whisper_tag }}'
@@ -693,13 +374,6 @@ jobs:
           test -f "$binary"
           ARXELL_TEST_WHISPER_BINARY="$binary" cargo test --manifest-path src-tauri/Cargo.toml --features tauri-runtime real_whisper_runs_from_staged_closure -- --ignored
           python scripts/model_assets.py whisper src-tauri/resources/whisper
-
-      - name: Save verified llama closure before packaging
-        if: steps.cache_llama.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v4
-        with:
-          path: src-tauri/resources/llama-runtime
-          key: ${{ steps.cache_llama.outputs.cache-primary-key }}
 
       - name: Save verified Whisper closure before packaging
         if: steps.cache_whisper.outputs.cache-hit != 'true'
@@ -724,7 +398,7 @@ jobs:
           case "${{ matrix.platform.os }}" in
             ubuntu-22.04)
               ../frontend/node_modules/.bin/tauri build --config '{"build":{"beforeBuildCommand":""}}' --bundles deb -- --features tauri-runtime 2>&1
-              runtime_library_path="$GITHUB_WORKSPACE/src-tauri/resources/llama-runtime/llama.cpp-cpu:$GITHUB_WORKSPACE/src-tauri/resources/llama-runtime/llama.cpp-vulkan:$GITHUB_WORKSPACE/src-tauri/resources/whisper-server"
+              runtime_library_path="$GITHUB_WORKSPACE/src-tauri/resources/whisper-server"
               DEBUG=1 LD_LIBRARY_PATH="$runtime_library_path" ../frontend/node_modules/.bin/tauri build --config '{"build":{"beforeBuildCommand":""}}' --verbose --bundles appimage -- --features tauri-runtime 2>&1
               ;;
             windows-latest)
@@ -885,14 +559,14 @@ jobs:
           file "$app_copy/Contents/MacOS/$executable" | grep -q 'arm64'
           # Remove build-tree libraries so copied bundle checks cannot resolve
           # dependencies accidentally from the compiler workspace.
-          rm -rf "$RUNNER_TEMP"/llama-build-* "$RUNNER_TEMP/whisper-build"
+          rm -rf "$RUNNER_TEMP/whisper-build"
           python scripts/desktop_launch_smoke.py --output "$RUNNER_TEMP/acceptance/macos-installed" -- "$app_copy/Contents/MacOS/$executable"
-          resources=$(find "$app_copy/Contents/Resources" -type d -name llama-runtime -print -quit)
+          resources=$(find "$app_copy/Contents/Resources" -type d -name whisper-server -print -quit)
           test -n "$resources"
           resources_root="$(dirname "$resources")"
           test -s "$resources_root/THIRD_PARTY_NOTICES.md"
           python scripts/packaged_runtime_smoke.py "$resources_root" --output "$RUNNER_TEMP/acceptance/macos-runtimes"
-          echo "Launched copied Apple Silicon app and tested packaged CPU inference/transcription"
+          echo "Launched copied Apple Silicon app and tested packaged runtime closure"
 
       - name: Build CI-only renderer IPC probe (never bundle or publish)
         if: runner.os == 'Linux' || runner.os == 'macOS'
@@ -930,13 +604,6 @@ jobs:
             src-tauri/target/release/bundle/appimage/*.AppImage
             src-tauri/target/release/bundle/**/*.dmg
             src-tauri/target/release/bundle/**/*.msi
-          if-no-files-found: error
-
-      - name: Upload bundled runtime manifest
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ matrix.platform.name }}-v${{ steps.app_version.outputs.version }}-llama-runtime-manifest
-          path: src-tauri/resources/llama-runtime/manifest.json
           if-no-files-found: error
 
       - name: Upload bundled whisper manifest
