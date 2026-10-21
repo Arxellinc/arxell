@@ -6,7 +6,7 @@ Arxell v0.2.12 is a cross-platform desktop build with safer native credential st
 
 ## Highlights
 
-- **Much smaller installers.** The local Linux `.deb` is 94 MiB, down from 449 MiB for v0.2.11. llama.cpp engines and the Kokoro TTS model are downloaded on demand; Whisper ships one multilingual base model; espeak-ng ships English-only data; and the packaged ONNX Runtime is no longer duplicated through symlink aliases.
+- **Much smaller installers.** The local Linux `.deb` is 94 MiB and the AppImage is 168 MiB, down from 449 MiB and 473 MiB for v0.2.11. llama.cpp engines and the Kokoro TTS model are downloaded on demand; Whisper ships one multilingual base model; espeak-ng ships English-only data; and the packaged ONNX Runtime is no longer duplicated through symlink aliases.
 - **Runtimes in onboarding.** First run now includes an **Install Local Runtimes** step, with an **Install now** notification if it is skipped, plus notifications when a newer llama.cpp release is available.
 - **Portable Linux voice runtime.** espeak-ng 1.52.0 is rebuilt from the pinned source on Ubuntu 22.04 (glibc 2.34 maximum), so the bundled phonemizer runs on the release baseline.
 - **Readable model names.** Long model IDs are truncated with an ellipsis in the chat header and status bar; hover for the full name.
@@ -15,10 +15,10 @@ Arxell v0.2.12 is a cross-platform desktop build with safer native credential st
 ## Downloads
 
 - Windows x64: MSI installer
-- Linux x64: `.deb` (~94 MiB in the local release build) and AppImage (built against Ubuntu 22.04 / glibc 2.35)
+- Linux x64: `.deb` (~94 MiB) and AppImage (~168 MiB) from the local release build, built against Ubuntu 22.04 / glibc 2.35
 - macOS Apple Silicon: DMG
 
-Download `SHA256SUMS.txt` with the installers and verify the checksum before installing. AppImage, MSI, and DMG sizes are reported by the release CI.
+Download `SHA256SUMS.txt` with the installers and verify the checksum before installing. MSI and DMG sizes are reported by the release CI.
 
 ## Prerequisites and compatibility
 

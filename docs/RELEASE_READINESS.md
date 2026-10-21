@@ -2,7 +2,7 @@
 
 Review baseline: `main` at `74543e1` (Arxell 0.2.12), reviewed 2026-10-21.
 
-**Status: suitable for a clearly labeled v0.2.12 preview; not a fully stable release.** The unified candidate (#29 + #30) passed cross-platform CI, including Linux `.deb`/AppImage install and launch in a clean Ubuntu 22.04 container, renderer/IPC handshakes, Windows MSI install/launch/uninstall, and macOS DMG mount validation. A local Linux release build produced a 94 MiB `.deb` and passed startup plus renderer/IPC smoke tests. Physical clean-machine acceptance, broader model/provider/Pi acceptance, and signing/notarization remain incomplete.
+**Status: suitable for a clearly labeled v0.2.12 preview; not a fully stable release.** The unified candidate (#29 + #30) passed cross-platform CI, including Linux `.deb`/AppImage install and launch in a clean Ubuntu 22.04 container, renderer/IPC handshakes, Windows MSI install/launch/uninstall, and macOS DMG mount validation. A local Linux release build produced a 94 MiB `.deb` and a 168 MiB AppImage; both passed startup smoke, and the renderer/IPC handshake passed locally. Physical clean-machine acceptance, broader model/provider/Pi acceptance, and signing/notarization remain incomplete.
 
 ## Repository and release state
 
@@ -34,7 +34,7 @@ Remove external-process killing. Report occupied/invalid ports and stop only the
 
 ## Addressed in this pass (PR #20–#30)
 
-- **Installer size reduction.** On-demand runtimes plus trimmed assets and deduplicated ONNX Runtime cut the locally built Linux `.deb` from 449 MiB (v0.2.11) to 94 MiB. Tauri dereferences symlinks when copying resources, so the Linux bundle now lists only the real `libonnxruntime.so.1.20.1` instead of globbing three 16.5 MiB aliases; a Python packaging test guards that config. AppImage, macOS, and Windows sizes are measured by CI on the release tag.
+- **Installer size reduction.** On-demand runtimes plus trimmed assets and deduplicated ONNX Runtime cut the locally built Linux packages from 449 MiB `.deb` / 473 MiB AppImage (v0.2.11) to 94 MiB `.deb` / 168 MiB AppImage. Tauri dereferences symlinks when copying resources, so the Linux bundle now lists only the real `libonnxruntime.so.1.20.1` instead of globbing three 16.5 MiB aliases; a Python packaging test guards that config. macOS and Windows sizes are measured by CI on the release tag.
 - **Chat header model-name handling.** Long model IDs render in an overlay label with ellipsis and a full-name tooltip; the native select is transparent and the status bar truncates too, preventing horizontal scrolling (#30).
 
 - **On-demand `llama.cpp` runtime installation and update notifications.** Instead of compiling `llama.cpp` and `glslc` from C++ source in CI and bundling ~100 MB of engine binaries into every installer, Arxell downloads prebuilt `llama.cpp` engines on demand (pinned to tested `b11757` by default, or the newest compatible release from `/releases?per_page=10` that ships a matching binary archive for the platform/backend). First-run onboarding includes a dedicated **Install Local Runtimes** step, and skipping it surfaces an **Install now** toast notification. Startup and panel refresh checks also notify users when a newer `llama.cpp` build release is available (**Install now** / **Ignore** toast and **Upgrade** button in the `llama.cpp` panel).
