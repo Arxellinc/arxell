@@ -70,6 +70,16 @@ On headless Linux, run the Python command under `dbus-run-session -- xvfb-run -a
 4. Open conversations list, delete a conversation.
 5. Verify `cmd_chat_delete_conversation` returns `deleted: true` and conversation is removed from list.
 
+### Local model loading, Stop, and single dispatch (Argon P0-3)
+
+1. Select a local model while the runtime is loading, then send a message. Verify `Waiting for model...` appears and chat is not dispatched until runtime metadata is healthy.
+2. Click Stop while waiting. The request/status should clear immediately, without waiting for a TTS/backend stop acknowledgement. Let loading finish; the stopped message must not be sent later or produce an error/TTS reply.
+3. Repeat in a split pane; stopping one pane must not cancel the other. Close/reset a waiting pane/conversation and verify it does not dispatch later.
+4. Leave readiness unavailable; within approximately 45 seconds the wait must fail visibly rather than retry forever. Reload the transcript: no user turn should have been persisted by this unsent attempt (the optimistic in-memory user message may remain until reload).
+5. After stopping, start a new send before an older request resolves; the old success/error/finalizer must not clear the new request's spinner/status, append its response to the new conversation, or enqueue speech.
+
+Automated fake-clock tests cover polling, timeouts (including hung status IPC), cancellation during/after readiness, late status resolution/rejection, split-pane independence, duplicate submits, and a post-readiness 503 making exactly one send call. Rust IPC/SQLite tests cover repeated cancelled correlations with/without an existing user turn and a fresh attempt still reaching persistence. A SQLite trigger stops fixture sends at persistence so even regressions cannot reach a real provider. No migration removes historical duplicates. Provider HTTP connect/idle/pre-header cancellation remains a separate release item; the 45-second readiness deadline is not a generation-duration limit.
+
 ## Terminal Session Lifecycle
 
 1. Open a terminal session (`cmd_terminal_open_session`).

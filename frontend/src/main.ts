@@ -293,7 +293,8 @@ import {
   appendAppEvent,
   payloadAsRecord
 } from "./app/events";
-import { createSendMessageHandler } from "./app/chatSend";
+import { createSendMessageHandler, interruptChatSend } from "./app/chatSend";
+import { waitForLocalModelReadiness } from "./app/localModelReadiness";
 import { installTauriSttListeners, registerClientEventBridge } from "./app/bootstrapEvents";
 import { syncBootstrapRuntime, type TauriWindowHandle, type TauriResizeEdge } from "./app/bootstrapRuntime";
 import { initializeSendMessageBinding } from "./app/sendMessageBootstrap";
@@ -1919,12 +1920,10 @@ let sttBargeInInFlight = false;
 function requestVoiceBargeInInterrupt(): void {
   if (sttBargeInInFlight) return;
   sttBargeInInFlight = true;
-  const targetCorrelationId = state.activeChatCorrelationId;
+  const targetCorrelationId = interruptChatSend(state);
   chatTtsStopRequested = true;
   resetChatTtsQueue();
   stopTtsPlaybackLocal();
-  state.chatStreaming = false;
-  state.activeChatCorrelationId = null;
   setVoicePipelineState("interrupted");
   void (async () => {
     try {
@@ -5095,7 +5094,16 @@ function notifySkippedRuntimes(): void {
   }
 }
 
-let waitForLocalModelReady: () => Promise<boolean> = async () => false;
+function waitForLocalModelReady(isCurrent: () => boolean): Promise<boolean> {
+  return waitForLocalModelReadiness({
+    refresh: refreshLlamaRuntime,
+    isCurrent,
+    isReady: () => Boolean(
+      state.llamaRuntime?.state === "healthy" && state.llamaRuntime.activeEngineId
+      && state.llamaRuntime.endpoint && state.llamaRuntime.pid
+    )
+  });
+}
 
 async function toggleAutoSafeMode(sendMessage: (text: string) => Promise<void>): Promise<void> {
   const nextEnabled = !state.autoSafeEnabled;
@@ -5399,13 +5407,14 @@ syncOverlayScrollbars();
   attachWorkspaceInteractions(sendMessage);
   bindCustomToolIframes();
   const collapseSplitPanes = async () => {
+    const targets = state.chatPanels.slice(1).map((cp) => interruptChatSend(cp));
     if (clientRef) {
-      for (const cp of state.chatPanels.slice(1)) {
-        if (!cp.activeChatCorrelationId) continue;
+      for (const targetCorrelationId of targets) {
+        if (!targetCorrelationId) continue;
         try {
           await clientRef.cancelMessage({
             correlationId: nextCorrelationId(),
-            targetCorrelationId: cp.activeChatCorrelationId
+            targetCorrelationId
           });
         } catch {
           // Best effort when closing split panes.
@@ -5471,7 +5480,6 @@ syncOverlayScrollbars();
       enqueueSpeakableChunk,
       runChatTtsQueue,
       refreshConversations,
-      refreshLlamaRuntime,
       waitForLocalModelReady,
       renderAndBind: (_boundSendMessage) => renderAndBind(sendMessage)
     });
@@ -5495,9 +5503,8 @@ syncOverlayScrollbars();
       async () => {
         stopTtsPlaybackLocal();
         resetChatTtsQueue();
-        const targetCorrelationId = cp.activeChatCorrelationId;
-        cp.chatStreaming = false;
-        cp.activeChatCorrelationId = null;
+        const targetCorrelationId = interruptChatSend(cp);
+        renderAndBind(sendMessage);
         if (clientRef && targetCorrelationId) {
           try {
             await clientRef.cancelMessage({
@@ -5521,11 +5528,12 @@ syncOverlayScrollbars();
     const newBtn = document.querySelector<HTMLButtonElement>(`#chatNewBtn${scopeId}`);
     if (newBtn) {
       newBtn.onclick = async () => {
-        if (clientRef && cp.activeChatCorrelationId) {
+        const targetCorrelationId = interruptChatSend(cp);
+        if (clientRef && targetCorrelationId) {
           try {
             await clientRef.cancelMessage({
               correlationId: nextCorrelationId(),
-              targetCorrelationId: cp.activeChatCorrelationId
+              targetCorrelationId
             });
           } catch {
             // Best effort before starting a fresh split conversation.
@@ -5541,11 +5549,12 @@ syncOverlayScrollbars();
     if (clearBtn) {
       clearBtn.onclick = async () => {
         const currentId = cp.conversationId;
-        if (clientRef && cp.activeChatCorrelationId) {
+        const targetCorrelationId = interruptChatSend(cp);
+        if (clientRef && targetCorrelationId) {
           try {
             await clientRef.cancelMessage({
               correlationId: nextCorrelationId(),
-              targetCorrelationId: cp.activeChatCorrelationId
+              targetCorrelationId
             });
           } catch {
             // Best effort before clearing the conversation.
@@ -5613,11 +5622,12 @@ syncOverlayScrollbars();
       state.chatAttachedFileContent = null;
     },
     onStopCurrentResponse: async () => {
-      const targetCorrelationId = state.activeChatCorrelationId;
+      const targetCorrelationId = interruptChatSend(state);
       chatTtsStopRequested = true;
       setVoicePipelineState("interrupted");
       resetChatTtsQueue();
       stopTtsPlaybackLocal();
+      renderAndBind(sendMessage);
       if (clientRef) {
         try {
           await clientRef.ttsStop({ correlationId: nextCorrelationId() });
@@ -5625,8 +5635,6 @@ syncOverlayScrollbars();
           pushConsoleEntry("warn", "browser", `TTS stop request failed: ${String(error)}`);
         }
       }
-      state.chatStreaming = false;
-      state.activeChatCorrelationId = null;
       if (!clientRef || !targetCorrelationId) {
         renderAndBind(sendMessage);
         return;
@@ -5648,6 +5656,7 @@ syncOverlayScrollbars();
       renderAndBind(sendMessage);
     },
     onCreateConversation: async () => {
+      interruptChatSend(state);
       chatTtsStopRequested = true;
       resetChatTtsQueue();
       stopTtsPlaybackLocal();
@@ -5667,6 +5676,7 @@ syncOverlayScrollbars();
       renderAndBind(sendMessage);
     },
     onClearChat: async () => {
+      interruptChatSend(state);
       chatTtsStopRequested = true;
       resetChatTtsQueue();
       stopTtsPlaybackLocal();
@@ -9393,22 +9403,6 @@ async function bootstrap(): Promise<void> {
     prewarmWhisper();
   }
 
-  waitForLocalModelReady = async (): Promise<boolean> => {
-    const deadline = Date.now() + 45000;
-    while (Date.now() < deadline) {
-      await refreshLlamaRuntime();
-      const healthy = Boolean(
-        state.llamaRuntime?.state === "healthy" &&
-        state.llamaRuntime.activeEngineId &&
-        state.llamaRuntime.endpoint &&
-        state.llamaRuntime.pid
-      );
-      if (healthy) return true;
-      await new Promise((resolve) => window.setTimeout(resolve, 1000));
-    }
-    return false;
-  };
-
   sendMessage = initializeSendMessageBinding({
     getClientRef: () => clientRef,
     state,
@@ -9434,7 +9428,6 @@ async function bootstrap(): Promise<void> {
     enqueueSpeakableChunk,
     runChatTtsQueue,
     refreshConversations,
-    refreshLlamaRuntime,
     waitForLocalModelReady,
     renderAndBind
   }, (boundSendMessage) => {

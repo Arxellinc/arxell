@@ -68,7 +68,6 @@ test("initializeSendMessageBinding assigns a live send handler used by submit pa
       enqueueSpeakableChunk: () => undefined,
       runChatTtsQueue: async () => undefined,
       refreshConversations: async () => undefined,
-      refreshLlamaRuntime: async () => undefined,
       waitForLocalModelReady: async () => true,
       renderAndBind: () => undefined
     },
