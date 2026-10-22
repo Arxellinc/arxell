@@ -1,6 +1,7 @@
 use serde_json::{Map, Value};
 
 use crate::events::Event;
+use crate::provider::lifecycle::{cancelled, wait_for, ProviderWaitError};
 use crate::provider::Provider;
 use crate::tools::{tool_by_name, tool_definitions, Tool};
 use crate::types::{ContentPart, Message, StopReason, ToolResult, UserContent};
@@ -41,7 +42,7 @@ pub async fn run_single_turn<F: FnMut(&Event) + Send>(
     tools: &[Box<dyn Tool>],
     system_prompt: Option<String>,
     turn: i64,
-    cancel: Option<tokio::sync::watch::Receiver<bool>>,
+    mut cancel: Option<tokio::sync::watch::Receiver<bool>>,
     retry_delays: Option<Vec<i64>>,
     on_event: &mut F,
 ) -> TurnOutcome {
@@ -49,34 +50,10 @@ pub async fn run_single_turn<F: FnMut(&Event) + Send>(
     let mut content: Vec<ContentPart> = Vec::new();
     let mut tool_results: Vec<Message> = Vec::new();
 
-    if let Some(c) = &cancel {
-        if *c.borrow() {
-            push_event(
-                &mut events,
-                on_event,
-                Event::Interrupted {
-                    message: "Interrupted by user".to_string(),
-                },
-            );
-            push_event(
-                &mut events,
-                on_event,
-                Event::TurnEnd {
-                    turn,
-                    assistant_message: None,
-                    tool_results: vec![],
-                    stop_reason: StopReason::Interrupted,
-                },
-            );
-            return TurnOutcome {
-                events,
-                assistant_message: None,
-                tool_results: vec![],
-                stop_reason: StopReason::Interrupted,
-                interrupted: true,
-            };
-        }
+    if cancel.as_ref().is_some_and(|c| *c.borrow()) {
+        return interrupted_before_stream(events, on_event, turn);
     }
+    let timeouts = provider.timeouts();
 
     let tool_defs = tool_definitions(tools);
     let provider_tools = if tool_defs.is_empty() {
@@ -95,16 +72,28 @@ pub async fn run_single_turn<F: FnMut(&Event) + Send>(
         .chain(std::iter::once(None))
         .enumerate()
     {
-        match provider
-            .stream(
+        let response = wait_for(
+            provider.stream(
                 messages.clone(),
                 system_prompt.clone(),
                 provider_tools.clone(),
                 None,
                 None,
-            )
-            .await
-        {
+            ),
+            cancelled(&mut cancel),
+            timeouts.first_response,
+        )
+        .await;
+        let response = match response {
+            Ok(response) => response,
+            Err(ProviderWaitError::Cancelled) => {
+                return interrupted_before_stream(events, on_event, turn)
+            }
+            Err(ProviderWaitError::TimedOut) => {
+                Err("provider response headers timeout".to_string())
+            }
+        };
+        match response {
             Ok(s) => {
                 stream = Some(s);
                 break;
@@ -122,7 +111,11 @@ pub async fn run_single_turn<F: FnMut(&Event) + Send>(
                                 error: e,
                             },
                         );
-                        tokio::time::sleep(std::time::Duration::from_secs(delay as u64)).await;
+                        tokio::select! {
+                            biased;
+                            _ = cancelled(&mut cancel) => return interrupted_before_stream(events, on_event, turn),
+                            _ = tokio::time::sleep(std::time::Duration::from_secs(delay.max(0) as u64)) => {},
+                        }
                         continue;
                     }
                 }
@@ -192,15 +185,29 @@ pub async fn run_single_turn<F: FnMut(&Event) + Send>(
     let mut tool_arg_token_count = 0i64;
 
     use futures_util::StreamExt;
-    while let Some(part) = stream.stream.next().await {
-        if let Some(c) = &cancel {
-            if *c.borrow() {
+    let mut idle = timeouts.first_response;
+    loop {
+        let part = match wait_for(stream.stream.next(), cancelled(&mut cancel), idle).await {
+            Ok(Some(part)) => part,
+            Ok(None) => break,
+            Err(ProviderWaitError::Cancelled) => {
                 interrupted = true;
                 stop_reason = StopReason::Interrupted;
                 break;
             }
-        }
-
+            Err(ProviderWaitError::TimedOut) => {
+                push_event(
+                    &mut events,
+                    on_event,
+                    Event::Error {
+                        error: "provider stream idle timeout".to_string(),
+                    },
+                );
+                stop_reason = StopReason::Error;
+                break;
+            }
+        };
+        idle = timeouts.stream_idle;
         let part = match part {
             Ok(p) => p,
             Err(e) => {
@@ -433,12 +440,21 @@ pub async fn run_single_turn<F: FnMut(&Event) + Send>(
     }
 
     for p in pending {
-        let res = if interrupted {
+        if cancel.as_ref().is_some_and(|c| *c.borrow()) {
+            interrupted = true;
+            stop_reason = StopReason::Interrupted;
+        }
+        let res = if interrupted || stop_reason == StopReason::Error {
+            let message = if interrupted {
+                "Interrupted by user"
+            } else {
+                "Provider stream did not complete"
+            };
             ToolResult {
                 success: false,
-                result: Some("Interrupted by user".to_string()),
+                result: Some(message.to_string()),
                 images: None,
-                display: Some("Interrupted by user".to_string()),
+                display: Some(message.to_string()),
             }
         } else if let Some(tool) = tool_by_name(tools, &p.name) {
             tool.execute(p.arguments.clone(), cancel.clone()).await
@@ -507,6 +523,37 @@ pub async fn run_single_turn<F: FnMut(&Event) + Send>(
         tool_results,
         stop_reason,
         interrupted,
+    }
+}
+
+fn interrupted_before_stream<F: FnMut(&Event) + Send>(
+    mut events: Vec<Event>,
+    on_event: &mut F,
+    turn: i64,
+) -> TurnOutcome {
+    push_event(
+        &mut events,
+        on_event,
+        Event::Interrupted {
+            message: "Interrupted by user".into(),
+        },
+    );
+    push_event(
+        &mut events,
+        on_event,
+        Event::TurnEnd {
+            turn,
+            assistant_message: None,
+            tool_results: vec![],
+            stop_reason: StopReason::Interrupted,
+        },
+    );
+    TurnOutcome {
+        events,
+        assistant_message: None,
+        tool_results: vec![],
+        stop_reason: StopReason::Interrupted,
+        interrupted: true,
     }
 }
 

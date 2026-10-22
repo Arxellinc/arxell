@@ -1,3 +1,4 @@
+pub mod lifecycle;
 pub mod mock;
 pub mod openai_compatible;
 
@@ -43,6 +44,10 @@ pub trait Provider: Send + Sync {
     fn name(&self) -> &'static str;
     fn config(&self) -> &ProviderConfig;
     fn config_mut(&mut self) -> &mut ProviderConfig;
+
+    fn timeouts(&self) -> lifecycle::ProviderTimeouts {
+        lifecycle::ProviderTimeouts::default()
+    }
 
     fn thinking_levels(&self) -> Vec<&'static str> {
         vec!["none", "low", "medium", "high"]

@@ -28,7 +28,7 @@ Rust port of the minimal Python coding agent in `py/`, designed for embedding in
 ## Run
 
 ```bash
-cd rs
+cd agent
 cargo run --bin arx-rs
 ```
 
@@ -37,9 +37,19 @@ Default endpoint is `http://127.0.0.1:8765` and the runtime targets any OpenAI-c
 ## Test
 
 ```bash
-cd rs
+cd agent
 cargo test
 ```
+
+## Provider deadlines and cancellation
+
+`provider::lifecycle::ProviderTimeouts` defaults to 10 seconds to connect (including TLS), 90 seconds for headers and separately for the first decoded stream part, and 45 seconds of idle time after progress. These are phase budgets: there is no total generation-duration cap, so slow healthy streams can run for minutes. Rust embedders can use `OpenAiCompatibleProvider::with_timeouts`; this is not a new serialized provider-config or desktop IPC field.
+
+The turn executor races provider setup, parsed-part waits, and retry backoff with its cancellation watch. Cancellation wins ready-I/O ties; a dropped false watch sender is not treated as Stop and cannot create a busy loop. Setup failures keep the existing bounded retry policy; mid-stream errors/timeouts do not replay streamed output. Incomplete calls from failed streams are not dispatched to tools. The OpenAI-compatible transport also bounds header and decoded-part waits when used directly (role-only frames/heartbeat comments do not count as output progress), and bounds non-success error-body collection to 45 seconds by default.
+
+The per-turn wrapper does not time-limit tool execution or wrap compaction orchestration. No tool authorization, usage/context-budget accounting, model routing, or secret-storage policy changes are included. Desktop-owned cancellation state is bridged to the turn watch by Rust; the embedding application's credential-supply policy is unchanged.
+
+Tests include loopback-only request/stream/TLS stalls plus virtual-time healthy streams beyond a minute; desktop CI explicitly runs `agent/Cargo.toml` tests as well as the Tauri suite.
 
 ## Tauri embedding
 

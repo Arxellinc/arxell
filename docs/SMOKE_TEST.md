@@ -94,7 +94,25 @@ P0-2 Linux verification used the real WebView with all eight flags true. As a ne
 4. Leave readiness unavailable; within approximately 45 seconds the wait must fail visibly rather than retry forever. Reload the transcript: no user turn should have been persisted by this unsent attempt (the optimistic in-memory user message may remain until reload).
 5. After stopping, start a new send before an older request resolves; the old success/error/finalizer must not clear the new request's spinner/status, append its response to the new conversation, or enqueue speech.
 
-Automated fake-clock tests cover polling, timeouts (including hung status IPC), cancellation during/after readiness, late status resolution/rejection, split-pane independence, duplicate submits, and a post-readiness 503 making exactly one send call. Rust IPC/SQLite tests cover repeated cancelled correlations with/without an existing user turn and a fresh attempt still reaching persistence. A SQLite trigger stops fixture sends at persistence so even regressions cannot reach a real provider. No migration removes historical duplicates. Provider HTTP connect/idle/pre-header cancellation remains a separate release item; the 45-second readiness deadline is not a generation-duration limit.
+Automated fake-clock tests cover polling, timeouts (including hung status IPC), cancellation during/after readiness, late status resolution/rejection, split-pane independence, duplicate submits, and a post-readiness 503 making exactly one send call. Rust IPC/SQLite tests cover repeated cancelled correlations with/without an existing user turn and a fresh attempt still reaching persistence. A SQLite trigger stops fixture sends at persistence so even regressions cannot reach a real provider. No migration removes historical duplicates. The 45-second readiness deadline is not a generation-duration limit; provider-I/O guards are described below.
+
+### Provider timeouts and cancellable waits (Argon P0-4)
+
+Automated regressions use loopback-only HTTP/TLS-stall fixtures and virtual time, never provider credentials:
+
+```sh
+cargo test --manifest-path agent/Cargo.toml
+cargo test --manifest-path src-tauri/Cargo.toml --lib app::chat_provider_http::tests
+```
+
+- TCP accepted but TLS handshake stalled: the 10-second connect budget wins over the longer header budget.
+- Server accepts the request without headers, sends headers without a first body chunk, or stalls after text: verify distinct header/first-chunk/idle deadlines and prompt Stop completion without more server bytes.
+- Verify retry backoff is cancellable, default retry counts stay bounded, and a closed false cancellation watch does not spin or interrupt a valid request.
+- Deliver healthy chunks for 120–150 seconds of virtual time: generation must continue beyond the old 60-second total cap, then a stalled next chunk must time out. Completed SSE/HTTP bodies must finish without an idle error. Role-only SSE frames/heartbeat comments must not shorten the first-output budget or hide a stalled model.
+- Partial tool calls followed by timeout, or Stop arriving just before tool dispatch, must never execute the tool.
+- Frontend tests hold speech-stop pending/rejected and verify model cancellation is dispatched independently, including synchronous callback failures.
+
+Desktop CI runs both agent and Tauri Rust suites, reusing the existing Rust target cache. During manual desktop acceptance, use a local fixture or controlled endpoint to repeat stalled-header/idle Stop tests in Agent and Legacy modes; no cloud credentials are needed. The metadata title helper retains its separate 15-second cap; compaction/tool-execution cancellation and the app's partial-stream error/persistence and route-fallback findings are separate concerns, not certified by these tests.
 
 ## Terminal Session Lifecycle
 

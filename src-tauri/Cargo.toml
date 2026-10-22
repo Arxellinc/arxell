@@ -51,6 +51,9 @@ chrono-tz = "0.10"
 sha2 = "0.10"
 hex = "0.4"
 
+[dev-dependencies]
+tokio = { version = "1", features = ["test-util"] }
+
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
