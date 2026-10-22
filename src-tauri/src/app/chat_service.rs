@@ -3,6 +3,7 @@ use crate::agent_tools::notepad::NotepadReadTool;
 use crate::agent_tools::sheets::SheetsTool;
 use crate::agent_tools::web_search::WebSearchTool;
 use crate::api_registry::ApiRegistryService;
+use crate::app::chat_provider_http::ChatProviderHttp;
 use crate::app::web_search_service::WebSearchService;
 use crate::contracts::{
     ApiConnectionType, ChatAttachment, ChatCancelResponse, ChatContextBreakdownItem,
@@ -1871,27 +1872,12 @@ impl ChatService {
             }),
         ));
 
-        let client = reqwest::Client::builder()
-            .connect_timeout(Duration::from_secs(5))
-            .timeout(Duration::from_secs(60))
-            .build()
-            .map_err(|e| format!("failed creating HTTP client: {e}"))?;
-        let mut response = client
-            .post(endpoint.as_str())
-            .json(&payload)
-            .send()
-            .await
-            .map_err(|e| {
-                format!(
-                    "failed calling local llama runtime at {endpoint}: {e}. Is llama.cpp running?"
-                )
-            })?;
+        let http = ChatProviderHttp::new()?;
+        let cancelled = || self.is_cancelled(correlation_id);
+        let mut response = http.send(endpoint.as_str(), &payload, &cancelled).await?;
         if response.status() != StatusCode::OK {
             let code = response.status();
-            let body = response
-                .text()
-                .await
-                .unwrap_or_else(|_| "<unreadable body>".to_string());
+            let body = http.text(response, &cancelled).await?;
             return Err(format!(
                 "local llama runtime returned {code}: {}",
                 truncate_for_error(body.as_str())
@@ -1918,12 +1904,11 @@ impl ChatService {
         let mut raw_response_body = String::new();
         let mut stream_done = false;
 
-        while let Some(chunk) = response.chunk().await.map_err(|e| {
-            format!("failed reading streaming response from local llama runtime: {e}")
-        })? {
-            if self.is_cancelled(correlation_id) {
-                break;
-            }
+        let mut first_chunk = true;
+        while let Some(chunk) = http
+            .next_chunk(&mut response, &cancelled, &mut first_chunk)
+            .await?
+        {
             let chunk_text = String::from_utf8_lossy(&chunk);
             raw_response_body.push_str(chunk_text.as_ref());
             line_buffer.push_str(chunk_text.as_ref());
@@ -1951,6 +1936,9 @@ impl ChatService {
             }
         }
 
+        if cancelled() {
+            return Err("Chat request was cancelled.".into());
+        }
         if !stream_done && !line_buffer.trim().is_empty() {
             let _ = handle_stream_line(
                 self,
@@ -2007,6 +1995,7 @@ impl ChatService {
             ));
             assistant = self
                 .request_nonstream_fallback(
+                    correlation_id,
                     endpoint.as_str(),
                     payload.model.as_str(),
                     &payload.messages,
@@ -2052,8 +2041,9 @@ impl ChatService {
                 .find(|m| m.role == "user")
                 .map(|m| m.content.as_str())
                 .unwrap_or("");
-            if let Ok(rewritten) = self
+            match self
                 .rewrite_reasoning_to_final_answer(
+                    correlation_id,
                     endpoint.as_str(),
                     payload.model.as_str(),
                     latest_user_message,
@@ -2061,9 +2051,9 @@ impl ChatService {
                 )
                 .await
             {
-                if !rewritten.trim().is_empty() {
-                    assistant = rewritten;
-                }
+                Ok(rewritten) if !rewritten.trim().is_empty() => assistant = rewritten,
+                Err(error) if cancelled() => return Err(error),
+                _ => {}
             }
         }
         if assistant.is_empty() {
@@ -2078,6 +2068,7 @@ impl ChatService {
                 EventSeverity::Warn,
                 json!({ "assistantLength": assistant.len() }),
             ));
+            return Err("Chat request was cancelled.".into());
         }
         let assistant_thinking = if thinking_enabled {
             let normalized = reasoning_normalized;
@@ -2139,6 +2130,7 @@ impl ChatService {
 
     async fn request_nonstream_fallback(
         &self,
+        correlation_id: &str,
         endpoint: &str,
         model: &str,
         messages: &[OpenAiMessage],
@@ -2146,11 +2138,8 @@ impl ChatService {
         strategy: ThinkingDisableStrategy,
         max_tokens: Option<u32>,
     ) -> Result<String, String> {
-        let client = reqwest::Client::builder()
-            .connect_timeout(Duration::from_secs(5))
-            .timeout(Duration::from_secs(60))
-            .build()
-            .map_err(|e| format!("failed creating fallback HTTP client: {e}"))?;
+        let http = ChatProviderHttp::new()?;
+        let cancelled = || self.is_cancelled(correlation_id);
         let payload = OpenAiChatRequest {
             model: model.to_string(),
             messages: messages.to_vec(),
@@ -2174,21 +2163,15 @@ impl ChatService {
             },
         };
 
-        let response = client
-            .post(endpoint)
-            .json(&payload)
-            .send()
-            .await
-            .map_err(|e| format!("fallback request to local runtime failed: {e}"))?;
+        let response = http.send(endpoint, &payload, &cancelled).await?;
         if response.status() != StatusCode::OK {
             return Err(format!(
                 "fallback request failed with status {}",
                 response.status()
             ));
         }
-        let body = response
-            .json::<serde_json::Value>()
-            .await
+        let bytes = http.bytes(response, &cancelled).await?;
+        let body: serde_json::Value = serde_json::from_slice(&bytes)
             .map_err(|e| format!("failed parsing fallback response: {e}"))?;
         let text = body
             .get("choices")
@@ -2244,16 +2227,14 @@ impl ChatService {
 
     async fn rewrite_reasoning_to_final_answer(
         &self,
+        correlation_id: &str,
         endpoint: &str,
         model: &str,
         user_prompt: &str,
         reasoning_output: &str,
     ) -> Result<String, String> {
-        let client = reqwest::Client::builder()
-            .connect_timeout(Duration::from_secs(5))
-            .timeout(Duration::from_secs(45))
-            .build()
-            .map_err(|e| format!("failed creating rewrite HTTP client: {e}"))?;
+        let http = ChatProviderHttp::new()?;
+        let cancelled = || self.is_cancelled(correlation_id);
         let payload = OpenAiChatRequest {
             model: model.to_string(),
             messages: vec![
@@ -2280,21 +2261,15 @@ impl ChatService {
                 }
             })),
         };
-        let response = client
-            .post(endpoint)
-            .json(&payload)
-            .send()
-            .await
-            .map_err(|e| format!("rewrite request to local runtime failed: {e}"))?;
+        let response = http.send(endpoint, &payload, &cancelled).await?;
         if response.status() != StatusCode::OK {
             return Err(format!(
                 "rewrite request failed with status {}",
                 response.status()
             ));
         }
-        let body = response
-            .json::<serde_json::Value>()
-            .await
+        let bytes = http.bytes(response, &cancelled).await?;
+        let body: serde_json::Value = serde_json::from_slice(&bytes)
             .map_err(|e| format!("failed parsing rewrite response: {e}"))?;
         let rewritten = body
             .get("choices")

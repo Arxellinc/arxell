@@ -1,7 +1,8 @@
 use async_trait::async_trait;
-use futures_util::stream::BoxStream;
+use futures_util::{stream::BoxStream, StreamExt};
 use std::collections::HashSet;
 
+use crate::provider::lifecycle::ProviderTimeouts;
 use crate::provider::{Provider, ProviderConfig, ProviderStream};
 use crate::types::{Message, StreamPart, ToolDefinition};
 
@@ -9,13 +10,24 @@ use crate::types::{Message, StreamPart, ToolDefinition};
 pub struct OpenAiCompatibleProvider {
     pub config: ProviderConfig,
     client: reqwest::Client,
+    timeouts: ProviderTimeouts,
 }
 
 impl OpenAiCompatibleProvider {
     pub fn new(config: ProviderConfig) -> Self {
+        Self::with_timeouts(config, ProviderTimeouts::default())
+    }
+
+    pub fn with_timeouts(config: ProviderConfig, timeouts: ProviderTimeouts) -> Self {
         Self {
             config,
-            client: reqwest::Client::new(),
+            // As with Client::new(), initialization failure is fatal, never a
+            // fallback to an unbounded client. Do not set a total body timeout.
+            client: reqwest::Client::builder()
+                .connect_timeout(timeouts.connect)
+                .build()
+                .expect("failed to initialize provider HTTP client"),
+            timeouts,
         }
     }
 
@@ -43,6 +55,10 @@ impl Provider for OpenAiCompatibleProvider {
 
     fn config_mut(&mut self) -> &mut ProviderConfig {
         &mut self.config
+    }
+
+    fn timeouts(&self) -> ProviderTimeouts {
+        self.timeouts
     }
 
     fn should_retry_for_error(&self, error: &str) -> bool {
@@ -95,20 +111,33 @@ impl Provider for OpenAiCompatibleProvider {
                 req = req.bearer_auth(key);
             }
         }
-        let resp = req.send().await.map_err(|e| e.to_string())?;
+        let resp = tokio::time::timeout(self.timeouts.first_response, req.send())
+            .await
+            .map_err(|_| "provider response headers timeout".to_string())?
+            .map_err(|error| {
+                if error.is_timeout() {
+                    "provider connection timeout".to_string()
+                } else {
+                    error.without_url().to_string()
+                }
+            })?;
 
         if !resp.status().is_success() {
             let status = resp.status();
-            let text = resp.text().await.unwrap_or_default();
+            let text = tokio::time::timeout(self.timeouts.stream_idle, resp.text())
+                .await
+                .ok()
+                .and_then(Result::ok)
+                .unwrap_or_else(|| "<error body unavailable>".to_string());
             return Err(format!("openai error {}: {}", status, text));
         }
 
         let mut bytes_stream = resp.bytes_stream();
+        let timeouts = self.timeouts;
         let stream = async_stream::stream! {
             let mut buf = String::new();
             let mut started_tool_indices: HashSet<usize> = HashSet::new();
 
-            use futures_util::StreamExt;
             while let Some(chunk) = bytes_stream.next().await {
                 let chunk = match chunk {
                     Ok(c) => c,
@@ -197,6 +226,27 @@ impl Provider for OpenAiCompatibleProvider {
                                 }
                             }
                         }
+                    }
+                }
+            }
+        };
+
+        // Bound decoded progress rather than individual reads: role-only SSE
+        // frames and heartbeat comments must not shorten the first-token budget
+        // or keep a request alive forever without model output.
+        let mut parsed = Box::pin(stream);
+        let stream = async_stream::stream! {
+            let mut idle = timeouts.first_response;
+            loop {
+                match tokio::time::timeout(idle, parsed.next()).await {
+                    Ok(Some(part)) => {
+                        idle = timeouts.stream_idle;
+                        yield part;
+                    }
+                    Ok(None) => break,
+                    Err(_) => {
+                        yield Err("provider stream idle timeout".to_string());
+                        break;
                     }
                 }
             }

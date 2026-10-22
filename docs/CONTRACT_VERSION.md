@@ -13,6 +13,7 @@ This version pins the shared contracts between the TypeScript frontend (`fronten
 - command: `cmd_chat_list_conversations` → `ChatListConversationsRequest` / `ChatListConversationsResponse`
 - command: `cmd_chat_delete_conversation` → `ChatDeleteConversationRequest` / `ChatDeleteConversationResponse`
 - Bug-fix semantics, unchanged payloads: local readiness precedes a single send invocation; already-cancelled correlations are rejected before persistence and cannot be revived by resending. Correlation IDs identify unique attempts; a deliberate retry requires a fresh ID. See `IPC_EVENTS.md` for readiness deadlines and cancellation scope.
+- Provider I/O bug fixes retain existing payloads/actions: connect/header/idle waits and retry backoff are cancellable and bounded without a total generation-duration cap. Timeout/Stop reporting uses existing error/interruption paths, not new public contract fields.
 
 ### Terminal
 - command: `cmd_terminal_open_session` → `TerminalOpenSessionRequest` / `TerminalOpenSessionResponse`

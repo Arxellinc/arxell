@@ -295,6 +295,7 @@ import {
 } from "./app/events";
 import { createSendMessageHandler, interruptChatSend } from "./app/chatSend";
 import { waitForLocalModelReadiness } from "./app/localModelReadiness";
+import { requestChatStop } from "./app/chatStop";
 import { installTauriSttListeners, registerClientEventBridge } from "./app/bootstrapEvents";
 import { syncBootstrapRuntime, type TauriWindowHandle, type TauriResizeEdge } from "./app/bootstrapRuntime";
 import { initializeSendMessageBinding } from "./app/sendMessageBootstrap";
@@ -1927,19 +1928,15 @@ function requestVoiceBargeInInterrupt(): void {
   setVoicePipelineState("interrupted");
   void (async () => {
     try {
-      if (clientRef) {
-        try {
-          await clientRef.ttsStop({ correlationId: nextCorrelationId() });
-        } catch (error) {
-          pushConsoleEntry("warn", "browser", `Barge-in TTS stop failed: ${String(error)}`);
-        }
-        if (targetCorrelationId) {
-          await clientRef.cancelMessage({
-            correlationId: nextCorrelationId(),
-            targetCorrelationId
-          });
-        }
-      }
+      const stopClient = clientRef;
+      await requestChatStop(
+        () => stopClient && targetCorrelationId
+          ? stopClient.cancelMessage({ correlationId: nextCorrelationId(), targetCorrelationId })
+          : Promise.resolve(),
+        () => stopClient ? stopClient.ttsStop({ correlationId: nextCorrelationId() }) : Promise.resolve(),
+        (target, error) => pushConsoleEntry("warn", "browser",
+          `${target === "speech" ? "Barge-in TTS stop" : "Voice barge-in cancel"} failed: ${String(error)}`)
+      );
       pushConsoleEntry("info", "browser", "Voice barge-in: interrupted agent speech.");
     } catch (error) {
       pushConsoleEntry("warn", "browser", `Voice barge-in cancel failed: ${String(error)}`);
@@ -5628,23 +5625,19 @@ syncOverlayScrollbars();
       resetChatTtsQueue();
       stopTtsPlaybackLocal();
       renderAndBind(sendMessage);
-      if (clientRef) {
-        try {
-          await clientRef.ttsStop({ correlationId: nextCorrelationId() });
-        } catch (error) {
-          pushConsoleEntry("warn", "browser", `TTS stop request failed: ${String(error)}`);
-        }
+      const stopClient = clientRef;
+      await requestChatStop(
+        () => stopClient && targetCorrelationId
+          ? stopClient.cancelMessage({ correlationId: nextCorrelationId(), targetCorrelationId })
+          : Promise.resolve(),
+        () => stopClient ? stopClient.ttsStop({ correlationId: nextCorrelationId() }) : Promise.resolve(),
+        (target, error) => pushConsoleEntry("warn", "browser",
+          `${target === "speech" ? "TTS" : "Chat"} stop request failed: ${String(error)}`)
+      );
+      if (stopClient && targetCorrelationId) {
+        pushConsoleEntry("info", "browser", `Requested stop for ${targetCorrelationId}.`);
       }
-      if (!clientRef || !targetCorrelationId) {
-        renderAndBind(sendMessage);
-        return;
-      }
-      await clientRef.cancelMessage({
-        correlationId: nextCorrelationId(),
-        targetCorrelationId
-      });
-      pushConsoleEntry("info", "browser", `Requested stop for ${targetCorrelationId}.`);
-      setVoicePipelineState("idle");
+      if (!state.chatStreaming) setVoicePipelineState("idle");
       renderAndBind(sendMessage);
     },
     onSpeakLatestAssistantTts: toggleChatAutoSpeak,
