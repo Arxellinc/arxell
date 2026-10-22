@@ -26,7 +26,9 @@ test("image preview contract version is synchronized across frontend, Rust, and 
   const rust = readFileSync("../src-tauri/src/contracts.rs", "utf8");
   const docs = readFileSync("../docs/CONTRACT_VERSION.md", "utf8");
   assert.match(rust, new RegExp(`CONTRACT_VERSION: &str = "${CONTRACT_VERSION}"`));
-  assert.ok(docs.includes(`## Current Version\n- \`${CONTRACT_VERSION}\``));
+  for (const checkoutText of [docs.replace(/\r\n/g, "\n"), docs.replace(/\r?\n/g, "\r\n")]) {
+    assert.ok(checkoutText.replace(/\r\n/g, "\n").includes(`## Current Version\n- \`${CONTRACT_VERSION}\``));
+  }
 });
 
 test("image previews do not enable an additional filesystem-serving asset protocol", () => {
