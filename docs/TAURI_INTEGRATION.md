@@ -9,10 +9,18 @@ Enable with:
 
 ### CI-only desktop probe
 
-The optional `desktop-smoke` feature enables `tauri-runtime` and `tauri/custom-protocol` so a direct Cargo build embeds the frontend instead of trying to reach `devUrl`. A feature-gated page-load probe checks rendered layout and calls the real `cmd_app_version`; the private `cmd_desktop_smoke_ready` handler checks the version and writes a bounded report to an environment-selected path. Neither the command nor the probe is compiled into normal release packages. There is no public contract change or general-purpose script execution endpoint. See `SMOKE_TEST.md` for commands and limits.
+The optional `desktop-smoke` feature enables `tauri-runtime` and `tauri/custom-protocol` so a direct Cargo build embeds the frontend instead of trying to reach `devUrl`. A feature-gated page-load probe checks rendered layout, data/blob image decoding, data/blob audio metadata and in-memory fetches, dynamically inserted inline styles, and rejection of inline scripts, then calls the real `cmd_app_version`. The private `cmd_desktop_smoke_ready` handler requires the correct version and every probe flag before writing a bounded report to an environment-selected path. Neither the command nor the probe is compiled into normal release packages. There is no public contract change or general-purpose script execution endpoint. See `SMOKE_TEST.md` for commands and limits.
 ## Onboarding browser integration
 
 The desktop entry point registers Tauri Opener with automatic link interception disabled. The main-window capability grants `opener:allow-open-url` only for the fixed Hugging Face model catalog (with the query delimiter escaped in the glob scope). No default opener permissions, filesystem opening, arbitrary URLs, or CSP changes are enabled. Native opening failures surface in onboarding rather than falling back to a WebView popup. This uses built-in plugin IPC, not a new public Arxell command. See `FIRST_RUN_ONBOARDING.md` for behavior and manual acceptance.
+
+## Packaged media and content security policy
+
+The bundled UI permits `data:` and `blob:` for images/media and in-memory fetches (image copying/uploaded avatar assets), plus `mediastream:` for media. Dynamic CSS is permitted through `style-src 'self' 'unsafe-inline'` and an explicit `style-src-attr 'unsafe-inline'` (so Tauri-injected style nonces/hashes cannot suppress runtime style attributes). Scripts remain restricted to bundled/self sources plus Tauri's generated hashes/nonces: no `unsafe-inline`, `unsafe-eval`, or data/blob script sources. Connections allow self, native IPC, the existing loopback host, and the two in-memory schemes; remote image/media hosts are not added. Embedded objects are disabled.
+
+Files image previews use the normal invoke gateway and canonical Files workspace boundary through `files:read-image`. This presentation-only read returns base64 bytes and an allowlisted image MIME type, rejects files over 10 MiB, and bounds the actual read if a file grows. Text/editor `read-file` behavior is unchanged. The binary image payload is a direct response, not an event or diagnostic-history entry. No `protocol-asset` feature or asset-protocol filesystem scope is enabled. Image decoding support still depends on the platform WebView.
+
+This does not fix the separately tracked notification-chime path/bundling or custom-tool `file://` iframe problems.
 
 ## Bridge State
 

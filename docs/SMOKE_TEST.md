@@ -25,7 +25,15 @@ Checks performed:
 
 ## Renderer / native IPC handshake (CI-only)
 
-This probe loads the **embedded production frontend**, checks that `#app .app-frame` has a visible layout, invokes the real `cmd_app_version` Rust handler, and writes a bounded result after checking its version. It does not mock IPC or accept a merely live process as success.
+This probe loads the **embedded production frontend** under the packaged CSP, checks that `#app .app-frame` has a visible layout, invokes the real `cmd_app_version` Rust handler, and requires all of these actual DOM/media assertions:
+
+- A 1×1 PNG decodes from both `data:` and `blob:` URLs.
+- Fetching those in-memory URLs returns the exact bytes (used by image copying and uploaded avatar assets).
+- A tiny generated PCM WAV loads metadata from both `data:` and `blob:` URLs (no autoplay, audio-device output, user gesture, or external resource required).
+- A runtime `innerHTML`-inserted `style="width: 42px"` attribute computes to `42px`.
+- An inserted inline script does **not** execute, preserving the script restriction while permitting CSS/media.
+
+The private callback writes a bounded result only after checking the version and every assertion. The harness requires all eight named boolean fields in `checks`; old layout-only reports, missing/false/string flags, malformed reports, and merely live processes cannot pass. It does not mock IPC.
 
 From the repository root, with a display session:
 
@@ -40,7 +48,15 @@ On headless Linux, run the Python command under `dbus-run-session -- xvfb-run -a
 
 **Build-mode regression:** `cargo build --release --features tauri-runtime` alone still uses Tauri's development URL unless the custom-protocol feature is enabled. `desktop-smoke` explicitly enables `tauri/custom-protocol`; its context regression test rejects an empty embedded frontend. The initial failing handshake was caused by this test-build configuration, not proof of a broken packaged app.
 
-**Never bundle or publish `desktop-smoke` builds.** Generate release packages with `tauri-runtime` via the Tauri CLI first. CI builds/runs the separate unbundled probe afterward. This test proves basic rendering and native IPC only—not clean-machine macOS acceptance, model/chat workflows, credentials, or upgrade persistence.
+**Never bundle or publish `desktop-smoke` builds.** Generate release packages with `tauri-runtime` via the Tauri CLI first. CI builds/runs the separate unbundled probe afterward. This test proves basic rendering, native IPC, local image/audio loading, dynamic style application, and inline-script rejection—not clean-machine macOS acceptance, audio playback quality, model/chat workflows, credentials, or upgrade persistence.
+
+P0-2 Linux verification used the real WebView with all eight flags true. As a negative control, rebuilding the probe with the old CSP via `TAURI_CONFIG` failed the actual image/style assertions and produced no successful report; rebuilding with the fixed policy passed again. These test-only builds must not be distributed.
+
+## Packaged Files image previews
+
+- Frontend tests verify one `files:read-image` request per image, data-URL construction for binary PNG and SVG, canonical-path handling, read-only preview state, visible denial errors, and unchanged text-file reads.
+- Rust tests verify exact base64 bytes/MIME/correlation, the canonical workspace boundary (including a symlink escape on Unix), unsupported paths/types, the 10 MiB size cap, and denial of the presentation action in automatic task policy.
+- In an installed app, open PNG/JPEG/SVG images inside the authorized workspace; confirm previews and existing image fit controls work. Try an oversized image and an out-of-scope path; expect a visible error, not a filesystem-serving URL fallback. Other image formats depend on platform decoder support.
 
 ## Manual (UI side)
 1. Start frontend:

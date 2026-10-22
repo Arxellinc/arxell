@@ -1262,8 +1262,12 @@ mod desktop_smoke;
 
 #[cfg(feature = "desktop-smoke")]
 #[tauri::command]
-fn cmd_desktop_smoke_ready(app: tauri::AppHandle, version: String) -> Result<(), String> {
-    desktop_smoke::ready(app, version)
+fn cmd_desktop_smoke_ready(
+    app: tauri::AppHandle,
+    version: String,
+    checks: desktop_smoke::SmokeChecks,
+) -> Result<(), String> {
+    desktop_smoke::ready(app, version, checks)
 }
 
 #[cfg(feature = "tauri-runtime")]

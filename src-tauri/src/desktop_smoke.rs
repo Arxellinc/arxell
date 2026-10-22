@@ -1,5 +1,32 @@
-//! CI-only renderer/IPC handshake. Never compile this feature into release assets.
+//! CI-only renderer/IPC/CSP probe. Never compile this feature into release assets.
+use serde::{Deserialize, Serialize};
 use tauri::Manager;
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SmokeChecks {
+    data_image_decoded: bool,
+    blob_image_decoded: bool,
+    data_audio_loaded: bool,
+    blob_audio_loaded: bool,
+    data_fetch_loaded: bool,
+    blob_fetch_loaded: bool,
+    inline_style_applied: bool,
+    inline_script_blocked: bool,
+}
+
+impl SmokeChecks {
+    fn passed(&self) -> bool {
+        self.data_image_decoded
+            && self.blob_image_decoded
+            && self.data_audio_loaded
+            && self.blob_audio_loaded
+            && self.data_fetch_loaded
+            && self.blob_fetch_loaded
+            && self.inline_style_applied
+            && self.inline_script_blocked
+    }
+}
 
 pub fn page_loaded(webview: &tauri::Webview, payload: &tauri::webview::PageLoadPayload<'_>) {
     eprintln!("[desktop-smoke] page event: {:?}", payload.event());
@@ -8,70 +35,85 @@ pub fn page_loaded(webview: &tauri::Webview, payload: &tauri::webview::PageLoadP
     {
         return;
     }
-    // Exercise the actual renderer and an existing Rust IPC command. Do not
-    // mock invoke or expose a general-purpose evaluation/server capability.
-    let evaluation = webview.eval(r#"
-        (() => {
-            let attempts = 0;
-            const timer = setInterval(async () => {
-                const frame = document.querySelector('#app .app-frame');
-                const bounds = frame && frame.getBoundingClientRect();
-                const visible = frame && bounds.width > 0 && bounds.height > 0
-                    && getComputedStyle(frame).visibility !== 'hidden';
-                if (!visible) {
-                    if (++attempts >= 100) {
-                        clearInterval(timer);
-                        window.__TAURI_INTERNALS__.invoke('cmd_desktop_smoke_ready', { version: 'frontend-missing' }).catch(() => {});
-                    }
-                    return;
-                }
-                clearInterval(timer);
-                try {
-                    const result = await window.__TAURI_INTERNALS__.invoke('cmd_app_version');
-                    await window.__TAURI_INTERNALS__.invoke('cmd_desktop_smoke_ready', { version: result.version });
-                } catch (_) {
-                    window.__TAURI_INTERNALS__.invoke('cmd_desktop_smoke_ready', { version: 'ipc-failed' }).catch(() => {});
-                }
-            }, 100);
-        })();
-    "#);
-    if evaluation.is_err() {
+    // Fixed test code only: no general-purpose evaluation/server capability.
+    if webview
+        .eval(include_str!("../resources/desktop-smoke/probe.js"))
+        .is_err()
+    {
         eprintln!("[desktop-smoke] probe injection failed");
     }
 }
 
-pub fn ready(app: tauri::AppHandle, version: String) -> Result<(), String> {
-    if version != env!("CARGO_PKG_VERSION") {
-        let reason = if version == "frontend-missing" {
-            "frontend-missing"
-        } else {
-            "ipc-failed"
-        };
-        eprintln!("[desktop-smoke] handshake failed: {reason}");
-        return Err("Desktop smoke IPC version mismatch".to_string());
+fn report_json(version: &str, checks: &SmokeChecks) -> Result<String, String> {
+    if version != env!("CARGO_PKG_VERSION") || !checks.passed() {
+        eprintln!("[desktop-smoke] renderer/IPC/CSP handshake failed: {checks:?}");
+        return Err("Desktop smoke version or DOM/media/CSP check failed".into());
     }
+    Ok(serde_json::json!({
+        "frontendRendered": true,
+        "ipcVersion": version,
+        "checks": checks,
+    })
+    .to_string()
+        + "\n")
+}
+
+pub fn ready(app: tauri::AppHandle, version: String, checks: SmokeChecks) -> Result<(), String> {
+    let report = report_json(&version, &checks)?;
     let _ = app
         .get_webview_window("main")
         .ok_or("Main window missing")?;
     let path = std::env::var_os("ARXELL_DESKTOP_SMOKE_REPORT")
         .ok_or("Desktop smoke report path missing")?;
     // The report path comes only from the test process environment, never IPC.
-    std::fs::write(
-        path,
-        format!("{{\"frontendRendered\":true,\"ipcVersion\":\"{version}\"}}\n"),
-    )
-    .map_err(|e| format!("Could not write desktop smoke report: {e}"))?;
-    // Keep the window alive for the harness to collect a screenshot and
-    // terminate its owned process tree. This is not a persistence test.
+    std::fs::write(path, report)
+        .map_err(|e| format!("Could not write desktop smoke report: {e}"))?;
+    // Keep the window alive for screenshot collection and owned-process cleanup.
     Ok(())
 }
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
     #[test]
     fn smoke_context_embeds_frontend_without_a_dev_server() {
         let context: tauri::Context<tauri::Wry> = tauri::generate_context!();
         assert!(context.assets().get(&"index.html".into()).is_some(),
             "desktop-smoke must enable tauri/custom-protocol; otherwise it loads devUrl without embedded assets");
+    }
+
+    fn successful_checks() -> serde_json::Value {
+        serde_json::json!({
+            "dataImageDecoded": true, "blobImageDecoded": true,
+            "dataAudioLoaded": true, "blobAudioLoaded": true,
+            "dataFetchLoaded": true, "blobFetchLoaded": true,
+            "inlineStyleApplied": true, "inlineScriptBlocked": true,
+        })
+    }
+
+    #[test]
+    fn report_requires_every_media_style_and_script_check() {
+        let checks = successful_checks();
+        let typed: SmokeChecks = serde_json::from_value(checks.clone()).unwrap();
+        let report = report_json(env!("CARGO_PKG_VERSION"), &typed).unwrap();
+        let report: serde_json::Value = serde_json::from_str(&report).unwrap();
+        assert_eq!(report["checks"], checks);
+        assert!(report_json("wrong-version", &typed).is_err());
+        for key in checks.as_object().unwrap().keys() {
+            let mut failed = checks.clone();
+            failed[key] = false.into();
+            let typed = serde_json::from_value(failed).unwrap();
+            assert!(
+                report_json(env!("CARGO_PKG_VERSION"), &typed).is_err(),
+                "{key}"
+            );
+            let mut missing = checks.clone();
+            missing.as_object_mut().unwrap().remove(key);
+            assert!(
+                serde_json::from_value::<SmokeChecks>(missing).is_err(),
+                "{key}"
+            );
+        }
     }
 }

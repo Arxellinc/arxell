@@ -1,5 +1,5 @@
 import type { ChatIpcClient } from "../../ipcClient";
-import type { FilesListDirectoryEntry } from "../../contracts";
+import type { FilesListDirectoryEntry, FilesReadFileResponse, FilesReadImageResponse } from "../../contracts";
 import type {
   FilesDeleteUndoDirSnapshot,
   FilesDeleteUndoEntry,
@@ -21,69 +21,6 @@ export function isImagePath(path: string): boolean {
   const dot = name.lastIndexOf(".");
   if (dot <= 0 || dot >= name.length - 1) return false;
   return IMAGE_EXTENSIONS.has(name.slice(dot + 1));
-}
-
-let cachedConvertFileSrc: ((path: string) => string) | null | undefined;
-
-async function resolveImageUrl(filePath: string): Promise<string> {
-  if (cachedConvertFileSrc === undefined) {
-    if ((window as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__) {
-      try {
-        const tauriCore = await import("@tauri-apps/api/core");
-        cachedConvertFileSrc = (tauriCore as unknown as { convertFileSrc?: (path: string) => string }).convertFileSrc ?? null;
-      } catch {
-        cachedConvertFileSrc = null;
-      }
-    } else {
-      cachedConvertFileSrc = null;
-    }
-  }
-  if (cachedConvertFileSrc) {
-    return cachedConvertFileSrc(filePath);
-  }
-  const correlationId = deps_ref_nextCorrelationId();
-  const invokeResponse = await deps_ref_client()?.toolInvoke({
-    correlationId,
-    toolId: "files",
-    action: "read-file",
-    mode: "sandbox",
-    payload: { correlationId, path: filePath }
-  });
-  if (invokeResponse?.ok) {
-    const data = invokeResponse.data as { content?: string; isBinary?: boolean };
-    if (data.content) {
-      const ext = filePath.toLowerCase().replace(/\\/g, "/").split("/").pop() ?? "";
-      const dotIdx = ext.lastIndexOf(".");
-      const mimeMap: Record<string, string> = {
-        png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", gif: "image/gif",
-        webp: "image/webp", svg: "image/svg+xml", bmp: "image/bmp", ico: "image/x-icon",
-        tif: "image/tiff", tiff: "image/tiff", avif: "image/avif"
-      };
-      const ext2 = dotIdx >= 0 ? ext.slice(dotIdx + 1) : "";
-      const mime = mimeMap[ext2] || "image/png";
-      return `data:${mime};base64,${data.content}`;
-    }
-  }
-  return "";
-}
-
-let _nextCorrelationId: (() => string) | null = null;
-let _client: (() => ChatIpcClient | null) | null = null;
-
-export function initFilesImageHelpers(
-  nextCorrelationId: () => string,
-  client: () => ChatIpcClient | null
-): void {
-  _nextCorrelationId = nextCorrelationId;
-  _client = client;
-}
-
-function deps_ref_nextCorrelationId(): string {
-  return _nextCorrelationId?.() ?? String(Date.now());
-}
-
-function deps_ref_client(): ChatIpcClient | null {
-  return _client?.() ?? null;
 }
 
 export type FilesConflictChoice = "replace" | "copy" | "cancel";
@@ -197,12 +134,15 @@ export async function openFilesFile(
   slice.filesSelectedEntryPath = requested;
   slice.filesSelectedPaths = [requested];
   slice.filesLoadingFileByPath[requested] = true;
+  const image = isImagePath(requested);
+  // Never reuse stale image data after a failed or denied fresh read.
+  delete slice.filesImagePreviewUrlByPath[requested];
   try {
     const correlationId = deps.nextCorrelationId();
     const invokeResponse = await deps.client.toolInvoke({
       correlationId,
       toolId: "files",
-      action: "read-file",
+      action: image ? "read-image" : "read-file",
       mode: "sandbox",
       payload: {
         correlationId,
@@ -212,15 +152,9 @@ export async function openFilesFile(
     if (!invokeResponse.ok) {
       throw new Error(invokeResponse.error || "Failed reading file.");
     }
-    const response = invokeResponse.data as unknown as {
-      path: string;
-      content: string;
-      sizeBytes: number;
-      readOnly: boolean;
-      isBinary: boolean;
-    };
+    const response = invokeResponse.data as unknown as FilesReadFileResponse | FilesReadImageResponse;
     const canonicalPath = response.path || requested;
-    const content = response.content ?? "";
+    const content = image ? "" : response.content ?? "";
     if (canonicalPath !== requested) {
       slice.filesOpenTabs = slice.filesOpenTabs.map((tab) =>
         tab === requested ? canonicalPath : tab
@@ -238,7 +172,9 @@ export async function openFilesFile(
     slice.filesContentByPath[canonicalPath] = content;
     slice.filesSavedContentByPath[canonicalPath] = content;
     slice.filesDirtyByPath[canonicalPath] = false;
-    slice.filesReadOnlyByPath[canonicalPath] = Boolean(response.readOnly || response.isBinary);
+    slice.filesReadOnlyByPath[canonicalPath] = image || Boolean(
+      ("readOnly" in response && response.readOnly) || ("isBinary" in response && response.isBinary)
+    );
     slice.filesSizeByPath[canonicalPath] = Number.isFinite(response.sizeBytes)
       ? response.sizeBytes
       : content.length;
@@ -246,17 +182,9 @@ export async function openFilesFile(
     if (canonicalPath !== requested) {
       delete slice.filesLoadingFileByPath[requested];
     }
-    if (isImagePath(canonicalPath)) {
-      slice.filesReadOnlyByPath[canonicalPath] = true;
+    if (image && "mimeType" in response) {
       slice.filesImageViewMode = "fit";
-      try {
-        const url = await resolveImageUrl(canonicalPath);
-        if (url) {
-          slice.filesImagePreviewUrlByPath[canonicalPath] = url;
-        }
-      } catch {
-        // URL resolution failed, image preview will show fallback
-      }
+      slice.filesImagePreviewUrlByPath[canonicalPath] = `data:${response.mimeType};base64,${response.content}`;
     }
   } catch (error) {
     slice.filesLoadingFileByPath[requested] = false;

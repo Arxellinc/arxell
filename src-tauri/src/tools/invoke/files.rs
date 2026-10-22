@@ -15,6 +15,7 @@ pub fn register(registry: &mut InvokeRegistry) {
         invoke_list_directory,
     );
     registry.register("files", &["read-file", "readFile"], invoke_read_file);
+    registry.register("files", &["read-image"], invoke_read_image);
     registry.register("files", &["write-file", "writeFile"], invoke_write_file);
     registry.register(
         "files",
@@ -44,6 +45,16 @@ fn invoke_read_file(state: &TauriBridgeState, payload: Value) -> ToolInvokeFutur
     })
 }
 
+fn invoke_read_image(state: &TauriBridgeState, payload: Value) -> ToolInvokeFuture<'_> {
+    let files = state.files.clone();
+    Box::pin(async move {
+        let req: FilesReadFileRequest = decode_payload(payload)?;
+        let result = files.read_image(req.path.as_str(), req.correlation_id)?;
+        serde_json::to_value(result)
+            .map_err(|_| "failed serializing image preview response".to_string())
+    })
+}
+
 fn invoke_write_file(state: &TauriBridgeState, payload: Value) -> ToolInvokeFuture<'_> {
     let files = state.files.clone();
     Box::pin(async move {
@@ -67,6 +78,22 @@ fn invoke_delete_path(state: &TauriBridgeState, payload: Value) -> ToolInvokeFut
         serde_json::to_value(result)
             .map_err(|e| format!("failed serializing files delete-path response: {e}"))
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn image_preview_action_is_registered_and_requires_a_path() {
+        let mut registry = InvokeRegistry::new();
+        register(&mut registry);
+        assert!(registry.get("files", "read-image").is_some());
+        assert!(decode_payload::<FilesReadFileRequest>(
+            serde_json::json!({"correlationId": "test"})
+        )
+        .is_err());
+    }
 }
 
 fn invoke_create_directory(state: &TauriBridgeState, payload: Value) -> ToolInvokeFuture<'_> {
