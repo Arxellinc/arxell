@@ -1,4 +1,4 @@
-export const CONTRACT_VERSION = "foundation-v9" as const;
+export const CONTRACT_VERSION = "foundation-v10" as const;
 
 export type ToolMode = "sandbox" | "shell" | "root";
 
@@ -621,6 +621,15 @@ export interface FilesReadFileResponse {
   sizeBytes: number;
   readOnly: boolean;
   isBinary: boolean;
+}
+
+export interface FilesReadImageResponse {
+  correlationId: string;
+  path: string;
+  /** Base64 image bytes (at most 10 MiB before encoding). */
+  content: string;
+  mimeType: string;
+  sizeBytes: number;
 }
 
 export interface FilesWriteFileRequest {

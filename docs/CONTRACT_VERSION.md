@@ -1,7 +1,7 @@
 # Contract Version
 
 ## Current Version
-- `foundation-v9`
+- `foundation-v10`
 
 ## Scope
 This version pins the shared contracts between the TypeScript frontend (`frontend/src/contracts.ts`) and the Rust backend (`src-tauri/src/contracts.rs`).
@@ -33,6 +33,13 @@ This version pins the shared contracts between the TypeScript frontend (`fronten
 - command: `cmd_custom_tool_capability_invoke` → `CustomToolCapabilityInvokeRequest` / `CustomToolCapabilityInvokeResponse`
 - command: `cmd_plugin_capability_invoke` → `PluginCapabilityInvokeRequest` / `PluginCapabilityInvokeResponse`
 - Tasks `upsert` payloads keep stable `projectId` separate from canonical `projectRoot` and persist `starred` and `source`; these additive fields are backward-compatible within `foundation-v7`.
+
+### Files image previews
+- invoke action: `cmd_tool_invoke` with `toolId: "files"`, `action: "read-image"`, `mode: "sandbox"`
+- payload: existing `FilesReadFileRequest { correlationId, path }`
+- response data: `FilesReadImageResponse { correlationId, path, content, mimeType, sizeBytes }`
+- `content` is base64 image bytes (10 MiB maximum before encoding); `path` is canonical within the Files workspace; MIME comes from the supported image-extension allowlist. Unsupported/oversized/out-of-scope reads fail through the existing typed invoke error response. Text/editor `read-file` semantics are unchanged.
+- This manual presentation action is not added to direct-chat or scheduled-task policy allowlists. No binary image content is emitted as diagnostic events.
 
 ### API Connections
 - command: `cmd_api_connections_list` → `ApiConnectionsListRequest` / `ApiConnectionsListResponse`
@@ -153,6 +160,12 @@ This version pins the shared contracts between the TypeScript frontend (`fronten
   2. update `IPC_EVENTS.md`
   3. document migration impact in PR/changeset
 
+## foundation-v10 Migration
+
+- Added the manual Files `read-image` invoke action and `FilesReadImageResponse` for bounded base64 previews without enabling a filesystem-serving protocol.
+- The frontend must use this action for supported images; `read-file` still returns text/empty binary content, not base64. Existing file actions remain compatible.
+- The CI-only desktop probe additionally requires eight media/fetch/style/script boolean checks. This private test hook/report is not a public IPC contract; normal release builds still exclude it.
+
 ## foundation-v9 Migration
 
 - `LlamaRuntimeStatusResponse` includes `currentVersion`.
@@ -183,3 +196,4 @@ This version pins the shared contracts between the TypeScript frontend (`fronten
 | `foundation-v7` | Added typed Pi runtime readiness diagnostics, executable selection, RPC approval responses, and Pi-backed provider metadata. |
 | `foundation-v8` | Metadata-only direct-tool diagnostics, durable saved memory with truthful context selection, and reconciled delegated task lifecycle including `starting` and nonterminal completion timestamps. |
 | `foundation-v9` | Added `cmd_check_llama_runtime_updates`, `forceRefresh` runtime upgrade support, `currentVersion` in runtime status, and `cmd_tts_download_model` for on-demand Kokoro voice asset installation. |
+| `foundation-v10` | Added the bounded, scoped Files `read-image` invoke action and typed base64/MIME preview response; existing text reads are unchanged. |

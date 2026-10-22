@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-pub const CONTRACT_VERSION: &str = "foundation-v9";
+pub const CONTRACT_VERSION: &str = "foundation-v10";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -831,6 +831,17 @@ pub struct FilesReadFileResponse {
     pub size_bytes: u64,
     pub read_only: bool,
     pub is_binary: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FilesReadImageResponse {
+    pub correlation_id: String,
+    pub path: String,
+    /// Base64-encoded bytes, bounded to 10 MiB before encoding.
+    pub content: String,
+    pub mime_type: String,
+    pub size_bytes: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -76,7 +76,7 @@ API keys use explicitly enabled persistent `keyring` backends: Windows Credentia
 Web search execution. Routes queries to configured search API connections.
 
 ### Files Service (`src-tauri/src/app/files_service.rs`)
-Filesystem operations: list directories, read/write files, create directories, delete paths. All operations go through permission checks.
+Filesystem operations: list directories, read/write files, create directories, delete paths. All operations go through permission checks. Manual image previews use a separate `read-image` invoke action under the canonical Files root, returning bounded base64/MIME data (10 MiB source-byte limit) without changing text reads or enabling the asset protocol. These presentation bytes stay out of diagnostic events/history. See `TAURI_INTEGRATION.md` for packaged CSP and `SMOKE_TEST.md` for real WebView media/style/script assertions.
 
 ### Permission Service (`src-tauri/src/app/permission_service.rs`)
 Microphone permission/device probing. Model-selected tool authorization is separate and lives at the action-policy/dispatch boundary; workspace enablement is not a mutation grant.

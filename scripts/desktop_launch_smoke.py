@@ -11,6 +11,23 @@ import tempfile
 import time
 
 
+REQUIRED_CHECKS = (
+    "dataImageDecoded", "blobImageDecoded", "dataAudioLoaded", "blobAudioLoaded",
+    "dataFetchLoaded", "blobFetchLoaded", "inlineStyleApplied", "inlineScriptBlocked",
+)
+
+
+def valid_report(payload):
+    if not isinstance(payload, dict):
+        return False
+    checks = payload.get("checks")
+    version = payload.get("ipcVersion")
+    return (payload.get("frontendRendered") is True
+            and isinstance(version, str) and bool(version.strip())
+            and isinstance(checks, dict)
+            and all(checks.get(key) is True for key in REQUIRED_CHECKS))
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--require-report", action="store_true")
@@ -42,7 +59,7 @@ def main():
                     if args.require_report and report.exists():
                         try:
                             payload = json.loads(report.read_text())
-                            rendered = payload.get("frontendRendered") is True and bool(payload.get("ipcVersion"))
+                            rendered = valid_report(payload)
                         except (ValueError, OSError):
                             pass
                         if rendered:
@@ -52,7 +69,7 @@ def main():
                     raise RuntimeError("Renderer/IPC handshake missing; a live process is not sufficient")
                 if sys.platform == "darwin":
                     subprocess.run(["/usr/sbin/screencapture", "-x", str(args.output / "desktop.png")], timeout=10, check=False)
-                print("PASS: renderer + Rust IPC" if args.require_report else "PASS: installed application startup (not a UI acceptance test)")
+                print("PASS: renderer + Rust IPC + image/audio/style CSP" if args.require_report else "PASS: installed application startup (not a UI acceptance test)")
             finally:
                 if os.name == "nt":
                     app.terminate()

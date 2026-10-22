@@ -1,7 +1,10 @@
 use crate::contracts::{
     FilesCreateDirectoryResponse, FilesDeletePathResponse, FilesListDirectoryEntry,
-    FilesListDirectoryResponse, FilesReadFileResponse, FilesWriteFileResponse,
+    FilesListDirectoryResponse, FilesReadFileResponse, FilesReadImageResponse,
+    FilesWriteFileResponse,
 };
+use base64::{engine::general_purpose::STANDARD, Engine};
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
 
@@ -86,6 +89,66 @@ impl FilesService {
             size_bytes,
             read_only: is_binary,
             is_binary,
+        })
+    }
+
+    /// Presentation-only image read; uses the same canonical workspace boundary
+    /// as editor reads, without exposing a filesystem URL/protocol to the WebView.
+    pub fn read_image(
+        &self,
+        path: &str,
+        correlation_id: String,
+    ) -> Result<FilesReadImageResponse, String> {
+        const MAX_IMAGE_BYTES: u64 = 10 * 1024 * 1024;
+        let target = resolve_existing_target_path(self.root_path.as_path(), Some(path))?;
+        let extension = target
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .unwrap_or("")
+            .to_ascii_lowercase();
+        let mime_type = match extension.as_str() {
+            "png" => "image/png",
+            "jpg" | "jpeg" => "image/jpeg",
+            "gif" => "image/gif",
+            "webp" => "image/webp",
+            "svg" => "image/svg+xml",
+            "ico" => "image/x-icon",
+            "bmp" => "image/bmp",
+            "tif" | "tiff" => "image/tiff",
+            "avif" => "image/avif",
+            _ => return Err("requested path is not a supported image".into()),
+        };
+        // Reject directories/devices/FIFOs before opening (a FIFO read can block).
+        if !std::fs::metadata(&target)
+            .map_err(|_| "failed reading image metadata")?
+            .is_file()
+        {
+            return Err("requested image path is not a file".into());
+        }
+        let file = std::fs::File::open(&target).map_err(|_| "failed opening image file")?;
+        let metadata = file
+            .metadata()
+            .map_err(|_| "failed reading image metadata")?;
+        if !metadata.is_file() {
+            return Err("requested image path is not a file".into());
+        }
+        if metadata.len() > MAX_IMAGE_BYTES {
+            return Err("image preview exceeds the 10 MiB limit".into());
+        }
+        // Bound the read itself as well: a file can grow after metadata is read.
+        let mut bytes = Vec::new();
+        file.take(MAX_IMAGE_BYTES + 1)
+            .read_to_end(&mut bytes)
+            .map_err(|_| "failed reading image file")?;
+        if bytes.len() as u64 > MAX_IMAGE_BYTES {
+            return Err("image preview exceeds the 10 MiB limit".into());
+        }
+        Ok(FilesReadImageResponse {
+            correlation_id,
+            path: path_to_string(&target),
+            size_bytes: bytes.len() as u64,
+            content: STANDARD.encode(bytes),
+            mime_type: mime_type.into(),
         })
     }
 
@@ -334,6 +397,86 @@ fn path_to_string(path: &Path) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn image_previews_encode_binary_and_svg_without_changing_text_reads() {
+        let root = std::env::temp_dir().join(format!("arxell-image-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let files = FilesService::for_root(&root).unwrap();
+        let png = STANDARD.decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNgYGD4DwABBAEAX+XDSwAAAABJRU5ErkJggg==").unwrap();
+        let svg = b"<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"1\" height=\"1\"/>";
+        for (name, bytes, mime) in [
+            ("pixel.PNG", png.as_slice(), "image/png"),
+            ("pixel.svg", svg.as_slice(), "image/svg+xml"),
+        ] {
+            std::fs::write(root.join(name), bytes).unwrap();
+            let image = files.read_image(name, "image-corr".into()).unwrap();
+            assert_eq!(image.correlation_id, "image-corr");
+            assert_eq!(
+                image.path,
+                path_to_string(&root.join(name).canonicalize().map(strip_unc).unwrap())
+            );
+            assert_eq!(image.mime_type, mime);
+            assert_eq!(image.size_bytes, bytes.len() as u64);
+            assert_eq!(STANDARD.decode(&image.content).unwrap(), bytes);
+        }
+        assert!(files
+            .read_file("pixel.PNG", "text".into())
+            .unwrap()
+            .content
+            .is_empty());
+        assert_eq!(
+            files
+                .read_file("pixel.svg", "text".into())
+                .unwrap()
+                .content
+                .as_bytes(),
+            svg
+        );
+        // Presentation reads must not become an automatic task/model capability.
+        let policy = crate::tools::action_policy::ReadOnlyPolicy::new(&root).unwrap();
+        assert!(policy
+            .invoke_parameters(
+                "files",
+                "read-image",
+                serde_json::json!({"path": "pixel.PNG"})
+            )
+            .is_err());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn image_previews_reject_outside_paths_unsupported_types_and_oversized_files() {
+        let temp =
+            std::env::temp_dir().join(format!("arxell-image-scope-{}", uuid::Uuid::new_v4()));
+        let root = temp.join("project");
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(temp.join("outside.png"), b"outside").unwrap();
+        std::fs::write(root.join("note.txt"), b"not an image").unwrap();
+        std::fs::create_dir(root.join("folder.png")).unwrap();
+        let oversized = std::fs::File::create(root.join("large.png")).unwrap();
+        oversized.set_len(10 * 1024 * 1024 + 1).unwrap();
+        drop(oversized);
+        let files = FilesService::for_root(&root).unwrap();
+        for path in [
+            "../outside.png",
+            "note.txt",
+            "folder.png",
+            "large.png",
+            "missing.png",
+        ] {
+            assert!(files.read_image(path, "denied".into()).is_err(), "{path}");
+        }
+        assert!(files
+            .read_image(temp.join("outside.png").to_str().unwrap(), "denied".into())
+            .is_err());
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(temp.join("outside.png"), root.join("escape.png")).unwrap();
+            assert!(files.read_image("escape.png", "denied".into()).is_err());
+        }
+        std::fs::remove_dir_all(temp).unwrap();
+    }
 
     #[test]
     fn manual_writes_cannot_escape_through_nonexistent_parent_paths() {

@@ -1,6 +1,6 @@
 # IPC and Event Contracts
 
-Contract version: `foundation-v9` (see `CONTRACT_VERSION.md`)
+Contract version: `foundation-v10` (see `CONTRACT_VERSION.md`)
 
 ## Event Channel
 Renderer, Looper, and CLI broadcast subscribers continue after lag instead of permanently disconnecting. Subscriber-local, rate-limited stderr warnings contain only the static subscriber name and skipped-event count; they are not `app:event` messages and do not change the public contract. Delivery is best-effort: skipped stream data is not replayed. Looper reconciles missed preview exits from terminal state; this is not a general replay/resynchronization protocol.
@@ -152,7 +152,9 @@ Task run-history responses may contain `starting`; delegated `running` records h
 | `cmd_files_list_directory` | `FilesListDirectoryRequest` | `FilesListDirectoryResponse` |
 
 Additional file operations via `cmd_tool_invoke` (`toolId: "files"`):
-- `read-file` → `FilesReadFileRequest` / `FilesReadFileResponse`
+- `read-file` → `FilesReadFileRequest` / `FilesReadFileResponse` (unchanged text/editor semantics)
+- `read-image` → `FilesReadFileRequest` / `FilesReadImageResponse { correlationId, path, content, mimeType, sizeBytes }`
+  - Manual presentation read through the enabled Files tool, using the same canonical workspace boundary as text reads. `content` is base64, capped at 10 MiB of source bytes; `mimeType` is allowlisted by image extension. Unsupported/oversized/out-of-scope reads fail through the existing invoke error response. The payload is not broadcast or retained in diagnostic history, and the action is not allowed for automatic tasks/direct chat.
 - `write-file` → `FilesWriteFileRequest` / `FilesWriteFileResponse`
 - `create-directory` → `FilesCreateDirectoryRequest` / `FilesCreateDirectoryResponse`
 - `delete-path` → `FilesDeletePathRequest` / `FilesDeletePathResponse`
@@ -207,7 +209,7 @@ Additional file operations via `cmd_tool_invoke` (`toolId: "files"`):
 
 ## App Meta Commands
 
-CI-only exception: builds with the `desktop-smoke` feature additionally register `cmd_desktop_smoke_ready(version: String) -> ()` for the renderer/native-IPC probe. It validates the running package version and reports only `frontendRendered` and `ipcVersion` to an environment-selected file; it emits no `app:event` payload. This private test hook is absent from normal release builds and is not part of the versioned public contract. See `SMOKE_TEST.md`.
+CI-only exception: builds with the `desktop-smoke` feature additionally register `cmd_desktop_smoke_ready(version: String, checks: SmokeChecks) -> ()` for the renderer/native-IPC/CSP probe. It validates the running package version and all eight required boolean checks (`dataImageDecoded`, `blobImageDecoded`, `dataAudioLoaded`, `blobAudioLoaded`, `dataFetchLoaded`, `blobFetchLoaded`, `inlineStyleApplied`, `inlineScriptBlocked`), then reports `frontendRendered`, `ipcVersion`, and `checks` to an environment-selected file; it emits no `app:event` payload. This private test hook is absent from normal release builds and is not part of the versioned public contract. See `SMOKE_TEST.md`.
 
 | Command | Input | Output |
 |---------|-------|--------|
