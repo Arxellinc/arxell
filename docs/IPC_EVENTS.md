@@ -31,6 +31,14 @@ Renderer, Looper, and CLI broadcast subscribers continue after lag instead of pe
 | `cmd_chat_list_conversations` | `ChatListConversationsRequest` | `ChatListConversationsResponse` |
 | `cmd_chat_delete_conversation` | `ChatDeleteConversationRequest` | `ChatDeleteConversationResponse` |
 
+### Local-model readiness and request cancellation
+
+- A selected `local:` model waits for healthy runtime metadata before the frontend invokes `cmd_chat_send_message`. The wait polls status approximately once per second, has a 45-second deadline even when status IPC hangs, and checks request ownership/cancellation approximately every 50 ms. API-selected models do not wait for the local runtime.
+- Stop invalidates the UI request before awaiting TTS/backend cancellation. A timed-out/stopped readiness wait dispatches no chat command and therefore appends no user turn to SQLite; its optimistic user message may remain visible until the transcript is reloaded. Late wait results and older IPC responses cannot overwrite a newer request's status/messages or trigger its speech.
+- The UI invokes send once per attempt. A 503 after readiness is surfaced, not retried through a command that already appended the user message.
+- Rust rejects an already-cancelled correlation before user-message persistence or workflow/provider dispatch; resending never clears that cancellation. IDs are unique per attempt, and cancellation tombstones last for the process lifetime (not across restart). This is not general send-command idempotency or a persistence deduplication migration.
+- This readiness deadline does not cap generation or repair provider pre-header/idle cancellation; those are separate provider-lifecycle concerns. Public payloads/actions are unchanged.
+
 ### Chat Streaming Actions
 - `chat.stream.start`
   - stage: `start`

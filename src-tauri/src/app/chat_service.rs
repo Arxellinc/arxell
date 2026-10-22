@@ -200,7 +200,6 @@ impl ChatService {
     }
 
     pub async fn send_message(&self, req: ChatSendRequest) -> Result<ChatSendResponse, String> {
-        self.clear_cancelled(req.correlation_id.as_str());
         self.hub.emit(self.hub.make_event(
             &req.correlation_id,
             Subsystem::Service,
@@ -209,6 +208,21 @@ impl ChatService {
             EventSeverity::Info,
             json!({"conversationId": req.conversation_id}),
         ));
+        // Stop can arrive before dispatch (e.g. while the UI waits for a model).
+        // A correlation identifies one attempt; resending it must not erase Stop
+        // or append another user turn. A deliberate retry needs a fresh ID.
+        if self.is_cancelled(req.correlation_id.as_str()) {
+            let error = "Chat request was cancelled.".to_string();
+            self.hub.emit(self.hub.make_event(
+                &req.correlation_id,
+                Subsystem::Service,
+                "chat.send_message",
+                EventStage::Error,
+                EventSeverity::Info,
+                json!({"error": error}),
+            ));
+            return Err(error);
+        }
 
         self.decay_tool_focus(req.conversation_id.as_str());
         self.append_message(
@@ -2113,12 +2127,6 @@ impl ChatService {
     fn mark_cancelled(&self, target_correlation_id: &str) {
         if let Ok(mut set) = self.cancelled_correlations.lock() {
             set.insert(target_correlation_id.to_string());
-        }
-    }
-
-    fn clear_cancelled(&self, target_correlation_id: &str) {
-        if let Ok(mut set) = self.cancelled_correlations.lock() {
-            set.remove(target_correlation_id);
         }
     }
 
@@ -4993,6 +5001,100 @@ mod tests {
         is_unsafe_project_folder, is_workflow_stop, normalize_workflow_command, planning_preflight,
     };
     use std::path::Path;
+
+    #[tokio::test]
+    async fn cancelled_correlations_cannot_be_replayed_or_append_duplicate_sqlite_turns() {
+        use crate::app::AppContext;
+        use crate::contracts::{
+            ChatCancelRequest, ChatSendRequest, ConversationMessageRecord, MessageRole,
+        };
+        use crate::persistence::{ConversationRepository, SqliteConversationRepository};
+
+        // Cover both Stop-before-dispatch and a replay after an existing user turn.
+        for existing_turn in [false, true] {
+            let root =
+                std::env::temp_dir().join(format!("arxell-chat-cancel-{}", uuid::Uuid::new_v4()));
+            let db_path = root.join("conversations.sqlite3");
+            let repo = SqliteConversationRepository::new(db_path.clone()).unwrap();
+            if existing_turn {
+                repo.append_message(&ConversationMessageRecord {
+                    conversation_id: "fixture".into(),
+                    role: MessageRole::User,
+                    content: "previous turn".into(),
+                    correlation_id: "cancelled-attempt".into(),
+                    timestamp_ms: 1,
+                })
+                .unwrap();
+            }
+            // Fail fast at persistence if this regresses: never contact a real
+            // model/provider, even when planning is disabled in the environment.
+            let conn = rusqlite::Connection::open(&db_path).unwrap();
+            conn.execute_batch(
+                "CREATE TRIGGER block_fixture_sends BEFORE INSERT ON conversation_messages
+                BEGIN SELECT RAISE(ABORT, 'fixture blocks provider dispatch'); END;",
+            )
+            .unwrap();
+            drop(conn);
+            let app = AppContext::new_with_paths(db_path, root.join("tasks.sqlite3")).unwrap();
+            let request = ChatSendRequest {
+                conversation_id: "fixture".into(),
+                user_message: "Use Planner".into(),
+                correlation_id: "cancelled-attempt".into(),
+                chat_mode: Some("agent".into()),
+                model_id: Some("local:fixture".into()),
+                model_name: None,
+                thinking_enabled: None,
+                max_tokens: None,
+                attachments: None,
+                always_load_tool_keys: None,
+                always_load_skill_keys: None,
+            };
+            assert!(
+                app.ipc
+                    .chat
+                    .cancel_message(ChatCancelRequest {
+                        correlation_id: "stop".into(),
+                        target_correlation_id: request.correlation_id.clone(),
+                    })
+                    .await
+                    .unwrap()
+                    .cancelled
+            );
+            for _ in 0..3 {
+                let error = app
+                    .ipc
+                    .chat
+                    .send_message(request.clone())
+                    .await
+                    .unwrap_err();
+                assert!(error.contains("cancelled"));
+            }
+            assert_eq!(
+                repo.list_messages("fixture").unwrap().len(),
+                usize::from(existing_turn)
+            );
+            let events = app.ipc.event_hub().recent_events(100);
+            assert!(!events.iter().any(|event| matches!(
+                event.action.as_str(),
+                "conversation.append" | "chat.route.selected"
+            )));
+
+            // A fresh attempt passes cancellation and reaches the fixture's DB
+            // guard instead; cancellation does not block the conversation itself.
+            let mut fresh = request;
+            fresh.correlation_id = "fresh-attempt".into();
+            let error = app.ipc.chat.send_message(fresh).await.unwrap_err();
+            assert!(error.contains("fixture blocks provider dispatch"));
+            assert!(!error.contains("cancelled"));
+            assert_eq!(
+                repo.list_messages("fixture").unwrap().len(),
+                usize::from(existing_turn)
+            );
+            drop(app);
+            drop(repo);
+            std::fs::remove_dir_all(root).unwrap();
+        }
+    }
 
     #[test]
     fn chat_only_message_detection_matches_greetings() {

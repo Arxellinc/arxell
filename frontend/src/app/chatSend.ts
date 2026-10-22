@@ -47,14 +47,19 @@ interface ChatSendDeps {
   enqueueSpeakableChunk: (text: string, isFinalFlush?: boolean, correlationId?: string | null) => void;
   runChatTtsQueue: (sendMessage: (text: string, attachments?: ChatAttachment[]) => Promise<void>) => Promise<void>;
   refreshConversations: () => Promise<void>;
-  refreshLlamaRuntime: () => Promise<void>;
-  waitForLocalModelReady: () => Promise<boolean>;
+  waitForLocalModelReady: (isCurrent: () => boolean) => Promise<boolean>;
   renderAndBind: (sendMessage: (text: string, attachments?: ChatAttachment[]) => Promise<void>) => void;
 }
 
-function isModelLoadingError(error: unknown): boolean {
-  const text = String(error ?? "").toLowerCase();
-  return text.includes("loading model") && text.includes("503");
+/** Invalidate synchronously, before awaiting TTS or backend cancellation. */
+export function interruptChatSend(
+  state: Pick<ChatSendState, "chatStreaming" | "activeChatCorrelationId" | "chatModelStatusMessage">
+): string | null {
+  const correlationId = state.activeChatCorrelationId;
+  state.chatStreaming = false;
+  state.activeChatCorrelationId = null;
+  state.chatModelStatusMessage = null;
+  return correlationId;
 }
 
 export function createSendMessageHandler(
@@ -62,7 +67,7 @@ export function createSendMessageHandler(
 ): (text: string, attachments?: ChatAttachment[]) => Promise<void> {
   const sendMessage = async (text: string, attachments?: ChatAttachment[]): Promise<void> => {
     const clientRef = deps.getClientRef();
-    if (!clientRef) return;
+    if (!clientRef || deps.state.chatStreaming) return;
 
     deps.clearVoicePrefillState();
 
@@ -71,6 +76,11 @@ export function createSendMessageHandler(
       return;
     }
     const correlationId = deps.nextCorrelationId();
+    const conversationId = deps.state.conversationId;
+    const modelId = deps.state.chatActiveModelId;
+    const isCurrent = () => deps.state.chatStreaming
+      && deps.state.activeChatCorrelationId === correlationId
+      && deps.state.conversationId === conversationId;
     deps.state.messages.push(
       attachments?.length
         ? { role: "user", text: normalizedUserText, attachments }
@@ -87,15 +97,15 @@ export function createSendMessageHandler(
 
     try {
       const selectedChatModel = deps.state.chatModelOptions.find(
-        (option) => option.id === deps.state.chatActiveModelId
+        (option) => option.id === modelId
       );
       const requestPayloadBase = {
-        conversationId: deps.state.conversationId,
+        conversationId,
         userMessage: normalizedUserText,
         correlationId,
         thinkingEnabled: deps.state.chatThinkingEnabled,
         chatMode: deps.state.chatRoutePreference,
-        modelId: deps.state.chatActiveModelId,
+        modelId,
         modelName: selectedChatModel?.modelName || deps.state.chatActiveModelLabel,
         alwaysLoadToolKeys: deps.state.memoryAlwaysLoadToolKeys,
         alwaysLoadSkillKeys: deps.state.memoryAlwaysLoadSkillKeys
@@ -106,30 +116,26 @@ export function createSendMessageHandler(
             attachments
           }
         : requestPayloadBase;
-      let response;
-      for (;;) {
-        try {
-          response = await clientRef.sendMessage(
-            deps.state.llamaRuntimeMaxTokens === null
-              ? requestPayload
-              : {
-                  ...requestPayload,
-                  maxTokens: deps.state.llamaRuntimeMaxTokens
-                }
-          );
-          break;
-        } catch (error) {
-          if (!isModelLoadingError(error) || !deps.state.chatActiveModelId.startsWith("local:")) {
-            throw error;
-          }
-          if (!deps.state.chatModelStatusMessage) {
-            deps.state.chatModelStatusMessage = "Waiting for model...";
-            deps.renderAndBind(sendMessage);
-          }
-          await new Promise((resolve) => window.setTimeout(resolve, 2000));
-          await deps.refreshLlamaRuntime();
+      const payload = deps.state.llamaRuntimeMaxTokens === null
+        ? requestPayload
+        : { ...requestPayload, maxTokens: deps.state.llamaRuntimeMaxTokens };
+      if (!isCurrent()) return;
+      if (modelId.startsWith("local:")) {
+        deps.state.chatModelStatusMessage = "Waiting for model...";
+        deps.renderAndBind(sendMessage);
+        const ready = await deps.waitForLocalModelReady(isCurrent);
+        if (!isCurrent()) return;
+        if (!ready) {
+          throw new Error("Local model did not become ready within 45 seconds. Check the runtime and try again.");
         }
+        deps.state.chatModelStatusMessage = null;
+        deps.renderAndBind(sendMessage);
       }
+      if (!isCurrent()) return;
+      // Send once. Even a 503 can arrive after the backend persisted the user
+      // message; replaying this command would duplicate that conversation turn.
+      const response = await clientRef.sendMessage(payload);
+      if (!isCurrent()) return;
 
       const existing = deps.state.messages.find(
         (m) => m.role === "assistant" && m.correlationId === response.correlationId
@@ -187,6 +193,7 @@ export function createSendMessageHandler(
       deps.chatTtsSawStreamDeltaByCorrelation.delete(response.correlationId);
       await deps.refreshConversations();
     } catch (error) {
+      if (!isCurrent()) return;
       deps.state.chatModelStatusMessage = null;
       const message = error instanceof Error ? error.message : String(error);
       const existing = deps.state.messages.find(
@@ -216,12 +223,13 @@ export function createSendMessageHandler(
         void deps.runChatTtsQueue(sendMessage);
       }
     } finally {
-      deps.state.chatModelStatusMessage = null;
+      // A stopped/older send must not clear the state of a newer request.
       if (deps.state.activeChatCorrelationId === correlationId) {
+        deps.state.chatModelStatusMessage = null;
         deps.state.activeChatCorrelationId = null;
+        deps.state.chatStreaming = false;
+        deps.renderAndBind(sendMessage);
       }
-      deps.state.chatStreaming = false;
-      deps.renderAndBind(sendMessage);
     }
   };
 
