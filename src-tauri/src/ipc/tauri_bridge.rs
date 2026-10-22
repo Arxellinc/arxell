@@ -15,7 +15,7 @@ use crate::ipc::chat::ChatCommandHandler;
 use crate::ipc::looper::LooperCommandHandler;
 use crate::ipc::terminal::TerminalCommandHandler;
 use crate::ipc::voice_commands::VoiceCommandHandler;
-use crate::observability::EventHub;
+use crate::observability::{EventHub, EventSubscription};
 use crate::services::sheets_service::SheetsService;
 use crate::workspace_tools::WorkspaceToolsService;
 use std::sync::Arc;
@@ -43,15 +43,77 @@ pub struct TauriBridgeState {
 }
 
 pub fn attach_event_forwarder(app: AppHandle, hub: EventHub) {
-    let mut rx = hub.subscribe();
-    tauri::async_runtime::spawn(async move {
-        while let Ok(event) = rx.recv().await {
-            let _ = emit_app_event(&app, &event);
-        }
-    });
+    let rx = hub.subscribe_resilient("renderer");
+    tauri::async_runtime::spawn(forward_events(rx, move |event| {
+        let _ = emit_app_event(&app, event);
+    }));
+}
+
+async fn forward_events(mut rx: EventSubscription, mut emit: impl FnMut(&AppEvent)) {
+    while let Some(event) = rx.recv().await {
+        rx.take_skipped();
+        emit(&event);
+    }
 }
 
 fn emit_app_event(app: &AppHandle, event: &AppEvent) -> Result<(), String> {
     app.emit("app:event", event)
         .map_err(|e| format!("failed to emit app:event: {e}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::contracts::{EventSeverity, EventStage, Subsystem};
+    use serde_json::json;
+
+    #[tokio::test]
+    async fn forwarder_survives_a_burst_then_forwards_new_events_until_closed() {
+        let hub = EventHub::new();
+        let rx = hub.subscribe_resilient("renderer-test");
+        for _ in 0..2000 {
+            hub.emit(hub.make_event(
+                "burst",
+                Subsystem::Service,
+                "terminal.output",
+                EventStage::Progress,
+                EventSeverity::Info,
+                json!({}),
+            ));
+        }
+        let (tx, mut forwarded) = tokio::sync::mpsc::unbounded_channel();
+        let task = tokio::spawn(forward_events(rx, move |event| {
+            tx.send(event.action.clone()).unwrap();
+        }));
+        // Wait for the buffered tail, proving the overflow did not end forwarding.
+        for _ in 0..512 {
+            assert_eq!(
+                tokio::time::timeout(std::time::Duration::from_secs(1), forwarded.recv())
+                    .await
+                    .unwrap()
+                    .unwrap(),
+                "terminal.output"
+            );
+        }
+        hub.emit(hub.make_event(
+            "future",
+            Subsystem::Service,
+            "terminal.exit",
+            EventStage::Complete,
+            EventSeverity::Info,
+            json!({"sessionId": "term-test"}),
+        ));
+        assert_eq!(
+            tokio::time::timeout(std::time::Duration::from_secs(1), forwarded.recv())
+                .await
+                .unwrap()
+                .unwrap(),
+            "terminal.exit"
+        );
+        drop(hub);
+        tokio::time::timeout(std::time::Duration::from_secs(1), task)
+            .await
+            .unwrap()
+            .unwrap();
+    }
 }

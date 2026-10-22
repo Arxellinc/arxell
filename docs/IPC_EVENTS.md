@@ -1,8 +1,10 @@
 # IPC and Event Contracts
 
-Contract version: `foundation-v8` (see `CONTRACT_VERSION.md`)
+Contract version: `foundation-v9` (see `CONTRACT_VERSION.md`)
 
 ## Event Channel
+Renderer, Looper, and CLI broadcast subscribers continue after lag instead of permanently disconnecting. Subscriber-local, rate-limited stderr warnings contain only the static subscriber name and skipped-event count; they are not `app:event` messages and do not change the public contract. Delivery is best-effort: skipped stream data is not replayed. Looper reconciles missed preview exits from terminal state; this is not a general replay/resynchronization protocol.
+
 - `app:event`
   - payload: `AppEvent` (see below)
 
@@ -81,6 +83,11 @@ Task run-history responses may contain `starting`; delegated `running` records h
 - `terminal.output`
   - stage: `progress`
   - payload: `{ sessionId, data }`
+  - Ordered UTF-8 text batches, normally flushed within approximately 16 ms, or earlier at a 64 KiB size threshold. PTY reads and event boundaries need not match; incomplete UTF-8 characters carry into the next batch.
+- `terminal.exit`
+  - stage: `complete`
+  - payload: `{ sessionId }`
+  - Emitted after the final output batch when the PTY stream ends (including PTY read failure); not proof of process success or Pi RPC settlement.
 
 ---
 

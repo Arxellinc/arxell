@@ -2,7 +2,7 @@ use crate::contracts::{AppEvent, EventSeverity, Subsystem};
 use serde_json::Value;
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio::sync::broadcast;
 
 const EVENT_BUFFER_MAX: usize = 2000;
@@ -44,6 +44,44 @@ pub struct EventHub {
     history: Arc<Mutex<VecDeque<AppEvent>>>,
 }
 
+/// A live subscriber survives broadcast overflow. Lag diagnostics are local,
+/// metadata-only and rate-limited: never publish them back into the busy hub.
+pub struct EventSubscription {
+    rx: broadcast::Receiver<AppEvent>,
+    subscriber: &'static str,
+    skipped: u64,
+    last_warning: Option<Instant>,
+}
+
+impl EventSubscription {
+    pub async fn recv(&mut self) -> Option<AppEvent> {
+        loop {
+            match self.rx.recv().await {
+                Ok(event) => return Some(event),
+                Err(broadcast::error::RecvError::Lagged(skipped)) => {
+                    self.skipped = self.skipped.saturating_add(skipped);
+                    if self
+                        .last_warning
+                        .is_none_or(|last| last.elapsed() >= Duration::from_secs(1))
+                    {
+                        eprintln!(
+                            "[event-hub] subscriber={} skipped={} (broadcast lag; continuing)",
+                            self.subscriber, self.skipped
+                        );
+                        self.last_warning = Some(Instant::now());
+                    }
+                }
+                Err(broadcast::error::RecvError::Closed) => return None,
+            }
+        }
+    }
+
+    /// Consumers with authoritative state can reconcile after lost events.
+    pub fn take_skipped(&mut self) -> u64 {
+        std::mem::take(&mut self.skipped)
+    }
+}
+
 impl EventHub {
     pub fn new() -> Self {
         let (tx, _) = broadcast::channel(512);
@@ -73,6 +111,15 @@ impl EventHub {
 
     pub fn subscribe(&self) -> broadcast::Receiver<AppEvent> {
         self.tx.subscribe()
+    }
+
+    pub fn subscribe_resilient(&self, subscriber: &'static str) -> EventSubscription {
+        EventSubscription {
+            rx: self.subscribe(),
+            subscriber,
+            skipped: 0,
+            last_warning: None,
+        }
     }
 
     pub fn recent_events(&self, max: usize) -> Vec<AppEvent> {
@@ -196,6 +243,55 @@ mod tests {
     use super::*;
     use crate::contracts::EventStage;
     use serde_json::json;
+
+    #[tokio::test]
+    async fn resilient_subscribers_survive_repeated_bursts_and_receive_future_events() {
+        let hub = EventHub::new();
+        let mut first = hub.subscribe_resilient("test-first");
+        let mut second = hub.subscribe_resilient("test-second");
+        for burst in 0..2 {
+            for index in 0..2000 {
+                hub.emit(hub.make_event(
+                    "burst",
+                    Subsystem::Service,
+                    "terminal.output",
+                    EventStage::Progress,
+                    EventSeverity::Info,
+                    json!({"index": burst * 2000 + index}),
+                ));
+            }
+            for rx in [&mut first, &mut second] {
+                let event = rx.recv().await.unwrap();
+                assert_eq!(event.payload["index"], burst * 2000 + 1488);
+                assert_eq!(rx.take_skipped(), 1488);
+                assert_eq!(rx.take_skipped(), 0);
+                for _ in 1..512 {
+                    rx.recv().await.unwrap();
+                }
+            }
+        }
+        hub.emit(hub.make_event(
+            "future",
+            Subsystem::Service,
+            "terminal.exit",
+            EventStage::Complete,
+            EventSeverity::Info,
+            json!({"sessionId": "term-test"}),
+        ));
+        for rx in [&mut first, &mut second] {
+            let event = tokio::time::timeout(Duration::from_secs(1), rx.recv())
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(event.action, "terminal.exit");
+            assert_eq!(rx.take_skipped(), 0);
+        }
+        // Lag diagnostics must not amplify traffic or enter diagnostic history.
+        assert_eq!(hub.recent_events(2000).len(), 1);
+        drop(hub);
+        assert!(first.recv().await.is_none());
+        assert!(second.recv().await.is_none());
+    }
 
     #[test]
     fn model_controlled_tool_identifiers_cannot_carry_private_text_into_diagnostics() {

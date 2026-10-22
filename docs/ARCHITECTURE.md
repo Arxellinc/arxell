@@ -46,7 +46,7 @@ Forbidden:
 Core chat orchestration: message handling, agent loop, tool binding, streaming. Routes user messages to LLM providers and manages conversation lifecycle including cancel, delete, and listing. Direct agent tools pass through the read-only policy adapter in `tools/agent_registry.rs`; file scope and action allowlists are owned by `tools/action_policy.rs`. Request construction and inspection share saved-context selection/rendering in `app/chat_context.rs`. Edits and shell execution use explicitly approved Pi-backed delegation rather than raw direct-chat tools.
 
 ### Terminal Service (`src-tauri/src/app/terminal_service.rs`)
-PTY-based terminal sessions: open, input, resize, close. Emits `terminal.output` streaming events.
+PTY-based terminal sessions: open, input, resize, close. A bounded 16 × 8 KiB reader queue feeds output batches flushed after approximately 16 ms or 64 KiB; sustained output can flush earlier at the size limit. Incremental UTF-8 decoding preserves characters across reads/batches. Pending output is flushed before `terminal.exit`. Per-session stream-finished state lets Looper reconcile missed preview exits without inferring Pi success.
 
 ### Pi Runtime Service (`src-tauri/src/app/pi_runtime_service.rs`)
 Cross-platform Pi discovery and readiness checks. It resolves explicit, PATH, npm, pnpm, Yarn, and Bun installations before falling back to Arxell's private managed runtime; accepts parseable Pi versions without a semver ceiling; and reports typed Node/npm/Bash diagnostics without shell `which`/`where` parsing. The Pi workspace automatically installs the current npm package when no Pi is found and prerequisites are available.
@@ -106,6 +106,8 @@ Explicit user-saved memory uses SQLite beside the conversation database, with fa
 - Tool I/O is typed and explicit.
 
 ## Event and Troubleshooting Rules
+- The renderer, Looper, and CLI use lag-resilient hub subscriptions. Broadcast overflow skips unavailable events but never terminates these listeners; only channel closure ends reception. Metadata-only stderr lag warnings are rate-limited to once per second per subscriber and are not rebroadcast into the hub.
+- Broadcast delivery remains best-effort, not a durable event log. Lost presentation bytes are not replayed. Looper reconciles preview exits from terminal stream state after lag; Pi phase settlement remains owned by RPC, and task outcomes remain reconciled from authoritative Looper state. Other missed UI state/stream events are not automatically reconstructed by this mechanism.
 - Every command and service operation must emit structured events.
 - Every event must include:
   - timestamp

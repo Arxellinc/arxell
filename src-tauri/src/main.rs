@@ -104,9 +104,10 @@ async fn main() {
             std::process::exit(1);
         }
     };
-    let mut rx = app.ipc.event_stream();
+    let mut rx = app.ipc.event_hub().subscribe_resilient("cli");
     tokio::spawn(async move {
-        while let Ok(event) = rx.recv().await {
+        while let Some(event) = rx.recv().await {
+            rx.take_skipped();
             println!(
                 "[event] subsystem={:?} action={} stage={:?} corr={}",
                 event.subsystem, event.action, event.stage, event.correlation_id

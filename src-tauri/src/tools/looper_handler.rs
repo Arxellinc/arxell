@@ -47,6 +47,8 @@ use crate::contracts::{
     TerminalCloseSessionRequest, TerminalInputRequest, TerminalOpenSessionRequest,
 };
 use crate::observability::EventHub;
+#[cfg(any(feature = "tauri-runtime", test))]
+use crate::observability::EventSubscription;
 use crate::workspace_tools::WorkspaceToolsService;
 use serde_json::json;
 use std::collections::HashMap;
@@ -617,33 +619,62 @@ impl LooperHandler {
         }
     }
 
-    /// Starts a background task that listens for terminal.exit events
-    /// and routes them to on_terminal_exit for phase auto-advancement.
+    /// Listen for preview terminal output/exits. Pi phase completion remains
+    /// owned by the RPC path and requires agent_settled, never a PTY exit.
     #[cfg(feature = "tauri-runtime")]
     pub fn start_event_listener(self: &Arc<Self>) {
-        let hub = self.hub.clone();
+        // Subscribe before spawning so immediate terminal activity is not missed.
+        let rx = self.hub.subscribe_resilient("looper");
         let handler = Arc::clone(self);
-
         tauri::async_runtime::spawn(async move {
-            let mut rx = hub.subscribe();
-            while let Ok(event) = rx.recv().await {
-                if event.action == "terminal.exit" {
-                    if let Some(session_id) = extract_session_id(&event.payload) {
-                        handler.on_terminal_exit(&session_id, 0).await;
-                    }
-                } else if event.action == "terminal.output" {
-                    if let Some(session_id) = extract_session_id(&event.payload) {
-                        let chunk = event
-                            .payload
-                            .as_object()
-                            .and_then(|row| row.get("data"))
-                            .and_then(|value| value.as_str())
-                            .unwrap_or("");
-                        handler.on_terminal_output(&session_id, chunk);
-                    }
+            handler.listen_for_terminal_events(rx).await;
+        });
+    }
+
+    #[cfg(any(feature = "tauri-runtime", test))]
+    async fn listen_for_terminal_events(&self, mut rx: EventSubscription) {
+        while let Some(event) = rx.recv().await {
+            if rx.take_skipped() > 0 {
+                self.reconcile_preview_exits();
+            }
+            if event.action == "terminal.exit" {
+                if let Some(session_id) = extract_session_id(&event.payload) {
+                    self.on_terminal_exit(&session_id, 0).await;
+                }
+            } else if event.action == "terminal.output" {
+                if let Some(session_id) = extract_session_id(&event.payload) {
+                    let chunk = event
+                        .payload
+                        .as_object()
+                        .and_then(|row| row.get("data"))
+                        .and_then(|value| value.as_str())
+                        .unwrap_or("");
+                    self.on_terminal_output(&session_id, chunk);
                 }
             }
-        });
+        }
+    }
+
+    #[cfg(any(feature = "tauri-runtime", test))]
+    fn reconcile_preview_exits(&self) {
+        let sessions: Vec<String> = self
+            .loops
+            .read()
+            .expect("loops lock poisoned")
+            .values()
+            .filter_map(|loopy| loopy.preview.as_ref()?.session_id.clone())
+            .collect();
+        let mut changed = false;
+        for session in sessions {
+            match self.terminal.output_finished(&session) {
+                Ok(true) => changed |= self.handle_preview_exit(&session),
+                Ok(false) => {}
+                Err(_) => eprintln!("[looper] preview lifecycle reconciliation unavailable"),
+            }
+        }
+        if changed {
+            self.save_to_disk();
+        }
     }
 
     /// Starts a new loop iteration.
@@ -2193,7 +2224,7 @@ impl LooperHandler {
         }
     }
 
-    #[cfg(feature = "tauri-runtime")]
+    #[cfg(any(feature = "tauri-runtime", test))]
     fn on_terminal_output(&self, session_id: &str, chunk: &str) {
         let Some(url) = detect_preview_url(chunk) else {
             return;
@@ -2773,7 +2804,7 @@ fn infer_preview_command(cwd: &str) -> String {
     "npm run dev".to_string()
 }
 
-#[cfg(feature = "tauri-runtime")]
+#[cfg(any(feature = "tauri-runtime", test))]
 fn detect_preview_url(chunk: &str) -> Option<String> {
     for token in chunk.split_whitespace() {
         let trimmed =
@@ -3032,7 +3063,7 @@ fn safe_pi_error(error: &PiRpcError) -> String {
     truncate_utf8(&message, 500).to_string()
 }
 
-#[cfg(feature = "tauri-runtime")]
+#[cfg(any(feature = "tauri-runtime", test))]
 fn extract_session_id(payload: &serde_json::Value) -> Option<String> {
     if let Some(obj) = payload.as_object() {
         if let Some(session_id) = obj.get("sessionId") {
@@ -3081,6 +3112,96 @@ mod tests {
             Arc::new(WebSearchService::new(Arc::clone(&api_registry))),
             api_registry,
         )
+    }
+
+    #[tokio::test]
+    async fn terminal_listener_survives_lag_and_reconciles_a_missed_preview_exit() {
+        let handler = Arc::new(sample_handler());
+        let mut loopy = sample_loop();
+        loopy.preview = Some(PreviewState {
+            status: "running".into(),
+            session_id: Some("closed-preview".into()),
+            url: Some("http://localhost:3000".into()),
+            last_error: None,
+            command: None,
+            last_started_at_ms: None,
+        });
+        handler
+            .loops
+            .write()
+            .unwrap()
+            .insert(loopy.id.clone(), loopy);
+        let rx = handler.hub.subscribe_resilient("looper-test");
+        handler.hub.emit(handler.hub.make_event(
+            "exit",
+            Subsystem::Service,
+            "terminal.exit",
+            EventStage::Complete,
+            EventSeverity::Info,
+            json!({"sessionId": "closed-preview"}),
+        ));
+        for _ in 0..2000 {
+            handler.hub.emit(handler.hub.make_event(
+                "burst",
+                Subsystem::Service,
+                "terminal.output",
+                EventStage::Progress,
+                EventSeverity::Info,
+                json!({"sessionId": "unrelated", "data": "noise"}),
+            ));
+        }
+        let listener_handler = Arc::clone(&handler);
+        let task =
+            tokio::spawn(async move { listener_handler.listen_for_terminal_events(rx).await });
+        tokio::time::timeout(std::time::Duration::from_secs(2), async {
+            loop {
+                if handler.loops.read().unwrap()["loop-1"]
+                    .preview
+                    .as_ref()
+                    .unwrap()
+                    .session_id
+                    .is_none()
+                {
+                    break;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+            }
+        })
+        .await
+        .unwrap();
+        {
+            let mut loops = handler.loops.write().unwrap();
+            let preview = loops.get_mut("loop-1").unwrap().preview.as_mut().unwrap();
+            assert_eq!(preview.status, "stopped");
+            preview.session_id = Some("new-preview".into());
+            preview.url = None;
+        }
+        handler.hub.emit(handler.hub.make_event(
+            "future",
+            Subsystem::Service,
+            "terminal.output",
+            EventStage::Progress,
+            EventSeverity::Info,
+            json!({"sessionId": "new-preview", "data": "Local: http://localhost:4321/"}),
+        ));
+        tokio::time::timeout(std::time::Duration::from_secs(2), async {
+            while handler.preview_url("loop-1").is_none() {
+                tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+            }
+        })
+        .await
+        .unwrap();
+        assert_eq!(
+            handler.preview_url("loop-1").as_deref(),
+            Some("http://localhost:4321")
+        );
+        // Lost PTY events must not turn into successful Pi phase completion.
+        assert_eq!(
+            handler.loops.read().unwrap()["loop-1"].phases["planner"].status,
+            LooperPhaseStatus::Running
+        );
+        task.abort();
+        let _ = task.await;
     }
 
     #[test]
