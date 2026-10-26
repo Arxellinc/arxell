@@ -220,7 +220,13 @@ jobs:
           echo "espeak-ng baseline check: $output"
 
       - name: Run Rust tests
-        run: cargo test --manifest-path src-tauri/Cargo.toml --features tauri-runtime
+        shell: bash
+        env:
+          CARGO_TARGET_DIR: ${{ github.workspace }}/src-tauri/target
+        run: |
+          set -euo pipefail
+          cargo test --manifest-path agent/Cargo.toml
+          cargo test --manifest-path src-tauri/Cargo.toml --features tauri-runtime
 
       - name: Build frontend
         working-directory: frontend

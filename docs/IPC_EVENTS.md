@@ -37,7 +37,15 @@ Renderer, Looper, and CLI broadcast subscribers continue after lag instead of pe
 - Stop invalidates the UI request before awaiting TTS/backend cancellation. A timed-out/stopped readiness wait dispatches no chat command and therefore appends no user turn to SQLite; its optimistic user message may remain visible until the transcript is reloaded. Late wait results and older IPC responses cannot overwrite a newer request's status/messages or trigger its speech.
 - The UI invokes send once per attempt. A 503 after readiness is surfaced, not retried through a command that already appended the user message.
 - Rust rejects an already-cancelled correlation before user-message persistence or workflow/provider dispatch; resending never clears that cancellation. IDs are unique per attempt, and cancellation tombstones last for the process lifetime (not across restart). This is not general send-command idempotency or a persistence deduplication migration.
-- This readiness deadline does not cap generation or repair provider pre-header/idle cancellation; those are separate provider-lifecycle concerns. Public payloads/actions are unchanged.
+- The readiness deadline is separate from the provider-I/O phase limits below; it is not a generation-duration cap. Public payloads/actions are unchanged.
+
+### Provider I/O deadlines and Stop (Argon P0-4)
+
+- Chat provider clients use a 10-second connection/TLS limit. Each header wait and initial body/parsed-part wait has a separate 90-second budget; subsequent byte/chunk or parsed-part waits have a 45-second idle budget. Healthy progressing streams have no total duration cap, including legacy chat.
+- Agent turn setup, stream-part waits, and bounded retry backoff race the cancellation watch. The OpenAI transport counts decoded output, not role-only frames/heartbeat comments, as progress. Already-set Stop wins a ready-I/O tie. Header/setup timeouts retain the existing bounded retry policy; failures after streamed output are not retried by the turn loop. Timed-out/incomplete tool calls are not executed.
+- Legacy streaming, non-stream fallback, response-body reads, and optional rewrite requests check cancellation approximately every 120 ms while blocked. Stop ends these waits without starting a fallback/rewrite; speech-stop IPC is dispatched independently and cannot delay sending model cancellation.
+- Timeouts use existing `chat.stream.error` / agent-error paths with fixed phase labels, not a new event or payload shape. No raw request arguments, credentials, or tool output are added to diagnostics. This does not fix the separately tracked app-level partial-stream success/persistence or cloud-to-local routing fallback findings.
+- The title helper keeps its independently bounded 15-second request; tool execution/compaction orchestration are not covered by the per-turn I/O cancellation wrapper. These are not OS-level process/sandbox guarantees.
 
 ### Chat Streaming Actions
 - `chat.stream.start`

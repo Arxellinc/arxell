@@ -1,4 +1,5 @@
 pub mod chat_context;
+mod chat_provider_http;
 pub mod chat_service;
 pub mod files_service;
 pub mod image_generation_service;
