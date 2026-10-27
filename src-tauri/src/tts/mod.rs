@@ -23,6 +23,8 @@ mod kokoro_frontend;
 mod kokoro_ort;
 mod kokoro_voice;
 mod phonemizer;
+#[cfg(test)]
+mod tests;
 use kokoro_ort::{init_onnxruntime, synthesize_phonemes};
 use phonemizer::{EspeakPhonemizer, Phonemizer};
 
@@ -1669,35 +1671,58 @@ pub fn stop(request: TtsStopRequest, tts_state: &TTSState) -> Result<TtsStopResp
 }
 
 const KOKORO_MODEL_URL: &str =
-    "https://huggingface.co/onnx-community/Kokoro-82M-v1.0-ONNX/resolve/main/onnx/model_quantized.onnx";
+    "https://huggingface.co/onnx-community/Kokoro-82M-v1.0-ONNX/resolve/1939ad2a8e416c0acfeecc08a694d14ef25f2231/onnx/model_quantized.onnx";
 const KOKORO_MODEL_SIZE_BYTES: u64 = 92_361_116;
+const KOKORO_MODEL_SHA256: &str =
+    "fbae9257e1e05ffc727e951ef9b9c98418e6d79f1c9b6b13bd59f5c9028a1478";
 const KOKORO_VOICES_URL: &str =
     "https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.1/voices-v1.0.bin";
 const KOKORO_VOICES_SIZE_BYTES: u64 = 28_214_398;
+const KOKORO_VOICES_SHA256: &str =
+    "bca610b8308e8d99f32e6fe4197e7ec01679264efed0cac9140fe9c29f1fbf7d";
 
-fn verify_kokoro_asset(path: &Path, expected_size: Option<u64>, is_model: bool) -> Result<(), String> {
+fn verify_kokoro_asset(
+    path: &Path,
+    expected_size: u64,
+    expected_sha256: &str,
+    is_model: bool,
+) -> Result<(), String> {
+    use sha2::{Digest, Sha256};
     let actual_size = file_size(path).unwrap_or(0);
     if actual_size == 0 {
         return Err(format!("downloaded asset is empty: {}", path.display()));
     }
-    if let Some(expected) = expected_size {
-        if actual_size != expected {
-            return Err(format!(
-                "size mismatch for {}: expected {} bytes, got {} bytes",
-                path.display(),
-                expected,
-                actual_size
-            ));
-        }
+    if actual_size != expected_size {
+        return Err(format!(
+            "size mismatch for {}: expected {} bytes, got {} bytes",
+            path.display(),
+            expected_size,
+            actual_size
+        ));
     }
-    if is_model {
-        if !file_contains_bytes(path, b"sample_rate") {
-            return Err(format!(
-                "invalid Kokoro ONNX model (missing sample_rate metadata): {}",
-                path.display()
-            ));
+    let file = fs::File::open(path).map_err(|e| format!("failed opening Kokoro asset: {e}"))?;
+    let mut reader = std::io::BufReader::new(file);
+    let mut hasher = Sha256::new();
+    let mut buffer = [0_u8; 64 * 1024];
+    loop {
+        let count = reader
+            .read(&mut buffer)
+            .map_err(|e| format!("failed reading Kokoro asset: {e}"))?;
+        if count == 0 {
+            break;
         }
-    } else {
+        hasher.update(&buffer[..count]);
+    }
+    if hex::encode(hasher.finalize()) != expected_sha256 {
+        return Err(format!(
+            "checksum mismatch for Kokoro asset: {}",
+            path.display()
+        ));
+    }
+    // This is the standard direct-ORT graph, not a Sherpa-format export.
+    // Its output rate is 24 kHz; it has no required sample_rate metadata.
+    // Pinning the complete artifact verifies it more strongly than a byte scan.
+    if !is_model {
         let voices = kokoro_voice::list_voices_in_pack(path)?;
         if voices.is_empty() {
             return Err(format!(
@@ -1712,10 +1737,13 @@ fn verify_kokoro_asset(path: &Path, expected_size: Option<u64>, is_model: bool) 
 fn download_verified_kokoro_asset(
     url: &str,
     destination: &Path,
-    expected_size: Option<u64>,
+    expected_size: u64,
+    expected_sha256: &str,
     is_model: bool,
 ) -> Result<PathBuf, String> {
-    if destination.is_file() && verify_kokoro_asset(destination, expected_size, is_model).is_ok() {
+    if destination.is_file()
+        && verify_kokoro_asset(destination, expected_size, expected_sha256, is_model).is_ok()
+    {
         return Ok(destination.to_path_buf());
     }
     let parent = destination
@@ -1728,7 +1756,7 @@ fn download_verified_kokoro_asset(
             .file_name()
             .and_then(|n| n.to_str())
             .unwrap_or("kokoro-asset"),
-        now_ms()
+        uuid::Uuid::new_v4()
     ));
     let result = (|| -> Result<PathBuf, String> {
         let client = reqwest::blocking::Client::builder()
@@ -1748,7 +1776,7 @@ fn download_verified_kokoro_asset(
         std::io::copy(&mut response, &mut out)
             .map_err(|e| format!("failed writing {}: {e}", temp.display()))?;
         drop(out);
-        verify_kokoro_asset(&temp, expected_size, is_model)?;
+        verify_kokoro_asset(&temp, expected_size, expected_sha256, is_model)?;
         if destination.exists() {
             let _ = fs::remove_file(destination);
         }
@@ -1810,11 +1838,8 @@ pub async fn download_model(
         let model = download_verified_kokoro_asset(
             model_url,
             &model_dest,
-            if model_override.is_some() {
-                None
-            } else {
-                Some(KOKORO_MODEL_SIZE_BYTES)
-            },
+            KOKORO_MODEL_SIZE_BYTES,
+            KOKORO_MODEL_SHA256,
             true,
         )?;
 
@@ -1829,11 +1854,8 @@ pub async fn download_model(
         let voices = download_verified_kokoro_asset(
             voices_url,
             &voices_dest,
-            if voices_override.is_some() {
-                None
-            } else {
-                Some(KOKORO_VOICES_SIZE_BYTES)
-            },
+            KOKORO_VOICES_SIZE_BYTES,
+            KOKORO_VOICES_SHA256,
             false,
         )?;
         Ok((model, voices))

@@ -1,8 +1,17 @@
 # Desktop release readiness
 
-Current release candidate: Arxell 0.2.13, based on `main` at `80f0c0d` plus release preparation. The earlier 0.2.12 review baseline was `74543e1` (2026-10-21).
+Current release candidate: Arxell 0.2.14, the Kokoro first-run installation hotfix on top of published v0.2.13 (`793bcab`). The earlier 0.2.12 review baseline was `74543e1` (2026-10-21).
 
-## v0.2.13 release gate
+## v0.2.14 release gate
+
+- Clean-user testing of published v0.2.13 exposed a first-run **Install voice** blocker: the correct standard Kokoro graph was rejected for missing Sherpa-format `sample_rate` metadata. A regression using the real published artifact reproduced the exact rejection before the fix.
+- Installation now checks pinned SHA-256 digests and sizes for the model and voice pack; the model URL pins its Hugging Face revision. Mirror URL overrides cannot bypass integrity checks. No IPC contract changes.
+- Local verification passed: frontend build/lint and 82 tests; Rust checks with/without desktop support; 225 desktop library tests (4 opt-in tests ignored); and a production no-bundle build. The new opt-in fresh-install test separately passed, producing 82,200 finite/non-silent samples at 24 kHz after loopback HTTP installation of both actual artifacts into a temporary directory.
+- Linux CI now requires this real fresh-install/synthesis test, in addition to cross-platform asset-validation and download-failure regressions. Gate publication on all existing cross-platform build/package checks.
+- Remaining unsigned/not-notarized status, dependency advisories, physical clean-machine/provider acceptance gaps, and Windows/macOS voice playback limitations are unchanged. See `RELEASE_NOTES_v0.2.14.md`.
+- Uncommitted workspace-root work is excluded, and testing does not seed the user's voice assets or modify existing LLM models.
+
+## Historical v0.2.13 release gate
 
 - Latest published release at preparation time: `v0.2.11`; `v0.2.12` was never published.
 - Latest main CI run `40327938105` passed Linux and Windows builds/package smoke checks, but macOS failed `openai_transport_has_no_total_body_timeout_and_enforces_idle_after_progress` because paused Tokio time could auto-advance to an idle deadline before real socket delivery. The release candidate resumes real time during socket progress and pauses only for explicit simulated delays/stalls; production timeout behavior is unchanged.

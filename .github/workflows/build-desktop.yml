@@ -228,6 +228,12 @@ jobs:
           cargo test --manifest-path agent/Cargo.toml
           cargo test --manifest-path src-tauri/Cargo.toml --features tauri-runtime
 
+      - name: Verify fresh Kokoro install and real speech synthesis
+        if: runner.os == 'Linux'
+        env:
+          CARGO_TARGET_DIR: ${{ github.workspace }}/src-tauri/target
+        run: cargo test --manifest-path src-tauri/Cargo.toml --features tauri-runtime --lib kokoro_fresh_install_synthesizes_real_audio -- --ignored --nocapture
+
       - name: Build frontend
         working-directory: frontend
         run: npm run build
