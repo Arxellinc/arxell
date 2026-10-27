@@ -448,9 +448,13 @@ async fn openai_transport_has_no_total_body_timeout_and_enforces_idle_after_prog
         .await
         .unwrap();
     let mut peer = server.peer().await;
-    tokio::time::pause();
     for _ in 0..4 {
+        tokio::time::pause();
         tokio::time::advance(Duration::from_secs(30)).await;
+        // Real sockets are not driven by Tokio's virtual clock. Keep time
+        // running until the client observes the chunk, otherwise an idle
+        // runtime can auto-advance to the timeout before the OS delivers it.
+        tokio::time::resume();
         http::chunk(
             &mut peer,
             b"data: {\"choices\":[{\"delta\":{\"content\":\"token\"}}]}\n\n",
@@ -462,6 +466,8 @@ async fn openai_transport_has_no_total_body_timeout_and_enforces_idle_after_prog
         ));
     }
     // 120 seconds have elapsed, but each healthy body chunk still arrived.
+    // No more socket data is expected, so virtual time is safe for the stall.
+    tokio::time::pause();
     let started = tokio::time::Instant::now();
     let error = stream.stream.next().await.unwrap().unwrap_err();
     assert!(error.contains("idle timeout"));
