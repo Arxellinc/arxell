@@ -58,6 +58,19 @@ P0-2 Linux verification used the real WebView with all eight flags true. As a ne
 - Rust tests verify exact base64 bytes/MIME/correlation, the canonical workspace boundary (including a symlink escape on Unix), unsupported paths/types, the 10 MiB size cap, and denial of the presentation action in automatic task policy.
 - In an installed app, open PNG/JPEG/SVG images inside the authorized workspace; confirm previews and existing image fit controls work. Try an oversized image and an out-of-scope path; expect a visible error, not a filesystem-serving URL fallback. Other image formats depend on platform decoder support.
 
+## Kokoro first-run download and synthesis
+
+```sh
+cargo test --manifest-path src-tauri/Cargo.toml --features tauri-runtime --lib tts::tests::
+cargo test --manifest-path src-tauri/Cargo.toml --features tauri-runtime --lib kokoro_fresh_install_synthesizes_real_audio -- --ignored --nocapture
+```
+
+The normal suite validates the actual pinned model/voice artifacts, including the standard graph without Sherpa `sample_rate` metadata. Loopback fixtures cover missing/valid/corrupted caches, same-size corruption, interrupted downloads, temporary cleanup, and preservation of previous files on transfer/validation failure. No provider credentials are used.
+
+The opt-in synthesis test is required by Linux desktop CI. It needs the platform ONNX Runtime, bundled espeak-ng/data, Kokoro config, and the tracked model/voice fixtures. It installs into a temporary directory using the actual download/validation helper, then requires non-silent finite 24 kHz speech and WAV encoding. `ARXELL_TEST_VOICE_RESOURCES` can select an alternative staged resource root; missing dependencies fail, rather than silently skipping synthesis. It never installs into the user's `~/.arxell` directory.
+
+For packaged acceptance on each OS, use a disposable account/profile with no existing voice assets. Choose **Install voice** during onboarding, require success without manually copying models, list/select a voice, run TTS self-test and actual playback, restart and repeat offline. Confirm that corrupt/incomplete downloads fail visibly and a retry succeeds without leftover temporary files. Existing developer assets, source tests, and Linux CPU synthesis alone do not establish clean Windows/macOS installation or audio-device acceptance. See `voice-updates.md` for pinned artifact provenance.
+
 ## Manual (UI side)
 1. Start frontend:
 - `cd frontend && npm install && npm run dev`

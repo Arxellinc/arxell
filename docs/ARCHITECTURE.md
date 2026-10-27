@@ -93,7 +93,7 @@ Voice session management with VAD method selection, duplex modes, handoff betwee
 Speech-to-text: backend selection, model management, streaming transcription via Whisper-compatible servers. Whisper lifecycle changes are serialized with startup cancellation; the supervisor stages a private executable/shared-library closure and sets the child loader path, checks HTTP `/health` plus child liveness, cleans up failed startup, and clears the endpoint/status on health failure. Model listing and startup share bundled/user model discovery.
 
 ### TTS Subsystem (`src-tauri/src/tts/`)
-Text-to-speech: multi-engine support (Kokoro, Piper, Matcha, Kitten), voice selection, settings management, self-test, model download.
+Text-to-speech: multi-engine support (Kokoro, Piper, Matcha, Kitten), voice selection, settings management, self-test, model download. Kokoro uses the direct ONNX Runtime path with a fixed 24 kHz output rate, not Sherpa-format model metadata. First-run downloads and cached assets are verified against pinned sizes and SHA-256 digests; the model URL also pins its Hugging Face revision. URL overrides are mirrors for the same artifacts and cannot disable integrity checks. Cross-platform tests validate the actual assets, and Linux CI additionally installs them through a loopback HTTP fixture into a temporary asset directory and requires real phonemization/speech synthesis.
 
 ### Skills System (`src-tauri/src/skills/`)
 Agent skill definitions: 8 specialized skills for orchestration, planning, product design, frontend/backend/database engineering, guardrails, and product vision.
