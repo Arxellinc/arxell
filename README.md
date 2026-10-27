@@ -11,7 +11,7 @@
 
 <p align="center">
   <img src="https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-6e7681?style=flat-square" alt="Platform">
-  <img src="https://img.shields.io/badge/version-0.2.12-blue?style=flat-square" alt="Version">
+  <img src="https://img.shields.io/badge/version-0.2.13-blue?style=flat-square" alt="Version">
   <img src="https://img.shields.io/badge/rust-2021-orange?style=flat-square" alt="Rust Edition">
   <img src="https://img.shields.io/badge/license-Proprietary-red?style=flat-square" alt="License">
   <img src="https://img.shields.io/badge/telemetry-none-brightgreen?style=flat-square" alt="No Telemetry">
@@ -199,6 +199,10 @@ Every layer communicates through typed contracts with correlation IDs, structure
 ---
 
 ## Getting Started
+
+### Downloads
+
+Download the **v0.2.13 preview** installers and `SHA256SUMS.txt` from [GitHub Releases](https://github.com/Arxellinc/arxell/releases/tag/v0.2.13). Builds are unsigned; see the [release notes](docs/RELEASE_NOTES_v0.2.13.md) for prerequisites and known limitations.
 
 ### Prerequisites
 

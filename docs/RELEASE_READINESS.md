@@ -1,6 +1,18 @@
 # Desktop release readiness
 
-Review baseline: `main` at `74543e1` (Arxell 0.2.12), reviewed 2026-10-21.
+Current release candidate: Arxell 0.2.13, based on `main` at `80f0c0d` plus release preparation. The earlier 0.2.12 review baseline was `74543e1` (2026-10-21).
+
+## v0.2.13 release gate
+
+- Latest published release at preparation time: `v0.2.11`; `v0.2.12` was never published.
+- Latest main CI run `40327938105` passed Linux and Windows builds/package smoke checks, but macOS failed `openai_transport_has_no_total_body_timeout_and_enforces_idle_after_progress` because paused Tokio time could auto-advance to an idle deadline before real socket delivery. The release candidate resumes real time during socket progress and pauses only for explicit simulated delays/stalls; production timeout behavior is unchanged.
+- Includes merged stabilization PRs #31–#35: Linux ONNX deduplication, lag-resilient event delivery and terminal batching, packaged CSP/image previews, bounded model readiness and Stop, and cancellable phase-based provider timeouts.
+- Release only after the candidate passes the complete cross-platform build workflow. Publish as a preview with unsigned/not-notarized warnings and the remaining acceptance limitations in `RELEASE_NOTES_v0.2.13.md`.
+- Uncommitted work on `fix/safe-workspace-roots` is explicitly excluded from this release candidate.
+- Local verification passed: version consistency, frontend build/lint and 82 tests, 20 agent tests, 24 packaging/smoke regression tests, Rust checks with/without desktop support, 220 desktop library tests (3 opt-in tests ignored), and a production no-bundle desktop build.
+- `npm audit` reports 10 dependency advisories (5 high, 3 moderate, 2 low), including direct Vite and Mermaid dependencies and transitive packages. They are not remediated by this release-preparation change; dependency updates and exposure review remain outstanding. Do not treat passing builds as security acceptance.
+
+## Historical v0.2.12 review
 
 **Status: suitable for a clearly labeled v0.2.12 preview; not a fully stable release.** The unified candidate (#29 + #30) passed cross-platform CI, including Linux `.deb`/AppImage install and launch in a clean Ubuntu 22.04 container, renderer/IPC handshakes, Windows MSI install/launch/uninstall, and macOS DMG mount validation. A local Linux release build produced a 94 MiB `.deb` and a 168 MiB AppImage; both passed startup smoke, and the renderer/IPC handshake passed locally. Physical clean-machine acceptance, broader model/provider/Pi acceptance, and signing/notarization remain incomplete.
 
